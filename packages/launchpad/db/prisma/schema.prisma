@@ -1,0 +1,370 @@
+// Animica Launch — Prisma schema
+// Animica-native launchpad. No Solana, SOL, Phantom, Solflare, SPL, Raydium,
+// Orca, Jupiter, or wANM/SOL references appear anywhere in this stack.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WalletType {
+  ANIMICA_EXTENSION
+  ANIMICA_WEB
+  MOCK
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+enum ProjectStatus {
+  DRAFT
+  PENDING
+  LIVE
+  HIDDEN
+  REJECTED
+}
+
+enum RiskLevel {
+  UNKNOWN
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ActivityType {
+  PROJECT_CREATED
+  PROJECT_APPROVED
+  PROJECT_FEATURED
+  COMMENT_CREATED
+  BUY
+  SELL
+  LIQUIDITY_ADDED
+  VERIFIED
+  RISK_UPDATED
+  FOLLOWED
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum TradeStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+  ACTIONED
+}
+
+model User {
+  id                   String   @id @default(cuid())
+  primaryWalletAddress String   @unique
+  primaryWalletType    WalletType
+  animicaAddress       String?
+  username             String?  @unique
+  avatarUrl            String?
+  bio                  String?
+  role                 UserRole @default(USER)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  wallets       WalletAccount[]
+  projects      Project[]       @relation("CreatorProjects")
+  comments      Comment[]
+  follows       Follow[]
+  activities    Activity[]
+  trades        Trade[]
+  reportsFiled  Report[]        @relation("Reporter")
+
+  @@index([role])
+}
+
+model WalletAccount {
+  id              String     @id @default(cuid())
+  userId          String
+  walletType      WalletType
+  address         String
+  chainId         Int?
+  verified        Boolean    @default(false)
+  lastConnectedAt DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([address, walletType])
+  @@index([userId])
+}
+
+model AuthNonce {
+  id         String     @id @default(cuid())
+  address    String
+  walletType WalletType
+  nonce      String     @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime   @default(now())
+
+  @@index([address])
+  @@index([expiresAt])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  jti       String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Category {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  projects    Project[]
+}
+
+model Project {
+  id                   String        @id @default(cuid())
+  slug                 String        @unique
+  name                 String
+  symbol               String
+  description          String
+  logoUrl              String?
+  bannerUrl            String?
+  websiteUrl           String?
+  twitterUrl           String?
+  telegramUrl          String?
+  discordUrl           String?
+  githubUrl            String?
+  docsUrl              String?
+  tags                 String[]      @default([])
+
+  creatorWallet        String
+  creatorUserId        String?
+  categoryId           String?
+
+  status               ProjectStatus @default(PENDING)
+  verified             Boolean       @default(false)
+  featured             Boolean       @default(false)
+
+  riskLevel            RiskLevel     @default(UNKNOWN)
+  riskNotes            String?
+
+  initialSupply        String?
+  animicaAssetId       String?
+  nativeContractAddress String?
+  poolAddress          String?
+  launchTx             String?
+  launchFeePaid        Boolean       @default(false)
+  launchFeeTx          String?
+
+  marketCap            String?       @db.VarChar(64)
+  liquidityAnm         String?       @db.VarChar(64)
+  liquidityUsd         String?       @db.VarChar(64)
+  volume24hAnm         String?       @db.VarChar(64)
+  volumeTotalAnm       String?       @db.VarChar(64)
+  holderCount          Int           @default(0)
+  commentCount         Int           @default(0)
+  followCount          Int           @default(0)
+
+  // Bonding-curve ledger state (Animica-native server-managed curve).
+  curveSoldSupply      Decimal       @default(0) @db.Decimal(78, 0)
+  curveAnmReserveNanm  Decimal       @default(0) @db.Decimal(78, 0)
+
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  creator              User?         @relation("CreatorProjects", fields: [creatorUserId], references: [id])
+  category             Category?     @relation(fields: [categoryId], references: [id])
+  comments             Comment[]
+  follows              Follow[]
+  activities           Activity[]
+  trades               Trade[]
+  liquidityEvents      LiquidityEvent[]
+  reports              Report[]
+  balances             ProjectBalance[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([featured, verified])
+  @@index([categoryId])
+  @@index([creatorWallet])
+}
+
+model Comment {
+  id            String   @id @default(cuid())
+  projectId     String
+  userId        String?
+  walletAddress String
+  body          String
+  parentId      String?
+  hidden        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id])
+  parent  Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  replies Comment[] @relation("CommentReplies")
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([walletAddress])
+}
+
+model Follow {
+  id            String   @id @default(cuid())
+  projectId     String
+  userId        String?
+  walletAddress String
+  createdAt     DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@unique([projectId, walletAddress])
+  @@index([walletAddress])
+}
+
+model Activity {
+  id            String       @id @default(cuid())
+  type          ActivityType
+  projectId     String?
+  userId        String?
+  walletAddress String?
+  txHash        String?
+  amountInAnm   String?
+  amountOut     String?
+  anmValue      String?
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id])
+
+  @@index([createdAt(sort: Desc)])
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([type, createdAt(sort: Desc)])
+}
+
+model Trade {
+  id              String      @id @default(cuid())
+  projectId       String
+  userId          String?
+  walletAddress   String
+  side            TradeSide
+  inputToken      String
+  outputToken     String
+  amountInAnm     String
+  amountOut       String
+  priceAnm        String
+  priceUsd        String?
+  feeAnm          String      @default("0")
+  txHash          String?     @unique
+  status          TradeStatus @default(PENDING)
+
+  // Server-managed bonding-curve bookkeeping.
+  memo            String?     @unique         // 0x-prefixed memo used in the on-chain payment
+  expectedNanm    String?                     // expected ANM (nanm) payment for a pending buy
+  confirmedAt     DateTime?
+  confirmedHeight Int?
+  expiresAt       DateTime?
+
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([walletAddress])
+  @@index([status, expiresAt])
+}
+
+// Virtual project-token balance per wallet.
+model ProjectBalance {
+  id            String   @id @default(cuid())
+  projectId     String
+  walletAddress String
+  balance       Decimal  @default(0) @db.Decimal(78, 0)  // token base units
+  updatedAt     DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, walletAddress])
+  @@index([walletAddress])
+}
+
+model LiquidityEvent {
+  id            String   @id @default(cuid())
+  projectId     String
+  walletAddress String
+  poolAddress   String
+  amountToken   String
+  amountAnm     String
+  txHash        String?
+  createdAt     DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt(sort: Desc)])
+}
+
+model Report {
+  id             String       @id @default(cuid())
+  projectId      String
+  reporterUserId String?
+  reporterWallet String
+  reason         String
+  details        String?
+  status         ReportStatus @default(OPEN)
+  createdAt      DateTime     @default(now())
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reporter User?   @relation("Reporter", fields: [reporterUserId], references: [id])
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model PlatformSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// Web-wallet connect handshake. Mirrors the polling protocol used by
+// wallet.animica.org: dapp creates a request → user approves in the popup
+// → wallet's sidecar POSTs the result to our /api/wallet/connect/callback
+// → client polls /api/wallet/connect/poll until status changes.
+model WalletConnectRequest {
+  id                 String    @id @default(cuid())
+  requestId          String    @unique
+  nonce              String
+  status             String    @default("pending") // pending | approved | rejected | expired
+  approvedAddress    String?
+  approvedAccounts   Json?
+  nonceSignature     String?
+  sessionToken       String?
+  callbackReceivedAt DateTime?
+  expiresAt          DateTime
+  createdAt          DateTime  @default(now())
+
+  @@index([status, expiresAt])
+}

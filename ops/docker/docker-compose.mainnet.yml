@@ -83,6 +83,13 @@ services:
       # bringup; in prod a silent rejection (e.g. wallet chain_id=0
       # mismatch) means users chat for free and providers earn nothing.
       ANIMICA_AICF_REQUIRE_SETTLEMENT: "${ANIMICA_AICF_REQUIRE_SETTLEMENT:-1}"
+      # Grace period before the node gives up on external workers and returns
+      # a local-stub. CPU-only workers (no GPU) on a multi-GB model need more
+      # than the 30s default — first inference can include cold model load.
+      ANIMICA_AICF_WORKER_CLAIM_GRACE_S: "${ANIMICA_AICF_WORKER_CLAIM_GRACE_S:-300}"
+      # Lease window once a worker has claimed. Keep generous so a slow CPU
+      # worker isn't preempted mid-generation.
+      ANIMICA_AICF_WORKER_LEASE_S: "${ANIMICA_AICF_WORKER_LEASE_S:-900}"
       # RPC server config
       ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8545}"

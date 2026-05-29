@@ -44,7 +44,9 @@ a per-instance ``threading.Lock`` for writes.  Read-only operations (``has``,
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import gzip
 import hashlib
 import json
 import logging
@@ -64,7 +66,7 @@ _log = logging.getLogger("animica.da.node_store")
 # Constants
 # ---------------------------------------------------------------------------
 
-_VERSION = "1"
+_VERSION = "2"  # bumped when DA shipped default-on + proof pipeline (0.1.58)
 _DEFAULT_MAX_BYTES: int = 10 * 1024 * 1024 * 1024  # 10 GiB
 _MAX_BLOB_BYTES: int = 32 * 1024 * 1024             # 32 MiB per call
 _SHARD_DEPTH = 2
@@ -77,15 +79,22 @@ _SHARD_WIDTH = 2
 
 @dataclass
 class NodeDAConfig:
-    """Persistent configuration stored in ``<dir>/config.json``."""
+    """Persistent configuration stored in ``<dir>/config.json``.
 
-    enabled: bool = False
+    DA is enabled by default as of 0.1.58 — the proof pipeline lands in this
+    release and there's no reason for a node to ship with DA off. Operators
+    who want to opt out can flip enabled=false in config.json (or pass
+    ``ANIMICA_DA_ENABLED=0`` at startup, see :func:`_load_config`).
+    """
+
+    enabled: bool = True
     dir: str = ""
     max_bytes: int = _DEFAULT_MAX_BYTES
     eviction_policy: str = "lru"          # only "lru" supported for now
     on_full: str = "evict"                # "evict" | "reject"
     allow_remote_get: bool = True
-    allow_remote_put: bool = False
+    allow_remote_put: bool = True         # safe default: blob store enforces
+                                          # max_bytes + LRU eviction
     version: str = _VERSION
 
     def to_dict(self) -> Dict[str, Any]:
@@ -161,6 +170,18 @@ def _free_bytes_fs(path: str) -> int:
         return 0
 
 
+def _pack_leaves(leaves: List[bytes]) -> bytes:
+    """Gzip + JSON-encode a list of encoded NMT leaves for compact storage."""
+    payload = json.dumps([base64.b64encode(b).decode("ascii") for b in leaves]).encode("utf-8")
+    return gzip.compress(payload)
+
+
+def _unpack_leaves(blob: bytes) -> List[bytes]:
+    """Inverse of :func:`_pack_leaves`."""
+    payload = gzip.decompress(blob).decode("utf-8")
+    return [base64.b64decode(s) for s in json.loads(payload)]
+
+
 # ---------------------------------------------------------------------------
 # NodeDAStore
 # ---------------------------------------------------------------------------
@@ -204,13 +225,32 @@ class NodeDAStore:
     # ------------------------------------------------------------------
 
     def _load_config(self) -> NodeDAConfig:
+        env_override = os.environ.get("ANIMICA_DA_ENABLED")
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
-                    return NodeDAConfig.from_dict(json.load(f))
+                    raw = json.load(f)
+                cfg = NodeDAConfig.from_dict(raw)
+                # Migrate: nodes that initialised under <=0.1.57 wrote
+                # enabled=false. Now that DA is the default, auto-flip the
+                # bit unless the operator has explicitly opted out via env.
+                # ``version`` in the file lets us tell "first launch after
+                # upgrade" apart from "operator deliberately disabled".
+                stored_version = raw.get("version")
+                if (
+                    not cfg.enabled
+                    and stored_version != _VERSION
+                    and env_override not in ("0", "false", "no")
+                ):
+                    cfg = NodeDAConfig.from_dict({**raw, "enabled": True, "version": _VERSION})
+                    self._save_config(cfg)
+                    _log.info("DA auto-enabled on first launch under version %s", _VERSION)
+                return cfg
             except Exception as exc:
                 _log.warning("Failed to load DA config: %s", exc)
-        cfg = NodeDAConfig(enabled=False, dir=self.root_dir)
+        # Fresh node: ship enabled unless the operator forced it off.
+        default_enabled = env_override not in ("0", "false", "no")
+        cfg = NodeDAConfig(enabled=default_enabled, dir=self.root_dir)
         self._save_config(cfg)
         return cfg
 
@@ -263,6 +303,29 @@ class NodeDAStore:
         )
         self.db.execute(
             "CREATE INDEX IF NOT EXISTS idx_created ON blobs(created_at DESC)"
+        )
+        # Commitment index: maps a NMT root (32-byte hex) to the underlying blob_id
+        # plus the encoded leaves needed to rebuild the tree for proof generation.
+        # leaves_blob holds gzipped JSON: [<base64-leaf>, ...].
+        self.db.execute("""
+            CREATE TABLE IF NOT EXISTS proofs (
+                commitment       TEXT PRIMARY KEY,
+                blob_id          TEXT NOT NULL,
+                namespace        INTEGER NOT NULL,
+                data_shards      INTEGER NOT NULL,
+                total_shards     INTEGER NOT NULL,
+                share_bytes      INTEGER NOT NULL,
+                leaf_count       INTEGER NOT NULL,
+                original_size    INTEGER NOT NULL,
+                leaves_blob      BLOB NOT NULL,
+                created_at       INTEGER NOT NULL
+            )
+        """)
+        self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_proofs_blob ON proofs(blob_id)"
+        )
+        self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_proofs_namespace ON proofs(namespace)"
         )
         self.db.commit()
 
@@ -388,6 +451,302 @@ class NodeDAStore:
             "SELECT 1 FROM blobs WHERE blob_id=? LIMIT 1", (blob_id,)
         ).fetchone()
         return row is not None
+
+    # ------------------------------------------------------------------
+    # DA proof pipeline
+    # ------------------------------------------------------------------
+
+    def put_with_proof(
+        self,
+        data: bytes,
+        namespace: int,
+        *,
+        erasure_params: Optional[Any] = None,
+        content_type: Optional[str] = None,
+        owner: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Ingest a blob AND build its NMT commitment + persist enough state to
+        produce inclusion proofs later.
+
+        Returns a dict with: blob_id, commitment (hex), namespace,
+        data_shards, total_shards, share_bytes, leaf_count, size_bytes.
+        """
+        # Local imports keep the storage module light when proofs aren't needed.
+        from da.erasure.encoder import encode_blob_to_leaves
+        from da.erasure.params import DEFAULT_PARAMS
+        from da.nmt.tree import NMT
+
+        params = erasure_params or DEFAULT_PARAMS
+        leaves, info = encode_blob_to_leaves(bytes(data), namespace, params)
+
+        tree = NMT()
+        for leaf in leaves:
+            tree.append_encoded(leaf)
+        if not leaves:
+            # Empty blob: commitment is the all-zero root; persist the row so
+            # getProof on the commitment returns leaf_count=0 instead of 404.
+            root = b"\x00" * 32
+        else:
+            root = tree.finalize()
+        commitment_hex = root.hex()
+
+        # Always also write the raw blob so da.get(blob_id) keeps working.
+        blob_id, size = self.put(
+            data,
+            content_type=content_type,
+            owner=owner,
+            metadata=metadata,
+        )
+
+        leaves_blob = _pack_leaves(leaves)
+
+        with self._lock:
+            now = _now()
+            self.db.execute(
+                """
+                INSERT INTO proofs
+                    (commitment, blob_id, namespace, data_shards, total_shards,
+                     share_bytes, leaf_count, original_size, leaves_blob, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(commitment) DO UPDATE SET
+                    blob_id = excluded.blob_id,
+                    namespace = excluded.namespace,
+                    data_shards = excluded.data_shards,
+                    total_shards = excluded.total_shards,
+                    share_bytes = excluded.share_bytes,
+                    leaf_count = excluded.leaf_count,
+                    original_size = excluded.original_size,
+                    leaves_blob = excluded.leaves_blob
+                """,
+                (
+                    commitment_hex,
+                    blob_id,
+                    int(namespace),
+                    int(info.data_per_stripe),
+                    int(info.leaves_per_stripe),
+                    int(info.share_bytes),
+                    int(info.total_leaves),
+                    int(info.original_size),
+                    leaves_blob,
+                    now,
+                ),
+            )
+            self.db.commit()
+
+        return {
+            "blob_id": blob_id,
+            "commitment": commitment_hex,
+            "namespace": int(namespace),
+            "data_shards": int(info.data_per_stripe),
+            "total_shards": int(info.leaves_per_stripe),
+            "share_bytes": int(info.share_bytes),
+            "leaf_count": int(info.total_leaves),
+            "size_bytes": size,
+        }
+
+    def get_proof(
+        self,
+        commitment: str,
+        *,
+        indices: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate a DA inclusion proof for the given commitment.
+
+        If ``indices`` is None, return inclusion proofs for *every* leaf
+        (so a verifier can sample any subset). If supplied, return one
+        proof per requested leaf index.
+        """
+        from da.nmt.tree import NMT
+
+        commitment = (commitment or "").lower().removeprefix("0x")
+        row = self.db.execute(
+            """
+            SELECT blob_id, namespace, data_shards, total_shards, share_bytes,
+                   leaf_count, original_size, leaves_blob
+            FROM proofs WHERE commitment=?
+            """,
+            (commitment,),
+        ).fetchone()
+        if row is None:
+            raise FileNotFoundError(f"no proof index for commitment {commitment}")
+
+        (
+            blob_id,
+            namespace,
+            data_shards,
+            total_shards,
+            share_bytes,
+            leaf_count,
+            original_size,
+            leaves_blob,
+        ) = row
+
+        leaves = _unpack_leaves(leaves_blob)
+        if len(leaves) != leaf_count:
+            raise RuntimeError(
+                f"leaf count mismatch: stored={leaf_count} actual={len(leaves)}"
+            )
+
+        if leaf_count == 0:
+            return {
+                "commitment": commitment,
+                "blob_id": blob_id,
+                "namespace": int(namespace),
+                "leaf_count": 0,
+                "data_shards": int(data_shards),
+                "total_shards": int(total_shards),
+                "share_bytes": int(share_bytes),
+                "original_size": int(original_size),
+                "proofs": [],
+            }
+
+        # Rebuild the tree so we have layer references for siblings.
+        tree = NMT()
+        for leaf in leaves:
+            tree.append_encoded(leaf)
+        tree.finalize()
+        layers = tree.layers()
+
+        if indices is None:
+            indices = list(range(leaf_count))
+        else:
+            indices = list(indices)
+        for i in indices:
+            if not (0 <= i < leaf_count):
+                raise ValueError(
+                    f"leaf index {i} out of range [0, {leaf_count})"
+                )
+
+        proofs: List[Dict[str, Any]] = []
+        for leaf_idx in indices:
+            siblings: List[Dict[str, Any]] = []
+            idx = leaf_idx
+            for level in range(len(layers) - 1):
+                layer = layers[level]
+                sib_idx = idx ^ 1
+                if sib_idx < len(layer):
+                    sib_node = layer[sib_idx]
+                else:
+                    # Boundary: NMT duplicates the last node when sibling is missing,
+                    # so the sibling is the node itself at this level.
+                    sib_node = layer[idx]
+                siblings.append({
+                    "level": level,
+                    "position": "right" if sib_idx > idx else "left",
+                    "hash": sib_node.hash.hex(),
+                    "ns_min": int(sib_node.ns_min),
+                    "ns_max": int(sib_node.ns_max),
+                })
+                idx //= 2
+            proofs.append({
+                "leaf_index": leaf_idx,
+                "leaf_bytes": base64.b64encode(leaves[leaf_idx]).decode("ascii"),
+                "leaf_hash": layers[0][leaf_idx].hash.hex(),
+                "siblings": siblings,
+            })
+
+        return {
+            "commitment": commitment,
+            "blob_id": blob_id,
+            "namespace": int(namespace),
+            "leaf_count": int(leaf_count),
+            "data_shards": int(data_shards),
+            "total_shards": int(total_shards),
+            "share_bytes": int(share_bytes),
+            "original_size": int(original_size),
+            "tree_height": len(layers),
+            "proofs": proofs,
+        }
+
+    def find_blob_by_commitment(self, commitment: str) -> Optional[str]:
+        """Return the underlying blob_id for a commitment, or None."""
+        commitment = (commitment or "").lower().removeprefix("0x")
+        row = self.db.execute(
+            "SELECT blob_id FROM proofs WHERE commitment=?", (commitment,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def list_commitments(
+        self,
+        *,
+        namespace: Optional[int] = None,
+        limit: int = 100,
+        cursor: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Enumerate commitments (NMT roots) from the proofs index, newest-first.
+
+        ``cursor`` is a created_at watermark — pass back ``next_cursor`` from
+        the previous call to page through the table. Cap the page at 500 rows
+        regardless of the requested limit so a misbehaving client can't
+        materialise the whole table in one RPC.
+        """
+        limit = min(max(int(limit), 1), 500)
+        clauses = []
+        params: List[Any] = []
+        if namespace is not None:
+            clauses.append("namespace = ?")
+            params.append(int(namespace))
+        if cursor is not None:
+            clauses.append("created_at < ?")
+            params.append(int(cursor))
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self.db.execute(
+            f"""
+            SELECT commitment, blob_id, namespace, data_shards, total_shards,
+                   share_bytes, leaf_count, original_size, created_at
+            FROM proofs
+            {where}
+            ORDER BY created_at DESC, commitment ASC
+            LIMIT ?
+            """,
+            (*params, limit + 1),
+        ).fetchall()
+
+        items = []
+        for r in rows[:limit]:
+            items.append({
+                "commitment": r[0],
+                "blob_id": r[1],
+                "namespace": int(r[2]),
+                "data_shards": int(r[3]),
+                "total_shards": int(r[4]),
+                "share_bytes": int(r[5]),
+                "leaf_count": int(r[6]),
+                "original_size": int(r[7]),
+                "created_at": int(r[8]),
+            })
+        next_cursor = int(rows[limit][8]) if len(rows) > limit else None
+        return {"items": items, "next_cursor": next_cursor}
+
+    def list_namespaces(self) -> List[Dict[str, Any]]:
+        """
+        Distinct namespaces with rollup stats: number of commitments, total
+        original bytes, latest commitment timestamp.
+        """
+        rows = self.db.execute(
+            """
+            SELECT namespace,
+                   COUNT(*) AS commitments,
+                   SUM(original_size) AS total_bytes,
+                   MAX(created_at) AS latest_at
+            FROM proofs
+            GROUP BY namespace
+            ORDER BY latest_at DESC
+            """
+        ).fetchall()
+        return [
+            {
+                "namespace": int(r[0]),
+                "commitments": int(r[1]),
+                "total_bytes": int(r[2] or 0),
+                "latest_at": int(r[3] or 0),
+            }
+            for r in rows
+        ]
 
     def delete(self, blob_id: str) -> bool:
         """Delete a blob.  Returns True if it existed."""

@@ -275,6 +275,25 @@ class ForkChoice:
 
     # ----------------------- internal helpers -----------------------
 
+    def _result(self, *, accepted: bool, new_tip: bytes) -> AddResult:
+        """Shorthand AddResult for the no-change paths (duplicate insert
+        or orphan-buffered). Both leave the best tip untouched and have
+        no detach/attach segments. Past bug: this helper was referenced
+        from add_block but never defined; under normal single-chain
+        operation neither no-change path was exercised, so it lay
+        dormant. The treasury-sweep fork (peers feeding us blocks our
+        node had already mined past) hit it for the first time and the
+        node crash-looped with AttributeError: 'ForkChoice' object has
+        no attribute '_result'."""
+        return AddResult(
+            accepted=accepted,
+            became_best=False,
+            best=self._best,
+            reorg_depth=0,
+            detached=(),
+            attached=(),
+        )
+
     def _attach_known_parent(
         self, hh: bytes, ph: bytes, height: int, weight_micro: WeightMicro
     ) -> Node:

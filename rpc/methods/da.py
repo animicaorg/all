@@ -738,9 +738,24 @@ def da_put(params=None, **kwargs) -> dict:
         content_type = metadata.get("content_type")
         owner = metadata.get("owner")
 
+    # If the caller supplied a namespace, run the full DA pipeline
+    # (erasure encode → NMT root → persist proof index). Otherwise fall back
+    # to the simple content-addressed blob store path. Both flows store the
+    # raw blob so `da.get(blob_id)` works the same way after either path.
+    namespace = kwargs.get("namespace")
     try:
         store = _require_store()
         _require_remote_put_allowed(store)
+        if namespace is not None:
+            ns_int = int(namespace)
+            result = store.put_with_proof(
+                blob_bytes,
+                ns_int,
+                content_type=content_type,
+                owner=owner,
+                metadata=metadata,
+            )
+            return result
         blob_id, size_bytes = store.put(
             blob_bytes,
             content_type=content_type,
@@ -932,15 +947,24 @@ def da_get(params=None, **kwargs) -> dict:
     elif isinstance(params, (list, tuple)) and params:
         kwargs["blob_id"] = params[0]
 
-    blob_id = kwargs.get("blob_id") or kwargs.get("id") or kwargs.get("commitment")
-    if not blob_id:
+    raw_id = kwargs.get("blob_id") or kwargs.get("id") or kwargs.get("commitment")
+    if not raw_id:
         raise rpc_errors.InvalidParams("Missing required parameter: blob_id")
 
     try:
         store = _require_store()
-        data, meta = store.get(str(blob_id))
+        blob_id = str(raw_id)
+        # When called via the `commitment` field, resolve the underlying
+        # content-addressed blob_id through the proof index. This keeps
+        # da.getBlob symmetric with da.putBlob: a caller who has the NMT
+        # root from the receipt can fetch the bytes back.
+        if not store.has(blob_id):
+            mapped = store.find_blob_by_commitment(blob_id)
+            if mapped:
+                blob_id = mapped
+        data, meta = store.get(blob_id)
     except FileNotFoundError:
-        raise rpc_errors.NotFound(f"blob {blob_id}")
+        raise rpc_errors.NotFound(f"blob {raw_id}")
     except rpc_errors.RpcError:
         raise
     except Exception as exc:
@@ -1098,9 +1122,100 @@ def da_gc(params=None, **kwargs) -> dict:
     return {"freed_bytes": freed, "removed_count": removed}
 
 
+@method("da.listCommitments", aliases=("da_listCommitments",),
+        desc="List NMT commitments from the node DA proof index")
+def da_list_commitments(params=None, **kwargs) -> dict:
+    """
+    Enumerate the proof index (commitments / NMT roots).
+
+    Params:
+      namespace  int | None — restrict to a single namespace
+      limit      int — default 100, capped at 500
+      cursor     int | None — created_at watermark returned by previous page
+    """
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params and isinstance(params[0], dict):
+        kwargs.update(params[0])
+    namespace = kwargs.get("namespace")
+    limit = kwargs.get("limit", 100)
+    cursor = kwargs.get("cursor")
+    try:
+        store = _require_store()
+        return store.list_commitments(
+            namespace=int(namespace) if namespace is not None else None,
+            limit=int(limit),
+            cursor=int(cursor) if cursor is not None else None,
+        )
+    except rpc_errors.RpcError:
+        raise
+    except ValueError as exc:
+        raise rpc_errors.InvalidParams(str(exc))
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA listCommitments failed: {exc}")
+
+
+@method("da.listNamespaces", aliases=("da_listNamespaces",),
+        desc="List distinct namespaces with rollup stats")
+def da_list_namespaces(params=None, **kwargs) -> dict:
+    _ = params, kwargs
+    try:
+        store = _require_store()
+        return {"namespaces": store.list_namespaces()}
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA listNamespaces failed: {exc}")
+
+
 @method("da.getProof", aliases=("da_getProof",), desc="Get DA proof for a blob commitment")
-def da_get_proof(*_args, **_kwargs):
-    raise rpc_errors.TemporarilyUnavailable("Blob proof not available on this node")
+def da_get_proof(params=None, **kwargs) -> dict:
+    """
+    Return NMT inclusion proofs for a previously committed blob.
+
+    Params:
+      commitment  str — the 32-byte NMT root (hex), as returned by da.putBlob
+                       when called with a namespace.
+      indices     list[int] | None — leaf indices to prove. Omit to receive
+                                     inclusion proofs for *every* leaf so the
+                                     verifier can sample any subset.
+
+    Returns:
+      {commitment, blob_id, namespace, leaf_count, data_shards, total_shards,
+       share_bytes, original_size, tree_height, proofs: [{leaf_index, leaf_bytes,
+       leaf_hash, siblings: [{level, position, hash, ns_min, ns_max}, ...]}]}
+    """
+    if isinstance(params, dict):
+        kwargs.update(params)
+    elif isinstance(params, (list, tuple)) and params and isinstance(params[0], dict):
+        kwargs.update(params[0])
+
+    commitment = kwargs.get("commitment") or kwargs.get("root") or kwargs.get("blob_id")
+    if not commitment:
+        raise rpc_errors.InvalidParams("Missing required parameter: commitment")
+
+    indices = kwargs.get("indices")
+    if indices is not None:
+        if not isinstance(indices, (list, tuple)):
+            raise rpc_errors.InvalidParams("indices must be a list of ints")
+        try:
+            indices = [int(i) for i in indices]
+        except (TypeError, ValueError) as exc:
+            raise rpc_errors.InvalidParams(f"indices must be ints: {exc}")
+
+    try:
+        store = _require_store()
+        proof = store.get_proof(str(commitment), indices=indices)
+    except FileNotFoundError:
+        raise rpc_errors.NotFound(f"no proof for commitment {commitment}")
+    except ValueError as exc:
+        raise rpc_errors.InvalidParams(str(exc))
+    except rpc_errors.RpcError:
+        raise
+    except Exception as exc:
+        raise rpc_errors.InternalError(f"DA proof failed: {exc}")
+
+    return proof
 
 
 __all__ = [

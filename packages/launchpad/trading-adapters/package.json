@@ -1,0 +1,20 @@
+{
+  "name": "@launchpad/trading-adapters",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mock": "./src/mock.ts",
+    "./native": "./src/native.ts",
+    "./bonding": "./src/bonding.ts",
+    "./bonding-anm": "./src/bonding-anm.ts"
+  },
+  "dependencies": {
+    "@launchpad/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2"
+  }
+}
