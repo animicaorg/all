@@ -37,24 +37,51 @@ OUT_DIR = REPO_ROOT / "python" / "animica" / "stratum_pool" / "_data" / "aicf_ra
 # operator-facing guides. We skip "*OLD*" and "*_old*" — those exist
 # precisely because they were superseded and would otherwise pull the
 # model toward stale answers.
-SOURCE_GLOBS: list[tuple[Path, str]] = [
-    (REPO_ROOT, "README.md"),
-    (REPO_ROOT / "docs", "*.md"),
+#
+# Beyond the operator docs we also pull contract examples, templates,
+# and the aicf_agent_task package — these teach the model how to write
+# Animica smart contracts that call into the AICF layer. SDK + spec
+# add API and protocol references.
+SOURCE_GLOBS: list[tuple[Path, str, bool]] = [
+    # (root, glob, recursive)
+    (REPO_ROOT, "README.md", False),
+    (REPO_ROOT / "docs", "*.md", False),
+    (REPO_ROOT / "contracts" / "examples", "**/*.md", True),
+    (REPO_ROOT / "contracts" / "examples", "**/*.py", True),
+    (REPO_ROOT / "contracts" / "templates", "**/*.md", True),
+    (REPO_ROOT / "contracts" / "templates", "**/*.py", True),
+    (REPO_ROOT / "contracts" / "templates", "**/manifest.json", True),
+    (REPO_ROOT / "contracts" / "packages" / "aicf_agent_task", "**/*.py", True),
+    (REPO_ROOT / "contracts" / "packages" / "aicf_agent_task", "**/*.md", True),
+    (REPO_ROOT / "contracts" / "packages" / "aicf_agent_task", "**/manifest.json", True),
+    (REPO_ROOT / "sdk", "**/*.md", True),
+    (REPO_ROOT / "spec", "**/*.md", True),
 ]
 SKIP_NAME_RE = re.compile(r"(?:^|[_-])(old|deprecated|archive)(?:[._-]|$)", re.IGNORECASE)
+# Skip vendored / virtualenv / build outputs even if they leak into a glob.
+SKIP_PATH_PARTS = {"node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".git"}
 
 CHUNK_CHARS = 700
 CHUNK_OVERLAP = 120
 MIN_CHUNK_CHARS = 80  # drop micro-chunks (headings alone, etc.)
+# Code files chunk by top-level def/class boundaries when possible, else
+# hard-split. Allow slightly larger chunks because code lines are short.
+CODE_CHUNK_CHARS = 1100
+CODE_CHUNK_OVERLAP = 150
 
 
 def _iter_sources() -> list[Path]:
     files: list[Path] = []
-    for root, pattern in SOURCE_GLOBS:
-        for p in sorted(root.glob(pattern)):
+    for root, pattern, recursive in SOURCE_GLOBS:
+        if not root.exists():
+            continue
+        it = root.rglob(pattern) if recursive else root.glob(pattern)
+        for p in sorted(it):
             if not p.is_file():
                 continue
             if SKIP_NAME_RE.search(p.stem):
+                continue
+            if any(part in SKIP_PATH_PARTS for part in p.parts):
                 continue
             files.append(p)
     # Dedup while preserving order.
@@ -117,6 +144,72 @@ def _chunk(text: str, *, source: str) -> list[dict]:
     return chunks
 
 
+_PY_BOUNDARY = re.compile(r"^(?:def |class |@\w)", re.MULTILINE)
+
+
+def _chunk_code(text: str, *, source: str) -> list[dict]:
+    """Code-aware chunker. Splits at top-level def/class/decorator
+    boundaries so each chunk is a self-contained block, then merges
+    small ones up to CODE_CHUNK_CHARS. Falls back to a sliding hard
+    split for files without recognizable structure (e.g. JSON)."""
+    text = text.strip()
+    if len(text) <= CODE_CHUNK_CHARS:
+        if len(text) >= MIN_CHUNK_CHARS:
+            return [{"text": f"# source: {source}\n{text}", "source": source}]
+        return []
+
+    boundaries = [m.start() for m in _PY_BOUNDARY.finditer(text)]
+    if not boundaries:
+        # JSON / config / unstructured: hard-split.
+        return _hard_split(text, source=source)
+
+    if boundaries[0] > 0:
+        boundaries = [0] + boundaries
+    boundaries.append(len(text))
+
+    blocks: list[str] = []
+    for i in range(len(boundaries) - 1):
+        blocks.append(text[boundaries[i] : boundaries[i + 1]].rstrip())
+
+    chunks: list[dict] = []
+    buf = ""
+    for block in blocks:
+        if not block:
+            continue
+        if len(buf) + len(block) + 2 <= CODE_CHUNK_CHARS:
+            buf = (buf + "\n\n" + block) if buf else block
+            continue
+        if buf:
+            chunks.append({"text": f"# source: {source}\n{buf}", "source": source})
+            tail = buf[-CODE_CHUNK_OVERLAP:] if CODE_CHUNK_OVERLAP > 0 else ""
+            buf = (tail + "\n\n" + block) if tail else block
+        else:
+            buf = block
+        while len(buf) > CODE_CHUNK_CHARS:
+            chunks.append({"text": f"# source: {source}\n{buf[:CODE_CHUNK_CHARS]}", "source": source})
+            buf = buf[CODE_CHUNK_CHARS - CODE_CHUNK_OVERLAP :]
+    if buf and len(buf) >= MIN_CHUNK_CHARS:
+        chunks.append({"text": f"# source: {source}\n{buf}", "source": source})
+    return chunks
+
+
+def _hard_split(text: str, *, source: str) -> list[dict]:
+    chunks: list[dict] = []
+    i = 0
+    while i < len(text):
+        piece = text[i : i + CODE_CHUNK_CHARS]
+        if len(piece) >= MIN_CHUNK_CHARS:
+            chunks.append({"text": f"# source: {source}\n{piece}", "source": source})
+        i += CODE_CHUNK_CHARS - CODE_CHUNK_OVERLAP
+    return chunks
+
+
+def _chunk_dispatch(text: str, *, source: str, ext: str) -> list[dict]:
+    if ext in {".py", ".json", ".toml", ".yaml", ".yml"}:
+        return _chunk_code(text, source=source)
+    return _chunk(text, source=source)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -150,7 +243,7 @@ def main() -> int:
             print(f"skip {path}: {exc}", file=sys.stderr)
             continue
         rel = path.relative_to(REPO_ROOT).as_posix()
-        all_chunks.extend(_chunk(raw, source=rel))
+        all_chunks.extend(_chunk_dispatch(raw, source=rel, ext=path.suffix.lower()))
 
     if not all_chunks:
         print("no chunks produced — check chunking thresholds", file=sys.stderr)

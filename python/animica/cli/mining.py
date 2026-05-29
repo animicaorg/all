@@ -642,6 +642,67 @@ def _resolve_default_miner_address() -> Optional[str]:
     return None
 
 
+# ── --llm flag helpers ─────────────────────────────────────────────────
+# A user-friendly resolver: maps a short alias, a tier name, or a model id
+# into the right env var(s) for the AICF inference engine.
+#
+# Three input shapes:
+#   1. A standard tier name (tiny / small / standard / premium / xl).
+#      → set ANIMICA_AICF_TIERS to that single tier, leaving the engine to
+#        pick the per-tier default model. The pool sees the worker as that
+#        tier and routes matching jobs to it.
+#   2. A well-known model alias (phi3, qwen2.5-0.5b, llama3-8b, ...).
+#      → expand to the canonical Hugging Face repo id.
+#   3. Anything that looks like a HF repo id or a local path.
+#      → pass through verbatim.
+_AICF_TIERS = {"tiny", "small", "standard", "premium", "xl"}
+_AICF_ALIASES = {
+    "phi3":          "microsoft/Phi-3-mini-4k-instruct",
+    "phi-3":         "microsoft/Phi-3-mini-4k-instruct",
+    "phi4":          "microsoft/Phi-4",
+    "qwen2.5-0.5b":  "Qwen/Qwen2.5-0.5B-Instruct",
+    "qwen2.5-1.5b":  "Qwen/Qwen2.5-1.5B-Instruct",
+    "qwen2.5-7b":    "Qwen/Qwen2.5-7B-Instruct",
+    "llama3-8b":     "meta-llama/Meta-Llama-3-8B-Instruct",
+    "llama3.1-8b":   "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    "mistral-7b":    "mistralai/Mistral-7B-Instruct-v0.3",
+    "gemma2-2b":     "google/gemma-2-2b-it",
+    "smollm-1.7b":   "HuggingFaceTB/SmolLM-1.7B-Instruct",
+}
+
+
+def _resolve_llm_alias(value: str) -> str:
+    """Return the canonical HF repo id (or pass-through path) for a --llm input.
+
+    Tier names short-circuit to "" so the caller knows to set
+    ANIMICA_AICF_TIERS instead of ANIMICA_AICF_MODEL.
+    """
+    v = (value or "").strip()
+    if not v:
+        return ""
+    if v.lower() in _AICF_TIERS:
+        return ""  # signal: tier path
+    return _AICF_ALIASES.get(v.lower(), v)
+
+
+def _apply_llm_flag(llm: Optional[str]) -> None:
+    """Set the env vars the AICF inference engine reads."""
+    if not llm:
+        return
+    v = llm.strip()
+    if not v:
+        return
+    if v.lower() in _AICF_TIERS:
+        # Tier path: advertise just this tier, let the engine resolve per-tier defaults.
+        os.environ["ANIMICA_AICF_TIERS"] = v.lower()
+        # Don't override ANIMICA_AICF_MODEL — let the per-tier default apply
+        # unless the user already pinned a model another way.
+        return
+    resolved = _resolve_llm_alias(v)
+    if resolved:
+        os.environ["ANIMICA_AICF_MODEL"] = resolved
+
+
 def _require_miner_address(address_or_label: Optional[str]) -> str:
     if address_or_label and address_or_label.strip():
         return _resolve_payout_address(address_or_label.strip())
@@ -1408,6 +1469,61 @@ def show_config() -> None:
     )
 
 
+@app.command("models")
+def models(
+    tier: Optional[str] = typer.Option(
+        None, "--tier", help="If set, only show the resolved model for this tier."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit JSON instead of a table."
+    ),
+) -> None:
+    """List models the AICF miner has auto-detected and the per-tier picks.
+
+    Resolution order: env override > local bundle > HF cache > fallback.
+    Operator overrides per tier with ANIMICA_AICF_MODEL_<TIER>=<id>.
+    Override the local bundle dir with ANIMICA_AICF_MODEL_DIR.
+    """
+    try:
+        from animica.stratum_pool.aicf_inference import (
+            discover_models, resolve_tier_model, _TIER_RANGES,
+        )
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    discovered = discover_models()
+    tiers = [t for t, _, _ in _TIER_RANGES]
+    if tier:
+        if tier not in tiers:
+            typer.echo(f"unknown tier {tier!r} (known: {', '.join(tiers)})", err=True)
+            raise typer.Exit(1)
+        tiers = [tier]
+    picks = {t: resolve_tier_model(t) for t in tiers}
+
+    if json_output:
+        import json
+        payload = {
+            "discovered": [
+                {"identifier": m.identifier, "source": m.source,
+                 "approx_billions": m.approx_billions}
+                for m in discovered
+            ],
+            "picks": picks,
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo("Auto-detected models:")
+    for m in discovered:
+        sz = f"{m.approx_billions:>5.1f}B" if m.approx_billions else "    ?"
+        typer.echo(f"  {m.source:<14s} {sz}  {m.identifier}")
+    typer.echo("")
+    typer.echo("Per-tier picks:")
+    for t in tiers:
+        typer.echo(f"  {t:<9s} -> {picks[t]}")
+
+
 @app.command("generate-payout-address")
 def generate_payout_address(
     wallet_file: Optional[Path] = typer.Option(
@@ -1862,6 +1978,18 @@ def start(
         envvar="ANIMICA_AICF_ENDPOINT",
         help="Override the AICF endpoint used by the worker.",
     ),
+    llm: Optional[str] = typer.Option(
+        None,
+        "--llm",
+        "--model",
+        envvar="ANIMICA_AICF_MODEL",
+        help=(
+            "Pin which LLM the AICF inference worker should serve. Accepts a "
+            "Hugging Face repo id, a local path, or one of the well-known "
+            "short names. When omitted the worker falls back to the per-tier "
+            "default."
+        ),
+    ),
     pool_scan_window: int = typer.Option(
         100_000,
         "--pool-scan-window",
@@ -1870,6 +1998,9 @@ def start(
 ) -> None:
     """Start mining against a Stratum pool until stopped."""
     resolved_address = _require_miner_address(address)
+    # Propagate the chosen model / tier into the env so the AICF inference
+    # engine (and any subprocesses) pick it up.
+    _apply_llm_flag(llm)
     mine_blocks(
         address=resolved_address,
         count=0,
@@ -2361,6 +2492,19 @@ def mine_blocks(
             "to the network's local 127.0.0.1 endpoint."
         ),
     ),
+    llm: Optional[str] = typer.Option(
+        None,
+        "--llm",
+        "--model",
+        envvar="ANIMICA_AICF_MODEL",
+        help=(
+            "Pin which LLM the AICF inference worker should serve. Accepts a "
+            "Hugging Face repo id (e.g. 'Qwen/Qwen2.5-0.5B-Instruct'), a "
+            "local path, or one of the well-known short names ('phi3', "
+            "'qwen2.5-0.5b', 'llama3-8b'). When omitted the worker falls "
+            "back to the per-tier default."
+        ),
+    ),
     threads: int = typer.Option(
         0,
         "--threads",
@@ -2527,6 +2671,9 @@ def mine_blocks(
     Note: For backward compatibility with older nodes, if the node doesn't support
     payout address selection, blocks will be mined to the node's default miner address.
     """
+    # Propagate the AICF model / tier choice early so any AICF worker that
+    # starts under our process tree picks it up.
+    _apply_llm_flag(llm)
     # Note: This repository uses a custom stub implementation of Typer
     # (see python/typer/__init__.py) that doesn't automatically parse type annotations.
     # The stub Typer passes string values for integer options, so we need to convert manually.

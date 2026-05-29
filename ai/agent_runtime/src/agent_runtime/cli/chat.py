@@ -129,7 +129,13 @@ class _SlashHandler:
             ("/clear",         "Clear the screen and forget history."),
             ("/status",        "Show provider cascade status."),
             ("/agent <task>",  "Run an agentic task with tool calls "
-                                "(read/write/edit/bash, gated)."),
+                                "(read/write/edit/bash, gated). Operates "
+                                "in the current /cwd — point it at a repo "
+                                "(e.g. /cwd /root/animica/apps/animica-chat) "
+                                "to have the agent edit that codebase."),
+            ("/cwd [path]",    "Show or set the agent's working directory. "
+                                "With no argument, prints the current cwd; "
+                                "with a path, changes where /agent runs."),
             ("/tiers",         "Show available tiers, the models behind "
                                 "each, and which one your next turn will "
                                 "use."),
@@ -377,6 +383,27 @@ class _SlashHandler:
         mode = "prefill_only" if rest == "prefill" else rest
         self.state["decode_mode"] = mode
         self.console.print(f"[cyan]decode mode set to: {mode}[/cyan]")
+
+    def _cmd_cwd(self, rest: str) -> None:
+        """Show or set the agent's working directory.
+
+        `/cwd` with no argument prints the current path. `/cwd <path>` switches
+        the agent's working directory so subsequent /agent invocations operate
+        on that codebase. Tilde expansion and relative paths are honored.
+        """
+        target = rest.strip()
+        if not target:
+            self.console.print(
+                f"[cyan]agent cwd:[/cyan] "
+                f"{self.state.get('agent_cwd') or os.getcwd()}"
+            )
+            return
+        resolved = os.path.abspath(os.path.expanduser(target))
+        if not os.path.isdir(resolved):
+            self.console.print(f"[red]not a directory: {resolved}[/red]")
+            return
+        self.state["agent_cwd"] = resolved
+        self.console.print(f"[green]agent cwd set to:[/green] {resolved}")
 
     def _cmd_agent(self, rest: str) -> None:
         """Run a single agentic task: `/agent <task description>`.
