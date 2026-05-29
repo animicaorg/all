@@ -226,31 +226,62 @@ class LocalBundleRunner:
                 f"failed to prepare input ids: {exc}",
             ) from exc
 
+        # Stream tokens via TextIteratorStreamer + a generation thread.
+        # This is critical for performance: the previous implementation
+        # called model.generate(max_new_tokens=1) in a Python loop, which
+        # re-ran the *entire* prefill from scratch on every token (O(N^2)
+        # in prompt length and made a single CPU turn take 25+ minutes
+        # on a 1.5B model). The HF generate() path uses KV cache
+        # internally, so a single call streams tokens in O(N) total work
+        # and finishes within the chain's worker-claim lease.
+        from threading import Thread
+        from transformers import TextIteratorStreamer    # type: ignore
+        streamer = TextIteratorStreamer(
+            self._tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
+        )
+        gen_kwargs = dict(
+            input_ids=input_ids,
+            max_new_tokens=max_output_tokens,
+            do_sample=temperature > 0,
+            temperature=max(temperature, 1e-3),
+            top_p=top_p,
+            pad_token_id=getattr(self._tokenizer, "eos_token_id", None),
+            streamer=streamer,
+        )
         accumulated_text = ""
-        # Token-by-token generate so we can stream.
-        with torch.no_grad():
-            for _ in range(max_output_tokens):
-                outputs = self._model.generate(
-                    input_ids,
-                    max_new_tokens=1,
-                    do_sample=temperature > 0,
-                    temperature=max(temperature, 1e-3),
-                    top_p=top_p,
-                    pad_token_id=getattr(self._tokenizer, "eos_token_id",
-                                          None),
-                )
-                new_tokens = outputs[0, input_ids.shape[1]:]
-                if new_tokens.numel() == 0:
-                    break
-                new_text = self._tokenizer.decode(
-                    new_tokens, skip_special_tokens=True)
-                accumulated_text += new_text
-                if on_chunk is not None:
-                    on_chunk(new_text, False)
-                input_ids = outputs
-                eos = getattr(self._tokenizer, "eos_token_id", None)
-                if eos is not None and int(outputs[0, -1].item()) == eos:
-                    break
+        gen_error: list[BaseException] = []
+
+        def _run_generate() -> None:
+            try:
+                with torch.no_grad():
+                    self._model.generate(**gen_kwargs)
+            except BaseException as exc:    # noqa: BLE001 — surface to outer thread
+                gen_error.append(exc)
+                # Closing the streamer's queue unblocks the consumer
+                # loop below so the error path can run.
+                try:
+                    streamer.end()
+                except Exception:    # noqa: BLE001
+                    pass
+
+        worker = Thread(target=_run_generate, daemon=True)
+        worker.start()
+
+        for chunk in streamer:
+            if not chunk:
+                continue
+            accumulated_text += chunk
+            if on_chunk is not None:
+                on_chunk(chunk, False)
+
+        worker.join()
+        if gen_error:
+            from agent_runtime.errors import BundleError
+            raise BundleError(
+                f"inference failed: {gen_error[0]}",
+            ) from gen_error[0]
         if on_chunk is not None:
             on_chunk("", True)
         return accumulated_text
