@@ -19,6 +19,34 @@ const walletExtension = loadWalletExtensionDownloadData();
       and always confirm addresses before sending funds.
     </p>
 
+    <!-- Web wallet — newest, fastest path. No install. -->
+    <div class="mt-8 rounded-2xl border p-6 bg-[var(--bg-elevated)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-xl font-semibold">Web Wallet</h2>
+          <p class="mt-2 text-sm opacity-80">
+            Open the in-browser wallet — no install. Generate an address, check balances and AICF
+            earnings, send ANM, and import or export a <code>wallets.json</code> compatible with the
+            <code>animica</code> CLI.
+          </p>
+          <p class="mt-2 text-xs opacity-70">
+            Custodial: addresses created here are held on the rpc.animica.org node. Use the desktop
+            wallet or CLI below for full self-custody.
+          </p>
+        </div>
+        <a
+          href="https://wallet.animica.org/"
+          class="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium
+                 border-[color-mix(in_srgb,var(--text-primary)_/_25%,transparent)]
+                 bg-[color-mix(in_srgb,var(--accent)_/_10%,transparent)]
+                 hover:bg-[color-mix(in_srgb,var(--accent)_/_18%,transparent)]"
+        >
+          Open wallet.animica.org →
+        </a>
+      </div>
+    </div>
+
     <div class="mt-8 grid gap-6 md:grid-cols-2">
       <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] md:col-span-2">

@@ -2,6 +2,7 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
+import AdBanner from "../components/AdBanner.astro";
 
 const title = "Animica — Post-Quantum Blockchain for Verifiable Compute";
 const description =
@@ -53,6 +54,18 @@ const startPaths = [
 
 const ecosystemProducts = [
   {
+    title: "Launchpad",
+    description:
+      "animica.xyz — discover, launch, and follow new Animica ecosystem projects from one Animica-native launchpad.",
+    href: "https://animica.xyz",
+  },
+  {
+    title: "Buy ANM",
+    description:
+      "buy.animica.org — custodial OTC desk to buy and sell native ANM with SOL, priced on a linear bonding curve.",
+    href: "https://buy.animica.org",
+  },
+  {
     title: "Wallet",
     description:
       "Desktop wallet releases for key management, transfers, and day-to-day ANM operations.",
@@ -80,7 +93,10 @@ const ecosystemProducts = [
 ---
 
 <BaseLayout title={title} description={description}>
-  <Header slot="header" />
+  <Fragment slot="header">
+    <AdBanner />
+    <Header />
+  </Fragment>
 
   <section class="aicf-trade-alert-wrap" aria-label="Trading announcement">
     <div class="aicf-container">
@@ -141,6 +157,42 @@ const ecosystemProducts = [
           <p class="aicf-muted">Wallet, explorer, RPC, docs</p>
         </article>
       </div>
+    </div>
+  </section>
+
+  <section class="aicf-section aicf-launchpad-section" aria-label="Animica launchpad">
+    <div class="aicf-container">
+      <a class="aicf-launchpad-card" href="https://animica.xyz" target="_blank" rel="noopener noreferrer">
+        <div class="aicf-launchpad-text">
+          <span class="aicf-launchpad-pill">Launchpad · animica.xyz</span>
+          <h2 class="aicf-launchpad-title">Launch on Animica.</h2>
+          <p class="aicf-launchpad-desc">
+            Discover, launch, and follow new Animica ecosystem projects from one Animica-native launchpad.
+            Browse upcoming token sales, find emerging builders, and follow what's shipping next on the chain.
+          </p>
+          <span class="aicf-launchpad-cta">Open animica.xyz -></span>
+        </div>
+        <div class="aicf-launchpad-glyph" aria-hidden="true">▲</div>
+      </a>
+    </div>
+  </section>
+
+  <section class="aicf-section aicf-otc-section" aria-label="Buy ANM with SOL">
+    <div class="aicf-container">
+      <a class="aicf-otc-card" href="https://buy.animica.org" target="_blank" rel="noopener noreferrer">
+        <div class="aicf-otc-text">
+          <span class="aicf-otc-pill">OTC desk · buy.animica.org</span>
+          <h2 class="aicf-otc-title">Buy ANM with SOL.</h2>
+          <p class="aicf-otc-desc">
+            A custodial OTC checkout that prices native ANM on a linear bonding curve. Pay SOL,
+            receive ANM on the Animica chain — and sell it back when reserves are available.
+            Connect Phantom on the Solana side and either the Animica browser extension or
+            wallet.animica.org for the ANM destination.
+          </p>
+          <span class="aicf-otc-cta">Open buy.animica.org -></span>
+        </div>
+        <div class="aicf-otc-glyph" aria-hidden="true">◬</div>
+      </a>
     </div>
   </section>
 
@@ -214,6 +266,200 @@ const ecosystemProducts = [
   </section>
 
   <style>
+    /* ── animica.xyz launchpad section ──────────────────────────── */
+    .aicf-launchpad-section {
+      padding-top: 0;
+    }
+    .aicf-launchpad-card {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: clamp(1rem, 3vw, 2.4rem);
+      overflow: hidden;
+      border-radius: 1.2rem;
+      border: 1px solid color-mix(in oklab, var(--brand-400), transparent 55%);
+      background:
+        radial-gradient(circle at 18% 22%, color-mix(in oklab, var(--brand-grad-from), transparent 70%), transparent 60%),
+        radial-gradient(circle at 82% 78%, color-mix(in oklab, var(--brand-grad-to), transparent 72%), transparent 60%),
+        linear-gradient(133deg, #0c1438 0%, #0e1a4a 55%, #0a2247 100%);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+      padding: clamp(1.5rem, 3.4vw, 2.6rem) clamp(1.2rem, 4vw, 3rem);
+      color: #f1f6ff;
+      text-decoration: none;
+      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+    }
+    .aicf-launchpad-card:hover {
+      transform: translateY(-2px);
+      border-color: color-mix(in oklab, var(--brand-300), transparent 25%);
+      box-shadow: 0 24px 50px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(94, 234, 212, 0.18);
+    }
+    .aicf-launchpad-text {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .aicf-launchpad-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0.34rem 0.78rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #0a2a26;
+      background: linear-gradient(130deg, var(--brand-300), var(--brand-grad-to));
+      box-shadow: 0 4px 12px rgba(58, 155, 255, 0.28);
+    }
+    .aicf-launchpad-title {
+      margin: 0.85rem 0 0;
+      font-size: clamp(1.7rem, 4vw, 2.7rem);
+      letter-spacing: 0.01em;
+      font-weight: 800;
+      line-height: 1.05;
+      color: #ffffff;
+      text-wrap: balance;
+    }
+    .aicf-launchpad-desc {
+      margin: 0.85rem 0 0;
+      max-width: 62ch;
+      font-size: clamp(0.96rem, 1.6vw, 1.04rem);
+      color: rgba(232, 242, 255, 0.84);
+      text-wrap: balance;
+    }
+    .aicf-launchpad-cta {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 1.1rem;
+      border-radius: 0.78rem;
+      border: 1px solid color-mix(in oklab, var(--brand-300), transparent 40%);
+      background: rgba(10, 22, 56, 0.6);
+      color: var(--brand-200);
+      font-family: var(--font-mono);
+      font-size: 0.86rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      padding: 0.6rem 0.95rem;
+    }
+    .aicf-launchpad-glyph {
+      flex: 0 0 auto;
+      font-size: clamp(3.5rem, 9vw, 6rem);
+      font-weight: 800;
+      line-height: 1;
+      background: linear-gradient(150deg, var(--brand-300), var(--brand-grad-to));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 6px 18px rgba(58, 155, 255, 0.35));
+    }
+    @media (max-width: 720px) {
+      .aicf-launchpad-card {
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+      }
+      .aicf-launchpad-glyph {
+        align-self: flex-end;
+        margin-top: -2rem;
+      }
+    }
+
+    /* ── buy.animica.org OTC section ─────────────────────────────── */
+    .aicf-otc-section {
+      padding-top: 0;
+    }
+    .aicf-otc-card {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: clamp(1rem, 3vw, 2.4rem);
+      overflow: hidden;
+      border-radius: 1.2rem;
+      border: 1px solid rgba(167, 139, 250, 0.45);
+      background:
+        radial-gradient(circle at 18% 22%, rgba(167, 139, 250, 0.32), transparent 60%),
+        radial-gradient(circle at 82% 78%, rgba(99, 102, 241, 0.28), transparent 58%),
+        linear-gradient(133deg, #1a0f3d 0%, #210d49 55%, #15103f 100%);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+      padding: clamp(1.5rem, 3.4vw, 2.6rem) clamp(1.2rem, 4vw, 3rem);
+      color: #f3eeff;
+      text-decoration: none;
+      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+    }
+    .aicf-otc-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(196, 181, 253, 0.7);
+      box-shadow: 0 24px 50px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(196, 181, 253, 0.22);
+    }
+    .aicf-otc-text {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .aicf-otc-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0.34rem 0.78rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #1a0a3d;
+      background: linear-gradient(130deg, #c4b5fd, #818cf8);
+      box-shadow: 0 4px 12px rgba(129, 140, 248, 0.32);
+    }
+    .aicf-otc-title {
+      margin: 0.85rem 0 0;
+      font-size: clamp(1.7rem, 4vw, 2.7rem);
+      letter-spacing: 0.01em;
+      font-weight: 800;
+      line-height: 1.05;
+      color: #ffffff;
+      text-wrap: balance;
+    }
+    .aicf-otc-desc {
+      margin: 0.85rem 0 0;
+      max-width: 64ch;
+      font-size: clamp(0.96rem, 1.6vw, 1.04rem);
+      color: rgba(238, 230, 255, 0.84);
+      text-wrap: balance;
+    }
+    .aicf-otc-cta {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 1.1rem;
+      border-radius: 0.78rem;
+      border: 1px solid rgba(196, 181, 253, 0.45);
+      background: rgba(20, 13, 47, 0.6);
+      color: #d8c8ff;
+      font-family: var(--font-mono);
+      font-size: 0.86rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      padding: 0.6rem 0.95rem;
+    }
+    .aicf-otc-glyph {
+      flex: 0 0 auto;
+      font-size: clamp(3.5rem, 9vw, 6rem);
+      font-weight: 800;
+      line-height: 1;
+      background: linear-gradient(150deg, #c4b5fd, #818cf8);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 6px 18px rgba(129, 140, 248, 0.38));
+    }
+    @media (max-width: 720px) {
+      .aicf-otc-card {
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+      }
+      .aicf-otc-glyph {
+        align-self: flex-end;
+        margin-top: -2rem;
+      }
+    }
+
     .aicf-home-stat .aicf-muted {
       font-size: 0.84rem;
     }

@@ -1,0 +1,230 @@
+---
+// A-Ads adaptive banner — front-page-only, top-of-page, dismissable.
+//
+// Design notes:
+//  - The wrapper is a thin band at the very top of the page (above the
+//    site header). Tinted to blend with the dark site shell, with a
+//    subtle bottom border so users perceive it as part of the chrome
+//    rather than content. Height is bounded so the hero stays
+//    above-the-fold on standard viewports.
+//  - "Sponsored" label + a close (×) button mark this clearly as an
+//    ad and let users dismiss it. Dismissal is persisted in
+//    sessionStorage so navigating between pages within the same tab
+//    keeps it dismissed. We deliberately do NOT use localStorage —
+//    losing the consent on a fresh session is the conservative
+//    default for an ad surface.
+//  - The iframe is the verbatim A-Ads unit (2439596, Adaptive). A-Ads
+//    handles which creative to serve based on the iframe's rendered
+//    size; we constrain the iframe to a centred max-width of 728px
+//    (IAB leaderboard) so it doesn't sprawl on ultra-wide displays
+//    while remaining a full-width 320×50 mobile banner on phones.
+//  - The whole banner stays in the normal document flow (NO position:
+//    fixed / sticky) so it scrolls away with the page — pinned ads
+//    are the single biggest UX complaint and we deliberately avoid
+//    that pattern.
+
+interface Props {
+  /** A-Ads unit id. Default targets unit 2439596 (Adaptive). */
+  unitId?: string;
+  /** Override the visible "Sponsored" label text. */
+  label?: string;
+}
+
+const { unitId = "2439596", label = "Sponsored" } = Astro.props;
+const iframeSrc = `//acceptable.a-ads.com/${unitId}/?size=Adaptive`;
+---
+
+<aside class="ad-banner" data-ad-banner aria-label="Advertisement">
+  <div class="ad-banner__inner">
+    <div class="ad-banner__copy" aria-hidden="false">
+      <span class="ad-banner__label">{label}</span>
+      <span class="ad-banner__cta">
+        <strong>Support Animica</strong>
+        <span class="ad-banner__cta-sub">— a click on the ad helps fund our open infrastructure.</span>
+      </span>
+    </div>
+    <div class="ad-banner__frame">
+      <!-- BEGIN AADS AD UNIT {unitId} -->
+      <iframe
+        data-aa={unitId}
+        src={iframeSrc}
+        title="Advertisement"
+        loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+        scrolling="no"
+        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+      ></iframe>
+      <!-- END AADS AD UNIT {unitId} -->
+    </div>
+    <button
+      type="button"
+      class="ad-banner__close"
+      data-ad-close
+      aria-label="Dismiss advertisement"
+    >
+      <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+        <path d="M2 2 L12 12 M12 2 L2 12" fill="none" stroke="currentColor"
+              stroke-width="1.5" stroke-linecap="round" />
+      </svg>
+    </button>
+  </div>
+</aside>
+
+<style>
+  .ad-banner {
+    width: 100%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    /* Stays in flow; no position: sticky so it scrolls away. */
+    position: relative;
+    z-index: 1;
+  }
+  .ad-banner__inner {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ad-banner__copy {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 240px;
+    min-width: 0;
+  }
+  .ad-banner__label {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.45);
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .ad-banner__cta {
+    font-size: 13px;
+    line-height: 1.35;
+    color: rgba(255,255,255,0.78);
+  }
+  .ad-banner__cta strong {
+    color: rgba(255,255,255,0.95);
+    font-weight: 600;
+  }
+  .ad-banner__cta-sub {
+    color: rgba(255,255,255,0.55);
+  }
+  .ad-banner__frame {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 728px;
+    height: 90px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ad-banner__frame iframe {
+    border: 0;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    display: block;
+    background: transparent;
+    color-scheme: dark;
+  }
+  .ad-banner__close {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: transparent;
+    border-radius: 999px;
+    color: rgba(255,255,255,0.55);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+  .ad-banner__close:hover,
+  .ad-banner__close:focus-visible {
+    color: rgba(255,255,255,0.95);
+    border-color: rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.04);
+    outline: none;
+  }
+  .ad-banner__close svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  /* Mobile: drop the leaderboard target and let A-Ads serve a 320×50
+     mobile banner. The longer "support" sub-copy collapses; we keep
+     the short "Support Animica" headline so the framing survives. */
+  @media (max-width: 640px) {
+    .ad-banner__inner {
+      padding: 6px 12px;
+      gap: 8px;
+    }
+    .ad-banner__copy {
+      max-width: 110px;
+    }
+    .ad-banner__label,
+    .ad-banner__cta-sub {
+      display: none;
+    }
+    .ad-banner__cta {
+      font-size: 12px;
+    }
+    .ad-banner__frame {
+      height: 60px;
+      max-width: 100%;
+    }
+  }
+
+  /* Respect prefers-reduced-motion by avoiding any animated reveal. */
+  @media (prefers-reduced-motion: no-preference) {
+    .ad-banner[data-ad-banner] {
+      animation: ad-banner-reveal 220ms ease-out;
+    }
+    @keyframes ad-banner-reveal {
+      from { opacity: 0; transform: translateY(-2px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  }
+</style>
+
+<script>
+  // Per-session dismiss. Reading sessionStorage in a try/catch in case
+  // the browser is configured to throw (Safari private mode used to
+  // raise QuotaExceededError on writes; reads can also error on
+  // hardened browsers). On any failure, behave as "not dismissed" so
+  // the ad still renders rather than silently failing.
+  const STORAGE_KEY = "animica.adBanner.dismissed.v1";
+  const banner = document.querySelector<HTMLElement>("[data-ad-banner]");
+  if (banner) {
+    let dismissed = false;
+    try {
+      dismissed = window.sessionStorage.getItem(STORAGE_KEY) === "1";
+    } catch {
+      dismissed = false;
+    }
+    if (dismissed) {
+      banner.remove();
+    } else {
+      const closeBtn = banner.querySelector<HTMLButtonElement>("[data-ad-close]");
+      closeBtn?.addEventListener("click", () => {
+        try {
+          window.sessionStorage.setItem(STORAGE_KEY, "1");
+        } catch {
+          // Best-effort: even if we can't persist, removing the node
+          // dismisses the ad for the rest of THIS page lifetime, which
+          // is what the user just asked for.
+        }
+        banner.remove();
+      });
+    }
+  }
+</script>
