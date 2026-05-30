@@ -1,18 +1,13 @@
-// Thin JSON-RPC client for Animica.
+// JSON-RPC client for Animica with multi-endpoint failover.
 //
-// Mirrors the public RPC surface used by the Chrome extension + the
-// explorer: chain.getHead, state.getBalance, tx.getReceipt, etc.
-//
-// Notes on calling convention:
-//   - Most state.* methods take a named-args object: {"address": "anim1…"}.
-//   - chain.getBlockByNumber takes a positional array: [height, includeTxs,
-//     includeReceipts].
-//   - tx.sendRawTransaction is the broadcast endpoint, but Animica's tx
-//     envelope is non-trivial to build in Dart without the executor's
-//     canonical sign-bytes encoder. v0.1 of the mobile wallet treats
-//     "send" as out-of-scope — see TODO in screens/send.dart.
+// Tries endpoints in order and remembers the last-good one for the
+// remainder of the session so a single flap on the primary doesn't make
+// every subsequent call pay the failover cost.
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:http/http.dart' as http;
 
 import '../constants.dart';
@@ -26,13 +21,19 @@ class RpcError implements Exception {
 }
 
 class RpcClient {
-  final String url;
+  final List<String> endpoints;
   final http.Client _http;
   int _id = 0;
+  int _preferredIdx = 0;
+  final Duration _timeout;
 
-  RpcClient({String? url, http.Client? httpClient})
-      : url = url ?? AnimicaConfig.rpcUrl,
-        _http = httpClient ?? http.Client();
+  RpcClient({
+    List<String>? endpoints,
+    http.Client? httpClient,
+    Duration timeout = const Duration(seconds: 12),
+  })  : endpoints = endpoints ?? AnimicaConfig.rpcEndpoints,
+        _http = httpClient ?? http.Client(),
+        _timeout = timeout;
 
   Future<dynamic> call(String method, [dynamic params]) async {
     _id++;
@@ -40,26 +41,61 @@ class RpcClient {
       'jsonrpc': '2.0',
       'id': _id,
       'method': method,
-      // Send params only when given; some methods (chain.getHead) take none.
       if (params != null) 'params': params,
     });
-    final resp = await _http.post(
-      Uri.parse(url),
-      headers: const {'Content-Type': 'application/json'},
-      body: body,
-    );
-    if (resp.statusCode != 200) {
-      throw RpcError(-32603, 'http ${resp.statusCode}: ${resp.body}');
+
+    final order = _orderedEndpoints();
+    final errors = <String>[];
+    for (var i = 0; i < order.length; i++) {
+      final ep = order[i];
+      try {
+        final resp = await _http
+            .post(
+              Uri.parse(ep),
+              headers: const {'Content-Type': 'application/json'},
+              body: body,
+            )
+            .timeout(_timeout);
+        if (resp.statusCode != 200) {
+          errors.add('$ep: http ${resp.statusCode}');
+          continue;
+        }
+        final j = jsonDecode(resp.body) as Map<String, dynamic>;
+        if (j.containsKey('error')) {
+          final e = j['error'] as Map<String, dynamic>;
+          // RPC-level errors are NOT transport failures — they came
+          // from a healthy node. Surface them immediately rather than
+          // failing over (which would just produce the same answer).
+          _preferredIdx = endpoints.indexOf(ep);
+          throw RpcError(
+            e['code'] as int? ?? -32603,
+            e['message'] as String? ?? 'rpc error',
+          );
+        }
+        _preferredIdx = endpoints.indexOf(ep);
+        return j['result'];
+      } on TimeoutException {
+        errors.add('$ep: timeout');
+      } catch (e) {
+        // Network errors are retryable.
+        if (e is RpcError) rethrow;
+        errors.add('$ep: $e');
+      }
     }
-    final j = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (j.containsKey('error')) {
-      final e = j['error'] as Map<String, dynamic>;
-      throw RpcError(e['code'] as int? ?? -32603, e['message'] as String? ?? 'rpc error');
-    }
-    return j['result'];
+    throw RpcError(-32603, 'all rpc endpoints failed: ${errors.join('; ')}');
   }
 
-  // ── convenience wrappers ───────────────────────────────────────────
+  List<String> _orderedEndpoints() {
+    if (_preferredIdx <= 0 || _preferredIdx >= endpoints.length) {
+      return endpoints;
+    }
+    return [
+      endpoints[_preferredIdx],
+      ...endpoints.where((e) => e != endpoints[_preferredIdx]),
+    ];
+  }
+
+  // ── high-level helpers ─────────────────────────────────────────────
 
   Future<int> chainHead() async {
     final r = await call('chain.getHead', {});
@@ -67,27 +103,18 @@ class RpcClient {
     return 0;
   }
 
-  /// Returns balance as nano-ANM (BigInt).
+  Future<int> chainId() async {
+    try {
+      final r = await call('chain.getChainId', {});
+      if (r is int) return r;
+      if (r is String) return int.tryParse(r) ?? AnimicaConfig.chainId;
+    } catch (_) {}
+    return AnimicaConfig.chainId;
+  }
+
   Future<BigInt> getBalance(String address) async {
     final r = await call('state.getBalance', {'address': address});
-    // RPC may return a string, an int, or an object with `.confirmed` etc.
-    BigInt _parse(dynamic v) {
-      if (v == null) return BigInt.zero;
-      if (v is int) return BigInt.from(v);
-      if (v is BigInt) return v;
-      if (v is String) {
-        if (v.startsWith('0x') || v.startsWith('0X')) {
-          return BigInt.parse(v.substring(2), radix: 16);
-        }
-        return BigInt.parse(v);
-      }
-      return BigInt.zero;
-    }
-
-    if (r is Map) {
-      return _parse(r['confirmed'] ?? r['available'] ?? r['balance']);
-    }
-    return _parse(r);
+    return _parseUintLike(r);
   }
 
   Future<int> getNonce(String address) async {
@@ -95,6 +122,55 @@ class RpcClient {
     if (r is int) return r;
     if (r is String) return int.tryParse(r) ?? 0;
     return 0;
+  }
+
+  Future<int> getPendingNonce(String address) async {
+    try {
+      final r = await call('state.getPendingNonce', {'address': address});
+      if (r is int) return r;
+      if (r is String) return int.tryParse(r) ?? 0;
+    } on RpcError {
+      // Node version may not expose pending-nonce; fall back to latest.
+    }
+    return getNonce(address);
+  }
+
+  /// Returns the raw bytes of `to`'s contract view value, or null on
+  /// `contract not found` / decode failure.
+  Future<Uint8List?> stateCall({
+    required String contract,
+    required Uint8List data,
+    String? from,
+  }) async {
+    try {
+      final r = await call('state.call', {
+        'to': contract,
+        'data': '0x${_hex(data)}',
+        if (from != null) 'from': from,
+      });
+      if (r is String) {
+        var s = r;
+        if (s.startsWith('0x') || s.startsWith('0X')) s = s.substring(2);
+        final out = Uint8List(s.length ~/ 2);
+        for (var i = 0; i < out.length; i++) {
+          out[i] = int.parse(s.substring(i * 2, i * 2 + 2), radix: 16);
+        }
+        return out;
+      }
+    } on RpcError catch (e) {
+      if (e.message.toLowerCase().contains('contract not found')) return null;
+      rethrow;
+    }
+    return null;
+  }
+
+  /// Submit a raw signed tx (CBOR-encoded envelope) and return the tx hash.
+  Future<String> sendRawTransaction(Uint8List rawTx) async {
+    final r = await call('tx.sendRawTransaction', ['0x${_hex(rawTx)}']);
+    if (r is String) return r;
+    if (r is Map && r['hash'] is String) return r['hash'] as String;
+    if (r is Map && r['txid'] is String) return r['txid'] as String;
+    throw RpcError(-32603, 'unexpected sendRawTransaction result shape');
   }
 
   Future<Map<String, dynamic>?> txReceipt(String txHash) async {
@@ -106,11 +182,37 @@ class RpcClient {
     }
   }
 
+  Future<Map<String, dynamic>?> txStatus(String txHash) async {
+    try {
+      final r = await call('tx.getStatus', [txHash]);
+      return r is Map<String, dynamic> ? r : null;
+    } on RpcError {
+      return null;
+    }
+  }
+
   void close() => _http.close();
 }
 
-/// Format a nano-ANM bigint as a human-readable ANM string with up to
-/// 9 decimal places, trimming trailing zeros.
+BigInt _parseUintLike(dynamic v) {
+  if (v == null) return BigInt.zero;
+  if (v is int) return BigInt.from(v);
+  if (v is BigInt) return v;
+  if (v is String) {
+    if (v.startsWith('0x') || v.startsWith('0X')) {
+      return BigInt.parse(v.substring(2), radix: 16);
+    }
+    return BigInt.parse(v);
+  }
+  if (v is Map) {
+    return _parseUintLike(v['confirmed'] ?? v['available'] ?? v['balance']);
+  }
+  return BigInt.zero;
+}
+
+String _hex(Uint8List b) =>
+    b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+
 String formatAnm(BigInt nanos, {int maxDecimals = 4}) {
   if (nanos == BigInt.zero) return '0';
   final whole = nanos ~/ AnimicaConfig.nanosPerAnm;

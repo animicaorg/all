@@ -35,10 +35,11 @@ dependencies:
   qr_flutter: ^4.1.0
   mobile_scanner: ^5.2.3
 
-  # Bech32m + hashing
+  # Bech32m + hashing + canonical CBOR for tx envelopes
   bech32: ^0.2.2
   crypto: ^3.0.3
   pointycastle: ^3.9.1
+  cbor: ^6.2.0
 
   # Open external URLs (e.g. buy.animica.org checkout)
   url_launcher: ^6.3.0

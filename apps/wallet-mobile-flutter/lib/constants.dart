@@ -9,11 +9,25 @@ class AnimicaConfig {
   static const int chainId =
       int.fromEnvironment('ANIMICA_CHAIN_ID', defaultValue: 1);
 
-  /// Public JSON-RPC endpoint.
-  static const String rpcUrl = String.fromEnvironment(
-    'ANIMICA_RPC_URL',
-    defaultValue: 'https://rpc.animica.org/rpc',
-  );
+  /// Primary + secondary public JSON-RPC endpoints. The client tries them
+  /// in order and remembers the last-good one for the session, so a single
+  /// flap doesn't punish every subsequent call. `mobile.animica.org/rpc`
+  /// is a smaller node optimized for mobile wallet traffic; `rpc.animica.org/rpc`
+  /// is the general public node and acts as the failover.
+  static const List<String> rpcEndpoints = [
+    String.fromEnvironment(
+      'ANIMICA_RPC_URL_PRIMARY',
+      defaultValue: 'https://mobile.animica.org/rpc',
+    ),
+    String.fromEnvironment(
+      'ANIMICA_RPC_URL_FALLBACK',
+      defaultValue: 'https://rpc.animica.org/rpc',
+    ),
+  ];
+
+  /// Legacy single-endpoint name kept for any callers that still expect
+  /// a single string. Points to the primary.
+  static String get rpcUrl => rpcEndpoints.first;
 
   /// Buy gateway URL — opened by the Buy screen.
   static const String buyGatewayUrl = String.fromEnvironment(
