@@ -208,7 +208,11 @@ function normalizeFailureReason(txDetail: TxDetail, receipt: any): string | null
     if (upper === 'OOG') return 'out_of_gas'
     if (upper === 'FAILED') return 'failed'
   }
-  if (status === 0) return 'failed'
+  // Animica's ReceiptStatus IntEnum: SUCCESS=0, REVERT=1, OOG=2.
+  // The previous `status === 0` branch was Ethereum-style and would
+  // mark every successful tx as failed.
+  if (status === 1) return 'revert'
+  if (status === 2) return 'out_of_gas'
   return null
 }
 
@@ -219,7 +223,8 @@ function isRevertedStatus(txDetail: TxDetail, receipt: any): boolean {
     const upper = status.toUpperCase()
     return upper === 'REVERT' || upper === 'OOG' || upper === 'FAILED'
   }
-  if (status === 0) return true
+  // Animica IntEnum: only 1 (REVERT) and 2 (OOG) are reverts; 0 = SUCCESS.
+  if (status === 1 || status === 2) return true
   return false
 }
 

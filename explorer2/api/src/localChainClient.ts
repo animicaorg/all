@@ -173,7 +173,24 @@ function formatTxView(
 }
 
 function formatReceipt(receipt: Record<string, any>, txHash: string, blockHash: string, height: number): Record<string, any> {
-  const status = receipt.status === 1 ? 'SUCCESS' : receipt.status === 2 ? 'REVERT' : receipt.status === 3 ? 'OOG' : 'SUCCESS'
+  // Chain emits status either as an uppercase string ("SUCCESS"|
+  // "REVERT"|"OOG") or as Animica's IntEnum (SUCCESS=0, REVERT=1,
+  // OOG=2). The old mapping here used Ethereum-style 1=success/0=fail
+  // which never matched our values; align both shapes onto the
+  // canonical string.
+  const raw = receipt.status
+  let status: string
+  if (typeof raw === 'string') {
+    status = raw.toUpperCase()
+  } else if (raw === 1) {
+    status = 'REVERT'
+  } else if (raw === 2) {
+    status = 'OOG'
+  } else {
+    // null/undefined/0 → SUCCESS (executor leaves status null for
+    // pre-execution or coinbase txs; both are treated as success).
+    status = 'SUCCESS'
+  }
   return {
     txHash,
     blockHash,

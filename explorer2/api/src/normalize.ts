@@ -478,7 +478,16 @@ export function normalizeTxDetail(tx: any, receipt: any | null): TxDetail {
   )
   const statusRaw = receipt?.status ?? tx?.status
   const statusText = typeof statusRaw === 'string' ? statusRaw.toUpperCase() : statusRaw
-  const failed = statusText === 'REVERT' || statusText === 'OOG' || statusText === 'FAILED' || statusText === 0
+  // Animica's chain encodes ReceiptStatus as IntEnum (SUCCESS=0, REVERT=1,
+  // OOG=2) — the opposite of Ethereum's convention where 0 means failure.
+  // Treat only the explicit failure markers (string names or our int values
+  // 1/2) as failed; SUCCESS=0 and null/undefined are not failures.
+  const failed =
+    statusText === 'REVERT' ||
+    statusText === 'OOG' ||
+    statusText === 'FAILED' ||
+    statusText === 1 ||
+    statusText === 2
   const isIncluded = blockHeight !== undefined && blockHeight !== null
   const status = failed ? 'failed' : isIncluded ? 'confirmed' : 'pending'
   return {
