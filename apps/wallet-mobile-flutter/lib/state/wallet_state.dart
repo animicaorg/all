@@ -43,6 +43,19 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     return acc;
   }
 
+  Future<Account> createDilithium3Account(String label) async {
+    final kp = generateDilithium3Keypair();
+    final acc = Account(
+      label: label,
+      algId: AnimicaConfig.algIdDilithium3,
+      publicKey: kp.publicKey,
+      secretKey: kp.secretKey,
+    );
+    await ref.read(vaultProvider).add(acc);
+    state = AsyncData([...?state.value, acc]);
+    return acc;
+  }
+
   Future<Account> importFromHex({
     required String label,
     required int algId,

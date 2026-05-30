@@ -71,9 +71,22 @@ class SettingsScreen extends ConsumerWidget {
             leading: const Icon(Icons.add),
             title: const Text('Create new wallet'),
             onTap: () async {
-              final label = await _askText(context, 'New wallet label', 'Account ${(accountsAsync.value?.length ?? 0) + 1}');
+              final scheme = await _pickScheme(context);
+              if (scheme == null) return;
+              final label = await _askText(
+                  context,
+                  'New wallet label',
+                  'Account ${(accountsAsync.value?.length ?? 0) + 1}');
               if (label == null) return;
-              await ref.read(accountsProvider.notifier).createSphincsAccount(label);
+              if (scheme == 'sphincs') {
+                await ref
+                    .read(accountsProvider.notifier)
+                    .createSphincsAccount(label);
+              } else {
+                await ref
+                    .read(accountsProvider.notifier)
+                    .createDilithium3Account(label);
+              }
             },
           ),
 
@@ -122,6 +135,39 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 24),
         ],
+      ),
+    );
+  }
+
+  Future<String?> _pickScheme(BuildContext context) async {
+    return showModalBottomSheet<String>(
+      context: context,
+      builder: (c) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Choose signature scheme',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.security),
+              title: const Text('SPHINCS-SHAKE-128s'),
+              subtitle: const Text(
+                  '64-byte pk, 7856-byte sig. Default; matches `animica wallet create`.'),
+              onTap: () => Navigator.pop(c, 'sphincs'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.verified_user),
+              title: const Text('Dilithium3 (ML-DSA-65)'),
+              subtitle: const Text(
+                  '1952-byte pk, 3293-byte sig. Smaller signatures, larger keys.'),
+              onTap: () => Navigator.pop(c, 'dilithium3'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }

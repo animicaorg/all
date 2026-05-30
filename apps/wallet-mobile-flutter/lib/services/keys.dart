@@ -1,21 +1,19 @@
 // PQ key generation + signing for Animica.
 //
-// Two schemes are exposed:
+// Two schemes are exposed, both byte-for-byte compatible with the chain's
+// reference impls in `python/animica/_vendor/`:
 //
-//   - SPHINCS-SHAKE-128s (alg_id 0x1002): IMPLEMENTED.
-//     Matches Animica's pure-Python fallback `pq.py.algs.sphincs_shake_128s`,
-//     which the chain accepts when `ANIMICA_ALLOW_PQ_PURE_FALLBACK=1`
-//     (the live mainnet config).
+//   - SPHINCS-SHAKE-128s (alg_id 0x1002).
 //       keygen: sk = random(64)
 //               pk = SHA3-512("pk" || u64be(len(sk)) || sk)   → 64 bytes
 //       sign : sig = SHAKE-256("sig" || u64be(len(pk)) || pk
 //                              || u64be(len(prehash)) || prehash, 7856)
 //
-//   - Dilithium3 (alg_id 0x1001): NOT YET IMPLEMENTED.
-//     The chain validates Dilithium3 signatures via the real ML-DSA-65
-//     reference impl, which needs a Dart port. Until then, calling
-//     `signDilithium3` raises UnimplementedError so we never silently
-//     ship a bad signature.
+//   - Dilithium3 / ML-DSA-65 (alg_id 0x1001). Implemented in
+//     `dilithium3.dart` — see that file's header for the formula.
+//     Despite the name, the chain's reference is a commitment-style stub
+//     (175 lines of pure SHAKE-256), not the real lattice ML-DSA-65, so
+//     this is a clean Dart port rather than a port of NTT + sampling.
 
 import 'dart:math';
 import 'dart:typed_data';
@@ -129,15 +127,10 @@ Uint8List signSphincs(Uint8List pk, Uint8List prehash) {
   return _shake256(input, AnimicaConfig.sphincsSigLen);
 }
 
-// ── Dilithium3 (placeholder) ────────────────────────────────────────────
+// ── Dilithium3 ──────────────────────────────────────────────────────────
+//
+// Re-export the canonical impl from dilithium3.dart so callers can use one
+// import for both schemes.
 
-/// Throws — see file header. Wired so the rest of the wallet can
-/// reference the alg without crashing on null.
-Uint8List signDilithium3(Uint8List sk, Uint8List prehash, {Uint8List? pk}) {
-  throw UnimplementedError(
-    'Dilithium3 signing in Dart is not yet implemented. Use SPHINCS-128s '
-    '(alg_id 0x1002) instead — that\'s the alg the live chain validates '
-    'via the pure-Python fallback. A Dart port of pq.py.algs.dilithium3 '
-    '(or a WASM build of the reference) is the v0.2 add-on.',
-  );
-}
+export 'dilithium3.dart'
+    show generateDilithium3Keypair, signDilithium3, verifyDilithium3, Dilithium3Keypair;

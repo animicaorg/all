@@ -18,8 +18,21 @@ Flutter mobile wallet for the Animica chain. iOS + Android.
 
 ## What's deferred
 
-- **Dilithium3 signing.** Needs an ML-DSA-65 Dart port (or WASM build of the reference). All CLI-generated wallets are SPHINCS-128s anyway, so this only matters if someone imports a Dilithium key. `signTx` throws a clear UnsupportedError in that case.
 - **Per-account vardiff / hashrate dashboards.** Not in mobile-wallet scope; use `miner-wallet-flutter` or `pool.animica.org` for those.
+
+## Signature schemes
+
+Both schemes the chain accepts are implemented in pure Dart and verified
+against the Python reference via golden-vector tests:
+
+| Scheme | alg_id | pk bytes | sig bytes | Source |
+|---|---|---|---|---|
+| SPHINCS-SHAKE-128s | `0x1002` (4098) | 64 | 7856 | `services/keys.dart` |
+| Dilithium3 / ML-DSA-65 | `0x1001` (4097) | 1952 | 3293 | `services/dilithium3.dart` |
+
+Dilithium3 here is a Dart port of `python/animica/_vendor/dilithium_py/dilithium3.py` — the chain's reference impl, which is a commitment-style stub using only SHAKE-256 (the lattice ML-DSA-65 itself isn't deployed yet). 80 lines of Dart, no NTT, no rejection sampling. Round-trips to/from the Python reference byte-for-byte; see `test/dilithium3_test.dart`.
+
+Choose a scheme when creating a new wallet in Settings → Create new wallet. SPHINCS is the default since `animica wallet create` produces SPHINCS keys.
 
 ## Build
 

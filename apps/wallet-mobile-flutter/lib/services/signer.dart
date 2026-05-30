@@ -78,24 +78,39 @@ Map<String, dynamic> buildCallBody({
 }
 
 /// Sign a tx body with `account`. Returns the raw CBOR envelope ready
-/// for `tx.sendRawTransaction`.
+/// for `tx.sendRawTransaction`. Dispatches by `account.algId`:
+///   0x1002 → SPHINCS-SHAKE-128s
+///   0x1001 → Dilithium3
 SignedTx signTx({
   required Account account,
   required Map<String, dynamic> body,
 }) {
-  if (account.algId != AnimicaConfig.algIdSphincs) {
-    throw UnsupportedError(
-      'Mobile wallet currently only signs SPHINCS-128s (alg 0x1002) txs. '
-      'Dilithium3 needs ML-DSA-65 Dart port — v0.3 follow-up.',
-    );
-  }
   final bodyCbor = canonicalCbor(body);
   final prehash = buildSignBytes(
     msg: bodyCbor,
     algId: account.algId,
     chainId: body['chainId'] is int ? body['chainId'] as int : null,
   );
-  final sig = signSphincs(account.publicKey, prehash);
+
+  final Uint8List sig;
+  switch (account.algId) {
+    case AnimicaConfig.algIdSphincs:
+      sig = signSphincs(account.publicKey, prehash);
+      break;
+    case AnimicaConfig.algIdDilithium3:
+      sig = signDilithium3(
+        sk: account.secretKey,
+        prehash: prehash,
+        pk: account.publicKey,
+      );
+      break;
+    default:
+      throw UnsupportedError(
+        'Unknown alg_id 0x${account.algId.toRadixString(16)} — '
+        'only SPHINCS-128s (0x1002) and Dilithium3 (0x1001) are supported.',
+      );
+  }
+
   final raw = packSignedEnvelope(
     body: body,
     algId: account.algId,
