@@ -121,7 +121,11 @@ export const KEY_LENGTHS = {
     name: "dilithium3",
   },
   [SCHEME_SPHINCS_SHAKE_128S]: {
-    pubkey: 32,
+    // Animica's pure-Python SPHINCS-SHAKE-128s variant: pk is derived as
+    // _h("pk", sk, out_len=64) → 64 bytes (not the NIST-spec 32 bytes).
+    // Matches python/_build_vendor/pq/py/algs/pure_python_fallbacks.py
+    // and the on-disk wallets.json format.
+    pubkey: 64,
     signature: 7856,
     name: "sphincs_shake_128s",
   },

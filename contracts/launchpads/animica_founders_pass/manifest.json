@@ -1,0 +1,53 @@
+{
+  "$schema": "../../schemas/manifest.schema.json",
+  "name": "AnimicaFoundersPass",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Animica Founders Pass launchpad. Fixed-supply (1000), fixed-price (25,000 ANM) public mint with whitelist phase, one pass per wallet, proceeds routed to treasury. Acts as the minter on an underlying ANM-721 collection.",
+  "source": { "path": "contract.py" },
+  "abi": {
+    "events": [
+      {"name": "PhaseChanged", "fields": [{"name": "prev", "type": "bytes"}, {"name": "new", "type": "bytes"}]},
+      {"name": "Whitelisted", "fields": [{"name": "addr", "type": "bytes"}, {"name": "value", "type": "bool"}]},
+      {"name": "PassMinted", "fields": [{"name": "buyer", "type": "bytes"}, {"name": "token_id", "type": "int"}, {"name": "price_paid", "type": "int"}]},
+      {"name": "TreasuryWithdraw", "fields": [{"name": "to", "type": "bytes"}, {"name": "amount", "type": "int"}]}
+    ],
+    "functions": [
+      {"name": "init", "stateMutability": "nonpayable", "inputs": [
+        {"name": "owner_", "type": "bytes"},
+        {"name": "collection", "type": "bytes"},
+        {"name": "treasury_addr", "type": "bytes"},
+        {"name": "price_nanos", "type": "int"},
+        {"name": "supply_cap", "type": "int"}
+      ], "outputs": []},
+
+      {"name": "owner", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "collection", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "treasury_address", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "price", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "supply_cap", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "minted_total", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "remaining", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "phase", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "is_whitelisted", "stateMutability": "view",
+       "inputs": [{"name": "addr", "type": "bytes"}], "outputs": [{"type": "bool"}]},
+      {"name": "has_minted", "stateMutability": "view",
+       "inputs": [{"name": "addr", "type": "bytes"}], "outputs": [{"type": "bool"}]},
+
+      {"name": "mint", "stateMutability": "payable", "inputs": [], "outputs": [{"type": "int"}]},
+
+      {"name": "set_phase", "stateMutability": "nonpayable",
+       "inputs": [{"name": "new_phase", "type": "bytes"}], "outputs": []},
+      {"name": "add_whitelist", "stateMutability": "nonpayable",
+       "inputs": [{"name": "addrs", "type": "bytes[]"}], "outputs": [{"type": "int"}]},
+      {"name": "remove_whitelist", "stateMutability": "nonpayable",
+       "inputs": [{"name": "addrs", "type": "bytes[]"}], "outputs": [{"type": "int"}]},
+      {"name": "set_treasury", "stateMutability": "nonpayable",
+       "inputs": [{"name": "new_treasury", "type": "bytes"}], "outputs": []},
+      {"name": "set_price", "stateMutability": "nonpayable",
+       "inputs": [{"name": "new_price", "type": "int"}], "outputs": []},
+      {"name": "transfer_ownership", "stateMutability": "nonpayable",
+       "inputs": [{"name": "new_owner", "type": "bytes"}], "outputs": []}
+    ]
+  }
+}

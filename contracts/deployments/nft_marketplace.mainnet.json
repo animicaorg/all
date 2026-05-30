@@ -1,0 +1,28 @@
+{
+  "network": "mainnet",
+  "chain_id": 1,
+  "owner": "anim1zqp25aa3ph4eak9fkh3vg27r6zmzumj30ducxay4rwgfu6m7sy7jd7gklsdns",
+  "owner_hex": "0xaa77b10deb9ed8a9b5e2c42bc3d0b62e6e517b798374951b909e6b7e813d26f9",
+  "treasury": "anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208",
+  "treasury_hex": "0xa1b433bb98c4e5f15c0ab494730f835a94d79b2efe3dc167f31776ebc6755139",
+  "collection_address": "0x6b9d610324919224d23bf7817344713200eac1f72ed8e167c46a4797a330651f",
+  "marketplace_address": "0xad26cba052f11d99bff59df523c917e354ff27be6e80de5741e8e6f7de4acf4a",
+  "founders_pass_address": "0x3a704f53f5138b7216b4ebcc6cb78941d24649c62151e830e2eac0795f33c7e0",
+  "founders_pass": {
+    "supply_cap": 1000,
+    "price_anm": 25000,
+    "price_nanos": 25000000000000,
+    "royalty_bps": 500,
+    "phase": "PUBLIC",
+    "public_sale_opened_at": "2026-05-29T19:10:11+00:00"
+  },
+  "marketplace_fee_bps": 250,
+  "tx_hashes": {
+    "deploy_collection": "0xe578bc3149ecbcccee4c7cfa9cc4e4f9df05c105dea8577fbb4d2d2962741166",
+    "deploy_marketplace": "0x93f375907964c1861f81161f83c2686557e1fc7cb1e5929a4c8fe7702abb917c",
+    "deploy_founders_pass": "0x3919eff4dd5bdc198dfba380f3ed2b7c4f8a71f2dab83883f3230fb49e3bb3b6",
+    "set_minter": "0x4a04eb07f222d9ffc9be3e17998de04330320a3ed66197c1ce7c87763011975b",
+    "set_phase_public": "0x547faf16b5afe39a2359646c35e09436ed1096a5cadf1e504b46a081b575ce1a"
+  },
+  "deployed_at": "2026-05-29T18:42:40Z"
+}

@@ -70,24 +70,24 @@ enum ReportStatus {
 }
 
 model User {
-  id                   String   @id @default(cuid())
-  primaryWalletAddress String   @unique
+  id                   String     @id @default(cuid())
+  primaryWalletAddress String     @unique
   primaryWalletType    WalletType
   animicaAddress       String?
-  username             String?  @unique
+  username             String?    @unique
   avatarUrl            String?
   bio                  String?
-  role                 UserRole @default(USER)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  role                 UserRole   @default(USER)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
-  wallets       WalletAccount[]
-  projects      Project[]       @relation("CreatorProjects")
-  comments      Comment[]
-  follows       Follow[]
-  activities    Activity[]
-  trades        Trade[]
-  reportsFiled  Report[]        @relation("Reporter")
+  wallets      WalletAccount[]
+  projects     Project[]       @relation("CreatorProjects")
+  comments     Comment[]
+  follows      Follow[]
+  activities   Activity[]
+  trades       Trade[]
+  reportsFiled Report[]        @relation("Reporter")
 
   @@index([role])
 }
@@ -122,12 +122,12 @@ model AuthNonce {
 }
 
 model Session {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    String
-  jti       String   @unique
+  jti       String    @unique
   expiresAt DateTime
   revokedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([userId])
 }
@@ -142,65 +142,65 @@ model Category {
 }
 
 model Project {
-  id                   String        @id @default(cuid())
-  slug                 String        @unique
-  name                 String
-  symbol               String
-  description          String
-  logoUrl              String?
-  bannerUrl            String?
-  websiteUrl           String?
-  twitterUrl           String?
-  telegramUrl          String?
-  discordUrl           String?
-  githubUrl            String?
-  docsUrl              String?
-  tags                 String[]      @default([])
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  symbol      String
+  description String
+  logoUrl     String?
+  bannerUrl   String?
+  websiteUrl  String?
+  twitterUrl  String?
+  telegramUrl String?
+  discordUrl  String?
+  githubUrl   String?
+  docsUrl     String?
+  tags        String[] @default([])
 
-  creatorWallet        String
-  creatorUserId        String?
-  categoryId           String?
+  creatorWallet String
+  creatorUserId String?
+  categoryId    String?
 
-  status               ProjectStatus @default(PENDING)
-  verified             Boolean       @default(false)
-  featured             Boolean       @default(false)
+  status   ProjectStatus @default(PENDING)
+  verified Boolean       @default(false)
+  featured Boolean       @default(false)
 
-  riskLevel            RiskLevel     @default(UNKNOWN)
-  riskNotes            String?
+  riskLevel RiskLevel @default(UNKNOWN)
+  riskNotes String?
 
-  initialSupply        String?
-  animicaAssetId       String?
+  initialSupply         String?
+  animicaAssetId        String?
   nativeContractAddress String?
-  poolAddress          String?
-  launchTx             String?
-  launchFeePaid        Boolean       @default(false)
-  launchFeeTx          String?
+  poolAddress           String?
+  launchTx              String?
+  launchFeePaid         Boolean @default(false)
+  launchFeeTx           String?
 
-  marketCap            String?       @db.VarChar(64)
-  liquidityAnm         String?       @db.VarChar(64)
-  liquidityUsd         String?       @db.VarChar(64)
-  volume24hAnm         String?       @db.VarChar(64)
-  volumeTotalAnm       String?       @db.VarChar(64)
-  holderCount          Int           @default(0)
-  commentCount         Int           @default(0)
-  followCount          Int           @default(0)
+  marketCap      String? @db.VarChar(64)
+  liquidityAnm   String? @db.VarChar(64)
+  liquidityUsd   String? @db.VarChar(64)
+  volume24hAnm   String? @db.VarChar(64)
+  volumeTotalAnm String? @db.VarChar(64)
+  holderCount    Int     @default(0)
+  commentCount   Int     @default(0)
+  followCount    Int     @default(0)
 
   // Bonding-curve ledger state (Animica-native server-managed curve).
-  curveSoldSupply      Decimal       @default(0) @db.Decimal(78, 0)
-  curveAnmReserveNanm  Decimal       @default(0) @db.Decimal(78, 0)
+  curveSoldSupply     Decimal @default(0) @db.Decimal(78, 0)
+  curveAnmReserveNanm Decimal @default(0) @db.Decimal(78, 0)
 
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  creator              User?         @relation("CreatorProjects", fields: [creatorUserId], references: [id])
-  category             Category?     @relation(fields: [categoryId], references: [id])
-  comments             Comment[]
-  follows              Follow[]
-  activities           Activity[]
-  trades               Trade[]
-  liquidityEvents      LiquidityEvent[]
-  reports              Report[]
-  balances             ProjectBalance[]
+  creator         User?            @relation("CreatorProjects", fields: [creatorUserId], references: [id])
+  category        Category?        @relation(fields: [categoryId], references: [id])
+  comments        Comment[]
+  follows         Follow[]
+  activities      Activity[]
+  trades          Trade[]
+  liquidityEvents LiquidityEvent[]
+  reports         Report[]
+  balances        ProjectBalance[]
 
   @@index([status, createdAt(sort: Desc)])
   @@index([featured, verified])
@@ -219,9 +219,9 @@ model Comment {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  project Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user    User?    @relation(fields: [userId], references: [id])
-  parent  Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  project Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User?     @relation(fields: [userId], references: [id])
+  parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   replies Comment[] @relation("CommentReplies")
 
   @@index([projectId, createdAt(sort: Desc)])
@@ -264,24 +264,24 @@ model Activity {
 }
 
 model Trade {
-  id              String      @id @default(cuid())
-  projectId       String
-  userId          String?
-  walletAddress   String
-  side            TradeSide
-  inputToken      String
-  outputToken     String
-  amountInAnm     String
-  amountOut       String
-  priceAnm        String
-  priceUsd        String?
-  feeAnm          String      @default("0")
-  txHash          String?     @unique
-  status          TradeStatus @default(PENDING)
+  id            String      @id @default(cuid())
+  projectId     String
+  userId        String?
+  walletAddress String
+  side          TradeSide
+  inputToken    String
+  outputToken   String
+  amountInAnm   String
+  amountOut     String
+  priceAnm      String
+  priceUsd      String?
+  feeAnm        String      @default("0")
+  txHash        String?     @unique
+  status        TradeStatus @default(PENDING)
 
   // Server-managed bonding-curve bookkeeping.
-  memo            String?     @unique         // 0x-prefixed memo used in the on-chain payment
-  expectedNanm    String?                     // expected ANM (nanm) payment for a pending buy
+  memo            String?   @unique // 0x-prefixed memo used in the on-chain payment
+  expectedNanm    String? // expected ANM (nanm) payment for a pending buy
   confirmedAt     DateTime?
   confirmedHeight Int?
   expiresAt       DateTime?
@@ -301,7 +301,7 @@ model ProjectBalance {
   id            String   @id @default(cuid())
   projectId     String
   walletAddress String
-  balance       Decimal  @default(0) @db.Decimal(78, 0)  // token base units
+  balance       Decimal  @default(0) @db.Decimal(78, 0) // token base units
   updatedAt     DateTime @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -367,4 +367,284 @@ model WalletConnectRequest {
   createdAt          DateTime  @default(now())
 
   @@index([status, expiresAt])
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// NFT Marketplace
+// ───────────────────────────────────────────────────────────────────────
+
+// State of an on-chain listing as last observed by the indexer.
+enum ListingState {
+  ACTIVE
+  SOLD
+  CANCELLED
+}
+
+// What kind of artwork lives in this collection. Helps the UI filter
+// and the indexer pick the right preview pipeline.
+enum CollectionCategory {
+  ART
+  PHOTOGRAPHY
+  PIXEL
+  AI_GENERATED
+  MUSIC
+  GAME_ITEM
+  UTILITY
+  BADGE
+  MEMBERSHIP
+  PFP
+  OTHER
+}
+
+// Where the underlying image bytes live.
+enum AssetStorage {
+  LOCAL // /var/www/animica-xyz-assets/<sha256>.<ext>
+  DA // animica DA layer blob_id
+  IPFS // ipfs:// CID (future)
+  EXTERNAL // arbitrary https URL (legacy/external collections)
+}
+
+// A deployed ANM-721 contract on Animica.
+model Collection {
+  id               String             @id @default(cuid())
+  // 20-byte contract address, hex (no 0x).
+  address          String             @unique
+  name             String
+  symbol           String
+  description      String?
+  category         CollectionCategory @default(OTHER)
+  // Display assets (cover + banner) stored in our asset store / DA.
+  coverAssetId     String?
+  bannerAssetId    String?
+  // Creator wallet address (bech32) — used for verification + payouts.
+  creatorAddress   String
+  // Royalty config snapshot — refreshed by the indexer.
+  royaltyBps       Int                @default(0)
+  royaltyReceiver  String?
+  // Whether Animica admin has verified this collection (no fakes).
+  verified         Boolean            @default(false)
+  // Optional pin to the marketplace homepage.
+  featured         Boolean            @default(false)
+  featuredUntil    DateTime?
+  // Hidden = filtered from default views (used for takedowns).
+  hidden           Boolean            @default(false)
+  // Aggregate stats — kept by indexer, denormalised for fast list views.
+  totalSupply      Int                @default(0)
+  ownerCount       Int                @default(0)
+  floorPrice       String? // big-int nanos as string
+  volumeAll        String             @default("0")
+  // Optional zip upload that birthed this collection. Stored as a
+  // reference so admins can audit + re-extract if needed.
+  sourceZipAssetId String?
+  // Provenance: which launchpad contract (if any) mints into it.
+  launchpadAddress String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  nfts      NFT[]
+  listings  Listing[]
+  sales     Sale[]
+  cover     Asset?    @relation("CollectionCover", fields: [coverAssetId], references: [id], onDelete: SetNull)
+  banner    Asset?    @relation("CollectionBanner", fields: [bannerAssetId], references: [id], onDelete: SetNull)
+  sourceZip Asset?    @relation("CollectionSourceZip", fields: [sourceZipAssetId], references: [id], onDelete: SetNull)
+
+  @@index([category])
+  @@index([featured])
+  @@index([hidden])
+  @@index([creatorAddress])
+}
+
+// One token within a collection. (collectionId, tokenId) is unique.
+model NFT {
+  id             String       @id @default(cuid())
+  collectionId   String
+  // The 256-bit token id from the contract, stored as decimal string so
+  // we don't lose precision in JS.
+  tokenId        String
+  // Where the image bytes live.
+  imageAssetId   String?
+  storage        AssetStorage @default(LOCAL)
+  // Off-chain metadata cached from token_uri at indexer time.
+  name           String?
+  description    String?
+  attributesJson Json?
+  // Current on-chain owner (bech32 wallet address).
+  ownerAddress   String
+  // Mint info.
+  mintTx         String?
+  mintedAt       DateTime?
+  // Cached views.
+  lastSalePrice  String?
+  // True until indexer confirms via Burned event.
+  burned         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  image      Asset?     @relation("NFTImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
+  listings   Listing[]
+  sales      Sale[]
+
+  @@unique([collectionId, tokenId])
+  @@index([ownerAddress])
+  @@index([burned])
+}
+
+// A marketplace listing as observed on-chain.
+model Listing {
+  id              String       @id @default(cuid())
+  // listing_id from the marketplace contract.
+  listingId       String       @unique
+  marketplaceAddr String
+  collectionId    String
+  nftId           String
+  sellerAddress   String
+  // Big-int nanos as decimal string.
+  priceNanos      String
+  state           ListingState @default(ACTIVE)
+  listedTx        String
+  cancelledTx     String?
+  cancelledAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  nft        NFT        @relation(fields: [nftId], references: [id], onDelete: Cascade)
+  sale       Sale?
+
+  @@index([state, createdAt])
+  @@index([sellerAddress])
+}
+
+// A completed sale.
+model Sale {
+  id                  String   @id @default(cuid())
+  // Cross-reference to the listing it settled.
+  listingId           String   @unique
+  collectionId        String
+  nftId               String
+  sellerAddress       String
+  buyerAddress        String
+  priceNanos          String
+  feeNanos            String
+  royaltyNanos        String
+  royaltyReceiver     String?
+  sellerProceedsNanos String
+  txHash              String
+  blockHeight         BigInt
+  soldAt              DateTime
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  nft        NFT        @relation(fields: [nftId], references: [id], onDelete: Cascade)
+  listing    Listing    @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([soldAt])
+  @@index([buyerAddress])
+  @@index([sellerAddress])
+}
+
+// A user profile bound to a wallet. Created lazily the first time a
+// wallet shows up via listing/buy/mint or a manual edit.
+model MarketProfile {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  displayName   String?
+  bio           String?
+  avatarAssetId String?
+  bannerAssetId String?
+  twitterHandle String?
+  website       String?
+  // Whether this profile has linked an Animica Chat account (lets us
+  // surface Pro subscribers as "verified").
+  verified      Boolean  @default(false)
+  // Founders Pass holder badge denormalised for fast badge rendering.
+  foundersPass  Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  avatar Asset? @relation("ProfileAvatar", fields: [avatarAssetId], references: [id], onDelete: SetNull)
+  banner Asset? @relation("ProfileBanner", fields: [bannerAssetId], references: [id], onDelete: SetNull)
+
+  @@index([foundersPass])
+}
+
+// Per-mint record for the Founders Pass launchpad. Lets the /founders
+// page show progress + buyer list without paginating chain events.
+model FoundersMint {
+  id           String   @id @default(cuid())
+  // token_id from the underlying ANM-721 collection.
+  tokenId      String   @unique
+  // Buyer wallet address.
+  buyerAddress String
+  priceNanos   String
+  txHash       String
+  blockHeight  BigInt
+  mintedAt     DateTime @default(now())
+
+  @@index([buyerAddress])
+  @@index([mintedAt])
+}
+
+// A blob/asset (image, video, zip) the marketplace knows about. Most
+// rows point at a local file under /var/www/animica-xyz-assets/. Some
+// rows point at a DA blob_id (for large collections that uploaded via
+// the zip-unzip-to-DA pipeline).
+model Asset {
+  id         String       @id @default(cuid())
+  // Content-addressed sha256 hex (lowercase). Unique per byte stream;
+  // an Asset row can be reused across NFTs / profiles / collections.
+  sha256     String       @unique
+  storage    AssetStorage @default(LOCAL)
+  // For LOCAL: filesystem path; for DA: blob_id; for IPFS: CID; for
+  // EXTERNAL: full URL.
+  locator    String
+  mime       String
+  byteSize   BigInt
+  width      Int?
+  height     Int?
+  // Original filename when known.
+  filename   String?
+  // Uploader wallet (for moderation).
+  uploadedBy String?
+  createdAt  DateTime     @default(now())
+
+  // Inverse relations for the typed fields above.
+  collectionCovers     Collection[]    @relation("CollectionCover")
+  collectionBanners    Collection[]    @relation("CollectionBanner")
+  collectionSourceZips Collection[]    @relation("CollectionSourceZip")
+  nftImages            NFT[]           @relation("NFTImage")
+  profileAvatars       MarketProfile[] @relation("ProfileAvatar")
+  profileBanners       MarketProfile[] @relation("ProfileBanner")
+  zipUploads           ZipUpload[]     @relation("ZipUpload")
+}
+
+// A pending or completed zip upload that got unzipped into per-token
+// DA blobs. Tracks progress so the UI can show "extracting 412/1000".
+enum ZipUploadStatus {
+  PENDING
+  EXTRACTING
+  PINNING
+  DONE
+  FAILED
+}
+
+model ZipUpload {
+  id            String          @id @default(cuid())
+  // The original zip asset we keep for audit/reference.
+  zipAssetId    String
+  uploaderAddr  String
+  status        ZipUploadStatus @default(PENDING)
+  // Total entries discovered + how many have been pinned to DA.
+  totalEntries  Int             @default(0)
+  pinnedEntries Int             @default(0)
+  // Error message if it failed.
+  errorMessage  String?
+  // The collection this upload populated.
+  collectionId  String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  zip Asset @relation("ZipUpload", fields: [zipAssetId], references: [id], onDelete: Cascade)
+
+  @@index([status])
 }

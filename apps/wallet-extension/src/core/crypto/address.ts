@@ -10,6 +10,11 @@ import { decodeAnimAddress, encodeAnimAddress } from '../../lib/address/animicaA
 
 const DEFAULT_HRP = 'anim';
 const ADDRESS_PAYLOAD_LENGTH = 34;
+// Wallet-account addresses use a PQ signing alg id in 0x1000..0x1fff
+// (Dilithium3 = 0x1001, SPHINCS-128s = 0x1002). Contract addresses
+// have alg_id = 0x0000 — they're keyless, derived from the deploy tx.
+// Both are valid as a tx `to`, so the address validator accepts either.
+const ALG_ID_CONTRACT = 0x0000;
 const SUPPORTED_ALG_ID_RANGE = { min: 0x1000, max: 0x1fff };
 
 export interface AddressValidationOptions {
@@ -40,7 +45,8 @@ export function decodeAddress(address: string, options: AddressValidationOptions
   }
 
   const algId = (decoded.payload[0] << 8) | decoded.payload[1];
-  if (algId < SUPPORTED_ALG_ID_RANGE.min || algId > SUPPORTED_ALG_ID_RANGE.max) {
+  const inWalletRange = algId >= SUPPORTED_ALG_ID_RANGE.min && algId <= SUPPORTED_ALG_ID_RANGE.max;
+  if (algId !== ALG_ID_CONTRACT && !inWalletRange) {
     throw new Error(`Unsupported address algorithm id: ${algId}`);
   }
 

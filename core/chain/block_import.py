@@ -2144,6 +2144,34 @@ class BlockImporter:
                 )
             assert_block_apply_deltas(tx_expectations=tx_expectations, events=apply_events)
 
+            # ── Persist execution receipts ─────────────────────────────
+            # apply_block returns an ApplyResult per non-coinbase tx, but
+            # the BlockImporter has historically discarded them — so
+            # tx.getReceipt always answered {status:null, gasUsed:null,
+            # logs:[]} and no PassMinted-style event ever surfaced. Build
+            # canonical Receipt objects from the execution results,
+            # stitch them into a new (frozen) Block, re-store it, and
+            # write the receipt-pointer index that RPC reads.
+            try:
+                self._persist_receipts(
+                    block=block,
+                    block_hash=block.header.hash(),
+                    height=int(getattr(block.header, "height", 0) or 0),
+                    non_coinbase_txs=non_coinbase_txs,
+                    block_result=block_result,
+                )
+            except Exception as persist_exc:
+                # Receipt persistence is best-effort; we don't want a
+                # serialization quirk to fail the whole block apply.
+                log.warning(
+                    "receipts: persistence failed (state still applied)",
+                    extra={
+                        "height": int(getattr(block.header, "height", 0) or 0),
+                        "error": str(persist_exc),
+                        "error_type": persist_exc.__class__.__name__,
+                    },
+                )
+
             # Compute block rewards with AICF slicing
             height = int(getattr(block.header, "height", 0) or 0)
             chain_id = int(self.params.chain_id)
@@ -2611,6 +2639,128 @@ class BlockImporter:
             except Exception:
                 pass
             self._remove_block_index(height)
+
+    def _persist_receipts(
+        self,
+        *,
+        block: Block,
+        block_hash: bytes,
+        height: int,
+        non_coinbase_txs: list,
+        block_result,
+    ) -> None:
+        """
+        Build chain-canonical Receipt objects from the per-tx ApplyResults
+        and persist them so tx.getReceipt returns real status/gas/logs.
+
+        Two writes happen:
+          1. Re-store the block with `Block.receipts` populated. The Block
+             dataclass is frozen, so we rebuild via dataclasses.replace and
+             call put_block again (idempotent — block_db key is the header
+             hash, so this overwrites the prior code-less stub).
+          2. Write the receipt-pointer index (PFX_RXI) keyed by tx_hash
+             so RPC's tx.getReceipt can locate the block + tx index.
+
+        Coinbase txs aren't executed via apply_block, so we synthesize a
+        SUCCESS receipt with 0 gas + no logs for each so the receipts
+        array length stays consistent with `block.txs` (Block.verify_against_header
+        rejects a mismatch).
+        """
+        from dataclasses import replace as _dc_replace
+        from core.types.receipt import Log as _Log, Receipt as _Receipt, ReceiptStatus as _ReceiptStatus
+
+        if not block.txs:
+            return
+
+        # Index ApplyResults by tx_hash so coinbase + non-coinbase
+        # interleaving in block.txs doesn't desync the receipts list.
+        applied_by_hash: dict[bytes, Any] = {}
+        for i, src_tx in enumerate(non_coinbase_txs):
+            try:
+                tx_hash_b = self._tx_hash(src_tx)
+            except Exception:
+                continue
+            if i < len(block_result.tx_results):
+                applied_by_hash[tx_hash_b] = block_result.tx_results[i]
+
+        def _status_to_receipt(status_obj: Any) -> _ReceiptStatus:
+            name = (getattr(status_obj, "name", None) or str(status_obj or "")).upper()
+            if name == "SUCCESS":
+                return _ReceiptStatus.SUCCESS
+            if name == "OOG":
+                return _ReceiptStatus.OOG
+            return _ReceiptStatus.REVERT
+
+        def _convert_logs(logs: Any) -> tuple[_Log, ...]:
+            out: list[_Log] = []
+            for raw in (logs or ()):
+                try:
+                    addr = bytes(getattr(raw, "address", b"") or b"")
+                    topics = tuple(bytes(t) for t in (getattr(raw, "topics", ()) or ()))
+                    data = bytes(getattr(raw, "data", b"") or b"")
+                    out.append(_Log(address=addr, topics=topics, data=data))
+                except Exception:
+                    continue
+            return tuple(out)
+
+        # Pointer-index entries to write alongside the re-stored block.
+        rxi_writes: list[tuple[bytes, dict[str, Any]]] = []
+
+        new_receipts: list[_Receipt] = []
+        for i, tx in enumerate(block.txs):
+            try:
+                tx_hash_b = self._tx_hash(tx)
+            except Exception:
+                tx_hash_b = b""
+            res = applied_by_hash.get(tx_hash_b)
+            if res is None:
+                # Coinbase or unmatched — synthesize a clean SUCCESS receipt.
+                new_receipts.append(
+                    _Receipt(status=_ReceiptStatus.SUCCESS, gas_used=0, logs=())
+                )
+            else:
+                new_receipts.append(
+                    _Receipt(
+                        status=_status_to_receipt(getattr(res, "status", None)),
+                        gas_used=max(0, int(getattr(res, "gas_used", 0) or 0)),
+                        logs=_convert_logs(getattr(res, "logs", ())),
+                    )
+                )
+            if tx_hash_b:
+                rxi_writes.append((tx_hash_b, {"h": int(height), "i": int(i), "b": bytes(block_hash)}))
+
+        # Re-store the block with receipts populated.
+        new_block = _dc_replace(block, receipts=tuple(new_receipts))
+        try:
+            self.block_db.put_block(new_block)
+        except TypeError:
+            # Fallback for legacy mock DBs.
+            try:
+                self.block_db.put_block(block_hash, new_block)
+            except Exception:
+                pass
+
+        # Write the receipt-pointer index so RPC can find tx → block+idx.
+        kv = getattr(self.block_db, "kv", None)
+        if kv is None or not rxi_writes:
+            return
+        try:
+            from core.db.block_db import k_rxi as _k_rxi
+            from core.encoding.cbor import cbor_dumps as _cbor_dumps
+        except Exception:
+            return
+        try:
+            if hasattr(kv, "batch"):
+                with kv.batch() as b:
+                    for tx_hash_b, ptr in rxi_writes:
+                        b.put(_k_rxi(tx_hash_b), _cbor_dumps(ptr))
+                    if hasattr(b, "commit"):
+                        b.commit()
+            else:
+                for tx_hash_b, ptr in rxi_writes:
+                    kv.put(_k_rxi(tx_hash_b), _cbor_dumps(ptr))
+        except Exception as e:
+            log.debug("receipts: rxi index write failed: %s", e)
 
     def _index_block_if_canonical(
         self, *, height: int, block_hash: bytes, block: Block

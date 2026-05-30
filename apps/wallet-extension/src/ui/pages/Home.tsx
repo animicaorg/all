@@ -5,6 +5,7 @@ import AccountsTab from '../components/AccountsTab';
 import SendTab from '../components/SendTab';
 import ActivityTab from '../components/ActivityTab';
 import SettingsTab from '../components/SettingsTab';
+import CollectionTab from '../components/CollectionTab';
 import { formatANM } from '../../services/balances';
 import { useBalancesStore } from '../../store/balances';
 import { activeWalletStoreActions, useActiveWalletStore } from '../../store/activeWallet';
@@ -28,7 +29,7 @@ interface HomeProps {
 const DEBUG_WALLET_UI = true; // Always enabled for troubleshooting
 
 function Home({ onLock }: HomeProps) {
-  const [activeTab, setActiveTab] = useState<'accounts' | 'send' | 'activity' | 'settings'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'send' | 'collection' | 'activity' | 'settings'>('accounts');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [balance, setBalance] = useState<{ confirmed: string; available: string } | null>(null);
   const [balanceError, setBalanceError] = useState<string | null>(null);
@@ -219,6 +220,12 @@ function Home({ onLock }: HomeProps) {
           Send
         </button>
         <button
+          className={`tab ${activeTab === 'collection' ? 'active' : ''}`}
+          onClick={() => setActiveTab('collection')}
+        >
+          Collection
+        </button>
+        <button
           className={`tab ${activeTab === 'activity' ? 'active' : ''}`}
           onClick={() => setActiveTab('activity')}
         >
@@ -395,6 +402,10 @@ function Home({ onLock }: HomeProps) {
             balance={balance}
             onSent={loadData}
           />
+        )}
+
+        {activeTab === 'collection' && currentAccount && (
+          <CollectionTab walletAddress={currentAccount.address} />
         )}
 
         {activeTab === 'activity' && (

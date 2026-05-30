@@ -1,0 +1,71 @@
+{
+  "$schema": "../../schemas/manifest.schema.json",
+  "name": "AnimicaNFTMarketplace",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Animica NFT marketplace contract. Pull-style listings (NFT stays in seller wallet via operator approval), atomic settlement in ANM with marketplace fee + EIP-2981 creator royalty, coarse reentrancy guard, owner-controlled pause switch.",
+  "source": { "path": "contract.py" },
+  "abi": {
+    "events": [
+      {"name": "Listed", "fields": [
+        {"name": "listing_id", "type": "int"},
+        {"name": "collection", "type": "bytes"},
+        {"name": "token_id", "type": "int"},
+        {"name": "seller", "type": "bytes"},
+        {"name": "price", "type": "int"}
+      ]},
+      {"name": "Sold", "fields": [
+        {"name": "listing_id", "type": "int"},
+        {"name": "buyer", "type": "bytes"},
+        {"name": "fee", "type": "int"},
+        {"name": "royalty", "type": "int"},
+        {"name": "seller_proceeds", "type": "int"},
+        {"name": "royalty_receiver", "type": "bytes"}
+      ]},
+      {"name": "Cancelled", "fields": [
+        {"name": "listing_id", "type": "int"},
+        {"name": "seller", "type": "bytes"}
+      ]},
+      {"name": "FeeUpdated", "fields": [{"name": "new_bps", "type": "int"}]},
+      {"name": "Paused", "fields": [{"name": "paused", "type": "bool"}]}
+    ],
+    "functions": [
+      {"name": "init", "stateMutability": "nonpayable", "inputs": [
+        {"name": "owner_", "type": "bytes"},
+        {"name": "fee_recipient", "type": "bytes"},
+        {"name": "fee_bps", "type": "int"}
+      ], "outputs": []},
+
+      {"name": "owner", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "fee_recipient", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "fee_bps", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "paused", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bool"}]},
+      {"name": "next_listing_id", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "get_listing", "stateMutability": "view",
+       "inputs": [{"name": "listing_id", "type": "int"}],
+       "outputs": [{"type": "bytes"}, {"type": "int"}, {"type": "bytes"}, {"type": "int"}, {"type": "bytes"}, {"type": "int"}]},
+      {"name": "active_listing_for_token", "stateMutability": "view",
+       "inputs": [{"name": "collection", "type": "bytes"}, {"name": "token_id", "type": "int"}],
+       "outputs": [{"type": "int"}]},
+
+      {"name": "list_nft", "stateMutability": "nonpayable", "inputs": [
+        {"name": "collection", "type": "bytes"},
+        {"name": "token_id", "type": "int"},
+        {"name": "price", "type": "int"}
+      ], "outputs": [{"type": "int"}]},
+      {"name": "cancel", "stateMutability": "nonpayable",
+       "inputs": [{"name": "listing_id", "type": "int"}], "outputs": []},
+      {"name": "buy", "stateMutability": "payable",
+       "inputs": [{"name": "listing_id", "type": "int"}], "outputs": []},
+
+      {"name": "set_fee_bps", "stateMutability": "nonpayable",
+       "inputs": [{"name": "new_bps", "type": "int"}], "outputs": []},
+      {"name": "set_fee_recipient", "stateMutability": "nonpayable",
+       "inputs": [{"name": "new_recipient", "type": "bytes"}], "outputs": []},
+      {"name": "set_paused", "stateMutability": "nonpayable",
+       "inputs": [{"name": "value", "type": "bool"}], "outputs": []},
+      {"name": "transfer_ownership", "stateMutability": "nonpayable",
+       "inputs": [{"name": "new_owner", "type": "bytes"}], "outputs": []}
+    ]
+  }
+}

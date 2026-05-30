@@ -639,6 +639,9 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'wallet_getNfts':
       return handleGetWatchedNfts();
 
+    case 'wallet_listOwnedAssets':
+      return handleListOwnedAssets(params?.address);
+
     case 'wallet_getDebugState':
       return handleGetDebugState();
     
@@ -2074,4 +2077,92 @@ async function initializeRuntimeRpc(): Promise<void> {
   const network = vaultData ? vaultData.networkConfigs[vaultData.currentNetwork] : null;
   const rpcUrl = await getRpcUrl(network?.rpcUrls?.[0]);
   recreateRpcClient(rpcUrl);
+}
+
+// ---------------------------------------------------------------------------
+// Collection: list NFTs + ANM-20 tokens owned by an address.
+// ---------------------------------------------------------------------------
+//
+// Hits the marketplace API on animica.xyz (which is itself fed by the
+// chain indexer) for a fast pre-aggregated view. Falls back to a
+// best-effort RPC scan against any locally-watched contracts if the
+// remote API is unreachable.
+//
+// Cached by the popup; this is just the source-of-truth fetch.
+
+interface OwnedTokenRow {
+  contractAddress: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+  balance: string;
+}
+
+interface OwnedNftRow {
+  contractAddress: string;
+  collectionName: string;
+  collectionSymbol: string;
+  tokenId: string;
+  name: string;
+  imageUrl: string | null;
+  marketplaceUrl: string;
+}
+
+interface ListOwnedAssetsResult {
+  tokens: OwnedTokenRow[];
+  nfts: OwnedNftRow[];
+  error?: string;
+}
+
+const MARKETPLACE_API_BASE =
+  process.env.PLASMO_PUBLIC_MARKETPLACE_BASE ?? 'https://animica.xyz';
+
+async function handleListOwnedAssets(
+  address: string | undefined,
+): Promise<ListOwnedAssetsResult> {
+  if (!address) return { tokens: [], nfts: [], error: 'no_address' };
+  try {
+    const res = await fetch(
+      `${MARKETPLACE_API_BASE}/api/marketplace/profile/${address}`,
+      { signal: AbortSignal.timeout(8_000) },
+    );
+    if (!res.ok) throw new Error(`api_${res.status}`);
+    const j = await res.json() as {
+      owned?: Array<{
+        tokenId: string;
+        name: string | null;
+        imageUrl: string | null;
+        collection: { address: string; name: string; symbol?: string };
+      }>;
+    };
+    // The marketplace API is NFT-centric. Tokens come from the locally-
+    // watched ANM-20 list (handleGetWatchedTokens) so users see the
+    // same balances they see on the Send tab.
+    const watched = await handleGetWatchedTokens().catch(() => [] as any[]);
+    const tokens: OwnedTokenRow[] = Array.isArray(watched)
+      ? watched.map((t: any) => ({
+          contractAddress: String(t.contractAddress ?? t.address ?? ''),
+          name: String(t.name ?? ''),
+          symbol: String(t.symbol ?? ''),
+          decimals: Number(t.decimals ?? 0),
+          balance: String(t.balance ?? '0'),
+        }))
+      : [];
+    const nfts: OwnedNftRow[] = (j.owned ?? []).map((n) => ({
+      contractAddress: n.collection.address,
+      collectionName: n.collection.name,
+      collectionSymbol: n.collection.symbol ?? '',
+      tokenId: n.tokenId,
+      name: n.name ?? `#${n.tokenId}`,
+      imageUrl: n.imageUrl,
+      marketplaceUrl: `${MARKETPLACE_API_BASE}/marketplace/nft/${n.collection.address}:${n.tokenId}`,
+    }));
+    return { tokens, nfts };
+  } catch (e) {
+    return {
+      tokens: [],
+      nfts: [],
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
 }

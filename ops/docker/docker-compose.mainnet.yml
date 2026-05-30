@@ -95,6 +95,11 @@ services:
       ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8545}"
       ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[\"http://localhost:*\",\"http://127.0.0.1:*\"]}"
       ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
+      # Enable the Python contract VM so deploy/call txs actually
+      # execute (set_code, mint(), state mutations, event emission).
+      # Without this flag every deploy + call REVERTs silently with a
+      # "vm.disabled" log — see execution/runtime/contracts.py:1240.
+      ANIMICA_ENABLE_VM_PY: "${ANIMICA_ENABLE_VM_PY:-1}"
       SYNC_ENABLED: "${SYNC_ENABLED:-1}"
       # Instant blocks enabled by default for immediate transaction inclusion
       ANIMICA_INSTANT_BLOCKS_ENABLED: "${ANIMICA_INSTANT_BLOCKS_ENABLED:-true}"

@@ -97,6 +97,7 @@ export const SITE: SiteConfig = {
   nav: {
     top: [
       { label: 'Home', href: '/' },
+      { label: 'Marketplace', href: 'https://animica.xyz/marketplace', external: true, target: '_blank', rel: 'noopener' },
       { label: 'Developers', href: '/developers' },
       { label: 'Providers', href: '/providers' },
       { label: 'Wallet', href: '/wallet' },
@@ -113,6 +114,8 @@ export const SITE: SiteConfig = {
       {
         title: 'Platform',
         items: [
+          { label: 'Marketplace', href: 'https://animica.xyz/marketplace' },
+          { label: 'Founders Pass', href: 'https://animica.xyz/marketplace/founders' },
           { label: 'Developers', href: '/developers' },
           { label: 'Providers', href: '/providers' },
           { label: 'Wallet', href: '/wallet' },

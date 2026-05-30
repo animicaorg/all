@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Animica Wallet",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Secure post-quantum wallet for the Animica blockchain",
   "permissions": [
     "storage",
