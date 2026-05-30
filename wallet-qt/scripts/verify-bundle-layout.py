@@ -105,6 +105,11 @@ def main() -> int:
         action="store_true",
         help="Accepted for backward compatibility; the wallet is always remote-RPC-only now.",
     )
+    parser.add_argument(
+        "--skip-bundled-node",
+        action="store_true",
+        help="Skip checks for the bundled Python node (used for hosted-RPC-only Windows cross-builds).",
+    )
     args = parser.parse_args()
 
     target = Path(args.path).expanduser().resolve()
@@ -114,6 +119,15 @@ def main() -> int:
         errors = verify_windows(target)
     else:
         errors = verify_linux(target)
+
+    if args.skip_bundled_node:
+        errors = [
+            e for e in errors
+            if "bundled Python runtime" not in e
+            and "bundled spec asset" not in e
+            and "bundled genesis asset" not in e
+            and "bundled node" not in e
+        ]
 
     if errors:
         for error in errors:

@@ -10,8 +10,8 @@
 #endif
 
 WalletAccount::WalletAccount()
-    : algId(0x1001)
-    , algName("dilithium3")
+    : algId(0x1003)
+    , algName("ml_dsa_65")
     , isDefault(false)
 {
 }

@@ -1,13 +1,14 @@
 // Account management
 
 import type { Account } from '../../types/wallet';
-import { generateKeyPair, DILITHIUM3_ALG_ID, SPHINCSPLUS_ALG_ID } from '../crypto/pq';
+import { generateKeyPair, DILITHIUM3_ALG_ID, SPHINCSPLUS_ALG_ID, ML_DSA_65_ALG_ID } from '../crypto/pq';
 import { addressFromPubkey } from '../crypto/address';
 import { hexToBytes } from '../crypto/convert';
 
 function algNameFor(algId: number): string {
   if (algId === DILITHIUM3_ALG_ID) return 'dilithium3';
   if (algId === SPHINCSPLUS_ALG_ID) return 'sphincs_shake_128s';
+  if (algId === ML_DSA_65_ALG_ID) return 'ml_dsa_65';
   return 'unknown';
 }
 

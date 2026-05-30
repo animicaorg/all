@@ -387,33 +387,53 @@ deploy_runtime_dependencies() {
 
     declare -A system_dlls=(
         [advapi32.dll]=1
+        [authz.dll]=1
         [bcrypt.dll]=1
         [cfgmgr32.dll]=1
         [combase.dll]=1
         [comctl32.dll]=1
         [comdlg32.dll]=1
         [crypt32.dll]=1
+        [d2d1.dll]=1
+        [d3d11.dll]=1
+        [d3d9.dll]=1
         [dnsapi.dll]=1
+        [dwmapi.dll]=1
+        [dwrite.dll]=1
+        [dxgi.dll]=1
         [gdi32.dll]=1
+        [imagehlp.dll]=1
         [imm32.dll]=1
         [iphlpapi.dll]=1
         [kernel32.dll]=1
+        [libpq.dll]=1
+        [mimapi64.dll]=1
         [mpr.dll]=1
         [msimg32.dll]=1
         [msvcrt.dll]=1
+        [ncrypt.dll]=1
         [netapi32.dll]=1
+        [odbc32.dll]=1
         [ole32.dll]=1
         [oleaut32.dll]=1
         [rpcrt4.dll]=1
         [sechost.dll]=1
+        [secur32.dll]=1
         [setupapi.dll]=1
+        [shcore.dll]=1
         [shell32.dll]=1
         [shlwapi.dll]=1
         [user32.dll]=1
+        [userenv.dll]=1
         [uxtheme.dll]=1
         [version.dll]=1
+        [winhttp.dll]=1
         [winmm.dll]=1
         [ws2_32.dll]=1
+        [wtsapi32.dll]=1
+        [api-ms-win-core-synch-l1-2-0.dll]=1
+        [api-ms-win-core-winrt-l1-1-0.dll]=1
+        [api-ms-win-core-winrt-string-l1-1-0.dll]=1
     )
 
     local queue=()
@@ -493,6 +513,9 @@ configure_and_build() {
         -DCMAKE_PREFIX_PATH="$QT_ROOT;$OPENSSL_ROOT" \
         -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT" \
         -DWALLET_ENABLE_QT_INSTALL_DEPLOYMENT=OFF \
+        -DWALLET_BUNDLE_PYTHON_RUNTIME=OFF \
+        -DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=TRUE \
+        -DCMAKE_DISABLE_FIND_PACKAGE_WrapVulkanHeaders=TRUE \
         -DBUILD_TESTING=OFF
 
     cmake --build "$BUILD_DIR" --parallel "$JOBS"
@@ -556,7 +579,7 @@ main() {
     configure_and_build
     deploy_runtime_dependencies
 
-    "$SCRIPT_DIR/verify-bundle-layout.py" --platform windows --path "$STAGE_DIR"
+    "$SCRIPT_DIR/verify-bundle-layout.py" --platform windows --path "$STAGE_DIR" --skip-bundled-node
 
     package_artifacts "$(resolve_version)"
 

@@ -597,7 +597,7 @@ def get_balance(address: str, rpc_url: str) -> int:
 def _is_dilithium3_alg(alg_name: str) -> bool:
     """Check if algorithm name refers to Dilithium3/ML-DSA-65."""
     name_lower = alg_name.lower().replace("_", "-").replace(" ", "")
-    return name_lower in ("dilithium3", "ml-dsa-65", "mldsa65")
+    return name_lower in ("dilithium3",)
 
 
 def _normalize_dilithium3_secret_key(secret: bytes, alg_name: str) -> bytes:
@@ -856,7 +856,11 @@ def create(
     alg: Optional[str] = typer.Option(
         None,
         "--alg",
-        help="Signature algorithm (e.g., dilithium3, sphincs_shake_128s)",
+        help=(
+            "Signature algorithm. Default: ml_dsa_65 (real FIPS 204, recommended). "
+            "Legacy stubs dilithium3/sphincs_shake_128s are accepted only with "
+            "ANIMICA_ALLOW_LEGACY_STUB_KEYGEN=1 and should not be used for new wallets."
+        ),
     ),
     allow_insecure_fallback: bool = typer.Option(
         False,

@@ -10,10 +10,13 @@ import { decodeAnimAddress, encodeAnimAddress } from '../../lib/address/animicaA
 
 const DEFAULT_HRP = 'anim';
 const ADDRESS_PAYLOAD_LENGTH = 34;
-// Wallet-account addresses use a PQ signing alg id in 0x1000..0x1fff
-// (Dilithium3 = 0x1001, SPHINCS-128s = 0x1002). Contract addresses
-// have alg_id = 0x0000 — they're keyless, derived from the deploy tx.
-// Both are valid as a tx `to`, so the address validator accepts either.
+// Wallet-account addresses use a PQ signing alg id in 0x1000..0x1fff.
+// Active scheme: ML-DSA-65 = 0x1003 (chain v2 default).
+// Deprecated commitment-stub schemes also accepted for legacy holders:
+//   Dilithium3 = 0x1001, SPHINCS-128s = 0x1002.
+// Contract addresses use alg_id = 0x0000 — keyless, derived from the
+// deploy tx. All three (contract / legacy stubs / ml_dsa_65) are valid
+// as a tx `to`, so the address validator accepts any of them.
 const ALG_ID_CONTRACT = 0x0000;
 const SUPPORTED_ALG_ID_RANGE = { min: 0x1000, max: 0x1fff };
 

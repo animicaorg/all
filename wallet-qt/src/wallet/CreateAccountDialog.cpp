@@ -41,13 +41,15 @@ void CreateAccountDialog::setupUi()
         const QString display = item["display_name"].toString(name);
         const int algId = item["alg_id"].toInt();
         QString label = display;
-        if (name == "dilithium3") {
-            label += " (Recommended)";
+        if (name == "ml_dsa_65") {
+            label += " (Recommended — FIPS 204)";
+        } else if (name == "dilithium3" || name == "sphincs_shake_128s") {
+            label += " (deprecated)";
         }
         m_algorithmCombo->addItem(label, algId);
     }
     if (m_algorithmCombo->count() == 0) {
-        m_algorithmCombo->addItem("dilithium3", 0x1001);
+        m_algorithmCombo->addItem("ml_dsa_65 (Recommended — FIPS 204)", 0x1003);
     }
     formLayout->addRow("Algorithm:", m_algorithmCombo);
     

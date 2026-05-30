@@ -185,8 +185,10 @@ QString WalletEngine::algorithmNameForId(int algId) const
         return "dilithium3";
     case 0x1002:
         return "sphincs_shake_128s";
+    case 0x1003:
+        return "ml_dsa_65";
     default:
-        return "dilithium3";
+        return "ml_dsa_65";
     }
 }
 

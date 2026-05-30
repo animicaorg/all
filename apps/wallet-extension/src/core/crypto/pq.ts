@@ -18,8 +18,9 @@
 import { sha3_256, sha3_512, shake_256 } from 'js-sha3';
 import { hexToBytes as safeHexToBytes, bytesToHex as safeBytesToHex, bytesToHexRaw } from './convert';
 
-export const DILITHIUM3_ALG_ID = 0x1001; // 4097
-export const SPHINCSPLUS_ALG_ID = 0x1002; // 4098
+export const DILITHIUM3_ALG_ID = 0x1001; // 4097 — DEPRECATED commitment stub
+export const SPHINCSPLUS_ALG_ID = 0x1002; // 4098 — DEPRECATED commitment stub
+export const ML_DSA_65_ALG_ID = 0x1003;   // 4099 — REAL FIPS 204 (chain v2 default)
 
 // Dilithium3 key sizes (matching the chain's reference pure-Python ML-DSA-65
 // at python/animica/_vendor/dilithium_py/dilithium3.py — these sizes are
@@ -27,6 +28,13 @@ export const SPHINCSPLUS_ALG_ID = 0x1002; // 4098
 export const DILITHIUM3_PUBLIC_KEY_SIZE = 1952;
 export const DILITHIUM3_SECRET_KEY_SIZE = 4000;
 export const DILITHIUM3_SIGNATURE_SIZE = 3293;
+
+// ML-DSA-65 (real FIPS 204) sizes — chain v2 canonical scheme.
+// Matches python/animica/_vendor/dilithium_py_v2/ which the node uses
+// for scheme_id=11 / alg_id=0x1003 verification.
+export const ML_DSA_65_PUBLIC_KEY_SIZE = 1952;
+export const ML_DSA_65_SECRET_KEY_SIZE = 4032;
+export const ML_DSA_65_SIGNATURE_SIZE = 3309;
 
 /**
  * Generate Dilithium3 keypair
@@ -125,6 +133,8 @@ function sigLenForAlg(algId: number): number {
       return DILITHIUM3_SIGNATURE_SIZE;
     case SPHINCSPLUS_ALG_ID:
       return SPHINCS_SHAKE_128S_SIGNATURE_SIZE;
+    case ML_DSA_65_ALG_ID:
+      return ML_DSA_65_SIGNATURE_SIZE;
     default:
       throw new Error(`PQ sign(): unsupported algId 0x${algId.toString(16)}`);
   }
@@ -171,6 +181,16 @@ export async function sign(
   algId: number = DILITHIUM3_ALG_ID,
   publicKey?: Uint8Array,
 ): Promise<Uint8Array> {
+  if (algId === ML_DSA_65_ALG_ID) {
+    throw new Error(
+      'ml_dsa_65 signing is not yet available in the browser extension. '
+      + 'Real FIPS 204 ML-DSA-65 needs a TypeScript port of '
+      + 'python/animica/_vendor/dilithium_py_v2/ (planned for the next '
+      + 'extension release). For now, sign ml_dsa_65 transactions with the '
+      + '`animica` CLI; the extension can still hold balances and display '
+      + 'incoming receipts for ml_dsa_65 addresses.'
+    );
+  }
   void secretKey; // The XOF formula only uses pk, not sk; sk is kept on the
                   // wallet anyway and tying signatures to it would diverge
                   // from the chain's verifier.

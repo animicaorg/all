@@ -71,9 +71,19 @@ class AnimicaConfig {
   static const int sphincsSigLen = 7856;
   static const int algIdSphincs = 0x1002;
 
-  /// Dilithium3 parameters — only relevant once the Dart port lands.
+  /// Dilithium3 parameters — DEPRECATED commitment-stub scheme.
   static const int dilithiumPubkeyLen = 1952;
   static const int dilithiumSecretLen = 4000;
   static const int dilithiumSigLen = 3293;
   static const int algIdDilithium3 = 0x1001;
+
+  /// ML-DSA-65 (real FIPS 204) — chain v2 canonical scheme.
+  /// Signing in Dart requires a port of FIPS 204 ML-DSA-65 (vendored
+  /// at python/animica/_vendor/dilithium_py_v2/ on the node side);
+  /// until that lands the wallet can display/import/receive ml_dsa_65
+  /// addresses but must sign outbound txs via the `animica` CLI.
+  static const int mlDsa65PubkeyLen = 1952;
+  static const int mlDsa65SecretLen = 4032;
+  static const int mlDsa65SigLen = 3309;
+  static const int algIdMlDsa65 = 0x1003;
 }

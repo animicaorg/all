@@ -289,6 +289,8 @@ QString AccountManager::algIdToName(int algId) const
             return "dilithium3";
         case 0x1002:
             return "sphincs-shake-128s";
+        case 0x1003:
+            return "ml_dsa_65";
         default:
             return QString();
     }
