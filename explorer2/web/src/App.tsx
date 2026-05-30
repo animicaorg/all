@@ -17,14 +17,10 @@ import DebugBundlePage from './pages/DebugBundlePage'
 import SearchBar from './components/SearchBar'
 import ThemeToggle from './components/ThemeToggle'
 import NetworkHealthBanner from './components/NetworkHealthBanner'
-import AdBanner from './components/AdBanner'
 
 export default function App() {
   return (
     <div className="min-h-screen bg-day-50 text-gray-900 transition-colors dark:bg-night-950 dark:text-slate-100">
-      {/* Sits above the sticky header so it scrolls away with the
-          page (non-invasive). Dismissible per-session. */}
-      <AdBanner />
       <header className="sticky top-0 z-10 border-b border-day-200 bg-white/80 backdrop-blur-sm dark:border-night-800 dark:bg-night-900/80">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
