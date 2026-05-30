@@ -22,6 +22,10 @@ _SCHEME_NAME_TO_ID = {
     "sphincs_shake_128s": 2,
     "sphincs128s": 2,
     "sphincs+128s": 2,
+    # v2 — real FIPS 204 ML-DSA-65
+    "ml_dsa_65": 11,
+    "ml-dsa-65": 11,
+    "ml-dsa": 11,
 }
 
 _CHAIN_REQUIRED_SCHEMES: dict[int, tuple[int, ...]] = {1: (1, 2)}
@@ -104,6 +108,33 @@ CANONICAL_SCHEME_SPECS: tuple[SchemeSpec, ...] = (
         name="sphincs_shake_256s",
         pubkey_lengths=(64,),
         signature_lengths=(29792,),
+        enabled_by_default=True,
+    ),
+    # ── v2 schemes (real PQ crypto) ─────────────────────────────────────
+    # 2026-05-30: scheme_id=1 ("dilithium3") and scheme_id=2 ("sphincs_
+    # shake_128s") above are commitment-style stubs that don't actually
+    # implement ML-DSA-65 / SPHINCS+. Any party with the public key can
+    # forge signatures under those schemes (see incident notes). The
+    # following scheme_ids are the real FIPS 204 implementations,
+    # vendored from python/animica/_vendor/dilithium_py_v2/ (MIT,
+    # jack4818/dilithium-py).
+    #
+    # Migration plan:
+    #   - Mainnet accepts BOTH old and new schemes during a transition
+    #     window so historical txs keep verifying.
+    #   - New wallets default to ml_dsa_65 (the CLI bumps in v0.2.0).
+    #   - At a fork height (configurable via env), schemes 1 and 2 are
+    #     dropped from the accepted-policy: tx.sendRawTransaction
+    #     rejects them while block import still accepts them in
+    #     historical blocks (verify-only, no new ingestion).
+    #
+    # ML-DSA-65 sizes per FIPS 204:
+    #   pk = 1952 bytes, sk = 4032 bytes, sig = 3309 bytes
+    SchemeSpec(
+        scheme_id=11,
+        name="ml_dsa_65",
+        pubkey_lengths=(1952,),
+        signature_lengths=(3309,),
         enabled_by_default=True,
     ),
 )

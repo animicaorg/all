@@ -52,6 +52,12 @@ SCHEME_SPHINCS_SHAKE_128S = 2
 SCHEME_SPHINCS_SHAKE_128F = 3
 SCHEME_SPHINCS_SHAKE_256S = 4
 
+# v2 schemes — real PQ crypto (FIPS 204 ML-DSA-65). schemes 1+2 are
+# commitment-style stubs vulnerable to forgery; ml_dsa_65 (11) is the
+# vendored jack4818/dilithium-py reference and is the new default for
+# `animica wallet create` from python package v0.2.0 onward.
+SCHEME_ML_DSA_65 = 11
+
 
 class SignFunc(Protocol):
     def __call__(self, message: bytes, secret_key: bytes) -> bytes: ...
@@ -352,6 +358,7 @@ def _bootstrap_schemes() -> None:
     try:
         from pq.py.algs import dilithium3 as dilithium3_backend
         from pq.py.algs import sphincs_shake_128s as sphincs_128s_backend
+        from pq.py.algs import ml_dsa_65 as ml_dsa_65_backend
 
         def _sign_dilithium3(message: bytes, secret_key: bytes) -> bytes:
             return dilithium3_backend.sign(secret_key, message)
@@ -365,6 +372,12 @@ def _bootstrap_schemes() -> None:
         def _verify_sphincs_128s(message: bytes, signature: bytes, public_key: bytes) -> bool:
             return bool(sphincs_128s_backend.verify(public_key, message, signature))
 
+        def _sign_ml_dsa_65(message: bytes, secret_key: bytes) -> bytes:
+            return ml_dsa_65_backend.sign(secret_key, message)
+
+        def _verify_ml_dsa_65(message: bytes, signature: bytes, public_key: bytes) -> bool:
+            return bool(ml_dsa_65_backend.verify(public_key, message, signature))
+
         runtime = table[SCHEME_DILITHIUM3]
         runtime.sign_fn = _sign_dilithium3
         runtime.verify_fn = _verify_dilithium3
@@ -373,11 +386,23 @@ def _bootstrap_schemes() -> None:
         runtime.sign_fn = _sign_sphincs_128s
         runtime.verify_fn = _verify_sphincs_128s
 
+        if SCHEME_ML_DSA_65 in table:
+            runtime = table[SCHEME_ML_DSA_65]
+            runtime.sign_fn = _sign_ml_dsa_65
+            runtime.verify_fn = _verify_ml_dsa_65
+
         backend_modules = {
             SCHEME_DILITHIUM3: dilithium3_backend,
             SCHEME_SPHINCS_SHAKE_128S: sphincs_128s_backend,
+            SCHEME_ML_DSA_65: ml_dsa_65_backend,
         }
-        for scheme_id, alg in ((SCHEME_DILITHIUM3, "dilithium3"), (SCHEME_SPHINCS_SHAKE_128S, "sphincs_shake_128s")):
+        for scheme_id, alg in (
+            (SCHEME_DILITHIUM3, "dilithium3"),
+            (SCHEME_SPHINCS_SHAKE_128S, "sphincs_shake_128s"),
+            (SCHEME_ML_DSA_65, "ml_dsa_65"),
+        ):
+            if scheme_id not in table:
+                continue
             mod = backend_modules[scheme_id]
             status: dict[str, object] = {
                 "schemeId": scheme_id,
@@ -392,6 +417,10 @@ def _bootstrap_schemes() -> None:
                     sk, pk = dilithium3_backend.keypair()
                     sig = dilithium3_backend.sign(sk, b"animica-pq-selftest")
                     ok = bool(dilithium3_backend.verify(pk, b"animica-pq-selftest", sig))
+                elif alg == "ml_dsa_65":
+                    sk, pk = ml_dsa_65_backend.keypair()
+                    sig = ml_dsa_65_backend.sign(sk, b"animica-pq-selftest")
+                    ok = bool(ml_dsa_65_backend.verify(pk, b"animica-pq-selftest", sig))
                 else:
                     sk, pk = sphincs_128s_backend.keypair()
                     sig = sphincs_128s_backend.sign(sk, b"animica-pq-selftest")

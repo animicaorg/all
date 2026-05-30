@@ -132,8 +132,9 @@ def _load_alg_ids_yaml() -> Dict[str, int]:
         return {
             # Keep these values in sync with pq/alg_ids.yaml so environments
             # without PyYAML still agree on canonical algorithm ids.
-            "dilithium3": 0x1001,
-            "sphincs_shake_128s": 0x1002,
+            "dilithium3": 0x1001,         # deprecated 0.2.0; commitment stub
+            "sphincs_shake_128s": 0x1002, # deprecated 0.2.0; commitment stub
+            "ml_dsa_65": 0x1003,          # real FIPS 204 ML-DSA-65
             "kyber768": 0x2001,
         }
     data = yaml.safe_load(alg_ids_path.read_text(encoding="utf-8"))

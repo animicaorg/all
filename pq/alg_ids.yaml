@@ -19,37 +19,64 @@ updated: 2025-09-19
 registry:
   - id: 0x1001
     name: dilithium3
-    display: "CRYSTALS-Dilithium3"
+    display: "CRYSTALS-Dilithium3 (legacy stub)"
+    kind: signature
+    nist_level: 3
+    status: deprecated
+    deprecated_since: "0.2.0"
+    sizes:
+      pk: 1952
+      sk: 4000
+      sig: 3293
+    hashing:
+      address_hash: sha3_256
+      domain_default: "animica:tx:signbytes:v1"
+    notes:
+      - "DEPRECATED. Implementation is a commitment-style stub: verify"
+      - "just checks sig[:32] == SHAKE-256(pk[:32] || msg, 32), which"
+      - "anyone with pk can produce. Historical blocks keep verifying"
+      - "under this scheme so chain state stays intact, but new tx"
+      - "submissions are rejected once the v2 transition window closes."
+      - "New wallets MUST use ml_dsa_65 (0x1003)."
+
+  - id: 0x1002
+    name: sphincs_shake_128s
+    display: "SPHINCS+ SHAKE-128s (legacy stub)"
+    kind: signature
+    nist_level: 1
+    status: deprecated
+    deprecated_since: "0.2.0"
+    sizes:
+      pk: 64
+      sk: 64
+      sig: 7856
+    hashing:
+      address_hash: sha3_256
+      domain_default: "animica:tx:signbytes:v1"
+    notes:
+      - "DEPRECATED. Same forgery weakness as 0x1001 — fallback_sig_sign"
+      - "uses sig = SHAKE-256('sig' || pk || msg). New wallets MUST use"
+      - "ml_dsa_65 (0x1003); no pure-Python SPHINCS+ reference is shipped"
+      - "yet, may return in a future package version."
+
+  - id: 0x1003
+    name: ml_dsa_65
+    display: "ML-DSA-65 (FIPS 204)"
     kind: signature
     nist_level: 3
     status: active
     sizes:
-      pk: 1952        # bytes
-      sk: 4000        # bytes
-      sig: 3293       # bytes (deterministic)
+      pk: 1952
+      sk: 4032        # FIPS 204 expanded sk
+      sig: 3309       # FIPS 204 max sig
     hashing:
       address_hash: sha3_256
       domain_default: "animica:tx:signbytes:v1"
     notes:
-      - "Primary PQ signature for nodes & wallets."
-      - "Fast with liboqs; reference fallbacks are development-only."
-
-  - id: 0x1002
-    name: sphincs_shake_128s
-    display: "SPHINCS+ (SHAKE-128s)"
-    kind: signature
-    nist_level: 1
-    status: active
-    sizes:
-      pk: 64          # 32-byte root || 32-byte pub-seed
-      sk: 64          # 32 sk-seed || 32 sk-prf || (pub components)
-      sig: 7856       # bytes (128s parameter set)
-    hashing:
-      address_hash: sha3_256
-      domain_default: "animica:tx:signbytes:v1"
-    notes:
-      - "Stateless hash-based fallback; larger signatures."
-      - "Recommended for archival keys or special-purpose policy mixes."
+      - "Real ML-DSA-65 per FIPS 204. Vendored from jack4818/dilithium-py"
+      - "(MIT) at python/animica/_vendor/dilithium_py_v2/."
+      - "Default scheme for `animica wallet create` from package 0.2.0 on."
+      - "coretx scheme_id = 11."
 
   - id: 0x2001
     name: kyber768
