@@ -127,8 +127,18 @@ class StratumPoolServer:
             submit_hook=self._handle_share_submit,
             on_worker_authorized=self._register_aicf_worker,
             on_aicf_result=self._handle_aicf_result,
+            on_xmr_result=self._handle_xmr_result,
             pool_mode=config.pool_mode,
         )
+        # XMR (Monero RandomX) dual-mining infrastructure. Initialised
+        # lazily in start() once the pool config has been validated.
+        # See python/animica/stratum_pool/xmr.py for the components.
+        self._xmr_client = None  # type: ignore[assignment]
+        self._xmr_jm = None      # type: ignore[assignment]
+        self._xmr_validator = None  # type: ignore[assignment]
+        self._xmr_ledger = None  # type: ignore[assignment]
+        self._xmr_stratum = None  # type: ignore[assignment]
+        self._xmr_enabled = False
         self._aicf_dispatcher_task: Optional[asyncio.Task] = None
         self._aicf_dispatcher_stop = asyncio.Event()
         # AICF jobs the pool has pushed but not yet seen a result for.
@@ -296,6 +306,7 @@ class StratumPoolServer:
         self._aicf_dispatcher_task = asyncio.create_task(
             self._aicf_dispatch_loop(), name="aicf_dispatch_loop"
         )
+        await self._maybe_start_xmr()
 
     async def stop(self) -> None:
         self._aicf_dispatcher_stop.set()
@@ -305,8 +316,175 @@ class StratumPoolServer:
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 self._aicf_dispatcher_task.cancel()
             self._aicf_dispatcher_task = None
+        if self._xmr_stratum is not None:
+            try:
+                await self._xmr_stratum.stop()
+            except Exception as exc:
+                self._log.warning("xmr cryptonote stratum stop: %s", exc)
+            self._xmr_stratum = None
+        if self._xmr_jm is not None:
+            try:
+                await self._xmr_jm.stop()
+            except Exception as exc:
+                self._log.warning("xmr job manager stop: %s", exc)
+            self._xmr_jm = None
+        if self._xmr_client is not None:
+            try:
+                await self._xmr_client.close()
+            except Exception:
+                pass
+            self._xmr_client = None
+        if self._xmr_validator is not None:
+            try:
+                self._xmr_validator.close()
+            except Exception:
+                pass
+            self._xmr_validator = None
         await self._server.stop()
         await self._job_manager.stop()
+
+    async def _maybe_start_xmr(self) -> None:
+        """Initialize XMR dual-mining if config + monerod are ready.
+
+        Config keys honored (via env vars; the pool config dataclass
+        doesn't currently carry these — easier to keep them env-only
+        until the operator opts in):
+
+          ANIMICA_POOL_XMR_ENABLED=1                  # master toggle
+          ANIMICA_POOL_XMR_ADDRESS=49Rc...HUTQxrXfJ   # pool fee receive
+          ANIMICA_POOL_MONEROD_URL=http://127.0.0.1:18081
+
+        The pool starts even if XMR setup fails — Animica SHA3 mining
+        is independent and shouldn't go down because monerod is.
+        """
+        import os
+        if os.environ.get("ANIMICA_POOL_XMR_ENABLED", "").strip() != "1":
+            return
+        addr = os.environ.get("ANIMICA_POOL_XMR_ADDRESS", "").strip()
+        if not addr:
+            self._log.warning(
+                "ANIMICA_POOL_XMR_ENABLED=1 but ANIMICA_POOL_XMR_ADDRESS empty — "
+                "XMR mining disabled. Set it to the pool's Monero primary "
+                "address (45/4A/8... prefix)."
+            )
+            return
+        try:
+            from animica.stratum_pool.xmr import make_default_components
+        except Exception as exc:
+            self._log.warning("XMR module unavailable (%s); skipping", exc)
+            return
+        try:
+            client, jm, validator, ledger = await make_default_components(
+                pool_xmr_address=addr,
+                monerod_url=os.environ.get(
+                    "ANIMICA_POOL_MONEROD_URL", "http://127.0.0.1:18081"
+                ),
+                num_validator_workers=int(
+                    os.environ.get("ANIMICA_POOL_XMR_VALIDATOR_WORKERS", "4")
+                ),
+            )
+        except Exception as exc:
+            self._log.warning("XMR start failed: %s", exc, exc_info=True)
+            return
+        self._xmr_client = client
+        self._xmr_jm = jm
+        self._xmr_validator = validator
+        self._xmr_ledger = ledger
+        self._xmr_enabled = True
+
+        # Whenever the XMR job manager builds a fresh template, broadcast
+        # it to all subscribed miners.
+        async def _broadcast(job) -> None:  # type: ignore[no-untyped-def]
+            try:
+                await self._server.push_xmr_job(
+                    job_id=job.job_id,
+                    blob_hex=job.blockhashing_blob.hex(),
+                    target_hex=f"{job.pool_difficulty:016x}",
+                    seed_hash_hex=job.seed_hash.hex(),
+                    height=job.height,
+                )
+            except Exception as exc:
+                self._log.warning("xmr broadcast failed: %s", exc, exc_info=False)
+        jm.subscribe(_broadcast)
+
+        # Cryptonote pool port — stock xmrig connects here for RandomX
+        # work. Defaults to 3334 (one above the animica port). The
+        # primary Stratum port stays animica-only so legacy miners aren't
+        # disturbed by the dual-mining rollout.
+        xmr_port = int(os.environ.get("ANIMICA_POOL_XMR_PORT", "3334"))
+        xmr_host = os.environ.get("ANIMICA_POOL_XMR_HOST", self._config.host)
+        try:
+            from animica.stratum_pool.xmr_stratum import XmrStratumServer
+            stratum_xmr = XmrStratumServer(
+                host=xmr_host, port=xmr_port,
+                job_manager=jm, validator=validator, ledger=ledger,
+            )
+            await stratum_xmr.start()
+            self._xmr_stratum = stratum_xmr
+        except Exception as exc:
+            self._log.warning(
+                "XMR cryptonote stratum failed to start on %s:%d (%s); "
+                "monerod-side XMR mining will still work via push_xmr_job "
+                "on the existing port, but stock xmrig users cannot connect.",
+                xmr_host, xmr_port, exc,
+            )
+
+        await jm.start()
+        self._log.info(
+            "XMR dual-mining enabled; pool fee → %s ; cryptonote port=%d",
+            addr, xmr_port,
+        )
+
+    async def _handle_xmr_result(self, session: object, params: dict) -> dict:
+        """Called by mining.stratum_server when a miner sends submit_xmr.
+
+        Delegates to XmrShareValidator + XmrShareLedger. Returns
+        {accepted, reason, block_solved} for the wire response.
+        """
+        if not self._xmr_enabled or self._xmr_validator is None:
+            return {"accepted": False, "reason": "xmr_not_enabled"}
+        miner_id = getattr(session, "address", None) or getattr(
+            session, "worker", None
+        ) or getattr(session, "session_id", "unknown")
+        ok, reason, share = await self._xmr_validator.validate(
+            miner_id=str(miner_id),
+            job_id=str(params.get("jobId") or params.get("job_id") or ""),
+            nonce_hex=str(params.get("nonce") or ""),
+            result_hex=str(params.get("result") or ""),
+        )
+        if not ok or share is None:
+            return {"accepted": False, "reason": reason}
+        await self._xmr_ledger.record(share)
+        if share.block_solved:
+            self._log.info(
+                "🎉 XMR block solved by miner=%s job=%s height=%s",
+                miner_id, share.job_id, getattr(self._xmr_jm.current_job, "height", "?"),
+            )
+            # Block-finder is responsible for submitting via monerod.
+            # We trigger an async submit so the wire response doesn't
+            # block on the RPC round-trip.
+            try:
+                job = self._xmr_jm.current_job
+                if job is not None and self._xmr_client is not None:
+                    # Splice the winning nonce into the full template blob
+                    # so the submit_block payload reflects the solved nonce.
+                    # The miner's blob mirrors the pool's blockhashing_blob;
+                    # we wrote the nonce into bytes [39:43] for hashing,
+                    # but submit_block wants the full blocktemplate_blob —
+                    # write the same 4 bytes at the same offset.
+                    blob = bytearray(job.blob)
+                    nonce_le = share.nonce.to_bytes(4, "little")
+                    blob[39:43] = nonce_le
+                    asyncio.create_task(
+                        self._xmr_client.submit_block(bytes(blob).hex())
+                    )
+            except Exception as exc:
+                self._log.warning("xmr submit_block dispatch failed: %s", exc)
+        return {
+            "accepted": True,
+            "reason": "ok",
+            "block_solved": share.block_solved,
+        }
 
     async def _aicf_dispatch_loop(self) -> None:
         """Periodically claim AICF jobs for each connected AICF-capable

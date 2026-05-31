@@ -2512,6 +2512,35 @@ def mine_blocks(
               "cores (minus one) so mining saturates the machine. Use a "
               "positive integer to cap.",
     ),
+    xmr: bool = typer.Option(
+        False,
+        "--xmr/--no-xmr",
+        help=(
+            "Dual-mine Monero (RandomX) alongside Animica SHA3, 50/50 thread "
+            "split. The pool's cryptonote port handles XMR shares; the same "
+            "anim1 address you mine with also accrues XMR earnings — set the "
+            "payout currency (xmr or anm) via POST /api/pool/xmr/register."
+        ),
+    ),
+    xmr_only: bool = typer.Option(
+        False,
+        "--xmr-only",
+        help="Skip Animica side and mine ONLY Monero through the pool's "
+             "cryptonote port. Implies --xmr.",
+    ),
+    xmrig_gpu: Optional[str] = typer.Option(
+        None,
+        "--xmrig-gpu",
+        help=(
+            "When dual-mining via xmrig (with --xmr / --xmr-only), pick the "
+            "GPU backend for xmrig: 'cuda' | 'opencl' | 'both'. Animica SHA3 "
+            "can use GPU via the xmrig CUDA scaffolding (may fall back to "
+            "CPU until the kernel lands). Monero RandomX is CPU-by-design — "
+            "GPU on the XMR side runs but at <10%% of equivalent CPU "
+            "hashrate. Different from --gpu, which only affects the Python "
+            "miner's local backend."
+        ),
+    ),
     allow_remote_rpc: bool = typer.Option(
         False,
         "--allow-remote-rpc",
@@ -2674,6 +2703,29 @@ def mine_blocks(
     # Propagate the AICF model / tier choice early so any AICF worker that
     # starts under our process tree picks it up.
     _apply_llm_flag(llm)
+
+    # XMR dual-mining short-circuit. When --xmr or --xmr-only is passed,
+    # mine-blocks transforms into a thin xmrig orchestrator (same as
+    # `animica miner dual-mine`) and never enters the Python miner loop.
+    # The user gets one command for both algos.
+    if xmr or xmr_only:
+        only_mode = "xmr" if xmr_only else None
+        addr_arg = address or address_opt
+        if not addr_arg:
+            typer.echo("--xmr requires a payout address (anim1…)", err=True)
+            raise typer.Exit(2)
+        return dual_mine(
+            address=addr_arg,
+            pool_host="pool.animica.org",
+            animica_port=3333,
+            xmr_port=3334,
+            threads=int(threads) if isinstance(threads, int) else 0,
+            xmrig_path="/root/animica/external/xmrig/build/xmrig-notls",
+            worker=None,
+            only=only_mode,
+            gpu=xmrig_gpu,
+        )
+
     # Note: This repository uses a custom stub implementation of Typer
     # (see python/typer/__init__.py) that doesn't automatically parse type annotations.
     # The stub Typer passes string values for integer options, so we need to convert manually.
@@ -4077,6 +4129,165 @@ def mine_blocks(
             uw_stop()
         except Exception:
             pass
+
+
+@app.command("dual-mine")
+def dual_mine(
+    address: str = typer.Argument(
+        ...,
+        help="Animica payout address (anim1…). Same address is used for XMR share credit; register XMR/ANM payout currency via the pool portal.",
+    ),
+    pool_host: str = typer.Option(
+        "pool.animica.org",
+        "--pool-host",
+        help="Pool hostname (animica port + cryptonote port both live here).",
+    ),
+    animica_port: int = typer.Option(
+        3333, "--animica-port",
+        help="Pool's Animica stratum port (SHA3 hashshare).",
+    ),
+    xmr_port: int = typer.Option(
+        3334, "--xmr-port",
+        help="Pool's Monero cryptonote port (RandomX).",
+    ),
+    threads: int = typer.Option(
+        0, "--threads",
+        help="Total CPU threads to allocate across BOTH algos. 0 = auto. "
+             "The launcher gives 50%% to each algo, rounded.",
+    ),
+    xmrig_path: str = typer.Option(
+        "/root/animica/external/xmrig/build/xmrig-notls",
+        "--xmrig-path",
+        help="Path to the Animica-fork xmrig binary (SHA3 support). The stock "
+             "xmrig used for the XMR side is auto-detected on PATH.",
+    ),
+    worker: Optional[str] = typer.Option(
+        None, "--worker",
+        help="Worker tag reported to both pools. Default: short hostname.",
+    ),
+    only: Optional[str] = typer.Option(
+        None, "--only",
+        help="Run a single algo only: 'animica' or 'xmr'. Useful when you "
+             "want pure-XMR mining (with the same 95/5 split + ANM payout "
+             "option) instead of dual mode.",
+    ),
+    gpu: Optional[str] = typer.Option(
+        None, "--gpu",
+        help=(
+            "GPU backend to use. 'cuda' for NVIDIA, 'opencl' for AMD/Intel, "
+            "'both' for both. Honest expectations: Animica SHA3 *can* benefit "
+            "from GPU (the xmrig fork has CUDA scaffolding that may still "
+            "fall back to CPU until the kernel lands). Monero RandomX is "
+            "CPU-by-design — passing --gpu on the XMR side starts the GPU "
+            "worker but expect <10%% of equivalent CPU hashrate. Most users "
+            "should leave this off."
+        ),
+    ),
+) -> None:
+    """Launch both Animica + Monero miners side-by-side.
+
+    Spawns two xmrig processes:
+      • Animica-fork xmrig → SHA3 hashshare on the Animica port.
+      • Stock xmrig (any modern build with RandomX) → cryptonote on the
+        pool's XMR port. The pool keeps a 5% fee on XMR blocks; the rest
+        is split among miners by share weight. To get paid in ANM
+        instead of XMR, POST your payout preference to
+        https://pool.animica.org/api/pool/xmr/register .
+
+    See `animica miner dual-mine --only xmr` for pure-Monero mode.
+    """
+    import os as _os
+    import shutil
+    import socket
+    import subprocess as _sp
+
+    if only and only not in ("animica", "xmr"):
+        typer.echo(f"--only must be 'animica' or 'xmr' (got {only!r})", err=True)
+        raise typer.Exit(2)
+
+    auto_threads = _os.cpu_count() or 4
+    total = threads if threads > 0 else auto_threads
+    worker_tag = worker or socket.gethostname().split(".")[0][:16]
+
+    procs: list = []
+
+    if only != "xmr":
+        if not _os.path.isfile(xmrig_path):
+            typer.echo(
+                f"Animica xmrig binary not found at {xmrig_path}. "
+                "Build it from /root/animica/external/xmrig/ or pass --xmrig-path.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        animica_threads = max(1, total if only == "animica" else total // 2)
+        animica_cmd = [
+            xmrig_path,
+            "--algo", "animica",
+            "--url", f"{pool_host}:{animica_port}",
+            "--user", f"{address}.{worker_tag}",
+            "--threads", str(animica_threads),
+            "--no-color",
+            "--keepalive",
+        ]
+        typer.echo(f"[dual-mine] starting animica miner: {' '.join(animica_cmd)}")
+        procs.append(_sp.Popen(animica_cmd))
+
+    if only != "animica":
+        stock_xmrig = shutil.which("xmrig")
+        if not stock_xmrig:
+            typer.echo(
+                "Stock xmrig not on PATH — install xmrig (https://xmrig.com/) "
+                "or symlink the Animica fork (it can do RandomX too with "
+                "--algo rx/0). Skipping XMR launch.",
+                err=True,
+            )
+            if not procs:
+                raise typer.Exit(1)
+        else:
+            xmr_threads = max(1, total if only == "xmr" else total - max(1, total // 2))
+            xmr_cmd = [
+                stock_xmrig,
+                "--algo", "rx/0",
+                "--url", f"{pool_host}:{xmr_port}",
+                "--user", f"{address}.{worker_tag}",
+                "--pass", "x",
+                "--threads", str(xmr_threads),
+                "--keepalive",
+                "--no-color",
+            ]
+            typer.echo(f"[dual-mine] starting xmr miner: {' '.join(xmr_cmd)}")
+            procs.append(_sp.Popen(xmr_cmd))
+
+    if not procs:
+        typer.echo("[dual-mine] nothing started", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"[dual-mine] {len(procs)} process(es) running. Ctrl-C to stop both."
+    )
+    try:
+        # Wait for any process to exit; if one dies, kill the rest.
+        while True:
+            for p in procs:
+                if p.poll() is not None:
+                    typer.echo(
+                        f"[dual-mine] process pid={p.pid} exited "
+                        f"with code {p.returncode}; stopping the rest.",
+                        err=True,
+                    )
+                    for other in procs:
+                        if other is not p and other.poll() is None:
+                            other.terminate()
+                    raise SystemExit(1)
+            import time as _time
+            _time.sleep(2.0)
+    except KeyboardInterrupt:
+        typer.echo("[dual-mine] interrupt — stopping miners")
+        for p in procs:
+            try:
+                p.terminate()
+            except Exception:
+                pass
 
 
 @app.command("credits")

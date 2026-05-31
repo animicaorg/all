@@ -31,6 +31,40 @@ import BaseLayout from "../layouts/BaseLayout.astro";
       </div>
     </div>
 
+    <h2 class="mt-12 text-xl font-semibold">Monero (dual-mining) · live</h2>
+    <p class="mt-1 text-sm text-ink-300">
+      Stock xmrig speaks cryptonote on port 3334. Pool keeps 5%, miners
+      get 95% via XMR transfer or ANM equivalent (set in
+      <a href="/downloads" class="underline">your miner config</a>).
+    </p>
+
+    <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">XMR active miners</div>
+        <div id="xmr-miners" class="mt-2 text-2xl font-semibold font-mono">…</div>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">XMR blocks found</div>
+        <div id="xmr-blocks" class="mt-2 text-2xl font-semibold font-mono">…</div>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">monerod sync</div>
+        <div id="xmr-sync" class="mt-2 text-2xl font-semibold font-mono">…</div>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div class="text-xs uppercase tracking-wide text-ink-300">Current job height</div>
+        <div id="xmr-job-height" class="mt-2 text-2xl font-semibold font-mono">…</div>
+      </div>
+    </div>
+
+    <div class="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+      <header class="flex items-baseline justify-between mb-4">
+        <h3 class="text-lg font-semibold">Recent XMR blocks · 24h</h3>
+        <span class="text-xs uppercase text-ink-300 tracking-wide">95/5 split</span>
+      </header>
+      <div id="xmr-recent" class="text-sm text-ink-200 font-mono space-y-1">…</div>
+    </div>
+
     <div class="mt-12 grid lg:grid-cols-2 gap-6">
       <section class="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
         <header class="flex items-baseline justify-between mb-4">
@@ -93,6 +127,41 @@ import BaseLayout from "../layouts/BaseLayout.astro";
           if (el) el.innerHTML = tierRows.join('') || '<div class="text-ink-400">no jobs in window</div>';
         }
       } catch (e) { console.warn('[pool-web] aicf api unreachable', e); }
+
+      // Monero (XMR) stats — populated from the same pool API
+      try {
+        const r = await fetch(`${miningApi}/api/pool/xmr/summary`);
+        if (r.ok) {
+          const j = await r.json();
+          set('xmr-miners', fmt(j.active_miners));
+          set('xmr-blocks', fmt(j.blocks_found));
+          if (j.monerod_target > 0) {
+            const pct = (100 * j.monerod_height / j.monerod_target).toFixed(1);
+            set('xmr-sync',
+              j.monerod_synced ? 'synced ✓'
+                               : `${pct}% (${j.monerod_height.toLocaleString()})`);
+          } else {
+            set('xmr-sync', j.enabled ? 'waiting' : 'disabled');
+          }
+          set('xmr-job-height', j.current_height ? fmt(j.current_height) : '—');
+        }
+      } catch (e) { console.warn('[pool-web] xmr api unreachable', e); }
+
+      try {
+        const r = await fetch(`${miningApi}/api/pool/xmr/blocks?limit=10`);
+        if (r.ok) {
+          const j = await r.json();
+          const blocks = (j.blocks || []).slice(0, 10);
+          const el = document.getElementById('xmr-recent');
+          if (el) el.innerHTML = blocks.length
+            ? blocks.map(b => {
+                const reward = (b.monero_block_reward_atomic || 0) / 1e12;
+                const minerCount = Object.keys(b.miner_credits_atomic || {}).length;
+                return `<div class="flex justify-between gap-2"><span>#${b.monero_block_height}</span><span class="text-ink-400">${reward.toFixed(6)} XMR</span><span class="text-amber-400">${minerCount} miners</span></div>`;
+              }).join('')
+            : '<div class="text-ink-400">no xmr blocks yet (waiting for monerod sync + block discovery)</div>';
+        }
+      } catch (e) { console.warn('[pool-web] xmr blocks api unreachable', e); }
     })();
   </script>
 </BaseLayout>

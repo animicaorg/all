@@ -60,6 +60,164 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
     async def pool_accounting_ledger(limit: int = Query(100, ge=1, le=500)):
         return metrics.accounting_ledger(limit=limit)
 
+    # --- Monero (XMR) dual-mining stats -----------------------------------
+    # These endpoints expose the parallel RandomX pool the dual-miner uses.
+    # When XMR mining is disabled (ANIMICA_POOL_XMR_ENABLED!=1) they return
+    # zeros / empty so the portal UI can show "0 active miners".
+
+    @app.get("/api/pool/xmr/summary")
+    async def xmr_summary():
+        ref = getattr(metrics, "xmr_handles", lambda: None)()
+        if not ref:
+            return {
+                "enabled": False,
+                "monerod_height": 0,
+                "monerod_target": 0,
+                "monerod_synced": False,
+                "active_miners": 0,
+                "blocks_found": 0,
+                "current_seed_hash": None,
+                "current_height": 0,
+                "pool_fee_address": None,
+                "pool_fee_bps": 500,
+            }
+        ledger = ref.get("ledger")
+        jm = ref.get("job_manager")
+        cn = ref.get("cryptonote_server")
+        monerod_info: Dict[str, Any] = {}
+        client = ref.get("client")
+        if client is not None:
+            try:
+                monerod_info = await client.get_info()
+            except Exception:
+                monerod_info = {}
+        stats_l = await ledger.stats() if ledger else {}
+        cn_stats = cn.stats() if cn else {"sessions": 0, "miners": []}
+        cur_job = jm.current_job if jm else None
+        return {
+            "enabled": True,
+            "monerod_height": int(monerod_info.get("height") or 0),
+            "monerod_target": int(monerod_info.get("target_height") or 0),
+            "monerod_synced": bool(monerod_info.get("synchronized") or False),
+            "active_miners": int(cn_stats.get("sessions", 0)),
+            "miner_addresses": cn_stats.get("miners", []),
+            "blocks_found": int(stats_l.get("blocks_found", 0)),
+            "current_seed_hash": (cur_job.seed_hash.hex() if cur_job else None),
+            "current_height": int(cur_job.height) if cur_job else 0,
+            "pool_fee_address": ref.get("pool_fee_address"),
+            "pool_fee_bps": 500,
+            "ledger": stats_l,
+        }
+
+    @app.get("/api/pool/xmr/blocks")
+    async def xmr_blocks(limit: int = Query(50, ge=1, le=500)):
+        """List recent XMR blocks the pool found (most recent first)."""
+        try:
+            from animica.stratum_pool.xmr_payouts import DEFAULT_LEDGER_PATH
+            from pathlib import Path
+            entries: list = []
+            path = Path(DEFAULT_LEDGER_PATH)
+            if path.exists():
+                with path.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            import json as _json
+                            entries.append(_json.loads(line))
+                        except Exception:
+                            continue
+            entries.sort(
+                key=lambda e: e.get("monero_block_height", 0), reverse=True
+            )
+            return {"blocks": entries[:limit], "total": len(entries)}
+        except Exception as exc:
+            return {"blocks": [], "total": 0, "error": str(exc)}
+
+    @app.post("/api/pool/xmr/register")
+    async def xmr_register(payload: Dict[str, Any]):
+        """Register a miner's payout preference.
+
+        Body:
+          {
+            "animica_address": "anim1...",
+            "payout_currency": "xmr" | "anm",
+            "xmr_address": "4... or 8..."   # required when currency=xmr
+          }
+
+        No on-chain signature required for now — the registration is
+        only USED at payout time, and the worst case is that a malicious
+        actor redirects another miner's earnings to themselves. We'll
+        add bech32 signature verification once `animica wallet sign-msg`
+        is wired up.
+        """
+        from animica.stratum_pool.xmr_payouts import (
+            load_registry, save_registry,
+        )
+        import re as _re
+
+        anim1 = str(payload.get("animica_address") or "").strip()
+        ccy = str(payload.get("payout_currency") or "xmr").strip().lower()
+        xmr = str(payload.get("xmr_address") or "").strip()
+
+        if not _re.match(r"^anim1[0-9a-z]{30,}$", anim1):
+            raise HTTPException(status_code=400,
+                                detail="animica_address must be bech32 anim1…")
+        if ccy not in ("xmr", "anm"):
+            raise HTTPException(status_code=400,
+                                detail="payout_currency must be 'xmr' or 'anm'")
+        if ccy == "xmr":
+            # Monero addresses are 95 chars (standard) or 106 (integrated)
+            if not (_re.match(r"^[48][0-9A-HJ-NP-Za-km-z]{94,105}$", xmr)):
+                raise HTTPException(
+                    status_code=400,
+                    detail="xmr_address must be a Monero primary/integrated address",
+                )
+
+        reg = load_registry()
+        reg[anim1] = {
+            "xmr_address": xmr if ccy == "xmr" else "",
+            "payout_currency": ccy,
+        }
+        save_registry(reg)
+        return {
+            "ok": True,
+            "animica_address": anim1,
+            "payout_currency": ccy,
+            "registered_count": len(reg),
+        }
+
+    @app.get("/api/pool/xmr/miner/{anim1_address}")
+    async def xmr_miner(anim1_address: str):
+        """Aggregated XMR earnings for a single miner address."""
+        from animica.stratum_pool.xmr_payouts import (
+            DEFAULT_LEDGER_PATH, _load_jsonl, load_registry,
+        )
+        entries = _load_jsonl(DEFAULT_LEDGER_PATH)
+        registry = load_registry()
+        owed_atomic = 0
+        paid_atomic = 0
+        block_count = 0
+        for e in entries:
+            credits = e.get("miner_credits_atomic", {})
+            if anim1_address in credits:
+                amt = int(credits[anim1_address])
+                if anim1_address in e.get("paid_anim1", []):
+                    paid_atomic += amt
+                else:
+                    owed_atomic += amt
+                block_count += 1
+        return {
+            "anim1_address": anim1_address,
+            "owed_atomic": owed_atomic,
+            "paid_atomic": paid_atomic,
+            "owed_xmr": owed_atomic / 1e12,
+            "paid_xmr": paid_atomic / 1e12,
+            "block_count_contributed_to": block_count,
+            "registered_xmr_address": registry.get(anim1_address),
+        }
+
     @app.get("/healthz")
     async def health():
         return metrics.health()

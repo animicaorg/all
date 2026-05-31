@@ -182,6 +182,13 @@ class Method(str, Enum):
     # project memory note.
     AICF_NOTIFY = "mining.aicf.notify"
     AICF_SUBMIT = "mining.aicf.submit"
+    # Monero (RandomX) dual-mining. The pool pushes XMR_NOTIFY with a
+    # Monero block template; the patched xmrig fork running --dual-mode
+    # consumes it on whichever threads are time-slicing RandomX. Shares
+    # come back via XMR_SUBMIT. See python/animica/stratum_pool/xmr.py
+    # for the pool-side job manager and RandomX share validator.
+    XMR_NOTIFY = "mining.notify_xmr"
+    XMR_SUBMIT = "mining.submit_xmr"
 
 
 # ---------------------- Dataclasses (schema) ----------------------

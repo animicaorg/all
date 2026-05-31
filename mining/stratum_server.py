@@ -343,6 +343,13 @@ class StratumServer:
         on_aicf_result: Optional[
             Callable[[Session, JSON], Awaitable[JSON]]
         ] = None,
+        # Fired when a miner sends mining.submit_xmr with a Monero share.
+        # Returns {accepted, reason, block_solved} which is shipped back.
+        # See python/animica/stratum_pool/xmr.py XmrShareValidator.validate
+        # for the canonical share-acceptance logic.
+        on_xmr_result: Optional[
+            Callable[[Session, JSON], Awaitable[JSON]]
+        ] = None,
         pool_mode: str = "pps",
         session_vardiff_enabled: bool = True,
     ) -> None:
@@ -364,6 +371,7 @@ class StratumServer:
         self._submit_hook = submit_hook
         self._on_worker_authorized = on_worker_authorized
         self._on_aicf_result = on_aicf_result
+        self._on_xmr_result = on_xmr_result
         self._pool_mode = _normalize_pool_mode(
             pool_mode, default="pps", allow_both=True
         )
@@ -524,6 +532,56 @@ class StratumServer:
             job_id, tier, worker_address,
         )
         return True
+
+    async def push_xmr_job(
+        self,
+        *,
+        job_id: str,
+        blob_hex: str,
+        target_hex: str,
+        seed_hash_hex: str,
+        height: int,
+    ) -> int:
+        """Broadcast a Monero (RandomX) job to every authorized session
+        whose feature negotiation included dual-mode XMR.
+
+        Returns the number of sessions notified. The wire shape mirrors
+        XMRig's "login" response: {job_id, blob, target, seed_hash,
+        height, algo: "rx/0"}.
+        """
+        payload = {
+            "jsonrpc": "2.0",
+            "method": Method.XMR_NOTIFY.value,
+            "params": {
+                "jobId": job_id,
+                "blob": blob_hex,
+                "target": target_hex,
+                "seed_hash": seed_hash_hex,
+                "height": height,
+                "algo": "rx/0",
+            },
+        }
+        sent = 0
+        for sess in list(self._sessions.values()):
+            if not sess.authorized:
+                continue
+            features = getattr(sess, "subscribed_features", None) or {}
+            if not features.get("xmr_dual"):
+                continue
+            try:
+                await self._send(sess, payload)
+                sent += 1
+            except Exception as exc:
+                log.warning(
+                    "[Stratum] xmr notify drop session=%s: %s",
+                    sess.session_id, exc,
+                )
+        if sent > 0:
+            log.info(
+                "[Stratum] xmr.notify job=%s height=%d sessions=%d",
+                job_id, height, sent,
+            )
+        return sent
 
     async def publish_job(
         self,
@@ -1399,6 +1457,63 @@ class StratumServer:
             reason = relay_result.get("reason")
             await self._send(session, res_aicf_submit(id_val, accepted,
                                                       state=state, reason=reason))
+
+        elif method == Method.XMR_NOTIFY:
+            await self._send(
+                session,
+                make_error(
+                    id_val, RpcErrorCodes.INVALID_REQUEST,
+                    "mining.notify_xmr is server-push only",
+                ),
+            )
+
+        elif method == Method.XMR_SUBMIT:
+            if not session.authorized:
+                await self._send(
+                    session,
+                    make_error(id_val, RpcErrorCodes.UNAUTHORIZED, "not authorized"),
+                )
+                return
+            if self._on_xmr_result is None:
+                await self._send(
+                    session,
+                    make_error(
+                        id_val, RpcErrorCodes.METHOD_NOT_FOUND,
+                        "XMR mining not enabled on this pool",
+                    ),
+                )
+                return
+            job_id = str(params.get("jobId") or params.get("job_id") or "")
+            nonce_hex = str(params.get("nonce") or "")
+            result_hex = str(params.get("result") or "")
+            if not job_id or not nonce_hex or not result_hex:
+                await self._send(
+                    session,
+                    make_error(
+                        id_val, RpcErrorCodes.INVALID_PARAMS,
+                        "submit_xmr requires jobId, nonce, result",
+                    ),
+                )
+                return
+            try:
+                relay_result = await self._on_xmr_result(session, dict(params))
+            except Exception as exc:
+                log.warning(
+                    f"[Stratum] submit_xmr relay failed job={job_id}: {exc}"
+                )
+                await self._send(
+                    session,
+                    make_error(id_val, RpcErrorCodes.INTERNAL_ERROR, str(exc)),
+                )
+                return
+            await self._send(
+                session,
+                make_result(id_val, {
+                    "accepted": bool(relay_result.get("accepted")),
+                    "reason": relay_result.get("reason"),
+                    "block_solved": bool(relay_result.get("block_solved", False)),
+                }),
+            )
 
         else:  # pragma: no cover - exhaustive enum
             await self._send(
