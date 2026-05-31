@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 from typing import Optional
 
 import uvicorn
@@ -185,6 +186,23 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
         server = StratumPoolServer(adapter, config, job_manager, logger=logger)
         metrics = PoolMetrics(config, job_manager, server.stratum)
         server.set_submit_hook(metrics.record_share)
+        # Expose XMR handles to the API so /api/pool/xmr/summary can
+        # answer with live status. The pool server starts its XMR
+        # subsystem lazily inside .start() — so we attach a callable
+        # rather than a snapshot.
+        def _xmr_handles():
+            if not getattr(server, "_xmr_enabled", False):
+                return None
+            return {
+                "client": server._xmr_client,
+                "job_manager": server._xmr_jm,
+                "ledger": server._xmr_ledger,
+                "cryptonote_server": server._xmr_stratum,
+                "pool_fee_address": (
+                    os.environ.get("ANIMICA_POOL_XMR_ADDRESS") or None
+                ),
+            }
+        metrics.xmr_handles = _xmr_handles  # type: ignore[attr-defined]
     if config.profile.startswith("asic"):
         server.stratum.set_submit_hook(metrics.record_share)
     api_app = create_app(metrics)

@@ -33,10 +33,17 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
     <h2 class="mt-12 text-xl font-semibold">Monero (dual-mining) · live</h2>
     <p class="mt-1 text-sm text-ink-300">
-      Stock xmrig speaks cryptonote on port 3334. Pool keeps 5%, miners
-      get 95% via XMR transfer or ANM equivalent (set in
-      <a href="/downloads" class="underline">your miner config</a>).
+      Single-port: stock xmrig connects on the same stratum port as
+      Animica (3333). Pool sniffs the protocol from the first message.
+      Pool keeps 5%, miners get 95% in XMR or equivalent ANM (set via
+      <code class="text-amber-400">/api/pool/xmr/register</code>).
+      &nbsp;<a href="/MINING_XMR.md" class="underline">Setup guide →</a>
     </p>
+    <div id="xmr-sync-banner" class="hidden mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+      monerod is still syncing — XMR job pushes start once it catches
+      up. Miners can connect now but will get "job not ready" until
+      sync completes.
+    </div>
 
     <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <div class="rounded-xl border border-white/10 bg-white/[0.03] p-5">
@@ -140,6 +147,9 @@ import BaseLayout from "../layouts/BaseLayout.astro";
             set('xmr-sync',
               j.monerod_synced ? 'synced ✓'
                                : `${pct}% (${j.monerod_height.toLocaleString()})`);
+            // Toggle the syncing-warning banner
+            const banner = document.getElementById('xmr-sync-banner');
+            if (banner) banner.classList.toggle('hidden', !!j.monerod_synced);
           } else {
             set('xmr-sync', j.enabled ? 'waiting' : 'disabled');
           }

@@ -284,6 +284,62 @@ class ShareValidator:
         return True, None, bool(decision.is_block), 0
 
 
+class _ReplayReader:
+    """asyncio.StreamReader-compatible wrapper that prepends an already-
+    consumed byte string before delegating to the underlying reader.
+
+    Used by the single-port protocol-detect handoff in
+    StratumServer._handle_client: we sniffed the first line off the wire
+    to decide whether to route to Animica or cryptonote, but any bytes
+    that arrived in the same read() AFTER the first newline still belong
+    to the connection. The cryptonote handler gets a feeder that yields
+    those leftover bytes first, then transparently forwards.
+    """
+
+    def __init__(self, leftover: bytes, inner: asyncio.StreamReader) -> None:
+        self._leftover = bytearray(leftover)
+        self._inner = inner
+
+    async def readline(self) -> bytes:
+        if self._leftover:
+            nl = self._leftover.find(b"\n")
+            if nl != -1:
+                line = bytes(self._leftover[: nl + 1])
+                del self._leftover[: nl + 1]
+                return line
+            # No newline in leftover yet; pull more
+            try:
+                more = await self._inner.readline()
+            except Exception:
+                more = b""
+            if not more:
+                # Connection closed before a full line — return what we have
+                line = bytes(self._leftover)
+                self._leftover.clear()
+                return line
+            line = bytes(self._leftover) + more
+            self._leftover.clear()
+            return line
+        return await self._inner.readline()
+
+    async def read(self, n: int = -1) -> bytes:
+        if self._leftover:
+            if n < 0 or n >= len(self._leftover):
+                out = bytes(self._leftover)
+                self._leftover.clear()
+                if n < 0:
+                    out += await self._inner.read(n)
+                else:
+                    remaining = n - len(out)
+                    if remaining > 0:
+                        out += await self._inner.read(remaining)
+                return out
+            out = bytes(self._leftover[:n])
+            del self._leftover[:n]
+            return out
+        return await self._inner.read(n)
+
+
 # --------------------------------------------------------------------------------------
 # Stratum Server
 # --------------------------------------------------------------------------------------
@@ -350,6 +406,25 @@ class StratumServer:
         on_xmr_result: Optional[
             Callable[[Session, JSON], Awaitable[JSON]]
         ] = None,
+        # Optional handoff for cryptonote pool protocol (Monero/RandomX
+        # stock xmrig clients). When the very first inbound JSON message
+        # is `{"method":"login", ...}` the server delegates the entire
+        # connection to this callback (the Animica session is abandoned
+        # before authorize). This lets ONE TCP port serve both Animica
+        # stratum-v1 AND cryptonote miners — the protocol is detected
+        # from the first message. See
+        # python/animica/stratum_pool/xmr_stratum.py for the canonical
+        # cryptonote handler the pool wires here.
+        cryptonote_handler: Optional[
+            Callable[
+                [
+                    asyncio.StreamReader,
+                    asyncio.StreamWriter,
+                    JSON,  # the already-parsed login message
+                ],
+                Awaitable[None],
+            ]
+        ] = None,
         pool_mode: str = "pps",
         session_vardiff_enabled: bool = True,
     ) -> None:
@@ -372,6 +447,7 @@ class StratumServer:
         self._on_worker_authorized = on_worker_authorized
         self._on_aicf_result = on_aicf_result
         self._on_xmr_result = on_xmr_result
+        self._cryptonote_handler = cryptonote_handler
         self._pool_mode = _normalize_pool_mode(
             pool_mode, default="pps", allow_both=True
         )
@@ -1039,15 +1115,85 @@ class StratumServer:
         self._conn_tasks[task] = None
         log.info(f"[Stratum] client connected {peer}")
 
+        # ── protocol detection ──────────────────────────────────────────
+        # Sniff the first line. If it's `{"method":"login", ...}` this is
+        # a cryptonote pool client (stock xmrig speaking the Monero pool
+        # protocol) and we hand the connection off to the cryptonote
+        # handler. Otherwise the regular Animica stratum-v1 flow takes
+        # over. Lets ONE port serve both algos.
+        if self._cryptonote_handler is not None:
+            preview_buf = bytearray()
+            try:
+                while b"\n" not in preview_buf and len(preview_buf) < 8192:
+                    chunk = await asyncio.wait_for(
+                        reader.read(4096), timeout=10.0
+                    )
+                    if not chunk:
+                        break
+                    preview_buf.extend(chunk)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                preview_buf = bytearray()
+
+            if preview_buf:
+                # Try to parse the first line as JSON
+                nl = preview_buf.find(b"\n")
+                first_line = bytes(preview_buf[:nl]) if nl != -1 else bytes(preview_buf)
+                try:
+                    first_obj = json.loads(first_line.decode("utf-8").strip())
+                except Exception:
+                    first_obj = None
+                if isinstance(first_obj, dict) and first_obj.get("method") == "login":
+                    # Cryptonote handoff. Build a feeder reader that
+                    # replays the bytes we already consumed (the rest of
+                    # preview_buf after the first newline, if any), then
+                    # streams from the original reader.
+                    leftover = bytes(preview_buf[nl + 1:]) if nl != -1 else b""
+                    feeder = _ReplayReader(leftover, reader)
+                    log.info(
+                        "[Stratum] %s spoke cryptonote on first line — "
+                        "handing off to xmr handler", peer,
+                    )
+                    try:
+                        await self._cryptonote_handler(feeder, writer, first_obj)
+                    finally:
+                        try:
+                            writer.close()
+                            await writer.wait_closed()
+                        except Exception:
+                            pass
+                        self._conn_tasks.pop(task, None)
+                    return
+
+                # Not cryptonote — feed the preview bytes back into the
+                # normal Animica pipeline so we don't lose the
+                # mining.subscribe / authorize that already arrived.
+                preserved = bytes(preview_buf)
+            else:
+                preserved = b""
+        else:
+            preserved = b""
+
         # Before subscribe, assume line framing; can be changed after subscribe
         session = self._alloc_session(writer, framing="lines")
-        buf = bytearray()
+        buf = bytearray(preserved)
         hb_task: Optional[asyncio.Task] = None
 
         try:
             if self._keepalive_secs > 0:
                 hb_task = asyncio.create_task(self._session_heartbeat(session))
                 self._heartbeats[session.session_id] = hb_task
+
+            # If we consumed preview bytes that contained complete lines,
+            # process them now before reading more from the socket.
+            if preserved:
+                try:
+                    decoded = decode_lines(buf)
+                except Exception:
+                    decoded = []
+                for obj in decoded:
+                    await self._process_message(session, obj)
 
             while True:
                 chunk = await reader.read(65536)

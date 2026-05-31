@@ -200,13 +200,31 @@ class XmrStratumServer:
         sess.agent = agent
         job = self._jm.current_job
         job_payload = self._serialize_job_for_session(job, sess) if job else None
+        if not job_payload:
+            # We have no XMR job to give yet — typically monerod is still
+            # syncing. Stock xmrig handles a soft error here cleanly:
+            # it logs the message, sleeps a few seconds, retries. That's
+            # MUCH better UX than accepting login then never pushing a
+            # job (which makes xmrig think it's stuck and spam-reconnect).
+            await self._send(sess, {
+                "id": msg_id, "jsonrpc": "2.0",
+                "error": {
+                    "code": -1,
+                    "message": (
+                        "XMR job not ready — monerod still syncing or "
+                        "no template yet. Pool will accept connections "
+                        "once the daemon catches up."
+                    ),
+                },
+            })
+            sess.closed = True
+            return
         result = {
             "id": sess.session_id,
             "status": "OK",
+            "job": job_payload,
         }
-        if job_payload:
-            result["job"] = job_payload
-            sess.last_job_id = job_payload.get("job_id")
+        sess.last_job_id = job_payload.get("job_id")
         await self._send(sess, {"id": msg_id, "jsonrpc": "2.0", "result": result})
         _LOG.info("xmr login: session=%s addr=%s worker=%s agent=%s",
                   sess.session_id, address[:24] + "...", worker, agent[:32])

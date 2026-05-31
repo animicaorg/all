@@ -128,6 +128,7 @@ class StratumPoolServer:
             on_worker_authorized=self._register_aicf_worker,
             on_aicf_result=self._handle_aicf_result,
             on_xmr_result=self._handle_xmr_result,
+            cryptonote_handler=self._handle_cryptonote_takeover,
             pool_mode=config.pool_mode,
         )
         # XMR (Monero RandomX) dual-mining infrastructure. Initialised
@@ -407,33 +408,119 @@ class StratumPoolServer:
                 self._log.warning("xmr broadcast failed: %s", exc, exc_info=False)
         jm.subscribe(_broadcast)
 
-        # Cryptonote pool port — stock xmrig connects here for RandomX
-        # work. Defaults to 3334 (one above the animica port). The
-        # primary Stratum port stays animica-only so legacy miners aren't
-        # disturbed by the dual-mining rollout.
-        xmr_port = int(os.environ.get("ANIMICA_POOL_XMR_PORT", "3334"))
-        xmr_host = os.environ.get("ANIMICA_POOL_XMR_HOST", self._config.host)
-        try:
-            from animica.stratum_pool.xmr_stratum import XmrStratumServer
-            stratum_xmr = XmrStratumServer(
-                host=xmr_host, port=xmr_port,
-                job_manager=jm, validator=validator, ledger=ledger,
+        # Cryptonote pool handler. We always build the XmrStratumServer
+        # object — it's the share/session bookkeeping used by the
+        # single-port protocol-detect handoff. Optionally we ALSO bind
+        # a dedicated TCP port (env-gated) for operators who want a
+        # separate-port deployment, but the default is single-port
+        # (everything on the existing Animica stratum port).
+        from animica.stratum_pool.xmr_stratum import XmrStratumServer
+        sep_port_env = os.environ.get("ANIMICA_POOL_XMR_PORT", "").strip()
+        sep_port = int(sep_port_env) if sep_port_env else 0
+        bind_host = os.environ.get("ANIMICA_POOL_XMR_HOST", self._config.host)
+        # host/port=0 means "single-port mode" — no separate listener;
+        # the cryptonote_handler callback handles takeovers on the
+        # Animica port.
+        stratum_xmr = XmrStratumServer(
+            host=bind_host, port=sep_port or 0,
+            job_manager=jm, validator=validator, ledger=ledger,
+        )
+        if sep_port > 0:
+            try:
+                await stratum_xmr.start()
+                self._log.info(
+                    "XMR separate-port mode: cryptonote on %s:%d", bind_host, sep_port,
+                )
+            except Exception as exc:
+                self._log.warning(
+                    "XMR separate-port listener failed on %s:%d (%s); "
+                    "miners can still connect via the Animica port using "
+                    "cryptonote pool protocol — protocol detection routes "
+                    "them to the same handler.",
+                    bind_host, sep_port, exc,
+                )
+        else:
+            self._log.info(
+                "XMR single-port mode: cryptonote login routes through the "
+                "Animica stratum port (no separate TCP listener)."
             )
-            await stratum_xmr.start()
-            self._xmr_stratum = stratum_xmr
-        except Exception as exc:
-            self._log.warning(
-                "XMR cryptonote stratum failed to start on %s:%d (%s); "
-                "monerod-side XMR mining will still work via push_xmr_job "
-                "on the existing port, but stock xmrig users cannot connect.",
-                xmr_host, xmr_port, exc,
-            )
+        self._xmr_stratum = stratum_xmr
 
         await jm.start()
         self._log.info(
-            "XMR dual-mining enabled; pool fee → %s ; cryptonote port=%d",
-            addr, xmr_port,
+            "XMR dual-mining enabled; pool fee → %s ; cryptonote mode=%s",
+            addr,
+            f"sep:{sep_port}" if sep_port > 0 else "single-port (animica port)",
         )
+
+    async def _handle_cryptonote_takeover(
+        self, reader, writer, first_msg: dict,
+    ) -> None:
+        """Single-port handoff. The Animica stratum sniffed a cryptonote
+        `login` on the first inbound line and handed the connection here.
+        We adopt the same handler logic XmrStratumServer uses, but reuse
+        the existing reader/writer (no new TCP accept).
+        """
+        if not self._xmr_enabled or self._xmr_stratum is None:
+            # XMR disabled at this pool — politely reject so the miner
+            # can switch ports/pools without confusion.
+            try:
+                import json as _json
+                writer.write((_json.dumps({
+                    "id": first_msg.get("id"),
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -1,
+                        "message": "this pool isn't running Monero (XMR) mining yet",
+                    },
+                }) + "\n").encode("utf-8"))
+                await writer.drain()
+            except Exception:
+                pass
+            return
+        # Re-feed the login message into the cryptonote session handler.
+        # XmrStratumServer._handle_client expects to readline() the login
+        # itself, so wrap the leftover reader with one more replay layer
+        # that re-emits the JSON-serialized first_msg first.
+        import json as _json
+        from animica.stratum_pool.xmr_stratum import XmrSession
+        import secrets as _secrets
+
+        # Build a minimal session and dispatch as if the line had just
+        # arrived. We bypass the per-connection accept-loop and drive
+        # the same _dispatch logic.
+        session_id = _secrets.token_hex(8)
+        sess = XmrSession(session_id=session_id, writer=writer)
+        async with self._xmr_stratum._lock:
+            self._xmr_stratum._sessions[session_id] = sess
+        self._log.info(
+            "xmr session %s adopted from animica port (single-port mode)",
+            session_id,
+        )
+        try:
+            # Process the login we already parsed
+            await self._xmr_stratum._dispatch(sess, first_msg)
+            # Then continue reading from the wire
+            while not sess.closed:
+                line = await reader.readline()
+                if not line:
+                    break
+                try:
+                    msg = _json.loads(line.decode("utf-8").strip())
+                except Exception:
+                    continue
+                await self._xmr_stratum._dispatch(sess, msg)
+        except Exception as exc:
+            self._log.warning("xmr single-port session %s error: %s",
+                              session_id, exc, exc_info=False)
+        finally:
+            sess.closed = True
+            async with self._xmr_stratum._lock:
+                self._xmr_stratum._sessions.pop(session_id, None)
+            self._log.info(
+                "xmr single-port session %s closed (accepted=%d rejected=%d)",
+                session_id, sess.shares_accepted, sess.shares_rejected,
+            )
 
     async def _handle_xmr_result(self, session: object, params: dict) -> dict:
         """Called by mining.stratum_server when a miner sends submit_xmr.

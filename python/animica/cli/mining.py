@@ -2718,7 +2718,7 @@ def mine_blocks(
             address=addr_arg,
             pool_host="pool.animica.org",
             animica_port=3333,
-            xmr_port=3334,
+            xmr_port=3333,
             threads=int(threads) if isinstance(threads, int) else 0,
             xmrig_path="/root/animica/external/xmrig/build/xmrig-notls",
             worker=None,
@@ -4147,8 +4147,13 @@ def dual_mine(
         help="Pool's Animica stratum port (SHA3 hashshare).",
     ),
     xmr_port: int = typer.Option(
-        3334, "--xmr-port",
-        help="Pool's Monero cryptonote port (RandomX).",
+        3333, "--xmr-port",
+        help=(
+            "Pool port for the Monero cryptonote stratum. Defaults to "
+            "the same port as Animica — the pool sniffs the first JSON "
+            "message and routes by protocol. Pass a different port only "
+            "if your pool runs separate-port mode."
+        ),
     ),
     threads: int = typer.Option(
         0, "--threads",
