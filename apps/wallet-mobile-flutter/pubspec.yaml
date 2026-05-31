@@ -41,6 +41,12 @@ dependencies:
   pointycastle: ^3.9.1
   cbor: ^6.2.0
 
+  # JS runtime for the noble/post-quantum ML-DSA-65 bundle. There is no
+  # pure-Dart FIPS 204 impl that's byte-compatible with the chain's
+  # verifier; we ship the same noble TS the browser extension uses
+  # (40 KB, IIFE bundle, MIT) and call it via QuickJS / JavaScriptCore.
+  flutter_js: ^0.8.7
+
   # Open external URLs (e.g. buy.animica.org checkout)
   url_launcher: ^6.3.0
 
@@ -63,3 +69,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/
+    - assets/js/

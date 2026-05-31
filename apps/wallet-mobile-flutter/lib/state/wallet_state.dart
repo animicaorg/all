@@ -4,9 +4,12 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'dart:math' as math;
+
 import '../constants.dart';
 import '../models/account.dart';
 import '../services/keys.dart';
+import '../services/ml_dsa_65.dart';
 import '../services/rpc.dart';
 import 'auth_state.dart';
 
@@ -28,6 +31,24 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
     // Don't try to decrypt a configured vault without the key.
     if (auth != null && auth.configured && !auth.unlocked) return const [];
     return vault.load();
+  }
+
+  /// Create a new ML-DSA-65 (FIPS 204) account — chain v2 default.
+  Future<Account> createMlDsa65Account(String label) async {
+    final rnd = math.Random.secure();
+    final seed = Uint8List.fromList(
+      List<int>.generate(MlDsa65.seedLen, (_) => rnd.nextInt(256)),
+    );
+    final kp = await MlDsa65.keygen(seed);
+    final acc = Account(
+      label: label,
+      algId: AnimicaConfig.algIdMlDsa65,
+      publicKey: kp.publicKey,
+      secretKey: kp.secretKey,
+    );
+    await ref.read(vaultProvider).add(acc);
+    state = AsyncData([...?state.value, acc]);
+    return acc;
   }
 
   Future<Account> createSphincsAccount(String label) async {

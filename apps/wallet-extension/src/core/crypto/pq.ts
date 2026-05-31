@@ -16,6 +16,7 @@
  */
 
 import { sha3_256, sha3_512, shake_256 } from 'js-sha3';
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { hexToBytes as safeHexToBytes, bytesToHex as safeBytesToHex, bytesToHexRaw } from './convert';
 
 export const DILITHIUM3_ALG_ID = 0x1001; // 4097 — DEPRECATED commitment stub
@@ -61,7 +62,39 @@ export const ML_DSA_65_SIGNATURE_SIZE = 3309;
  * uses that flag). Dilithium3 keygen requires the real ML-DSA-65
  * reference impl which isn't ported to TypeScript yet.
  */
+/**
+ * Generate a new wallet keypair. Defaults to ML-DSA-65 (chain v2, alg_id
+ * 0x1003) — real FIPS 204 lattice signatures via the @noble/post-quantum
+ * pure-JS reference (vendored under apps/wallet-extension's node_modules,
+ * MIT-licensed, no native bindings).
+ *
+ * The legacy SPHINCS-SHAKE-128s commitment-stub keygen is still reachable
+ * via `generateLegacyStubKeyPair()` for one-time recovery flows; new
+ * wallets must not use it (the chain accepts those sigs only because the
+ * commitment stub is forgeable — see pq/alg_ids.yaml 0x1002 deprecation).
+ */
 export function generateKeyPair(): {
+  publicKey: Uint8Array;
+  secretKey: Uint8Array;
+  algId: number;
+} {
+  const seed = new Uint8Array(32);
+  crypto.getRandomValues(seed);
+  const kp = ml_dsa65.keygen(seed);
+  return {
+    publicKey: kp.publicKey,
+    secretKey: kp.secretKey,
+    algId: ML_DSA_65_ALG_ID,
+  };
+}
+
+/**
+ * Legacy SPHINCS-SHAKE-128s "keygen" — produces a 64-byte sk + the
+ * SHA3-512 commitment pk that the chain's deprecated 0x1002 verifier
+ * accepts. Kept ONLY so users with existing sphincs wallets can re-sign
+ * recovery flows; never call this for new wallets.
+ */
+export function generateLegacyStubKeyPair(): {
   publicKey: Uint8Array;
   secretKey: Uint8Array;
   algId: number;
@@ -69,8 +102,6 @@ export function generateKeyPair(): {
   const secretKey = new Uint8Array(SPHINCS_SHAKE_128S_SECRET_KEY_SIZE);
   crypto.getRandomValues(secretKey);
 
-  // pk = SHA3-512("pk" || u64be(8B,len(sk)) || sk) — 64-byte digest.
-  // js-sha3's sha3_512.array returns the 64-byte digest as a number[].
   const tag = new TextEncoder().encode('pk');
   const skLen = new Uint8Array(8);
   let v = BigInt(secretKey.length);
@@ -178,18 +209,19 @@ function u64be(n: number): Uint8Array {
 export async function sign(
   message: Uint8Array,
   secretKey: Uint8Array,
-  algId: number = DILITHIUM3_ALG_ID,
+  algId: number = ML_DSA_65_ALG_ID,
   publicKey?: Uint8Array,
 ): Promise<Uint8Array> {
   if (algId === ML_DSA_65_ALG_ID) {
-    throw new Error(
-      'ml_dsa_65 signing is not yet available in the browser extension. '
-      + 'Real FIPS 204 ML-DSA-65 needs a TypeScript port of '
-      + 'python/animica/_vendor/dilithium_py_v2/ (planned for the next '
-      + 'extension release). For now, sign ml_dsa_65 transactions with the '
-      + '`animica` CLI; the extension can still hold balances and display '
-      + 'incoming receipts for ml_dsa_65 addresses.'
-    );
+    // Real FIPS 204 ML-DSA-65 via @noble/post-quantum. The chain's
+    // pq.py.algs.ml_dsa_65 verifier (vendored jack4818/dilithium-py)
+    // accepts exactly these 3309-byte signatures.
+    if (secretKey.length !== ML_DSA_65_SECRET_KEY_SIZE) {
+      throw new Error(
+        `ml_dsa_65 sign(): secretKey length ${secretKey.length} != ${ML_DSA_65_SECRET_KEY_SIZE}`
+      );
+    }
+    return ml_dsa65.sign(message, secretKey);
   }
   void secretKey; // The XOF formula only uses pk, not sk; sk is kept on the
                   // wallet anyway and tying signatures to it would diverge
@@ -239,11 +271,28 @@ export async function verify(
   message: Uint8Array,
   signature: Uint8Array,
   publicKey: Uint8Array,
-  algId: number = DILITHIUM3_ALG_ID
+  algId: number = ML_DSA_65_ALG_ID
 ): Promise<boolean> {
-  // MOCK: Always return true for development
-  
-  return signature.length === DILITHIUM3_SIGNATURE_SIZE;
+  if (algId === ML_DSA_65_ALG_ID) {
+    if (
+      signature.length !== ML_DSA_65_SIGNATURE_SIZE
+      || publicKey.length !== ML_DSA_65_PUBLIC_KEY_SIZE
+    ) {
+      return false;
+    }
+    try {
+      return ml_dsa65.verify(signature, message, publicKey);
+    } catch {
+      return false;
+    }
+  }
+  // For the legacy commitment-stub schemes we only confirm the sig has
+  // the expected fixed length; the chain's verifier is the source of
+  // truth and the stub formula is forgeable anyway.
+  return (
+    (algId === DILITHIUM3_ALG_ID && signature.length === DILITHIUM3_SIGNATURE_SIZE)
+    || (algId === SPHINCSPLUS_ALG_ID && signature.length === SPHINCS_SHAKE_128S_SIGNATURE_SIZE)
+  );
 }
 
 // Hash utilities

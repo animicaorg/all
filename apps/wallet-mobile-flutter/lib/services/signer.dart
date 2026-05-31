@@ -15,6 +15,7 @@ import '../constants.dart';
 import '../models/account.dart';
 import 'canonical.dart';
 import 'keys.dart';
+import 'ml_dsa_65.dart';
 import 'rpc.dart';
 
 class SignedTx {
@@ -79,12 +80,17 @@ Map<String, dynamic> buildCallBody({
 
 /// Sign a tx body with `account`. Returns the raw CBOR envelope ready
 /// for `tx.sendRawTransaction`. Dispatches by `account.algId`:
-///   0x1002 → SPHINCS-SHAKE-128s
-///   0x1001 → Dilithium3
-SignedTx signTx({
+///   0x1003 → ML-DSA-65 (real FIPS 204, chain v2 default — async)
+///   0x1002 → SPHINCS-SHAKE-128s (deprecated commitment stub)
+///   0x1001 → Dilithium3 (deprecated commitment stub)
+///
+/// Returns a Future because the ML-DSA-65 path runs through flutter_js
+/// which is async-only. The legacy stub paths complete synchronously,
+/// just wrapped in a resolved Future for API uniformity.
+Future<SignedTx> signTx({
   required Account account,
   required Map<String, dynamic> body,
-}) {
+}) async {
   final bodyCbor = canonicalCbor(body);
   final prehash = buildSignBytes(
     msg: bodyCbor,
@@ -94,6 +100,9 @@ SignedTx signTx({
 
   final Uint8List sig;
   switch (account.algId) {
+    case AnimicaConfig.algIdMlDsa65:
+      sig = await MlDsa65.sign(account.secretKey, prehash);
+      break;
     case AnimicaConfig.algIdSphincs:
       sig = signSphincs(account.publicKey, prehash);
       break;
@@ -107,7 +116,7 @@ SignedTx signTx({
     default:
       throw UnsupportedError(
         'Unknown alg_id 0x${account.algId.toRadixString(16)} — '
-        'only SPHINCS-128s (0x1002) and Dilithium3 (0x1001) are supported.',
+        'supported: ML-DSA-65 (0x1003), SPHINCS-128s (0x1002), Dilithium3 (0x1001).',
       );
   }
 
@@ -132,6 +141,6 @@ Future<String> signAndBroadcast({
   required Account account,
   required Map<String, dynamic> body,
 }) async {
-  final signed = signTx(account: account, body: body);
+  final signed = await signTx(account: account, body: body);
   return rpc.sendRawTransaction(signed.rawTx);
 }

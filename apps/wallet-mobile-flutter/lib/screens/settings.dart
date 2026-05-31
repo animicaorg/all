@@ -78,7 +78,11 @@ class SettingsScreen extends ConsumerWidget {
                   'New wallet label',
                   'Account ${(accountsAsync.value?.length ?? 0) + 1}');
               if (label == null) return;
-              if (scheme == 'sphincs') {
+              if (scheme == 'ml_dsa_65') {
+                await ref
+                    .read(accountsProvider.notifier)
+                    .createMlDsa65Account(label);
+              } else if (scheme == 'sphincs') {
                 await ref
                     .read(accountsProvider.notifier)
                     .createSphincsAccount(label);
@@ -152,17 +156,24 @@ class SettingsScreen extends ConsumerWidget {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             ),
             ListTile(
-              leading: const Icon(Icons.security),
-              title: const Text('SPHINCS-SHAKE-128s'),
+              leading: const Icon(Icons.verified_user),
+              title: const Text('ML-DSA-65 (FIPS 204) — Recommended'),
               subtitle: const Text(
-                  '64-byte pk, 7856-byte sig. Default; matches `animica wallet create`.'),
+                  'Real post-quantum lattice signatures. Default since chain v2.'),
+              onTap: () => Navigator.pop(c, 'ml_dsa_65'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.warning_amber),
+              title: const Text('SPHINCS-SHAKE-128s (deprecated)'),
+              subtitle: const Text(
+                  'Legacy stub kept only for receiving on existing addresses.'),
               onTap: () => Navigator.pop(c, 'sphincs'),
             ),
             ListTile(
-              leading: const Icon(Icons.verified_user),
-              title: const Text('Dilithium3 (ML-DSA-65)'),
+              leading: const Icon(Icons.warning_amber),
+              title: const Text('Dilithium3 stub (deprecated)'),
               subtitle: const Text(
-                  '1952-byte pk, 3293-byte sig. Smaller signatures, larger keys.'),
+                  'Legacy commitment-stub scheme; do not use for new wallets.'),
               onTap: () => Navigator.pop(c, 'dilithium3'),
             ),
             const SizedBox(height: 8),

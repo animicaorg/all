@@ -235,7 +235,7 @@ class _CreateFirstAccount extends ConsumerWidget {
               onPressed: () async {
                 await ref
                     .read(accountsProvider.notifier)
-                    .createSphincsAccount('Account 1');
+                    .createMlDsa65Account('Account 1');
               },
             ),
           ],

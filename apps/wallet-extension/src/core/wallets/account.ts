@@ -13,12 +13,9 @@ function algNameFor(algId: number): string {
 }
 
 export function createAccount(label: string): Account {
-  // generateKeyPair() defaults to SPHINCS-SHAKE-128s (Animica's
-  // pure-Python variant), which is what the chain's fallback verifier
-  // accepts when ANIMICA_ALLOW_PQ_PURE_FALLBACK=1. Dilithium3 keygen
-  // requires the real ML-DSA-65 reference impl that isn't ported to
-  // TypeScript yet — accounts created here use SPHINCS so the resulting
-  // signatures actually verify on chain.
+  // generateKeyPair() returns a real FIPS 204 ML-DSA-65 keypair via
+  // @noble/post-quantum (chain v2 default, alg_id 0x1003). The chain's
+  // pq.py.algs.ml_dsa_65 verifier accepts these signatures byte-for-byte.
   const { publicKey, secretKey, algId } = generateKeyPair();
   const address = addressFromPubkey(publicKey, algId);
 
@@ -37,7 +34,7 @@ export function importFromPrivateKey(
   label: string,
   secretKeyHex: string,
   publicKeyHex: string,
-  algId: number = SPHINCSPLUS_ALG_ID,
+  algId: number = ML_DSA_65_ALG_ID,
 ): Account {
   const secretKey = hexToBytes(secretKeyHex, 'secretKeyHex');
   const publicKey = hexToBytes(publicKeyHex, 'publicKeyHex');
