@@ -63,7 +63,7 @@ export interface WalletChecksumLink {
 }
 
 export interface WalletPlatformCard {
-  key: 'windows' | 'macos' | 'linux';
+  key: 'windows' | 'macos' | 'linux' | 'android' | 'ios';
   title: string;
   description: string;
   architecture?: string;
@@ -464,6 +464,74 @@ function buildLegacyWindowsCard(): WalletPlatformCard | null {
   };
 }
 
+function buildAndroidCard(): WalletPlatformCard | null {
+  const apk = 'animica-wallet-android.apk';
+  if (!hasPublicWalletFile(apk)) return null;
+  const sha = parseSha256(readPublicWalletFile('animica-wallet-android.sha256'));
+  const versionRaw = readPublicWalletFile('animica-wallet-android.version');
+  const buildLabel = versionRaw ? versionRaw.trim().split(/\s+/)[0] : undefined;
+  const download = normalizeDownload(
+    `/wallet/${apk}`,
+    apk,
+    'Android APK (sideload)',
+    readPublicWalletFileSize(apk),
+    sha,
+    true,
+  );
+  if (!download) return null;
+  const checksums: WalletChecksumLink[] = [];
+  if (hasPublicWalletFile('animica-wallet-android.sha256')) {
+    checksums.push({ href: '/wallet/animica-wallet-android.sha256', label: 'SHA-256 checksum' });
+  }
+  return {
+    key: 'android',
+    title: 'Android',
+    description: 'Flutter mobile wallet — real ML-DSA-65 (FIPS 204) signing via the same noble bundle the browser extension uses.',
+    architecture: 'arm64-v8a + armeabi-v7a + x86_64 (fat APK)',
+    buildLabel,
+    downloads: [download],
+    checksums,
+    instructions: [
+      'Enable "Install unknown apps" for your browser/file manager in Android settings.',
+      'Download the APK and tap to install. Verify the SHA-256 checksum before installing.',
+      'First launch warms up the JS engine that hosts the ML-DSA-65 signer (~50-100 ms one-time).',
+      'Play Store distribution is pending — this APK is unsigned with a stable production keystore.',
+    ],
+  };
+}
+
+function buildIosCard(): WalletPlatformCard | null {
+  const src = 'animica-wallet-ios-src.tar.gz';
+  if (!hasPublicWalletFile(src)) return null;
+  const download = normalizeDownload(
+    `/wallet/${src}`,
+    src,
+    'Source bundle (build on a Mac)',
+    readPublicWalletFileSize(src),
+    undefined,
+    true,
+  );
+  if (!download) return null;
+  const checksums: WalletChecksumLink[] = [];
+  if (hasPublicWalletFile('animica-wallet-ios-BUILD.md')) {
+    checksums.push({ href: '/wallet/animica-wallet-ios-BUILD.md', label: 'Build instructions' });
+  }
+  return {
+    key: 'ios',
+    title: 'iOS',
+    description: 'A prebuilt IPA cannot be cross-compiled from Linux — Apple\'s SDK is Mac-only. Build the IPA yourself on macOS, or use the Chrome extension on iOS Safari (limited dapp support).',
+    architecture: 'Universal (built on Mac)',
+    downloads: [download],
+    checksums,
+    instructions: [
+      'Requires macOS + Xcode 15 + Flutter 3.41+ + CocoaPods.',
+      'Extract the bundle, cd into apps/wallet-mobile-flutter, run `flutter pub get` then `flutter build ipa --release`.',
+      'Sideload the resulting Runner.ipa via Apple Configurator or distribute through TestFlight.',
+      'See the linked build instructions for full steps and entitlements notes.',
+    ],
+  };
+}
+
 export function loadWalletDownloadPageData(): WalletDownloadPageData {
   const manifest = readManifestFile();
   const cardsByKey = new Map(
@@ -491,7 +559,23 @@ export function loadWalletDownloadPageData(): WalletDownloadPageData {
     }
   }
 
-  const platformCards: WalletPlatformCard[] = (['windows', 'macos', 'linux'] as const)
+  if (!cardsByKey.has('android')) {
+    const androidCard = buildAndroidCard();
+    if (androidCard) {
+      cardsByKey.set('android', androidCard);
+    }
+  }
+
+  if (!cardsByKey.has('ios')) {
+    const iosCard = buildIosCard();
+    if (iosCard) {
+      cardsByKey.set('ios', iosCard);
+    }
+  }
+
+  const platformCards: WalletPlatformCard[] = (
+    ['windows', 'macos', 'linux', 'android', 'ios'] as const
+  )
     .map((key) => cardsByKey.get(key))
     .filter((card): card is WalletPlatformCard => card !== undefined);
 
