@@ -89,18 +89,27 @@ APP_FRAMEWORKS="$APP_PATH/Contents/Frameworks"
 APP_PLUGINS="$APP_PATH/Contents/PlugIns"
 mkdir -p "$APP_FRAMEWORKS" "$APP_PLUGINS/platforms" "$APP_PLUGINS/styles" "$APP_PLUGINS/imageformats" "$APP_PLUGINS/tls" "$APP_PLUGINS/sqldrivers"
 
+# Use `cp -a` (not -RL) so framework symlinks are preserved. Apple's
+# framework layout depends on Versions/Current → A and top-level
+# Foo → Versions/Current/Foo symlinks; dereferencing them creates a
+# duplicate, bloated bundle that fails codesign because rcodesign
+# treats both copies as binaries.
 for fw in QtCore QtGui QtWidgets QtNetwork QtSql QtConcurrent QtSvg QtDBus; do
     if [ -d "$QT_MAC_ROOT/lib/$fw.framework" ]; then
-        cp -RL "$QT_MAC_ROOT/lib/$fw.framework" "$APP_FRAMEWORKS/" 2>/dev/null || true
+        cp -a "$QT_MAC_ROOT/lib/$fw.framework" "$APP_FRAMEWORKS/" 2>/dev/null || true
     fi
 done
 
-# Plugins
-cp -RL "$QT_MAC_ROOT/plugins/platforms/libqcocoa.dylib" "$APP_PLUGINS/platforms/" 2>/dev/null || true
-cp -RL "$QT_MAC_ROOT/plugins/styles/." "$APP_PLUGINS/styles/" 2>/dev/null || true
-cp -RL "$QT_MAC_ROOT/plugins/imageformats/." "$APP_PLUGINS/imageformats/" 2>/dev/null || true
-cp -RL "$QT_MAC_ROOT/plugins/tls/." "$APP_PLUGINS/tls/" 2>/dev/null || true
-cp -RL "$QT_MAC_ROOT/plugins/sqldrivers/." "$APP_PLUGINS/sqldrivers/" 2>/dev/null || true
+# Plugins — dylibs, no nested symlinks to preserve, plain copy is fine.
+cp -a "$QT_MAC_ROOT/plugins/platforms/libqcocoa.dylib" "$APP_PLUGINS/platforms/" 2>/dev/null || true
+cp -a "$QT_MAC_ROOT/plugins/styles/." "$APP_PLUGINS/styles/" 2>/dev/null || true
+cp -a "$QT_MAC_ROOT/plugins/imageformats/." "$APP_PLUGINS/imageformats/" 2>/dev/null || true
+cp -a "$QT_MAC_ROOT/plugins/tls/." "$APP_PLUGINS/tls/" 2>/dev/null || true
+cp -a "$QT_MAC_ROOT/plugins/sqldrivers/." "$APP_PLUGINS/sqldrivers/" 2>/dev/null || true
+
+# Drop .dSYM debug bundles — they contain stub Mach-O DWARF binaries
+# that rcodesign tries to sign and fails on. Not needed at runtime.
+find "$APP_FRAMEWORKS" "$APP_PLUGINS" -name "*.dSYM" -type d -exec rm -rf {} + 2>/dev/null || true
 
 # Write qt.conf so the app finds bundled plugins
 cat > "$APP_PATH/Contents/Resources/qt.conf" <<'EOF'
@@ -129,11 +138,55 @@ if [ ! -f "$APP_PATH/Contents/Info.plist" ]; then
 EOF
 fi
 
+# Mach-O fixes
+# -----------
+# The linker baked in three things that make the bundle fail on real macOS:
+#   1. No LC_RPATH — the binary references @rpath/Qt*.framework/... but
+#      dyld has nothing to substitute for @rpath, so every framework
+#      fails to load and Gatekeeper reports "AnimicaWallet is damaged".
+#   2. AGL.framework — CMake's WrapOpenGL pulls in deprecated AGL on
+#      macOS; the SDK we cross-link against has a stub AGL.tbd, but
+#      modern macOS doesn't ship AGL at the canonical path. Rewrite
+#      every AGL load command to OpenGL.framework which IS present.
+#   3. No code signature — Apple Silicon Macs reject unsigned binaries
+#      as "damaged" outright. Ad-hoc sign every Mach-O with rcodesign.
+INT="$OSXCROSS_ROOT/bin/$HOST_TRIPLE-install_name_tool"
+BIN="$APP_PATH/Contents/MacOS/$(basename "$APP_PATH" .app)"
+
+echo "[mac-cross] adding LC_RPATH @executable_path/../Frameworks"
+"$INT" -add_rpath "@executable_path/../Frameworks" "$BIN" 2>/dev/null || true
+
+echo "[mac-cross] rewriting AGL.framework refs -> OpenGL.framework"
+find "$APP_PATH" -type f \( -name "*.dylib" -o -path "*/Versions/A/*" \) \
+                 ! -name "Info.plist" ! -path "*.dSYM*" > /tmp/macho-files-$ARCH.txt
+"$INT" -change "/System/Library/Frameworks/AGL.framework/Versions/A/AGL" \
+                "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL" \
+                "$BIN" 2>/dev/null || true
+while read f; do
+  "$INT" -change "/System/Library/Frameworks/AGL.framework/Versions/A/AGL" \
+                  "/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL" \
+                  "$f" 2>/dev/null || true
+done < /tmp/macho-files-$ARCH.txt
+
+# Ad-hoc sign — rcodesign is a pure-Rust reimplementation of `codesign`
+# that runs on Linux. Required for Apple Silicon to accept the bundle.
+if command -v rcodesign >/dev/null 2>&1; then
+  # Drop any stale signatures from the cross-link or earlier passes.
+  find "$APP_PATH" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
+  echo "[mac-cross] ad-hoc signing bundle"
+  rcodesign sign "$APP_PATH" 2>&1 | tail -3
+else
+  echo "[mac-cross] WARNING: rcodesign not on PATH — bundle will be UNSIGNED" >&2
+  echo "[mac-cross] install with:" >&2
+  echo "  curl -sL https://github.com/indygreg/apple-platform-rs/releases/latest -O ..." >&2
+fi
+
 # Package as .zip + .dmg-like layout (dmg requires hdiutil which is Mac-only,
 # so we ship .zip and leave dmg creation to the native release-mac.sh)
 DIST_DIR="$REPO_ROOT/dist/wallet-qt/v0.1.1-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)/macos"
 mkdir -p "$DIST_DIR"
 ZIP_NAME="animica-wallet-macos-$ARCH.zip"
+rm -f "$DIST_DIR/$ZIP_NAME"
 ( cd "$(dirname "$APP_PATH")" && zip -ryq "$DIST_DIR/$ZIP_NAME" "$(basename "$APP_PATH")" )
 sha256sum "$DIST_DIR/$ZIP_NAME" | awk '{print $1}' > "$DIST_DIR/$ZIP_NAME.sha256"
 
