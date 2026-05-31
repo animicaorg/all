@@ -61,7 +61,7 @@ class AnimicaConfig {
   ];
 
   /// 1 ANM in nano-units.
-  static const BigInt nanosPerAnm = BigInt.from(1000000000);
+  static final BigInt nanosPerAnm = BigInt.from(1000000000);
 
   /// SPHINCS-SHAKE-128s parameters (Animica pure-python variant —
   /// pubkey is the 64-byte form `_h("pk", sk, out_len=64)`, sig is

@@ -100,7 +100,7 @@ ImportResult importWalletsJson(String jsonText) {
 
 // Stash the produced accounts on the result so callers can use them
 // without re-running the import. (Two-phase API kept simple for v0.1.)
-extension _IRA on ImportResult {
+extension IRA on ImportResult {
   // ignore: library_private_types_in_public_api
   set _accounts(List<Account> v) => _accountsBuffer = v;
   List<Account> get accounts => _accountsBuffer;

@@ -21,6 +21,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:pointycastle/digests/sha3.dart';
+import 'package:pointycastle/digests/shake.dart';
 
 import '../constants.dart';
 
@@ -40,7 +41,7 @@ class Dilithium3Keypair {
 // We wrap it so callers can ask for arbitrary output lengths.
 
 Uint8List _shake256(List<Uint8List> chunks, int outBytes) {
-  final d = SHA3Digest(256, true); // true = SHAKE mode
+  final d = SHAKEDigest(256);
   for (final c in chunks) {
     d.update(c, 0, c.length);
   }

@@ -18,8 +18,14 @@
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:pointycastle/digests/sha3.dart';
+import 'package:pointycastle/digests/shake.dart';
 
 import '../constants.dart';
+
+// Re-export the legacy Dilithium3 stub for callers that import keys.dart.
+// (Pure Dart, broken commitment-stub kept for receive-side compat.)
+export 'dilithium3.dart'
+    show generateDilithium3Keypair, signDilithium3, verifyDilithium3, Dilithium3Keypair;
 
 // ── byte helpers ────────────────────────────────────────────────────────
 
@@ -53,26 +59,11 @@ Uint8List _sha3_512(Uint8List input) {
 }
 
 Uint8List _shake256(Uint8List input, int outLen) {
-  // pointycastle exposes SHAKE via `SHAKEDigest`. Length is in bits.
-  // ignore: invalid_use_of_visible_for_testing_member
-  final d = _Shake256();
+  final d = SHAKEDigest(256);
   d.update(input, 0, input.length);
-  return d.digest(outLen);
-}
-
-// pointycastle's SHAKEDigest interface is a bit clunky for our needs;
-// wrap it to expose digest(outLen).
-class _Shake256 {
-  final digest = SHA3Digest(256, true); // 256 = security, true → SHAKE mode
-  void update(Uint8List input, int off, int len) {
-    digest.update(input, off, len);
-  }
-
-  Uint8List digest(int outLen) {
-    final out = Uint8List(outLen);
-    digest.doOutput(out, 0, outLen);
-    return out;
-  }
+  final out = Uint8List(outLen);
+  d.doOutput(out, 0, outLen);
+  return out;
 }
 
 // ── SPHINCS-128s ────────────────────────────────────────────────────────
@@ -127,10 +118,3 @@ Uint8List signSphincs(Uint8List pk, Uint8List prehash) {
   return _shake256(input, AnimicaConfig.sphincsSigLen);
 }
 
-// ── Dilithium3 ──────────────────────────────────────────────────────────
-//
-// Re-export the canonical impl from dilithium3.dart so callers can use one
-// import for both schemes.
-
-export 'dilithium3.dart'
-    show generateDilithium3Keypair, signDilithium3, verifyDilithium3, Dilithium3Keypair;

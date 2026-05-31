@@ -27,6 +27,7 @@ import 'package:pointycastle/block/aes.dart';
 import 'package:pointycastle/block/modes/gcm.dart';
 import 'package:pointycastle/api.dart';
 import 'package:pointycastle/key_derivators/pbkdf2.dart';
+import 'package:pointycastle/key_derivators/api.dart';
 import 'package:pointycastle/macs/hmac.dart';
 import 'package:pointycastle/digests/sha256.dart';
 
