@@ -132,8 +132,9 @@ def _load_alg_ids_yaml() -> Dict[str, int]:
         return {
             # Keep these values in sync with pq/alg_ids.yaml so environments
             # without PyYAML still agree on canonical algorithm ids.
-            "dilithium3": 0x1001,
-            "sphincs_shake_128s": 0x1002,
+            "dilithium3": 0x1001,         # deprecated 0.2.0; commitment stub
+            "sphincs_shake_128s": 0x1002, # deprecated 0.2.0; commitment stub
+            "ml_dsa_65": 0x1003,          # real FIPS 204 ML-DSA-65
             "kyber768": 0x2001,
         }
     data = yaml.safe_load(alg_ids_path.read_text(encoding="utf-8"))
@@ -271,6 +272,16 @@ _SIGS: Dict[str, SigAlgInfo] = {
             "liboqs" if FEATURES["liboqs"] else ("wasm" if FEATURES["wasm"] else "pure")
         ),
     ),
+    "ml_dsa_65": _mk_sig_info(
+        "ml_dsa_65",
+        "ML-DSA-65 (FIPS 204)",
+        192,
+        pk=1952,
+        sk=4032,
+        sig=3309,
+        notes="L3; real FIPS 204 ref impl (vendored). Default since 0.2.0.",
+        provider="pure",
+    ),
 }
 
 _KEMS: Dict[str, KemAlgInfo] = {
@@ -387,18 +398,13 @@ def default_signature_alg() -> SigAlgInfo:
     """
     Choose the chain's *default* signature algorithm for new wallets/addresses.
 
-    Policy (subject to pq_policy.yaml at higher layers):
-    - Use mechanism from ANIMICA_PQ_MECHANISM if set and available
-    - Prefer Dilithium3/ML-DSA-65 when liboqs is available (fast, widely supported)
-    - Otherwise fall back to SPHINCS+ SHAKE-128s (hash-based, slower, robust)
-    
-    Note: This returns metadata for dilithium3 or sphincs_shake_128s regardless of
-    whether the underlying implementation uses ML-DSA-65 or Dilithium3. The actual
-    mechanism mapping happens in the algorithm backend layer.
+    From package 0.2.0 onward the default is ml_dsa_65 (real FIPS 204).
+    Older schemes (0x1001 dilithium3 / 0x1002 sphincs_shake_128s) are kept
+    in the registry only for verifying historical blocks; new keys should
+    not be created under them. See pq/alg_ids.yaml for the deprecation
+    notices.
     """
-    if FEATURES["liboqs"]:
-        return require_sig("dilithium3")
-    return require_sig("sphincs_shake_128s")
+    return require_sig("ml_dsa_65")
 
 
 def normalize_alg_name(name_or_id: AlgNameOrId) -> str:

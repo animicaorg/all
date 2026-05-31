@@ -12,6 +12,8 @@ from pq.py.registry import (  # type: ignore
     SPHINCS_SHAKE_128S_ID,
 )
 
+ML_DSA_65_ID = 0x1003
+
 
 @dataclass(frozen=True)
 class KeyPair:
@@ -24,13 +26,13 @@ class KeyPair:
 
 def _normalize_alg(alg: Union[int, str, Any]) -> Tuple[int, str]:
     if isinstance(alg, int):
-        if alg in (DILITHIUM3_ID, SPHINCS_SHAKE_128S_ID):
+        if alg in (DILITHIUM3_ID, SPHINCS_SHAKE_128S_ID, ML_DSA_65_ID):
             return alg, name_of(alg)
         raise NotImplementedError(f"Unknown alg id: 0x{alg:04x}")
 
     if isinstance(alg, str):
         name = normalize_alg_name(alg)
-        if name in ("dilithium3", "sphincs_shake_128s"):
+        if name in ("dilithium3", "sphincs_shake_128s", "ml_dsa_65"):
             return id_of(name), name
         raise NotImplementedError(f"Unknown alg name: {alg}")
 
@@ -52,12 +54,35 @@ def keygen_sig(alg: Union[int, str, Any]) -> KeyPair:
     """
     alg_id, alg_name = _normalize_alg(alg)
 
-    if alg_name == "dilithium3":
-        # Pure-Python ML-DSA-65 (vendored Dilithium3)
+    if alg_name == "ml_dsa_65":
+        # Real FIPS 204 ML-DSA-65 (vendored jack4818/dilithium-py)
+        from pq.py.algs import ml_dsa_65 as ml_dsa_backend
+
+        sk_b, pk_b = ml_dsa_backend.keypair()
+        if pk_b == sk_b:
+            raise RuntimeError("PQ keygen produced sk==pk (this is invalid / fake)")
+    elif alg_name == "dilithium3":
+        # Legacy commitment stub kept for verifying historical blocks only.
+        # New wallets MUST use ml_dsa_65; refuse to create new dilithium3 keys
+        # unless explicitly opted in via ANIMICA_ALLOW_LEGACY_STUB_KEYGEN=1.
+        import os as _os
+        if _os.environ.get("ANIMICA_ALLOW_LEGACY_STUB_KEYGEN") != "1":
+            raise NotImplementedError(
+                "dilithium3 (0x1001) is a deprecated commitment stub. Use "
+                "ml_dsa_65 (0x1003) for new wallets. To create a legacy stub "
+                "key anyway, set ANIMICA_ALLOW_LEGACY_STUB_KEYGEN=1."
+            )
         from animica import pq as animica_pq
 
         pk_b, sk_b = animica_pq.sig_keygen()
     elif alg_name == "sphincs_shake_128s":
+        import os as _os
+        if _os.environ.get("ANIMICA_ALLOW_LEGACY_STUB_KEYGEN") != "1":
+            raise NotImplementedError(
+                "sphincs_shake_128s (0x1002) is a deprecated commitment stub. "
+                "Use ml_dsa_65 (0x1003) for new wallets. To create a legacy "
+                "stub key anyway, set ANIMICA_ALLOW_LEGACY_STUB_KEYGEN=1."
+            )
         from pq.py.algs import sphincs_shake_128s as sphincs_backend
 
         sk_b, pk_b = sphincs_backend.keypair()
