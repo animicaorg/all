@@ -259,6 +259,38 @@ if(WALLET_BUNDLE_PYTHON_RUNTIME)
         USE_SOURCE_PERMISSIONS
     )
 
+    # Rewrite shebangs in the bundled venv's bin/ to be portable.
+    # The build-time venv has shebangs like
+    #   #!/root/animica/wallet-qt/build/linux-release/animica-node/venv/bin/python
+    # which obviously don't exist on the user's machine. Replace them with
+    # `#!/usr/bin/env python3` and let the venv's pyvenv.cfg+bundled
+    # site-packages take it from there. Only applies to UNIX-ish targets;
+    # Windows .exe wrappers aren't shebangs and never had this problem.
+    if(UNIX)
+        install(CODE "
+            file(GLOB VENV_BIN_FILES \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${WALLET_NODE_INSTALL_DESTINATION}/venv/bin/*\")
+            foreach(BIN_FILE \${VENV_BIN_FILES})
+                if(NOT IS_SYMLINK \"\${BIN_FILE}\" AND NOT IS_DIRECTORY \"\${BIN_FILE}\")
+                    file(READ \"\${BIN_FILE}\" CONTENT LIMIT 4096 OFFSET 0 HEX)
+                    string(SUBSTRING \"\${CONTENT}\" 0 4 MAGIC)
+                    # 23 21 = '#!' — only patch text scripts, skip ELF / Mach-O / unrelated.
+                    if(\"\${MAGIC}\" MATCHES \"^2321\")
+                        file(READ \"\${BIN_FILE}\" TEXT)
+                        string(REGEX REPLACE
+                            \"^#![^\\n]*\"
+                            \"#!/usr/bin/env python3\"
+                            PATCHED
+                            \"\${TEXT}\")
+                        if(NOT \"\${PATCHED}\" STREQUAL \"\${TEXT}\")
+                            file(WRITE \"\${BIN_FILE}\" \"\${PATCHED}\")
+                            message(STATUS \"shebang-fix: \${BIN_FILE}\")
+                        endif()
+                    endif()
+                endif()
+            endforeach()
+        ")
+    endif()
+
     install(
         FILES "${ANIMICA_REPO_ROOT}/spec/params.yaml"
         DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/assets/spec"

@@ -265,18 +265,23 @@ export function normalizeWalletManifest(manifest: WalletManifest | null): Wallet
           label: macDownloads.length > 1 ? 'SHA-256 checksums' : 'SHA-256 checksum',
         });
       }
+      if (hasPublicWalletFile('MAC_INSTALL.md')) {
+        checksums.push({ href: '/wallet/MAC_INSTALL.md', label: 'Install + Gatekeeper guide' });
+      }
 
       cards.push({
         key: 'macos',
         title: 'macOS',
-        description: 'Native macOS desktop builds for Intel and Apple Silicon when available.',
+        description: 'Ad-hoc signed bundle for Apple Silicon. First-launch needs the Gatekeeper / quarantine workaround documented in the install guide.',
         architecture: manifest.macos.architecture,
         buildLabel: manifest.macos.build_label ?? manifest.version,
         downloads: macDownloads,
         checksums,
         instructions: [
-          'Download the ZIP and extract Animica Wallet.',
-          'If Gatekeeper warns, verify the SHA-256 checksum before first launch.',
+          'Download the ZIP and extract AnimicaWallet.app.',
+          'Clear quarantine: xattr -dr com.apple.quarantine AnimicaWallet.app',
+          'Open AnimicaWallet.app. If macOS still blocks it, right-click → Open.',
+          'See the linked install guide for full screenshot-level steps.',
         ],
       });
     }
@@ -329,19 +334,23 @@ export function normalizeWalletManifest(manifest: WalletManifest | null): Wallet
           label: 'Raw executable SHA-256 checksum',
         });
       }
+      if (hasPublicWalletFile('LINUX_INSTALL.md')) {
+        checksums.push({ href: '/wallet/LINUX_INSTALL.md', label: 'Install + Python 3.12 dep guide' });
+      }
 
       cards.push({
         key: 'linux',
         title: 'Linux',
-        description: 'Native Linux builds with bundled runtime assets when those artifacts are published.',
+        description: 'Debian/Ubuntu package using the system Qt 6 stack. Bundles a Python 3.12 venv for wallet ops.',
         architecture: manifest.linux.architecture,
         buildLabel: manifest.linux.build_label ?? manifest.version,
         downloads: linuxDownloads,
         checksums,
         instructions: [
-          'Choose AppImage for the simplest desktop launch.',
-          'Use the .deb package for Debian or Ubuntu installs.',
-          'Verify the matching SHA-256 file before first launch.',
+          'Install with: sudo apt install ./animica-wallet-linux.deb',
+          'Requires Python 3.12 — Ubuntu 22.04 users add the deadsnakes PPA first.',
+          'Use AppImage for the simplest no-install run on other distros.',
+          'See the linked install guide for distro-specific notes.',
         ],
       });
     }
@@ -368,17 +377,22 @@ function buildLegacyMacCard(): WalletPlatformCard | null {
       label: downloads.length > 1 ? 'SHA-256 checksums' : 'SHA-256 checksum',
     });
   }
+  if (hasPublicWalletFile('MAC_INSTALL.md')) {
+    checksums.push({ href: '/wallet/MAC_INSTALL.md', label: 'Install + Gatekeeper guide' });
+  }
 
   return {
     key: 'macos',
     title: 'macOS',
-    description: 'Legacy website wallet files detected without a generated macOS manifest entry.',
-    architecture: 'universal',
+    description: 'Ad-hoc signed bundle for Apple Silicon. First-launch needs the Gatekeeper / quarantine workaround documented in the install guide.',
+    architecture: 'arm64',
     downloads,
     checksums,
     instructions: [
-      'Download the ZIP and extract Animica Wallet.',
-      'If Gatekeeper warns, verify the SHA-256 checksum before first launch.',
+      'Download the ZIP and extract AnimicaWallet.app.',
+      'Clear quarantine: xattr -dr com.apple.quarantine AnimicaWallet.app',
+      'Open AnimicaWallet.app. If macOS still blocks it, right-click → Open.',
+      'See the linked install guide for full screenshot-level steps.',
     ],
   };
 }
@@ -410,18 +424,22 @@ function buildLegacyLinuxCard(): WalletPlatformCard | null {
   if (hasPublicWalletFile('animica-wallet.sha256')) {
     checksums.push({ href: '/wallet/animica-wallet.sha256', label: 'Raw executable SHA-256 checksum' });
   }
+  if (hasPublicWalletFile('LINUX_INSTALL.md')) {
+    checksums.push({ href: '/wallet/LINUX_INSTALL.md', label: 'Install + Python 3.12 dep guide' });
+  }
 
   return {
     key: 'linux',
     title: 'Linux',
-    description: 'Legacy website wallet files detected without a generated manifest.',
+    description: 'Debian/Ubuntu package using the system Qt 6 stack. Bundles a Python 3.12 venv for wallet ops.',
     architecture: 'x86_64',
     downloads,
     checksums,
     instructions: [
-      'Choose AppImage for the simplest desktop launch.',
-      'Use the .deb package for Debian or Ubuntu installs.',
-      'Verify the matching SHA-256 file before first launch.',
+      'Install with: sudo apt install ./animica-wallet-linux.deb',
+      'Requires Python 3.12 — Ubuntu 22.04 users add the deadsnakes PPA first.',
+      'Use AppImage for the simplest no-install run on other distros.',
+      'See the linked install guide for distro-specific notes.',
     ],
   };
 }
@@ -448,18 +466,22 @@ function buildLegacyWindowsCard(): WalletPlatformCard | null {
   if (hasPublicWalletFile('animicawallersetup.sha256')) {
     checksums.push({ href: '/wallet/animicawallersetup.sha256', label: 'SHA-256 checksum' });
   }
+  if (hasPublicWalletFile('WINDOWS_INSTALL.md')) {
+    checksums.push({ href: '/wallet/WINDOWS_INSTALL.md', label: 'Install + SmartScreen guide' });
+  }
 
   return {
     key: 'windows',
     title: 'Windows',
-    description: 'Legacy website wallet files detected without a generated Windows manifest entry.',
+    description: 'Cross-built unsigned Windows installer for Windows 10/11 on x86_64. Expect a one-click-through SmartScreen warning on first launch.',
     architecture: 'x86_64',
     downloads,
     checksums,
     instructions: [
       'Download the installer and run it on Windows.',
-      'If SmartScreen warns because the build is unsigned, click “More info” and verify the SHA-256 checksum before running.',
-      'Install into your standard user profile unless your organization requires a custom path.',
+      'On the SmartScreen prompt, click "More info" → "Run anyway".',
+      'If Defender quarantines the .exe, allow it from Protection History.',
+      'See the linked install guide for screenshot-level steps.',
     ],
   };
 }
