@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -17,6 +19,19 @@ from .job_manager import JobManager
 
 ShareEvent = Dict[str, object]
 AccountingEvent = Dict[str, object]
+
+# 256-bit space of a SHA3-256 digest — used to convert a share target into the
+# expected number of raw hashes (2**256 / share_target_int).
+_TWO_POW_256 = 2 ** 256
+
+# How long a miner-reported hashrate sample stays "fresh". Miners report every
+# ~30s, so a 120s window tolerates a couple of missed beats before a worker is
+# dropped from the aggregate network hashrate.
+_REPORTED_HR_TTL = 120.0
+
+
+class RentalConflict(Exception):
+    """Raised when a rig already has an active rental assignment."""
 
 
 class PoolMetrics:
@@ -51,6 +66,20 @@ class PoolMetrics:
         self._started = time.time()
         self._db_lock = Lock()
         self._db = self._init_db(config.db_url)
+        # Rig-rental redirect: maps an owner rig (worker, address) to the
+        # active assignment that re-points its mining credit at the renter
+        # for the paid window. Kept in memory so the hot share path does no
+        # per-share SQL; rebuilt from status='active' rows on boot so
+        # redirects survive a pool restart.
+        self._rental_lock = Lock()
+        self._rental_index: Dict[Tuple[str, str], Dict[str, object]] = {}
+        self._load_rental_index()
+        # Miner-reported hashrate (Option A): each dual-miner polls its local
+        # xmrig HTTP API and POSTs its measured H/s here. Summing the fresh
+        # reports gives the true network hashrate without depending on sparse
+        # block-shares. Keyed by worker; entries expire after _REPORTED_HR_TTL.
+        self._reported_hashrates_lock = Lock()
+        self._reported_hashrates: Dict[str, Dict[str, object]] = {}
         self._payout_state_lock = Lock()
         self._read_cache_ttl = max(
             0.0,
@@ -173,7 +202,8 @@ class PoolMetrics:
                 job_id TEXT,
                 height INTEGER,
                 is_block INTEGER,
-                tx_count INTEGER
+                tx_count INTEGER,
+                work REAL
             )
             """
         )
@@ -244,10 +274,31 @@ class PoolMetrics:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rental_assignments (
+                id TEXT PRIMARY KEY,
+                owner_worker TEXT NOT NULL,
+                owner_address TEXT NOT NULL,
+                renter_anm_address TEXT,
+                renter_xmr_anim_address TEXT,
+                anm_mode TEXT,
+                coins TEXT NOT NULL,
+                start_ts REAL NOT NULL,
+                end_ts REAL NOT NULL,
+                status TEXT NOT NULL,
+                created_ts REAL NOT NULL
+            )
+            """
+        )
         self._ensure_column(conn, "blocks", "worker", "TEXT")
         self._ensure_column(conn, "blocks", "address", "TEXT")
         self._ensure_column(conn, "blocks", "reward", "INTEGER")
         self._ensure_column(conn, "shares", "mode", "TEXT NOT NULL DEFAULT 'pps'")
+        # Per-share expected raw SHA3 hashes (2**256 / share_target_int). Summed
+        # over a window this yields the TRUE raw hashrate (matches xmrig's H/s),
+        # unlike the legacy `difficulty` column which is just the share ratio.
+        self._ensure_column(conn, "shares", "work", "REAL")
         self._ensure_column(conn, "worker_balances", "paid_out", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column(conn, "payouts", "raw_tx", "TEXT")
         self._ensure_column(conn, "payouts", "nonce", "INTEGER")
@@ -271,9 +322,33 @@ class PoolMetrics:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_ledger_mode_ts ON accounting_ledger(mode, ts)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rental_active "
+            "ON rental_assignments(status, owner_worker, owner_address, end_ts)"
+        )
         conn.execute("PRAGMA optimize")
         conn.commit()
         return conn
+
+    @staticmethod
+    def _expected_share_work(job: object, difficulty: float) -> float:
+        """Expected raw SHA3 hashes the miner performed to find this share.
+
+        A share is accepted when ``int256(sha3_256(prefix||nonce)) <=
+        share_target_int``; for a uniform 256-bit digest the expected number of
+        attempts is ``2**256 / share_target_int``. Summing this over accepted
+        shares in a time window gives the TRUE raw hashrate (H/s) and matches
+        what xmrig reports — unlike the stored ``difficulty`` ratio (~1.0), which
+        is unrelated to hash count. Falls back to the Bitcoin-style
+        ``difficulty * 2**32`` only when the target isn't available.
+        """
+        try:
+            target_int = int(getattr(job, "share_target_int", 0) or 0)
+        except (TypeError, ValueError):
+            target_int = 0
+        if target_int > 0:
+            return float(_TWO_POW_256) / float(target_int)
+        return max(0.0, float(difficulty or 0.0)) * 4_294_967_296.0
 
     @staticmethod
     def _ensure_column(
@@ -438,6 +513,7 @@ class PoolMetrics:
         self._prune_worker_balance_cache(now_ts=now)
         self._prune_payout_records(now_ts=now)
         self._prune_db_history(now_ts=now)
+        self._sweep_expired_rentals(now_ts=now)
 
     def _read_cache_get(self, key: str) -> Optional[object]:
         ttl = float(self._read_cache_ttl)
@@ -465,6 +541,310 @@ class PoolMetrics:
         while len(self._read_cache) > self._read_cache_max_entries:
             self._read_cache.popitem(last=False)
 
+    # ------------------------------------------------------------------
+    # Rig-rental redirect engine
+    # ------------------------------------------------------------------
+    _RENTAL_COLUMNS = (
+        "id, owner_worker, owner_address, renter_anm_address, "
+        "renter_xmr_anim_address, anm_mode, coins, start_ts, end_ts, "
+        "status, created_ts"
+    )
+
+    @staticmethod
+    def rig_id_for(worker: str, address: str) -> str:
+        raw = f"{worker}\x1f{address}".encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    @staticmethod
+    def _rental_key(worker: object, address: object) -> Tuple[str, str]:
+        return (str(worker or ""), str(address or ""))
+
+    def _rental_row_to_dict(self, row: Tuple[object, ...]) -> Dict[str, object]:
+        return {
+            "id": str(row[0]),
+            "owner_worker": str(row[1] or ""),
+            "owner_address": str(row[2] or ""),
+            "renter_anm_address": row[3],
+            "renter_xmr_anim_address": row[4],
+            "anm_mode": row[5],
+            "coins": str(row[6] or ""),
+            "start_ts": float(row[7] or 0.0),
+            "end_ts": float(row[8] or 0.0),
+            "status": str(row[9] or ""),
+            "created_ts": float(row[10] or 0.0),
+        }
+
+    def _load_rental_index(self) -> None:
+        if self._db is None:
+            return
+        with self._db_lock:
+            rows = self._db.execute(
+                f"SELECT {self._RENTAL_COLUMNS} FROM rental_assignments "
+                "WHERE status='active'"
+            ).fetchall()
+        index: Dict[Tuple[str, str], Dict[str, object]] = {}
+        for row in rows:
+            rec = self._rental_row_to_dict(row)
+            index[self._rental_key(rec["owner_worker"], rec["owner_address"])] = rec
+        with self._rental_lock:
+            self._rental_index = index
+
+    def _mark_rental_status(self, rental_id: str, status: str) -> None:
+        if self._db is None:
+            return
+        with self._db_lock:
+            self._db.execute(
+                "UPDATE rental_assignments SET status=? WHERE id=?",
+                (status, str(rental_id)),
+            )
+            self._db.commit()
+
+    def _active_rental_for(
+        self, worker: str, address: str, now: float
+    ) -> Optional[Dict[str, object]]:
+        """Return the active rental for an owner rig, or None.
+
+        Lazily drops (and marks completed) an assignment whose window has
+        elapsed, so the rig's credit reverts to the owner the moment the
+        rental ends — no reconnect, no waiting for the housekeeping sweep.
+        """
+        key = self._rental_key(worker, address)
+        expired_id: Optional[str] = None
+        result: Optional[Dict[str, object]] = None
+        with self._rental_lock:
+            rec = self._rental_index.get(key)
+            if rec is not None and rec.get("status") == "active":
+                if now >= float(rec["end_ts"]):
+                    self._rental_index.pop(key, None)
+                    expired_id = str(rec["id"])
+                elif now >= float(rec["start_ts"]):
+                    result = dict(rec)
+        if expired_id is not None:
+            self._mark_rental_status(expired_id, "completed")
+        return result
+
+    def active_rental(self, worker: str, address: str) -> Optional[Dict[str, object]]:
+        """Public rental lookup for the XMR stratum redirect (and others).
+        Returns the active assignment for an owner rig, or None."""
+        return self._active_rental_for(worker, address, time.time())
+
+    def _sweep_expired_rentals(self, *, now_ts: float) -> None:
+        if self._db is None:
+            return
+        with self._db_lock:
+            self._db.execute(
+                "UPDATE rental_assignments SET status='completed' "
+                "WHERE status='active' AND end_ts <= ?",
+                (float(now_ts),),
+            )
+            self._db.commit()
+        with self._rental_lock:
+            for key, rec in list(self._rental_index.items()):
+                if float(rec.get("end_ts") or 0.0) <= float(now_ts):
+                    self._rental_index.pop(key, None)
+
+    def upsert_rental_assignment(
+        self,
+        *,
+        id: str,
+        owner_worker: str,
+        owner_address: str,
+        coins: str,
+        start_ts: float,
+        end_ts: float,
+        renter_anm_address: Optional[str] = None,
+        renter_xmr_anim_address: Optional[str] = None,
+        anm_mode: Optional[str] = None,
+    ) -> Dict[str, object]:
+        if self._db is None:
+            raise RuntimeError("pool DB not configured")
+        coins_norm = str(coins or "").upper()
+        if coins_norm not in {"ANM", "XMR", "BOTH"}:
+            raise ValueError("coins must be ANM, XMR, or BOTH")
+        mode_norm: Optional[str] = None
+        if anm_mode:
+            mode_norm = str(anm_mode).strip().lower()
+            if mode_norm not in {"pps", "solo"}:
+                raise ValueError("anm_mode must be pps or solo")
+        rec: Dict[str, object] = {
+            "id": str(id),
+            "owner_worker": str(owner_worker or ""),
+            "owner_address": str(owner_address or ""),
+            "renter_anm_address": renter_anm_address or None,
+            "renter_xmr_anim_address": renter_xmr_anim_address or None,
+            "anm_mode": mode_norm,
+            "coins": coins_norm,
+            "start_ts": float(start_ts),
+            "end_ts": float(end_ts),
+            "status": "active",
+            "created_ts": time.time(),
+        }
+        with self._db_lock:
+            existing = self._db.execute(
+                "SELECT id FROM rental_assignments WHERE status='active' "
+                "AND owner_worker=? AND owner_address=? AND id != ?",
+                (rec["owner_worker"], rec["owner_address"], rec["id"]),
+            ).fetchone()
+            if existing is not None:
+                raise RentalConflict(
+                    f"rig already has active rental {existing[0]}"
+                )
+            self._db.execute(
+                f"INSERT INTO rental_assignments ({self._RENTAL_COLUMNS}) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "owner_worker=excluded.owner_worker, "
+                "owner_address=excluded.owner_address, "
+                "renter_anm_address=excluded.renter_anm_address, "
+                "renter_xmr_anim_address=excluded.renter_xmr_anim_address, "
+                "anm_mode=excluded.anm_mode, coins=excluded.coins, "
+                "start_ts=excluded.start_ts, end_ts=excluded.end_ts, "
+                "status=excluded.status",
+                (
+                    rec["id"], rec["owner_worker"], rec["owner_address"],
+                    rec["renter_anm_address"], rec["renter_xmr_anim_address"],
+                    rec["anm_mode"], rec["coins"], rec["start_ts"],
+                    rec["end_ts"], rec["status"], rec["created_ts"],
+                ),
+            )
+            self._db.commit()
+        with self._rental_lock:
+            self._rental_index[
+                self._rental_key(rec["owner_worker"], rec["owner_address"])
+            ] = rec
+        return rec
+
+    def cancel_rental_assignment(self, rental_id: str) -> bool:
+        if self._db is None:
+            return False
+        with self._db_lock:
+            cur = self._db.execute(
+                "UPDATE rental_assignments SET status='cancelled' "
+                "WHERE id=? AND status='active'",
+                (str(rental_id),),
+            )
+            changed = int(cur.rowcount or 0)
+            self._db.commit()
+        with self._rental_lock:
+            for key, rec in list(self._rental_index.items()):
+                if str(rec.get("id")) == str(rental_id):
+                    self._rental_index.pop(key, None)
+        return changed > 0
+
+    def get_rental_assignment(self, rental_id: str) -> Optional[Dict[str, object]]:
+        if self._db is None:
+            return None
+        with self._db_lock:
+            row = self._db.execute(
+                f"SELECT {self._RENTAL_COLUMNS} FROM rental_assignments WHERE id=?",
+                (str(rental_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._rental_row_to_dict(row)
+
+    def rentable_rigs(
+        self, *, online_window_seconds: float = 600.0
+    ) -> List[Dict[str, object]]:
+        """List rigs (worker, address) seen recently, with live stats.
+
+        The owner's payout address is intentionally NOT exposed; rigs are
+        referenced by an opaque ``rig_id = sha256(worker|address)``.
+        """
+        if self._db is None:
+            return []
+        now = time.time()
+        cutoff_online = now - float(online_window_seconds)
+        cutoff_1m = now - 60
+        cutoff_15m = now - 900
+        cutoff_1h = now - 3600
+        cutoff_max = min(cutoff_online, cutoff_1h)
+        with self._db_lock:
+            rows = self._db.execute(
+                """
+                SELECT worker, address,
+                       SUM(CASE WHEN status='accepted' AND ts >= ? THEN difficulty ELSE 0 END),
+                       SUM(CASE WHEN status='accepted' AND ts >= ? THEN difficulty ELSE 0 END),
+                       SUM(CASE WHEN status='accepted' AND ts >= ? THEN difficulty ELSE 0 END),
+                       MAX(ts), MAX(mode)
+                FROM shares
+                WHERE ts >= ? AND address LIKE 'anim1%'
+                  AND worker IS NOT NULL AND worker != ''
+                GROUP BY worker, address
+                """,
+                (cutoff_1m, cutoff_15m, cutoff_1h, cutoff_max),
+            ).fetchall()
+        rigs: List[Dict[str, object]] = []
+        for worker, address, d1, d15, d60, last_ts, mode in rows:
+            last = float(last_ts or 0.0)
+            key = self._rental_key(worker, address)
+            with self._rental_lock:
+                rented = key in self._rental_index
+            rigs.append(
+                {
+                    "rig_id": self.rig_id_for(str(worker), str(address)),
+                    "worker_name": str(worker),
+                    "hashrate_1m": float(d1 or 0.0) / 60,
+                    "hashrate_15m": float(d15 or 0.0) / 900,
+                    "hashrate_1h": float(d60 or 0.0) / 3600,
+                    "last_share_at": last,
+                    "online": bool(last >= cutoff_online),
+                    "pool_mode": str(mode or "pps"),
+                    "rented": bool(rented),
+                }
+            )
+        return rigs
+
+    def rig_stats(
+        self,
+        *,
+        rig_id: Optional[str] = None,
+        worker: Optional[str] = None,
+        address: Optional[str] = None,
+        online_window_seconds: float = 600.0,
+    ) -> Optional[Dict[str, object]]:
+        """Live stats for one rig, by opaque rig_id or by (worker, address)."""
+        for rig in self.rentable_rigs(online_window_seconds=online_window_seconds):
+            if rig_id is not None and rig["rig_id"] == rig_id:
+                return rig
+            if (
+                worker is not None
+                and address is not None
+                and rig["rig_id"] == self.rig_id_for(str(worker), str(address))
+            ):
+                return rig
+        return None
+
+    def rig_window_stats(
+        self, *, worker: str, address: str, start_ts: float, end_ts: float
+    ) -> Dict[str, object]:
+        """Measured delivery within a rental window, for pro-rata settlement.
+
+        Counts distinct one-minute buckets that contain at least one accepted
+        share; measured uptime = buckets x 60s, capped at the window length.
+        """
+        window = max(0.0, float(end_ts) - float(start_ts))
+        if self._db is None:
+            return {"measured_uptime_seconds": 0, "active_buckets": 0, "window_seconds": int(window)}
+        with self._db_lock:
+            rows = self._db.execute(
+                """
+                SELECT CAST(ts/60 AS INTEGER) AS bucket
+                FROM shares
+                WHERE worker=? AND address=? AND status='accepted'
+                  AND ts >= ? AND ts < ?
+                GROUP BY bucket
+                """,
+                (str(worker), str(address), float(start_ts), float(end_ts)),
+            ).fetchall()
+        buckets = len(rows)
+        measured = min(window, buckets * 60.0)
+        return {
+            "measured_uptime_seconds": int(measured),
+            "active_buckets": buckets,
+            "window_seconds": int(window),
+        }
+
     async def record_share(
         self,
         session: object,
@@ -490,6 +870,24 @@ class PoolMetrics:
         address = self._normalize_address(address_hint)
         share_mode = self._resolve_share_mode(session=session, submit_params=submit_params)
 
+        # Rig-rental redirect: if this owner rig is under an active rental,
+        # credit the renter (and honour the renter's chosen ANM mode) while
+        # leaving the raw shares/blocks rows attributed to the true owner so
+        # the rig's own hashrate history stays intact. The instant the window
+        # ends, _active_rental_for returns None and credit reverts to the
+        # owner automatically — the rig goes back to mining for itself.
+        credit_address = address
+        credit_mode = share_mode
+        rental = self._active_rental_for(worker, address, now)
+        if rental is not None:
+            renter_anm = rental.get("renter_anm_address")
+            coins = str(rental.get("coins") or "")
+            if renter_anm and coins in ("ANM", "BOTH"):
+                credit_address = str(renter_anm)
+                anm_mode = str(rental.get("anm_mode") or "").strip().lower()
+                if anm_mode in {"pps", "solo"}:
+                    credit_mode = anm_mode
+
         accepted_block = bool(ok and is_block)
         difficulty_value = submit_params.get("d_ratio")
         if difficulty_value in (None, ""):
@@ -503,6 +901,9 @@ class PoolMetrics:
             # Block-winning shares should be credited at full ratio even when
             # legacy submit payloads omit d_ratio.
             difficulty = max(1.0, difficulty)
+        # Raw SHA3 hashes this share represents (2**256 / share_target_int).
+        # Summed over a window this gives the true H/s — see _expected_share_work.
+        share_work = self._expected_share_work(job, difficulty)
         job_id = str(
             getattr(job, "job_id", None) or submit_params.get("jobId") or "unknown-job"
         )
@@ -514,6 +915,7 @@ class PoolMetrics:
             "worker": worker,
             "address": address,
             "difficulty": difficulty,
+            "work": share_work,
             "status": "accepted" if ok else "rejected",
             "reason": reason,
             "pool_mode": share_mode,
@@ -535,14 +937,14 @@ class PoolMetrics:
         self._apply_accounting_for_share(
             ts=now,
             worker=worker,
-            address=address,
+            address=credit_address,
             job_id=job_id,
             ok=ok,
             is_block=accepted_block,
             reward=reward,
             difficulty=difficulty,
             reason=reason,
-            share_mode=share_mode,
+            share_mode=credit_mode,
             defer_commit=True,
         )
         rejection_reason = str(reason or "").lower()
@@ -588,8 +990,8 @@ class PoolMetrics:
             statements = 1
             self._db.execute(
                 """
-                INSERT INTO shares (ts, worker, address, mode, difficulty, status, job_id, height, is_block, tx_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO shares (ts, worker, address, mode, difficulty, status, job_id, height, is_block, tx_count, work)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.get("timestamp"),
@@ -602,6 +1004,7 @@ class PoolMetrics:
                     event.get("height"),
                     1 if is_block else 0,
                     tx_count,
+                    event.get("work"),
                 ),
             )
             if is_block:
@@ -1327,6 +1730,83 @@ class PoolMetrics:
             ).fetchone()
         total = float(row[0] or 0.0) if row else 0.0
         return total / window_seconds if window_seconds > 0 else 0.0
+
+    # --- ACCURATE raw hashrate (H/s) --------------------------------------
+    # Sum the per-share `work` (expected raw SHA3 hashes = 2**256/share_target)
+    # over the window and divide by elapsed time. This is the real hashing rate
+    # the connected miners produce and matches xmrig's reported H/s, unlike the
+    # difficulty-ratio sum above. Pre-existing shares (recorded before the
+    # `work` column existed) contribute 0, so the figure converges as new shares
+    # land. Falls back to difficulty*2**32 inside _expected_share_work when a
+    # share had no target.
+
+    def _raw_hashrate_from_events(
+        self, events: List[ShareEvent], window_seconds: float
+    ) -> float:
+        if not events:
+            return 0.0
+        cutoff = time.time() - window_seconds
+        total = sum(
+            float(ev.get("work") or 0.0)
+            for ev in events
+            if ev["timestamp"] >= cutoff and ev["status"] == "accepted"
+        )
+        return total / window_seconds if window_seconds > 0 else 0.0
+
+    def _raw_hashrate_from_db(self, window_seconds: float) -> float:
+        if self._db is None:
+            return 0.0
+        cutoff = time.time() - window_seconds
+        with self._db_lock:
+            row = self._db.execute(
+                "SELECT COALESCE(SUM(work), 0) FROM shares WHERE status = 'accepted' AND ts >= ?",
+                (cutoff,),
+            ).fetchone()
+        total = float(row[0] or 0.0) if row else 0.0
+        return total / window_seconds if window_seconds > 0 else 0.0
+
+    # --- Miner-reported hashrate (Option A) -------------------------------
+    def record_reported_hashrate(
+        self,
+        worker: str,
+        address: Optional[str],
+        hps: float,
+        algo: str = "animica",
+    ) -> None:
+        """Store a miner's self-measured hashrate (H/s) from its xmrig API.
+
+        This is the smooth, accurate source for the network hashrate: xmrig
+        counts every hash, so summing fresh per-worker reports avoids the
+        block-share sparsity of the share-work estimate.
+        """
+        w = self._normalize_worker(worker, "") if worker else ""
+        if not w:
+            return
+        try:
+            value = max(0.0, float(hps or 0.0))
+        except (TypeError, ValueError):
+            return
+        with self._reported_hashrates_lock:
+            self._reported_hashrates[w] = {
+                "hps": value,
+                "address": self._normalize_address(address) if address else None,
+                "algo": str(algo or "animica"),
+                "ts": time.time(),
+            }
+
+    def reported_network_hashrate(self, fresh_seconds: float = _REPORTED_HR_TTL) -> Tuple[float, int]:
+        """Sum of fresh miner-reported hashrates → (total_hps, reporting_miners)."""
+        cutoff = time.time() - float(fresh_seconds)
+        total = 0.0
+        n = 0
+        with self._reported_hashrates_lock:
+            stale = [w for w, e in self._reported_hashrates.items() if float(e.get("ts") or 0.0) < cutoff]
+            for w in stale:
+                self._reported_hashrates.pop(w, None)
+            for e in self._reported_hashrates.values():
+                total += float(e.get("hps") or 0.0)
+                n += 1
+        return total, n
 
     def _hashrate_series(self, minutes: int = 60) -> List[Tuple[str, float]]:
         cutoff = time.time() - (minutes * 60)
@@ -2574,6 +3054,17 @@ class PoolMetrics:
         pool_hashrate = self._hashrate_from_db(600) or self._hashrate_from_events(
             share_events, 600
         )
+        # Accurate raw H/s from per-share work. Shares are sparse (recorded at
+        # block granularity), so the headline uses a 1h window for stability and
+        # falls back to a wider 6h window when the last hour had no shares.
+        raw_1m = self._raw_hashrate_from_db(60) or self._raw_hashrate_from_events(share_events, 60)
+        raw_15m = self._raw_hashrate_from_db(900) or self._raw_hashrate_from_events(share_events, 900)
+        raw_1h = self._raw_hashrate_from_db(3600) or self._raw_hashrate_from_events(share_events, 3600)
+        share_work_hps = raw_1h or self._raw_hashrate_from_db(21600) or raw_15m
+        # Prefer the smooth miner-reported sum (Option A); fall back to the
+        # share-work estimate when no miner is reporting (e.g. stock xmrig).
+        reported_hps, reporting_miners = self.reported_network_hashrate()
+        network_hashrate_hps = reported_hps or share_work_hps
         latest_block = self._latest_block()
         current_reward = str(self._reward_from_raw(getattr(job, "raw", None)))
         accounting = self.accounting_summary()
@@ -2585,6 +3076,15 @@ class PoolMetrics:
             "height": (job.height if job else None) or 0,
             "last_block_hash": latest_block.get("hash") or "0x0",
             "pool_hashrate": pool_hashrate,
+            # Accurate raw SHA3 hashrate (H/s). Prefers miner-reported (smooth)
+            # and falls back to share-work. This is the Animica network hashrate.
+            "network_hashrate_hps": network_hashrate_hps,
+            "hashrate_source": "reported" if reported_hps else "share_work",
+            "reported_hashrate_hps": reported_hps,
+            "reporting_miners": reporting_miners,
+            "hashrate_raw_1m": raw_1m,
+            "hashrate_raw_15m": raw_15m,
+            "hashrate_raw_1h": raw_1h,
             "blocks_found_total": self._blocks_found_total(),
             "hashrate_series": self._hashrate_series(60),
             "hashrate_1m": self._hashrate_from_db(60)

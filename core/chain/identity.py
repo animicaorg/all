@@ -52,8 +52,15 @@ def _consensus_id_fingerprint(*, chain_id: int, genesis_hash: bytes) -> str:
     except Exception:
         pass
     repo_root = Path(__file__).resolve().parents[2]
+    # IMPORTANT: only hash files that are RELIABLY present at the same path in
+    # every install method. `consensus/difficulty.py` is a top-level package in
+    # the wheel, so source checkouts and pip installs agree. `spec/params.yaml`
+    # is NOT installed at top-level by the wheel, so hashing it makes the
+    # consensus-id install-dependent (source nodes diverged from pip nodes,
+    # breaking p2p handshake on consensus_mismatch). Network params are already
+    # folded in via compute_network_params_hash above, so the raw file is
+    # redundant — drop it.
     extra_files = [
-        repo_root / "spec" / "params.yaml",
         repo_root / "consensus" / "difficulty.py",
     ]
     for path in extra_files:

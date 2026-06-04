@@ -548,6 +548,48 @@ def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
     lookup_trace["checked"]["pending_mempool"] = True
     is_pending = _pending_contains(tx_hash_hex)
 
+    # Side-table fast path: the block importer writes execution receipts
+    # to a PFX_TXRCPT (0x25) keyed by tx_hash so we don't have to mutate
+    # Block.receipts (which would invalidate the header's receiptsRoot).
+    # See core.chain.block_import.BlockImporter._persist_receipts.
+    try:
+        bdb = getattr(deps, "block_db", None)
+        kv = getattr(bdb, "kv", None) if bdb is not None else None
+        if kv is not None:
+            raw = kv.get(b"\x25" + bytes(tx_hash_b))
+            if raw is not None:
+                from core.types.receipt import Receipt as _Receipt
+                rec_obj = _Receipt.from_cbor(bytes(raw))
+                # Try to fetch the matching loc from PFX_RXI for height/index.
+                loc_raw = bdb.get_receipt_loc_by_hash(tx_hash_b) if hasattr(bdb, "get_receipt_loc_by_hash") else None
+                loc_side = _ReceiptLoc()
+                if isinstance(loc_raw, dict):
+                    if loc_raw.get("height") is not None:
+                        loc_side["height"] = int(loc_raw["height"])
+                    if loc_raw.get("index") is not None:
+                        loc_side["index"] = int(loc_raw["index"])
+                    if loc_raw.get("block_hash") is not None:
+                        loc_side["block_hash"] = bytes(loc_raw["block_hash"])
+                # Build the dict shape _normalize_receipt expects.
+                rec_dict = {
+                    "status": int(rec_obj.status),
+                    "gasUsed": int(rec_obj.gas_used),
+                    "logs": [
+                        {
+                            "address": bytes(lg.address),
+                            "topics": [bytes(t) for t in lg.topics],
+                            "data": bytes(lg.data),
+                        }
+                        for lg in rec_obj.logs
+                    ],
+                }
+                lookup_trace["result"] = "found_via_side_table"
+                log.debug("tx.getTransactionReceipt lookup", extra=lookup_trace)
+                return _normalize_receipt(tx_hash_hex, loc_side, None, rec_dict, deploy_meta)
+    except Exception as exc:
+        # Side-table read shouldn't break the fallback chain — log and continue.
+        log.debug("receipt side-table lookup failed: %s", exc)
+
     # Find location (height, index), then fetch receipt and block context
     lookup_trace["checked"]["receipt_loc"] = True
     loc = _lookup_receipt_loc(tx_hash_b)

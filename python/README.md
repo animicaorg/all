@@ -5,6 +5,28 @@ including data-availability helpers, mempool policy tests, and the
 stratum pool prototype. Installing it as a Python package allows tools
 and tests elsewhere in the repo to import `animica` modules directly.
 
+## Mine & earn
+
+```bash
+pip install animica
+
+# CPU: dual-mine ANM + Monero on pool.animica.org with one command
+animica miner dual-mine <anm-address> --pool-host pool.animica.org
+
+# GPU: earn TAO by backing Animica Pool's Bittensor SN51 (Celium) miner —
+# the pool splits on-chain earnings 70/30 with rig owners, paid in
+# ANM/XMR/SOL/BTC/USDT. Token comes from https://pool.animica.org/workers.
+animica bittensor overview                       # pool status (no token)
+animica bittensor status --token anm_worker_…    # this rig: eligibility
+animica bittensor enroll --token anm_worker_…    # join the GPU pool
+animica bittensor up     --token anm_worker_…    # install the SN51 executor
+```
+
+Rigs need uptime history before they can enroll (default: 97% over 7 days,
+≥16 GB VRAM) because Bittensor slashes collateral for flaky hardware — install
+the worker agent from the Workers page and keep it heartbeating. Full details:
+https://pool.animica.org/bittensor
+
 ## Installation
 
 From the repository root you can install the package in editable mode:

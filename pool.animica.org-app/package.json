@@ -1,0 +1,50 @@
+{
+  "name": "pool-rental",
+  "version": "0.1.0",
+  "private": true,
+  "description": "pool.animica.org/app — rig rental marketplace (rent out / rent mining rigs, NOWPayments, magic-link auth).",
+  "scripts": {
+    "dev": "next dev -p 3020",
+    "build": "prisma generate && next build",
+    "start": "next start -p 3020 -H 127.0.0.1",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "test": "vitest run",
+    "worker": "tsx scripts/worker.ts",
+    "worker:dev": "tsx --watch scripts/worker.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "clsx": "^2.1.1",
+    "decimal.js": "^10.4.3",
+    "lucide-react": "^0.452.0",
+    "next": "^14.2.35",
+    "nodemailer": "^6.9.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tailwind-merge": "^2.6.1",
+    "undici": "^7.16.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/nodemailer": "^6.4.16",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.35",
+    "postcss": "^8.4.49",
+    "prisma": "^5.22.0",
+    "tailwindcss": "^3.4.15",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

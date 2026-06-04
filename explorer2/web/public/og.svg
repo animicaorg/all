@@ -1,0 +1,22 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#070b14"/>
+      <stop offset="1" stop-color="#0b1426"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#5ad0ff"/>
+      <stop offset="1" stop-color="#3df5a0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1200" height="6" fill="url(#accent)"/>
+  <circle cx="990" cy="160" r="220" fill="#5ad0ff" opacity="0.08"/>
+
+  <text x="80" y="150" font-family="Arial, Helvetica, sans-serif" font-size="34" fill="#8fd6ff" font-weight="700" letter-spacing="4">ANIMICA EXPLORER</text>
+  <text x="78" y="280" font-family="Arial, Helvetica, sans-serif" font-size="80" fill="#ffffff" font-weight="800">The <tspan fill="#5ad0ff">ANM</tspan> blockchain,</text>
+  <text x="78" y="366" font-family="Arial, Helvetica, sans-serif" font-size="80" fill="#ffffff" font-weight="800">block by block.</text>
+  <text x="80" y="436" font-family="Arial, Helvetica, sans-serif" font-size="32" fill="#aeb6c6">Live blocks · transactions · miners · network hashrate</text>
+
+  <text x="80" y="585" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#6b7488">explorer.animica.org</text>
+</svg>

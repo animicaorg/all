@@ -198,6 +198,21 @@ def verify_checksum(data: bytes, digest: bytes) -> bool:
 # ------------------------------------------
 
 
+def _coerce_floats_to_int(obj: Any) -> Any:
+    """Recursively round float values to int so canonical CBOR (which rejects
+    floats) can encode p2p control messages. bool is left untouched (it's a
+    valid CBOR type); dict keys are assumed non-float."""
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, float):
+        return int(round(obj))
+    if isinstance(obj, dict):
+        return {k: _coerce_floats_to_int(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_coerce_floats_to_int(x) for x in obj]
+    return obj
+
+
 def encode_payload(
     obj: Any, *, fmt: WireFormat = DEFAULT_WIRE, max_bytes: int = MAX_PAYLOAD_BYTES
 ) -> bytes:
@@ -210,7 +225,11 @@ def encode_payload(
     obj = _dataclass_to_plain(obj)
 
     if fmt is WireFormat.CBOR:
-        data = cbor_dumps(obj)
+        # Canonical CBOR (consensus determinism) rejects floats. P2P control
+        # messages only carry advisory floats (sizes, timestamps, scores) — and
+        # a float here currently raises (so it never sends anyway). Round them to
+        # int at the wire boundary so these messages encode instead of crashing.
+        data = cbor_dumps(_coerce_floats_to_int(obj))
     elif fmt is WireFormat.MSGPACK:
         if not _HAVE_MSGSPEC:
             raise EncodingError("msgspec is not available; cannot encode msgpack")

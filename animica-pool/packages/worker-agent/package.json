@@ -1,0 +1,19 @@
+{
+  "name": "@animica/worker-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference Animica Pool worker agent — register, benchmark, heartbeat, claim/complete jobs.",
+  "bin": { "animica-worker": "src/agent.ts" },
+  "scripts": {
+    "start": "tsx src/agent.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "echo no-build",
+    "lint": "echo no-lint",
+    "test": "echo no-tests"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.3"
+  }
+}

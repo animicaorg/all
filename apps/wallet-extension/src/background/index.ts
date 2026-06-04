@@ -765,7 +765,7 @@ async function handleProviderGetPublicKey(
   return {
     address: account.address,
     algId: account.algId,
-    algName: account.algName || (account.algId === 0x1001 ? 'dilithium3' : 'unknown'),
+    algName: account.algName || (account.algId === 0x1003 ? 'ml_dsa_65' : account.algId === 0x1002 ? 'sphincs_shake_128s' : account.algId === 0x1001 ? 'dilithium3' : 'unknown'),
     publicKey: hex,
   };
 }

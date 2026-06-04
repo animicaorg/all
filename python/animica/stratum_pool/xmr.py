@@ -161,6 +161,23 @@ class MoneroDaemonClient:
 
 # ── job + ledger types ─────────────────────────────────────────────────
 
+def difficulty_to_target_hex(difficulty: int) -> str:
+    """Encode a share difficulty as the cryptonote stratum ``target`` xmrig
+    expects: the top 4 bytes of ``2**256 // difficulty``, little-endian, as
+    8 hex chars.
+
+    This is NOT the difficulty integer printed as hex. xmrig decodes an
+    8-char target ``t`` back to a difficulty via ``0xFFFFFFFF // t`` — so
+    sending ``f"{difficulty:016x}"`` (the old bug) made xmrig mine at diff ~2
+    and every submitted share was rejected as ``low_difficulty``. Truncating
+    to the top 4 bytes rounds the target DOWN, so xmrig's effective bar is
+    always ≥ the pool's check — never a spurious low-difficulty reject.
+    """
+    difficulty = max(1, int(difficulty))
+    top4 = ((1 << 256) // difficulty) >> 224 & 0xFFFFFFFF
+    return top4.to_bytes(4, "little").hex()
+
+
 @dataclass
 class XmrJob:
     """One Monero block template wrapped as a Stratum job."""
@@ -174,6 +191,11 @@ class XmrJob:
     created_at: float = field(default_factory=time.time)
     template_reserved_offset: int = 0
     template_reserved_size: int = 8
+    prev_hash: bytes = b""   # 32 bytes — the chain tip this template builds on.
+                             # Stable while we mine the same block; the
+                             # blockhashing_blob is NOT (monerod rewrites the
+                             # timestamp every poll), so prev_hash is the job's
+                             # real identity for dedupe.
 
 
 @dataclass
@@ -209,6 +231,7 @@ class XmrJobManager:
         pool_wallet_address: str,
         poll_interval: float = 1.0,
         cache_retirement_seconds: float = 120.0,
+        share_difficulty: int = 10000,
     ):
         if not pool_wallet_address:
             raise ValueError(
@@ -220,6 +243,12 @@ class XmrJobManager:
         self._pool_addr = pool_wallet_address
         self._poll_interval = poll_interval
         self._cache_retirement_seconds = cache_retirement_seconds
+        # Per-share difficulty miners are asked to hit. Must be MUCH lower
+        # than the Monero network difficulty (~10^11) so CPU miners submit
+        # shares every few seconds. network_diff // 10000 was ~67M → a CPU
+        # rig needed hours per share, and every share that did land was
+        # rejected because the target sent on the wire was malformed anyway.
+        self._share_difficulty = max(1, int(share_difficulty))
 
         self._current_job: Optional[XmrJob] = None
         self._caches: Dict[bytes, _CacheEntry] = {}
@@ -285,17 +314,35 @@ class XmrJobManager:
         height = int(template["height"])
         seed_hash_hex = template["seed_hash"]
         seed_hash = bytes.fromhex(seed_hash_hex)
+        prev_hash_hex = str(template.get("prev_hash") or "")
+        prev_hash = bytes.fromhex(prev_hash_hex) if prev_hash_hex else b""
         blockhashing_blob_hex = template["blockhashing_blob"]
         blocktemplate_blob_hex = template["blocktemplate_blob"]
         difficulty = int(template["difficulty"])
 
-        # New template? Compare blockhashing_blob — if unchanged the
-        # template is still hot and we don't need to bother miners.
+        # New template? Dedupe on the chain tip (prev_hash + seed_hash), NOT
+        # the blockhashing_blob: monerod rewrites the block timestamp (and the
+        # reserved extra-nonce region) on every get_block_template call, so the
+        # blob differs every poll even while we're still mining the same block.
+        # Comparing the blob therefore never matched and we re-issued a brand
+        # new job_id ~every second — miners abandoned each job before they
+        # could submit, so every share came back "stale or unknown job".
+        # prev_hash only changes when a new block lands (or on a reorg), which
+        # is exactly when miners genuinely need a fresh job.
         async with self._lock:
-            if (
-                self._current_job is not None
-                and self._current_job.blockhashing_blob.hex() == blockhashing_blob_hex
-            ):
+            cur = self._current_job
+            same_tip = (
+                cur is not None
+                and cur.seed_hash == seed_hash
+                and (
+                    # Prefer prev_hash; fall back to height if a daemon ever
+                    # omits prev_hash (so an empty value can't pin us forever).
+                    (cur.prev_hash == prev_hash)
+                    if prev_hash
+                    else (cur.height == height)
+                )
+            )
+            if same_tip:
                 return
 
             await self._ensure_cache_for(seed_hash)
@@ -307,9 +354,13 @@ class XmrJobManager:
                 blockhashing_blob=bytes.fromhex(blockhashing_blob_hex),
                 seed_hash=seed_hash,
                 network_difficulty=difficulty,
-                pool_difficulty=max(1000, difficulty // 10000),  # default vardiff-able
+                # Share difficulty is a fixed, modest target (NOT network-
+                # derived) so CPU miners submit shares regularly. Never let
+                # it exceed the block difficulty.
+                pool_difficulty=min(self._share_difficulty, max(1, difficulty)),
                 template_reserved_offset=int(template.get("reserved_offset", 0)),
                 template_reserved_size=8,
+                prev_hash=prev_hash,
             )
             self._current_job = new_job
 
@@ -549,10 +600,15 @@ async def make_default_components(
     pool_xmr_address: str,
     monerod_url: str = DEFAULT_MONEROD_URL,
     num_validator_workers: int = 4,
+    share_difficulty: int = 10000,
 ) -> Tuple[MoneroDaemonClient, XmrJobManager, XmrShareValidator, XmrShareLedger]:
     """Factory used by core.py when XMR mining is enabled in config."""
     client = MoneroDaemonClient(url=monerod_url)
-    jm = XmrJobManager(client, pool_wallet_address=pool_xmr_address)
+    jm = XmrJobManager(
+        client,
+        pool_wallet_address=pool_xmr_address,
+        share_difficulty=share_difficulty,
+    )
     validator = XmrShareValidator(jm, num_workers=num_validator_workers)
     ledger = XmrShareLedger()
     # Re-notify the validator whenever a new job is built

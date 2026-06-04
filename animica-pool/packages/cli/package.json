@@ -1,0 +1,19 @@
+{
+  "name": "@animica/cli",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Animica Pool CLI — mine, rent, serve inference, manage keys/credits/payouts from the terminal.",
+  "type": "module",
+  "bin": { "animica-pool": "src/cli.mjs" },
+  "files": ["src/cli.mjs", "README.md"],
+  "keywords": ["animica", "mining", "ai", "inference", "openai", "crypto", "cli"],
+  "license": "Apache-2.0",
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "typecheck": "echo no-typecheck",
+    "build": "echo no-build",
+    "lint": "echo no-lint",
+    "test": "echo no-tests"
+  },
+  "engines": { "node": ">=20" }
+}

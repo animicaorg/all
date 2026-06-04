@@ -201,6 +201,14 @@ set_target_properties(animica-wallet PROPERTIES
 )
 
 if(APPLE)
+    # Drop load commands for dylibs whose symbols aren't used. Combined with the
+    # POST_BUILD dedup below, this prevents the "duplicate linked dylib" dyld
+    # abort on macOS 13+ (OpenGL.framework was being linked twice by the
+    # cross-compile toolchain). See scripts/fix_macho_duplicate_dylibs.py.
+    target_link_options(animica-wallet PRIVATE "-Wl,-dead_strip_dylibs")
+endif()
+
+if(APPLE)
     set_target_properties(animica-wallet PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_GUI_IDENTIFIER "${WALLET_GUI_IDENTIFIER}"
@@ -217,6 +225,19 @@ if(APPLE)
         set_source_files_properties("${MACOS_ICON}" PROPERTIES
             MACOSX_PACKAGE_LOCATION "Resources")
         target_sources(animica-wallet PRIVATE "${MACOS_ICON}")
+    endif()
+
+    # Belt-and-suspenders: strip any remaining duplicate LC_LOAD_DYLIB load
+    # commands from the built binary (dyld on macOS 13+ aborts otherwise).
+    # No-op if python3/lief is unavailable, so it never breaks the build.
+    find_program(PYTHON3_EXECUTABLE NAMES python3 python)
+    if(PYTHON3_EXECUTABLE)
+        add_custom_command(TARGET animica-wallet POST_BUILD
+            COMMAND "${PYTHON3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/fix_macho_duplicate_dylibs.py"
+                    "$<TARGET_FILE:animica-wallet>"
+            COMMENT "Removing duplicate Mach-O load commands (dyld safety)"
+            VERBATIM)
     endif()
 elseif(WIN32)
     set(WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/animica.ico")

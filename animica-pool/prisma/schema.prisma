@@ -1,0 +1,623 @@
+// Animica Pool — unified platform schema.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================ Enums ============================
+enum UserRole {
+  GUEST
+  CUSTOMER
+  MINER
+  WORKER
+  ADMIN
+}
+
+enum KycStatus {
+  not_required
+  pending
+  approved
+  rejected
+}
+
+enum MiningMode {
+  ANM_ONLY
+  XMR_ONLY
+  DUAL_50_50
+}
+
+enum PayoutAsset {
+  ANM
+  XMR
+  SOL
+  USDT
+  BTC
+  SPLIT_ANM_XMR
+  ORIGINAL_ASSET
+}
+
+enum InferenceStatus {
+  success
+  failed
+}
+
+enum WorkerStatus {
+  pending
+  benchmarking
+  online
+  offline
+  busy
+  banned
+  disabled
+}
+
+enum WorkerEarningMode {
+  mining
+  inference
+  rental
+  all
+}
+
+enum RentalProviderType {
+  cpu
+  gpu
+  ai_endpoint
+  dedicated_model
+  batch_job
+}
+
+enum RentalStatus {
+  pending_payment
+  paid
+  provisioning
+  active
+  completed
+  failed
+  refunded
+  cancelled
+}
+
+enum CreditEntryType {
+  purchase
+  inference_usage
+  rental_usage
+  refund
+  admin_adjustment
+}
+
+enum PayoutType {
+  mining
+  worker_inference
+  compute_rental
+  referral
+  anm_reward
+  treasury_redistribution
+  bittensor_mining
+}
+
+enum PayoutStatus {
+  pending
+  pending_review
+  approved
+  submitted
+  processing
+  completed
+  failed
+  cancelled
+}
+
+enum RevenueSourceType {
+  inference
+  rental
+  mining
+  referral
+  manual_adjustment
+  bittensor
+}
+
+enum BittensorExecutorStatus {
+  pending      // enrollment accepted, provisioning script issued
+  provisioning // executor container reported installing
+  active       // verified online, in the miner's advertised inventory
+  offline      // missed liveness window — pulled from inventory
+  suspended    // admin/uptime-breach pull (collateral reclaim in flight)
+  retired
+}
+
+enum ReferralStatus {
+  pending
+  approved
+  paid
+  rejected
+}
+
+// ============================ Core ============================
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  displayName  String?
+  role         UserRole  @default(CUSTOMER)
+  isActive     Boolean   @default(true)
+  kycStatus    KycStatus @default(not_required)
+  walletAddress String?
+  referralCode String?   @unique
+  referredById String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  apiKeys        ApiKey[]
+  creditLedger   CreditLedger[]
+  creditPurchases CreditPurchase[]
+  inferenceRequests InferenceRequest[]
+  miningAccounts MiningAccount[]
+  workers        Worker[]
+  rentalOrders   RentalOrder[]
+  payoutWallets  PayoutWallet[]
+  payoutRequests PayoutRequest[]
+  referralsMade  Referral[] @relation("referrer")
+  referralsGot   Referral[] @relation("referred")
+
+  @@index([role])
+  @@index([referredById])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  keyHash    String    @unique
+  prefix     String
+  label      String?
+  isActive   Boolean   @default(true)
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  inferenceRequests InferenceRequest[]
+
+  @@index([userId])
+  @@index([keyHash])
+}
+
+// ======================= Credits / Payments =======================
+model CreditPurchase {
+  id                   String   @id @default(cuid())
+  userId               String
+  amountUsd            Decimal  @db.Decimal(18, 8)
+  creditsUsd           Decimal  @db.Decimal(18, 8)
+  payCurrency          String?
+  status               String   @default("pending")
+  nowpaymentsPaymentId String?
+  nowpaymentsInvoiceId String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([nowpaymentsPaymentId])
+}
+
+model CreditLedger {
+  id                   String          @id @default(cuid())
+  userId               String
+  type                 CreditEntryType
+  amountUsd            Decimal         @db.Decimal(18, 8) // signed
+  balanceAfterUsd      Decimal         @db.Decimal(18, 8)
+  refId                String? // inferenceRequestId / rentalOrderId / purchaseId
+  note                 String?
+  createdAt            DateTime        @default(now())
+  user                 User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model NowPaymentsEvent {
+  id         String   @id @default(cuid())
+  dedupeKey  String   @unique
+  kind       String // payment | payout
+  refId      String?
+  payload    Json
+  createdAt  DateTime @default(now())
+
+  @@index([refId])
+}
+
+// ======================= Inference / Providers =======================
+model InferenceRequest {
+  id              String          @id @default(cuid())
+  userId          String
+  apiKeyId        String?
+  model           String
+  provider        String
+  kind            String // chat | completion | embedding
+  inputTokens     Int             @default(0)
+  outputTokens    Int             @default(0)
+  customerCostUsd Decimal         @db.Decimal(18, 8)
+  providerCostUsd Decimal         @db.Decimal(18, 8)
+  grossMarginUsd  Decimal         @db.Decimal(18, 8)
+  latencyMs       Int?
+  status          InferenceStatus
+  errorMessage    String?
+  createdAt       DateTime        @default(now())
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey          ApiKey?         @relation(fields: [apiKeyId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([provider])
+}
+
+model ProviderConfig {
+  name        String   @id
+  isEnabled   Boolean  @default(false)
+  priority    Int      @default(100)
+  config      Json?
+  updatedAt   DateTime @updatedAt
+}
+
+model ProviderHealth {
+  provider     String   @id
+  isEnabled    Boolean  @default(true)
+  avgLatencyMs Int      @default(0)
+  successRate  Decimal  @default(100) @db.Decimal(5, 2)
+  currentQueue Int      @default(0)
+  lastError    String?
+  updatedAt    DateTime @updatedAt
+}
+
+// ======================= Mining =======================
+model MiningAccount {
+  id            String      @id @default(cuid())
+  userId        String
+  username      String      @unique
+  workerName    String?
+  mode          MiningMode  @default(ANM_ONLY)
+  payoutAsset   PayoutAsset @default(ANM)
+  payoutAddress String?
+  anmAddress    String?
+  xmrAddress    String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  snapshots     MiningStatsSnapshot[]
+
+  @@index([userId])
+}
+
+model MiningStatsSnapshot {
+  id              String        @id @default(cuid())
+  miningAccountId String
+  hashrate        Decimal       @db.Decimal(18, 4)
+  hashrate24h     Decimal       @db.Decimal(18, 4)
+  acceptedShares  Int           @default(0)
+  rejectedShares  Int           @default(0)
+  pendingBalance  Decimal       @db.Decimal(18, 8) @default(0)
+  paidBalance     Decimal       @db.Decimal(18, 8) @default(0)
+  contributionPct Decimal       @db.Decimal(7, 4)  @default(0)
+  createdAt       DateTime      @default(now())
+  account         MiningAccount @relation(fields: [miningAccountId], references: [id], onDelete: Cascade)
+
+  @@index([miningAccountId, createdAt])
+}
+
+// ======================= Workers =======================
+model Worker {
+  id              String       @id @default(cuid())
+  userId          String
+  name            String
+  machineId       String?      @unique
+  cpuModel        String?
+  gpuModel        String?
+  vramGb          Int?
+  ramGb           Int?
+  diskGb          Int?
+  os              String?
+  region          String?
+  benchmarkScore  Decimal?     @db.Decimal(12, 2)
+  status          WorkerStatus @default(pending)
+  isVerified      Boolean      @default(false)
+  earningMode     WorkerEarningMode @default(all)
+  supportedModels String[]     @default([])
+  tokenHash       String?      @unique
+  // Raw install token, kept so the owner can re-read it from the Workers page
+  // (workers created before this column have only the hash — regenerate).
+  token           String?
+  lastSeenAt      DateTime?
+  createdAt       DateTime     @default(now())
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  benchmarks      WorkerBenchmark[]
+  jobs            WorkerJob[]
+  heartbeatDays   WorkerHeartbeatDay[]
+  bittensorExecutor BittensorExecutor?
+
+  @@index([userId])
+  @@index([status])
+}
+
+// Daily heartbeat rollup (30s beats → max ~2880/day) powering the uptime gate
+// for Bittensor executor eligibility. Cheap upsert-per-heartbeat.
+model WorkerHeartbeatDay {
+  workerId  String
+  day       DateTime @db.Date
+  beats     Int      @default(0)
+  worker    Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@id([workerId, day])
+  @@index([day])
+}
+
+model WorkerBenchmark {
+  id        String   @id @default(cuid())
+  workerId  String
+  score     Decimal  @db.Decimal(12, 2)
+  details   Json?
+  createdAt DateTime @default(now())
+  worker    Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId])
+}
+
+model WorkerJob {
+  id          String   @id @default(cuid())
+  workerId    String?
+  kind        String // inference | rental
+  status      String   @default("queued") // queued|claimed|completed|failed
+  payloadRef  String?
+  model       String?
+  payload     Json? // the inference request the worker should serve
+  resultText  String? // the worker's output
+  inputTokens Int      @default(0)
+  outputTokens Int     @default(0)
+  errorMessage String?
+  rewardUsd   Decimal? @db.Decimal(18, 8)
+  claimedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  worker      Worker?  @relation(fields: [workerId], references: [id])
+
+  @@index([workerId])
+  @@index([status])
+}
+
+// ======================= Rentals =======================
+model RentalListing {
+  id                 String             @id @default(cuid())
+  providerType       RentalProviderType
+  workerId           String?
+  title              String
+  description        String?
+  cpuModel           String?
+  gpuModel           String?
+  vramGb             Int?
+  ramGb              Int?
+  storageGb          Int?
+  region             String?
+  pricePerHourUsd    Decimal            @db.Decimal(18, 8)
+  pricePerDayUsd     Decimal?           @db.Decimal(18, 8)
+  availabilityStatus String             @default("available")
+  benchmarkScore     Decimal?           @db.Decimal(12, 2)
+  supportedModels    String[]           @default([])
+  createdAt          DateTime           @default(now())
+  orders             RentalOrder[]
+
+  @@index([providerType])
+  @@index([availabilityStatus])
+}
+
+model RentalOrder {
+  id            String       @id @default(cuid())
+  listingId     String
+  userId        String
+  hours         Int
+  priceUsd      Decimal      @db.Decimal(18, 8)
+  status        RentalStatus @default(pending_payment)
+  endpointUrl   String?
+  assignedWorkerId String?
+  startedAt     DateTime?
+  endsAt        DateTime?
+  nowpaymentsPaymentId String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  listing       RentalListing @relation(fields: [listingId], references: [id])
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ======================= Payouts =======================
+model PayoutWallet {
+  id          String      @id @default(cuid())
+  userId      String
+  asset       PayoutAsset
+  address     String
+  isDefault   Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PayoutRequest {
+  id          String       @id @default(cuid())
+  userId      String
+  type        PayoutType
+  asset       PayoutAsset
+  address     String
+  amountUsd   Decimal      @db.Decimal(18, 8)
+  status      PayoutStatus @default(pending_review)
+  batchId     String?
+  reviewedBy  String?
+  note        String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  batch       PayoutBatch? @relation(fields: [batchId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+}
+
+model PayoutBatch {
+  id                  String          @id @default(cuid())
+  status              PayoutStatus    @default(pending)
+  nowpaymentsBatchId  String?
+  totalUsd            Decimal         @db.Decimal(18, 8) @default(0)
+  createdBy           String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  requests            PayoutRequest[]
+
+  @@index([status])
+}
+
+// ======================= Revenue / Referral =======================
+model RevenueLedger {
+  id             String            @id @default(cuid())
+  sourceType     RevenueSourceType
+  sourceId       String?
+  grossUsd       Decimal           @db.Decimal(18, 8)
+  costUsd        Decimal           @db.Decimal(18, 8) @default(0)
+  feeUsd         Decimal           @db.Decimal(18, 8) @default(0)
+  netUsd         Decimal           @db.Decimal(18, 8)
+  allocationJson Json?
+  createdAt      DateTime          @default(now())
+
+  @@index([sourceType, createdAt])
+}
+
+model Referral {
+  id               String         @id @default(cuid())
+  referrerUserId   String
+  referredUserId   String
+  referralCode     String
+  purchaseAmountUsd Decimal       @db.Decimal(18, 8) @default(0)
+  rewardUsd        Decimal        @db.Decimal(18, 8) @default(0)
+  rewardAsset      PayoutAsset    @default(USDT)
+  status           ReferralStatus @default(pending)
+  createdAt        DateTime       @default(now())
+  referrer         User           @relation("referrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  referred         User           @relation("referred", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@index([referrerUserId])
+}
+
+// ======================= Bittensor (SN51 GPU pool) =======================
+// Supply side of the Bittensor positioning: our miner UID(s) on Celium/SN51,
+// backed by enrolled user rigs running the Datura executor container with
+// MINER_HOTKEY_SS58_ADDRESS = our hotkey. One miner row per (netuid, hotkey).
+model BittensorMiner {
+  id                  String    @id @default(cuid())
+  netuid              Int
+  hotkeySs58          String    @unique
+  coldkeyName         String?
+  // planned → registered (burn paid) → active (executors advertised) → deregistered
+  status              String    @default("planned")
+  registrationBurnTao Decimal?  @db.Decimal(18, 9)
+  registeredAt        DateTime?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  executors           BittensorExecutor[]
+  earnings            BittensorEarning[]
+  snapshots           BittensorMinerSnapshot[]
+
+  @@index([netuid])
+}
+
+// On-chain poll snapshots: the hotkey's alpha stake on the subnet at poll
+// time. Positive deltas between consecutive snapshots = emissions earned →
+// recorded as BittensorEarning(kind=emission) via the shared split path.
+model BittensorMinerSnapshot {
+  id           String         @id @default(cuid())
+  minerId      String
+  alphaStake   Decimal        @db.Decimal(28, 9)
+  alphaPriceTao Decimal       @db.Decimal(18, 9) @default(0)
+  taoPriceUsd  Decimal        @db.Decimal(18, 8) @default(0)
+  raw          Json?
+  createdAt    DateTime       @default(now())
+  miner        BittensorMiner @relation(fields: [minerId], references: [id], onDelete: Cascade)
+
+  @@index([minerId, createdAt])
+}
+
+// One enrolled user rig = one SN51 executor. Collateral (7 days of rental
+// fees, BURNED on slash) is posted by the pool; holdback of the owner's
+// recent earnings stands behind it (see BittensorEarning release window).
+model BittensorExecutor {
+  id              String                  @id @default(cuid())
+  minerId         String
+  workerId        String                  @unique
+  executorUuid    String?                 @unique // assigned at `lium provider node add`
+  gpuType         String
+  gpuCount        Int                     @default(1)
+  externalIp      String?
+  externalPort    Int                     @default(8080)
+  sshPort         Int                     @default(2200)
+  pricePerHourUsd Decimal?                @db.Decimal(18, 8)
+  status          BittensorExecutorStatus @default(pending)
+  collateralTao   Decimal                 @db.Decimal(18, 9) @default(0)
+  slashCount      Int                     @default(0)
+  containerOk     Boolean                 @default(false) // worker agent reports executor container health
+  lastVerifiedAt  DateTime?
+  enrolledAt      DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  miner           BittensorMiner          @relation(fields: [minerId], references: [id], onDelete: Cascade)
+  worker          Worker                  @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  earnings        BittensorEarning[]
+
+  @@index([minerId])
+  @@index([status])
+}
+
+// Earnings recorded per miner (emission) or per executor (rental), converted
+// to USD at record time. ownerShareUsd enters the rig owner's payable balance
+// only after the holdback window (BITTENSOR_HOLDBACK_DAYS) and only if not
+// forfeited — forfeiture absorbs collateral slashes caused by that rig.
+model BittensorEarning {
+  id            String             @id @default(cuid())
+  minerId       String
+  executorId    String?
+  kind          String // emission | rental | adjustment
+  periodStart   DateTime
+  periodEnd     DateTime
+  alphaAmount   Decimal            @db.Decimal(18, 9) @default(0)
+  taoAmount     Decimal            @db.Decimal(18, 9) @default(0)
+  usdValue      Decimal            @db.Decimal(18, 8)
+  ownerShareUsd Decimal            @db.Decimal(18, 8) @default(0)
+  poolShareUsd  Decimal            @db.Decimal(18, 8) @default(0)
+  forfeited     Boolean            @default(false)
+  raw           Json?
+  createdAt     DateTime           @default(now())
+  miner         BittensorMiner     @relation(fields: [minerId], references: [id], onDelete: Cascade)
+  executor      BittensorExecutor? @relation(fields: [executorId], references: [id])
+
+  @@index([minerId, createdAt])
+  @@index([executorId, createdAt])
+}
+
+// ======================= Settings =======================
+// Admin-tunable runtime config (e.g. redistribution split percentages).
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ======================= Audit =======================
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  entityType String
+  entityId   String?
+  actor      String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}

@@ -257,10 +257,16 @@ def _normalize_dilithium3_sk(sk: bytes) -> bytes:
 
 
 def _resolve_backend(alg_name: str):
+    canonical = (alg_name or "").lower().replace("-", "_").replace(" ", "")
     try:
-        if alg_name == "dilithium3":
+        if canonical == "dilithium3":
             from pq.py.algs import dilithium3 as backend
-        elif alg_name == "sphincs_shake_128s":
+        elif canonical in ("ml_dsa_65", "mldsa65"):
+            # Real FIPS 204 ML-DSA-65 (alg_id 0x1003) — wraps the vendored
+            # dilithium_py_v2 impl. Distinct key format from the legacy
+            # dilithium3 stub, so it has its own backend (no sk normalization).
+            from pq.py.algs import ml_dsa_65 as backend
+        elif canonical == "sphincs_shake_128s":
             from pq.py.algs import sphincs_shake_128s as backend
         else:
             raise NotImplementedError(f"Signature backend not wired for {alg_name}")
@@ -286,10 +292,13 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes, pk: bytes | None = None)
     For Dilithium3, automatically normalizes secret keys from legacy 4032-byte format
     to canonical 4000-byte format before signing.
     """
-    # Normalize Dilithium3 secret keys to handle legacy liboqs format
-    if _is_dilithium3_alg(alg_name):
+    # Normalize ONLY legacy liboqs Dilithium3 secret keys (4000/4032 -> 4000).
+    # Do NOT apply this to ml_dsa_65: its FIPS 204 secret key is genuinely 4032
+    # bytes and truncating to 4000 would corrupt it.
+    canonical = (alg_name or "").lower().replace("-", "_").replace(" ", "")
+    if canonical == "dilithium3":
         sk = _normalize_dilithium3_sk(sk)
-    
+
     backend = _resolve_backend(alg_name)
     sign_fn = getattr(backend, "sign", None)
     if not callable(sign_fn):

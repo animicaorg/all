@@ -1,0 +1,321 @@
+// Rig rental marketplace — pool.animica.org/app
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  BANNED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  role      UserRole @default(USER)
+  createdAt DateTime @default(now())
+
+  sessions        Session[]
+  rigs            Rig[]
+  rentalsAsRenter Rental[]    @relation("renter")
+
+  // AI compute broker
+  apiKeys           ApiKey[]
+  creditLedger      CreditLedger[]
+  inferenceRequests InferenceRequest[]
+  creditPurchases   CreditPurchase[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  ipHash     String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model MagicLink {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  email      String
+  userId     String?
+  redirectTo String?
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  UNLISTED
+}
+
+// A rig listing. ownerAddress is PROVEN via the pool ownership challenge.
+// rigId = sha256(worker|address) — the opaque id the pool exposes.
+model Rig {
+  id                String        @id @default(cuid())
+  ownerUserId       String
+  rigId             String        @unique
+  workerName        String
+  ownerAddress      String
+  ownershipProvenAt DateTime?
+  pricePerHourUsd   String
+  payoutCurrency    String
+  payoutAddress     String
+  supportedCoins    String // 'ANM' | 'XMR' | 'BOTH'
+  status            ListingStatus @default(DRAFT)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  owner   User     @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  rentals Rental[]
+
+  @@index([status])
+  @@index([ownerUserId])
+}
+
+enum RentalStatus {
+  CREATED
+  QUOTED
+  WAITING_PAYMENT
+  PAYMENT_DETECTED
+  PAYMENT_CONFIRMED
+  ACTIVE
+  COMPLETING
+  OWNER_PAID
+  COMPLETE
+  REFUND_DUE
+  REFUND_PROCESSING
+  REFUNDED
+  EXPIRED
+  FAILED
+  CANCELLED
+  NEEDS_ADMIN_REVIEW
+}
+
+model Rental {
+  id                    String       @id @default(cuid())
+  rigId                 String
+  renterUserId          String
+  hours                 Int
+  pricePerHourUsd       String
+  grossUsd              String
+  marketplaceFeePercent String
+  marketplaceFeeUsd     String
+  ownerNetUsd           String
+  coins                 String // 'ANM' | 'XMR' | 'BOTH'
+  anmMode               String? // 'pps' | 'solo'
+  renterAnmAddress      String?
+  renterXmrAddress      String?
+  status                RentalStatus @default(CREATED)
+
+  windowStartAt DateTime?
+  windowEndAt   DateTime?
+
+  // settlement bookkeeping
+  measuredUptimeSeconds Int?
+  refundUsd             String?
+  ownerEarnedUsd        String?
+  ownerPayoutCurrency   String?
+  ownerPayoutAddress    String?
+
+  // NOWPayments ids
+  npInvoiceId      String?
+  npPaymentId      String?
+  npPayoutId       String?
+  npRefundPayoutId String?
+  npConversionId   String?
+  payAmount        String?
+  payCurrency      String?
+  actuallyPaidUsd  String?
+  invoiceUrl       String?
+
+  quoteExpiresAt DateTime?
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  rig    Rig            @relation(fields: [rigId], references: [id])
+  renter User           @relation("renter", fields: [renterUserId], references: [id])
+  events PaymentEvent[]
+
+  @@index([status])
+  @@index([rigId])
+  @@index([renterUserId])
+  @@index([npPaymentId])
+  @@index([npPayoutId])
+}
+
+model PaymentEvent {
+  id        String   @id @default(cuid())
+  rentalId  String
+  source    String
+  dedupeKey String   @unique
+  payload   Json
+  createdAt DateTime @default(now())
+  rental    Rental   @relation(fields: [rentalId], references: [id], onDelete: Cascade)
+
+  @@index([rentalId])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime  @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  entityType String
+  entityId   String?
+  actor      String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// AI compute broker — OpenAI-compatible inference resold across providers.
+// Money is stored as Decimal strings (see src/lib/money.ts), matching the
+// rest of this schema. The account owner is the existing magic-link `User`.
+// ---------------------------------------------------------------------------
+
+// A developer API key. The raw secret (`anm_live_<random>`) is shown ONCE at
+// creation and only its sha256 hash is stored — same discipline as Session.
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  keyHash    String    @unique
+  prefix     String // first ~12 chars, shown in the dashboard to identify the key
+  label      String?
+  isActive   Boolean   @default(true)
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inferenceRequests InferenceRequest[]
+
+  @@index([userId])
+  @@index([keyHash])
+}
+
+enum CreditSource {
+  purchase
+  grant
+  inference
+  refund
+  adjustment
+}
+
+// Append-only credit ledger. `amountUsd` is signed (+ for purchase/grant,
+// − for inference spend). `balanceAfterUsd` is the running balance snapshot
+// after this row, written under a per-user advisory lock so concurrent
+// inference requests can never overspend. See src/server/credit.ts.
+model CreditLedger {
+  id                  String       @id @default(cuid())
+  userId              String
+  amountUsd           String
+  balanceAfterUsd     String
+  source              CreditSource
+  inferenceRequestId  String?
+  nowpaymentsPaymentId String?
+  note                String?
+  createdAt           DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+enum InferenceStatus {
+  success
+  failed
+}
+
+// One metered inference call. Records what the customer was charged, what the
+// upstream provider cost, and the gross margin — the basis for redistribution.
+model InferenceRequest {
+  id              String          @id @default(cuid())
+  userId          String
+  apiKeyId        String
+  model           String
+  provider        String
+  kind            String // 'chat' | 'embedding'
+  inputTokens     Int             @default(0)
+  outputTokens    Int             @default(0)
+  customerCostUsd String
+  providerCostUsd String
+  grossMarginUsd  String
+  latencyMs       Int?
+  status          InferenceStatus
+  errorMessage    String?
+  createdAt       DateTime        @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([provider])
+}
+
+// Rolling health/score per provider — the router consults `isEnabled` and
+// prefers lower latency / higher success. Updated after each call.
+model ProviderHealth {
+  provider     String   @id
+  isEnabled    Boolean  @default(true)
+  avgLatencyMs Int      @default(0)
+  successRate  String   @default("100")
+  currentQueue Int      @default(0)
+  updatedAt    DateTime @updatedAt
+}
+
+enum CreditPurchaseStatus {
+  pending // invoice created, awaiting payment
+  paid // payment finished and credit granted
+  failed
+  expired
+}
+
+// A "buy credits" order. `id` is used as the NOWPayments order_id so the IPN
+// can map a payment back to the buyer. Credit is granted exactly once when the
+// payment finishes (guarded by `creditedAt`). See src/server/billing.ts.
+model CreditPurchase {
+  id              String               @id @default(cuid())
+  userId          String
+  amountUsd       String
+  status          CreditPurchaseStatus @default(pending)
+  payCurrency     String?
+  actuallyPaidUsd String?
+  npInvoiceId     String?
+  npPaymentId     String?
+  invoiceUrl      String?
+  creditedAt      DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([npPaymentId])
+}

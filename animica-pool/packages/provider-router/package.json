@@ -1,0 +1,22 @@
+{
+  "name": "@animica/provider-router",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "lint": "echo no-lint",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@animica/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  }
+}

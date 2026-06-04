@@ -394,7 +394,7 @@ bool AddressBook::writeContactsFile(const QString& path, const QList<Contact>& c
                 << csvField(contact.label) << ','
                 << csvField(contact.address) << ','
                 << csvField(contact.note) << ','
-                << csvField(contact.createdAt.toUTC().toString(Qt::ISODate))
+                << csvField(contact.createdAt.isValid() ? contact.createdAt.toString(Qt::ISODate) : QString())
                 << '\n';
         }
     } else {

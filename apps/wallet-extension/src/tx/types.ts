@@ -100,10 +100,12 @@ export interface TxDebugInfo {
 // Scheme constants
 export const SCHEME_DILITHIUM3 = 1;
 export const SCHEME_SPHINCS_SHAKE_128S = 2;
+export const SCHEME_ML_DSA_65 = 11; // chain v2 default (node scheme_id=11)
 
 // Algorithm ID constants (used in some contexts)
-export const ALG_ID_DILITHIUM3 = 0x1001; // 4097
-export const ALG_ID_SPHINCS = 0x1002;     // 4098
+export const ALG_ID_DILITHIUM3 = 0x1001; // 4097 (deprecated stub)
+export const ALG_ID_SPHINCS = 0x1002;     // 4098 (deprecated stub)
+export const ALG_ID_ML_DSA_65 = 0x1003;   // 4099 — real FIPS 204 ML-DSA-65
 
 // Prehash constants
 export const PREHASH_NONE = 0;
@@ -129,6 +131,13 @@ export const KEY_LENGTHS = {
     signature: 7856,
     name: "sphincs_shake_128s",
   },
+  [SCHEME_ML_DSA_65]: {
+    // FIPS 204 ML-DSA-65 (alg_id 0x1003) — node default. Sizes per the
+    // vendored dilithium_py_v2 / @noble/post-quantum ml_dsa65.
+    pubkey: 1952,
+    signature: 3309,
+    name: "ml_dsa_65",
+  },
 } as const;
 
 export function getSchemeInfo(scheme_id: number) {
@@ -138,11 +147,13 @@ export function getSchemeInfo(scheme_id: number) {
 export function algIdToSchemeId(alg_id: number): number | null {
   if (alg_id === ALG_ID_DILITHIUM3) return SCHEME_DILITHIUM3;
   if (alg_id === ALG_ID_SPHINCS) return SCHEME_SPHINCS_SHAKE_128S;
+  if (alg_id === ALG_ID_ML_DSA_65) return SCHEME_ML_DSA_65;
   return null;
 }
 
 export function schemeIdToAlgId(scheme_id: number): number | null {
   if (scheme_id === SCHEME_DILITHIUM3) return ALG_ID_DILITHIUM3;
   if (scheme_id === SCHEME_SPHINCS_SHAKE_128S) return ALG_ID_SPHINCS;
+  if (scheme_id === SCHEME_ML_DSA_65) return ALG_ID_ML_DSA_65;
   return null;
 }

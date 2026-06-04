@@ -1,10 +1,64 @@
 #include "AccountManager.h"
+#include "AnimicaWalletBackend.h"
 #include <QProcess>
 #include <QUuid>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QDir>
+#include <QProcessEnvironment>
 #include <QDebug>
+
+namespace {
+// Run `python -c <code>` against the SAME interpreter the rest of the wallet
+// uses (bundled venv first, then repo/system) instead of a bare "python" off
+// PATH. The bare form only worked on machines that happened to have Python
+// installed — on clean Windows boxes it failed to start and surfaced as a
+// "Python was not found" error. Mirrors AnimicaWalletBackend::call()'s env.
+bool runPythonInline(const QString& code, int timeoutMs, QByteArray& outStdout)
+{
+    const QString python = AnimicaWalletBackend::findPythonInterpreter();
+    if (python.isEmpty()) {
+        qWarning() << "No Python interpreter found for the Animica wallet backend";
+        return false;
+    }
+
+    QProcess process;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    const QString repoRoot = AnimicaWalletBackend::findRepoRoot();
+    if (!repoRoot.isEmpty()) {
+        const QString sep =
+#ifdef Q_OS_WIN
+            ";";
+#else
+            ":";
+#endif
+        QStringList pyPath = env.value("PYTHONPATH").split(sep, Qt::SkipEmptyParts);
+        pyPath.prepend(QDir(repoRoot).filePath("sdk/python"));
+        pyPath.prepend(QDir(repoRoot).filePath("python"));
+        env.insert("PYTHONPATH", pyPath.join(sep));
+    }
+    process.setProcessEnvironment(env);
+
+    process.start(python, QStringList() << "-c" << code);
+    if (!process.waitForStarted(5000)) {
+        qWarning() << "Failed to start Python process:" << python << process.errorString();
+        return false;
+    }
+    if (!process.waitForFinished(timeoutMs)) {
+        qWarning() << "Python process timeout";
+        process.kill();
+        process.waitForFinished(500);
+        return false;
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        qWarning() << "Python process failed:" << process.readAllStandardError();
+        return false;
+    }
+    outStdout = process.readAllStandardOutput();
+    return true;
+}
+} // namespace
 
 AccountManager::AccountManager(QObject* parent)
     : QObject(parent)
@@ -210,27 +264,13 @@ bool AccountManager::generateKeypair(int algId, QByteArray& outPublicKey, QByteA
         "print(json.dumps({'public_key': kp.public_key.hex(), 'secret_key': kp.secret_key.hex()}))"
     ).arg(algName);
     
-    QProcess process;
-    process.start("python", QStringList() << "-c" << pythonCode);
-    
-    if (!process.waitForStarted()) {
-        qWarning() << "Failed to start Python keygen process";
+    QByteArray output;
+    if (!runPythonInline(pythonCode, 15000, output)) {
+        qWarning() << "Python keygen failed";
         return false;
     }
-    
-    if (!process.waitForFinished(15000)) {
-        qWarning() << "Python keygen process timeout";
-        process.kill();
-        return false;
-    }
-    
-    if (process.exitCode() != 0) {
-        qWarning() << "Python keygen failed:" << process.readAllStandardError();
-        return false;
-    }
-    
+
     // Parse JSON output: {"public_key": "hex", "secret_key": "hex"}
-    QByteArray output = process.readAllStandardOutput();
     QJsonDocument doc = QJsonDocument::fromJson(output);
     if (!doc.isObject()) {
         qWarning() << "Invalid keygen output:" << output;
@@ -259,26 +299,13 @@ QString AccountManager::deriveAddress(const QByteArray& publicKey, int algId)
         "print(address_from_pubkey(bytes.fromhex('%1'), %2))"
     ).arg(pubkeyHex).arg(algId);
     
-    QProcess process;
-    process.start("python", QStringList() << "-c" << pythonCode);
-    
-    if (!process.waitForStarted()) {
-        qWarning() << "Failed to start Python address process";
+    QByteArray output;
+    if (!runPythonInline(pythonCode, 10000, output)) {
+        qWarning() << "Python address derivation failed";
         return QString();
     }
-    
-    if (!process.waitForFinished(10000)) {
-        qWarning() << "Python address process timeout";
-        process.kill();
-        return QString();
-    }
-    
-    if (process.exitCode() != 0) {
-        qWarning() << "Python address failed:" << process.readAllStandardError();
-        return QString();
-    }
-    
-    QString address = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
+
+    QString address = QString::fromUtf8(output).trimmed();
     return address;
 }
 

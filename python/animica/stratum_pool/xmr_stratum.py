@@ -90,12 +90,16 @@ class XmrStratumServer:
         job_manager: XmrJobManager,
         validator: XmrShareValidator,
         ledger: XmrShareLedger,
+        rental_resolver=None,
     ):
         self._host = host
         self._port = port
         self._jm = job_manager
         self._validator = validator
         self._ledger = ledger
+        # Optional callable(worker, address) -> rental dict | None. When a
+        # rented rig submits an XMR share, credit is keyed to the renter.
+        self._rental_resolver = rental_resolver
         self._sessions: Dict[str, XmrSession] = {}
         self._server: Optional[asyncio.AbstractServer] = None
         self._lock = asyncio.Lock()
@@ -236,8 +240,21 @@ class XmrStratumServer:
         job_id = str(params.get("job_id") or "")
         nonce = str(params.get("nonce") or "")
         result_hex = str(params.get("result") or "")
+        # Rig-rental redirect: if this owner rig (worker, address) is under an
+        # active XMR rental, credit the share to the renter's anim1 handle so
+        # the XMR ledger pays the renter. Reverts automatically at window end.
+        credit_id = sess.miner_address
+        if self._rental_resolver is not None:
+            try:
+                rental = self._rental_resolver(sess.worker, sess.miner_address)
+            except Exception:
+                rental = None
+            if rental and str(rental.get("coins") or "") in ("XMR", "BOTH"):
+                renter = rental.get("renter_xmr_anim_address")
+                if renter:
+                    credit_id = str(renter)
         ok, reason, share = await self._validator.validate(
-            miner_id=sess.miner_address,
+            miner_id=credit_id,
             job_id=job_id,
             nonce_hex=nonce,
             result_hex=result_hex,

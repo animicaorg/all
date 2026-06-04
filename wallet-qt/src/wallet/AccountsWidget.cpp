@@ -143,8 +143,11 @@ void AccountsWidget::updateAccountRow(int row, const WalletAccount& account)
     // Algorithm
     m_accountTable->setItem(row, 3, new QTableWidgetItem(account.algName));
 
-    // Created
-    m_accountTable->setItem(row, 4, new QTableWidgetItem(account.createdAt.toUTC().toString(Qt::ISODate)));
+    // Created. NOTE: avoid QDateTime::toUTC()/timezone conversion here — the
+    // value is already stored in UTC, and tz conversion crashes on builds whose
+    // Qt timezone backend can't initialize (observed on macOS). Guard validity.
+    m_accountTable->setItem(row, 4, new QTableWidgetItem(
+        account.createdAt.isValid() ? account.createdAt.toString(Qt::ISODate) : QString()));
 
     // Balance
     auto balance = m_engine->getBalance(account.address);
@@ -436,7 +439,7 @@ void AccountsWidget::showAccountDetails(const WalletAccount& account)
         .arg(account.address)
         .arg(account.algName)
         .arg(account.algId)
-        .arg(account.createdAt.toUTC().toString(Qt::ISODate))
+        .arg(account.createdAt.isValid() ? account.createdAt.toString(Qt::ISODate) : QString())
         .arg(account.isDefault ? "Yes" : "No")
         .arg(formatBalance(balance.confirmed));
     QMessageBox::information(this, "Wallet Details", details);

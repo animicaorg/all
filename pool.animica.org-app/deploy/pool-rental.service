@@ -1,0 +1,23 @@
+[Unit]
+Description=Animica rig-rental marketplace (Next.js, pool.animica.org/app)
+Wants=network-online.target
+After=network-online.target pool-rental-postgres.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/animica/pool.animica.org-app
+EnvironmentFile=/etc/animica/pool-rental.env
+Environment=NODE_ENV=production
+Environment=NEXT_DIST_DIR=.next-prod
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -p 3020 -H 127.0.0.1
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

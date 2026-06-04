@@ -9,7 +9,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import click as _click
+# Standalone Click is an optional import: Typer vendors its own Click, so the
+# `click` distribution is not guaranteed to be installed (e.g. the minimal
+# Windows wallet bundle ships Typer but not standalone Click). The only use of
+# `_click` below is a redundant fallback to `typer.get_current_context`, which
+# already covers the same case, so degrade gracefully when it is absent.
+try:
+    import click as _click
+except ModuleNotFoundError:  # pragma: no cover - depends on install profile
+    _click = None
 import typer
 
 from animica.cli.rpc_guard import guard_bootstrap_rpc
@@ -797,12 +805,13 @@ def _current_wallet_file() -> Optional[Path]:
             return ctx.obj.get("wallet_file")
     except Exception:
         pass
-    try:
-        ctx = _click.get_current_context(silent=True)
-        if ctx and isinstance(getattr(ctx, "obj", None), dict):
-            return ctx.obj.get("wallet_file")
-    except Exception:
-        pass
+    if _click is not None:
+        try:
+            ctx = _click.get_current_context(silent=True)
+            if ctx and isinstance(getattr(ctx, "obj", None), dict):
+                return ctx.obj.get("wallet_file")
+        except Exception:
+            pass
     return None
 
 

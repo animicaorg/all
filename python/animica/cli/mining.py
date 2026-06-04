@@ -2720,7 +2720,7 @@ def mine_blocks(
             animica_port=3333,
             xmr_port=3333,
             threads=int(threads) if isinstance(threads, int) else 0,
-            xmrig_path="/root/animica/external/xmrig/build/xmrig-notls",
+            xmrig_path="",  # auto-resolve (env / cache / PATH / bundle / download)
             worker=None,
             only=only_mode,
             gpu=xmrig_gpu,
@@ -4131,6 +4131,228 @@ def mine_blocks(
             pass
 
 
+def _xmrig_platform_tag() -> Optional[str]:
+    """Return the '<os>-<arch>' tag used in download/bundle names, or None
+    for unsupported platforms."""
+    import platform as _plat
+    sysname = sys.platform
+    machine = (_plat.machine() or "").lower()
+    if machine in ("x86_64", "amd64"):
+        arch = "x86_64"
+    elif machine in ("arm64", "aarch64"):
+        arch = "arm64"
+    else:
+        arch = machine or "unknown"
+    if sysname.startswith("linux"):
+        return f"linux-{arch}"
+    if sysname == "darwin":
+        return f"macos-{arch}"
+    if sysname.startswith("win"):
+        return f"windows-{arch}"
+    return None
+
+
+def _download_animica_xmrig(dest: Path) -> Optional[str]:
+    """Best-effort download of the Animica-fork xmrig for this platform from the
+    pool's downloads. Returns the path on success, None otherwise."""
+    tag = _xmrig_platform_tag()
+    if not tag:
+        return None
+    base = os.environ.get("ANIMICA_DOWNLOADS_URL", "https://pool.animica.org/downloads").rstrip("/")
+    suffix = ".exe" if tag.startswith("windows") else ""
+    url = f"{base}/xmrig-animica-{tag}{suffix}"
+    try:
+        import urllib.request
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".part")
+        typer.echo(f"[dual-mine] fetching Animica xmrig for {tag} from {url} ...", err=True)
+        req = urllib.request.Request(url, headers={"User-Agent": "animica-cli"})
+        with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310 (trusted host)
+            if getattr(r, "status", 200) != 200:
+                return None
+            data = r.read()
+        # Guard against an HTML 404 page being saved as a binary.
+        if len(data) < 100_000 or data[:15].lstrip().startswith(b"<"):
+            return None
+        tmp.write_bytes(data)
+        tmp.replace(dest)
+        dest.chmod(0o755)
+        typer.echo(f"[dual-mine] saved {dest}", err=True)
+        return str(dest)
+    except Exception:
+        return None
+
+
+def _resolve_animica_xmrig(explicit: Optional[str]) -> Optional[str]:
+    """Locate the Animica-fork xmrig (SHA3 'animica' algo). Order:
+    explicit flag -> $ANIMICA_XMRIG -> cached download -> PATH -> package bundle
+    -> dev build dirs -> auto-download. Returns None if nothing works."""
+    import shutil
+
+    cache = Path.home() / ".animica" / "bin" / ("xmrig-animica" + (".exe" if sys.platform.startswith("win") else ""))
+    candidates = []
+    if explicit:
+        candidates.append(explicit)
+    if os.environ.get("ANIMICA_XMRIG"):
+        candidates.append(os.environ["ANIMICA_XMRIG"])
+    candidates.append(str(cache))
+    for name in ("xmrig-animica", "animica-xmrig"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    # Bundled inside the installed package (animica/bin/...).
+    try:
+        pkg_bin = Path(__file__).resolve().parents[1] / "bin"
+        tag = _xmrig_platform_tag()
+        if tag:
+            candidates.append(str(pkg_bin / f"xmrig-animica-{tag}"))
+        candidates.append(str(pkg_bin / "xmrig-animica"))
+    except Exception:
+        pass
+    # Dev/source build locations.
+    candidates.append("/root/animica/external/xmrig/build/xmrig-notls")
+    candidates.append(str(Path.cwd() / "external" / "xmrig" / "build" / "xmrig-notls"))
+
+    for c in candidates:
+        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    # Last resort: download for this platform into the cache.
+    return _download_animica_xmrig(cache)
+
+
+def _download_stock_xmrig(dest_dir: Path) -> Optional[str]:
+    """Download the official xmrig release for this platform (for the Monero
+    side) and extract the binary into dest_dir. Returns the path or None."""
+    import io
+    import json as _json
+    import tarfile
+    import urllib.request
+    import zipfile
+    import platform as _plat
+
+    machine = (_plat.machine() or "").lower()
+    is_arm = machine in ("arm64", "aarch64")
+    if sys.platform == "darwin":
+        tokens = ["macos-arm64"] if is_arm else ["macos-x64"]
+    elif sys.platform.startswith("linux"):
+        tokens = ["linux-static-x64", "linux-x64"] if not is_arm else ["linux-static-arm64", "linux-arm64"]
+    elif sys.platform.startswith("win"):
+        tokens = ["msvc-win64", "gcc-win64"]
+    else:
+        return None
+    ua = {"User-Agent": "animica-cli"}
+    try:
+        rel = _json.load(urllib.request.urlopen(
+            urllib.request.Request("https://api.github.com/repos/xmrig/xmrig/releases/latest", headers=ua), timeout=30))
+        url = name = None
+        for tok in tokens:
+            for a in rel.get("assets", []):
+                n = a.get("name", "")
+                if tok in n and (n.endswith(".tar.gz") or n.endswith(".zip")):
+                    url, name = a.get("browser_download_url"), n
+                    break
+            if url:
+                break
+        if not url:
+            return None
+        typer.echo(f"[dual-mine] downloading stock xmrig ({name}) for the Monero side ...", err=True)
+        data = urllib.request.urlopen(urllib.request.Request(url, headers=ua), timeout=180).read()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        is_win = sys.platform.startswith("win")
+        out = dest_dir / ("xmrig.exe" if is_win else "xmrig")
+        if name.endswith(".zip"):
+            zf = zipfile.ZipFile(io.BytesIO(data))
+            member = next((m for m in zf.namelist() if m.endswith("xmrig.exe") or m.endswith("/xmrig") or m == "xmrig"), None)
+            if not member:
+                return None
+            out.write_bytes(zf.read(member))
+        else:
+            tf = tarfile.open(fileobj=io.BytesIO(data))
+            member = next((m for m in tf.getmembers() if m.isfile() and (m.name.endswith("/xmrig") or m.name == "xmrig")), None)
+            if not member:
+                return None
+            ex = tf.extractfile(member)
+            if not ex:
+                return None
+            out.write_bytes(ex.read())
+        out.chmod(0o755)
+        typer.echo(f"[dual-mine] saved {out}", err=True)
+        return str(out)
+    except Exception:
+        return None
+
+
+def _resolve_stock_xmrig() -> Optional[str]:
+    """Find stock xmrig for the Monero side: PATH -> cached -> auto-download."""
+    import shutil
+    found = shutil.which("xmrig")
+    if found:
+        return found
+    cache = Path.home() / ".animica" / "bin"
+    cached = cache / ("xmrig.exe" if sys.platform.startswith("win") else "xmrig")
+    if cached.is_file() and os.access(cached, os.X_OK):
+        return str(cached)
+    return _download_stock_xmrig(cache)
+
+
+def _start_hashrate_reporter(*, http_port: int, pool_host: str, address: str, worker_tag: str):
+    """Poll the local xmrig HTTP API and POST measured H/s to the pool.
+
+    Reads the Animica (SHA3) backend's own hashrate from xmrig's
+    ``/2/summary`` and reports it to ``/api/pool/hashrate/report`` every ~30s.
+    This is the accurate, smooth source for the pool's network hashrate
+    (xmrig counts every hash). Runs in a daemon thread; all errors are
+    swallowed so a reporting hiccup never interrupts mining. Override the pool
+    HTTP base with ANIMICA_POOL_API_URL (e.g. for local testing).
+    """
+    import json as _json
+    import os as _os
+    import threading
+    import time as _t
+    import urllib.request as _u
+
+    base = (_os.getenv("ANIMICA_POOL_API_URL") or f"https://{pool_host}").rstrip("/")
+    summary_url = f"http://127.0.0.1:{http_port}/2/summary"
+    report_url = f"{base}/api/pool/hashrate/report"
+
+    def _loop() -> None:
+        _t.sleep(15)  # let xmrig warm up + connect to the pool
+        while True:
+            try:
+                with _u.urlopen(summary_url, timeout=5) as r:
+                    summary = _json.loads(r.read().decode("utf-8"))
+                total = (summary.get("hashrate") or {}).get("total") or []
+                # total = [10s, 60s, 15m] avg (entries may be null early on).
+                hps = 0.0
+                for idx in (1, 0, 2):  # prefer 60s, then 10s, then 15m
+                    if idx < len(total) and total[idx]:
+                        hps = float(total[idx])
+                        break
+                if hps > 0:
+                    body = _json.dumps({
+                        "worker": worker_tag,
+                        "address": address,
+                        "hps": hps,
+                        "algo": "animica",
+                    }).encode("utf-8")
+                    req = _u.Request(
+                        report_url, data=body,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    try:
+                        _u.urlopen(req, timeout=5).read()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            _t.sleep(30)
+
+    th = threading.Thread(target=_loop, name="animica-hashrate-reporter", daemon=True)
+    th.start()
+    return th
+
+
 @app.command("dual-mine")
 def dual_mine(
     address: str = typer.Argument(
@@ -4161,10 +4383,11 @@ def dual_mine(
              "The launcher gives 50%% to each algo, rounded.",
     ),
     xmrig_path: str = typer.Option(
-        "/root/animica/external/xmrig/build/xmrig-notls",
+        "",
         "--xmrig-path",
-        help="Path to the Animica-fork xmrig binary (SHA3 support). The stock "
-             "xmrig used for the XMR side is auto-detected on PATH.",
+        help="Path to the Animica-fork xmrig binary (SHA3 support). Default: "
+             "auto-resolve ($ANIMICA_XMRIG, ~/.animica/bin, PATH, bundled, then "
+             "download for your OS). The stock xmrig for the XMR side is found on PATH.",
     ),
     worker: Optional[str] = typer.Option(
         None, "--worker",
@@ -4216,40 +4439,65 @@ def dual_mine(
 
     procs: list = []
 
+    ran_animica = False
+    ran_xmr = False
     if only != "xmr":
-        if not _os.path.isfile(xmrig_path):
-            typer.echo(
-                f"Animica xmrig binary not found at {xmrig_path}. "
-                "Build it from /root/animica/external/xmrig/ or pass --xmrig-path.",
-                err=True,
+        resolved_xmrig = _resolve_animica_xmrig(xmrig_path or None)
+        if resolved_xmrig:
+            xmrig_path = resolved_xmrig
+            animica_threads = max(1, total if only == "animica" else total // 2)
+            # Local xmrig HTTP API so we can read the miner's own measured H/s
+            # and report it to the pool (accurate network-hashrate source).
+            http_port = int(_os.getenv("ANIMICA_XMRIG_HTTP_PORT", "18222") or 18222)
+            animica_cmd = [
+                xmrig_path,
+                "--algo", "animica",
+                "--url", f"{pool_host}:{animica_port}",
+                "--user", f"{address}.{worker_tag}",
+                "--threads", str(animica_threads),
+                "--http-host", "127.0.0.1",
+                "--http-port", str(http_port),
+                "--no-color",
+                "--keepalive",
+            ]
+            typer.echo(f"[dual-mine] starting animica miner: {' '.join(animica_cmd)}")
+            procs.append(_sp.Popen(animica_cmd))
+            ran_animica = True
+            _start_hashrate_reporter(
+                http_port=http_port,
+                pool_host=pool_host,
+                address=address,
+                worker_tag=worker_tag,
             )
-            raise typer.Exit(1)
-        animica_threads = max(1, total if only == "animica" else total // 2)
-        animica_cmd = [
-            xmrig_path,
-            "--algo", "animica",
-            "--url", f"{pool_host}:{animica_port}",
-            "--user", f"{address}.{worker_tag}",
-            "--threads", str(animica_threads),
-            "--no-color",
-            "--keepalive",
-        ]
-        typer.echo(f"[dual-mine] starting animica miner: {' '.join(animica_cmd)}")
-        procs.append(_sp.Popen(animica_cmd))
+        else:
+            tag = _xmrig_platform_tag() or sys.platform
+            msg = (
+                "Animica-fork xmrig (SHA3 'animica' side) is not available for your "
+                f"platform ({tag}) and no prebuilt could be downloaded.\n"
+                "  Provide it with --xmrig-path /path/to/xmrig, $ANIMICA_XMRIG, or\n"
+                "  ~/.animica/bin/xmrig-animica (build from the SHA3 xmrig fork)."
+            )
+            if only == "animica":
+                typer.echo(msg, err=True)
+                raise typer.Exit(1)
+            # Dual mode: don't fail — fall through and mine Monero only.
+            typer.echo(msg + "\n[dual-mine] continuing with Monero (XMR) only.", err=True)
 
     if only != "animica":
-        stock_xmrig = shutil.which("xmrig")
+        stock_xmrig = _resolve_stock_xmrig()
         if not stock_xmrig:
             typer.echo(
-                "Stock xmrig not on PATH — install xmrig (https://xmrig.com/) "
-                "or symlink the Animica fork (it can do RandomX too with "
-                "--algo rx/0). Skipping XMR launch.",
+                "Could not find or auto-download stock xmrig for the Monero side. "
+                "Install it from https://xmrig.com/ and re-run.",
                 err=True,
             )
             if not procs:
                 raise typer.Exit(1)
         else:
-            xmr_threads = max(1, total if only == "xmr" else total - max(1, total // 2))
+            # If the Animica side is running, split 50/50; otherwise (pure XMR,
+            # or dual that fell back to XMR-only) give XMR all the threads.
+            xmr_threads = total if (only == "xmr" or not ran_animica) else max(1, total - max(1, total // 2))
+            xmr_threads = max(1, xmr_threads)
             xmr_cmd = [
                 stock_xmrig,
                 "--algo", "rx/0",
@@ -4262,11 +4510,27 @@ def dual_mine(
             ]
             typer.echo(f"[dual-mine] starting xmr miner: {' '.join(xmr_cmd)}")
             procs.append(_sp.Popen(xmr_cmd))
+            ran_xmr = True
 
     if not procs:
         typer.echo("[dual-mine] nothing started", err=True)
         raise typer.Exit(1)
 
+    active = []
+    if ran_animica:
+        active.append("Animica/SHA3")
+    if ran_xmr:
+        active.append("Monero/RandomX")
+    if ran_animica and ran_xmr:
+        summary = "mining BOTH Animica + Monero (threads split 50/50)"
+    elif active == ["Monero/RandomX"]:
+        summary = ("mining MONERO ONLY — the Animica/SHA3 side is NOT running "
+                   "(no Animica-fork xmrig for this platform). No ANM shares will "
+                   "be reported until that binary is provided (--xmrig-path / "
+                   "$ANIMICA_XMRIG / ~/.animica/bin/xmrig-animica).")
+    else:
+        summary = "mining " + ", ".join(active)
+    typer.echo(f"[dual-mine] {summary}")
     typer.echo(
         f"[dual-mine] {len(procs)} process(es) running. Ctrl-C to stop both."
     )

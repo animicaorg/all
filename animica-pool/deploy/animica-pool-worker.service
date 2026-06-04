@@ -1,0 +1,20 @@
+[Unit]
+Description=Animica Pool worker agent (serves inference via local ollama)
+Wants=network-online.target ollama.service
+After=network-online.target ollama.service animica-pool-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/animica/animica-pool/packages/worker-agent
+Environment=WORKER_TOKEN=anm_worker_51677eb4a0d07d2f0197fcdb3199a57b6a7fddc3
+Environment=ANIMICA_API_BASE=http://127.0.0.1:4000
+Environment=LOCAL_INFERENCE_URL=http://127.0.0.1:11434/v1
+Environment=LOCAL_INFERENCE_MODEL=qwen2.5:7b
+Environment=LOCAL_INFERENCE_MODEL_MAP=anm-fast-8b=qwen2.5:7b,anm-code-7b=deepseek-coder:6.7b,anm-pro-70b=qwen3:14b,anm-worker-small=qwen2.5:0.5b,anm-worker-code=qwen2.5-coder:14b,anm-bittensor-router=qwen2.5:7b
+Environment=HEARTBEAT_MS=15000
+ExecStart=/root/animica/animica-pool/packages/worker-agent/node_modules/.bin/tsx src/agent.ts
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

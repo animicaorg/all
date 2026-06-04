@@ -20,6 +20,10 @@ QStringList bundledPythonCandidates()
 #ifdef Q_OS_WIN
     candidates << QDir(appDir).filePath("node/venv/Scripts/python.exe");
     candidates << QDir(appDir).absoluteFilePath("../node/venv/Scripts/python.exe");
+    // Bundled relocatable CPython (python-build-standalone) keeps python.exe at
+    // the venv root, not under Scripts/ — accept that layout too.
+    candidates << QDir(appDir).filePath("node/venv/python.exe");
+    candidates << QDir(appDir).absoluteFilePath("../node/venv/python.exe");
 #elif defined(Q_OS_MACOS)
     candidates << QDir(appDir).absoluteFilePath("../Resources/node/venv/bin/python");
     candidates << QDir(appDir).filePath("node/venv/bin/python");
@@ -147,8 +151,57 @@ QString AnimicaWalletBackend::findRepoRoot()
     return QString();
 }
 
+namespace {
+// True if `python -c "import animica"` exits 0 — i.e. the interpreter can serve
+// the wallet bridge. Quick (2s) and side-effect free.
+bool pythonHasAnimica(const QString& python)
+{
+    QProcess p;
+    p.start(python, {"-c", "import animica"});
+    if (!p.waitForFinished(4000)) {
+        p.kill();
+        p.waitForFinished(500);
+        return false;
+    }
+    return p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0;
+}
+
+// Common places a pip-installed `animica` might live on macOS/Linux when the
+// app wasn't shipped with its own bundled venv (e.g. cross-built bundles).
+QStringList systemPythonCandidates()
+{
+    QStringList c;
+    const QString home = QDir::homePath();
+    // Homebrew (Apple silicon + Intel) and common Python.org / system paths.
+    c << "/opt/homebrew/bin/python3" << "/usr/local/bin/python3" << "/usr/bin/python3";
+    for (const QString& v : {"3.13", "3.12", "3.11", "3.10"}) {
+        c << QString("/opt/homebrew/bin/python%1").arg(v);
+        c << QString("/usr/local/bin/python%1").arg(v);
+        c << QString("/Library/Frameworks/Python.framework/Versions/%1/bin/python3").arg(v);
+    }
+    // conda / miniforge / mambaforge and the active conda env.
+    const QString condaPrefix = qEnvironmentVariable("CONDA_PREFIX");
+    if (!condaPrefix.isEmpty())
+        c << QDir(condaPrefix).filePath("bin/python");
+    for (const QString& d : {"miniconda3", "anaconda3", "miniforge3", "mambaforge"})
+        c << QDir(home).filePath(d + "/bin/python");
+    // pyenv shims + active virtualenv.
+    c << QDir(home).filePath(".pyenv/shims/python3");
+    const QString venv = qEnvironmentVariable("VIRTUAL_ENV");
+    if (!venv.isEmpty())
+        c << QDir(venv).filePath("bin/python");
+    // Finally whatever python3/python is on PATH.
+    const QString p3 = QStandardPaths::findExecutable("python3");
+    if (!p3.isEmpty()) c << p3;
+    const QString p = QStandardPaths::findExecutable("python");
+    if (!p.isEmpty()) c << p;
+    return c;
+}
+} // namespace
+
 QString AnimicaWalletBackend::findPythonInterpreter()
 {
+    // 1) Explicit override always wins.
     const QString override = qEnvironmentVariable("ANIMICA_WALLET_PYTHON");
     if (!override.isEmpty()) {
         QFileInfo info(override);
@@ -157,6 +210,7 @@ QString AnimicaWalletBackend::findPythonInterpreter()
         }
     }
 
+    // 2) A bundled venv (proper native builds) is authoritative if present.
     for (const QString& candidate : bundledPythonCandidates()) {
         QFileInfo info(candidate);
         if (info.exists() && info.isExecutable()) {
@@ -164,6 +218,7 @@ QString AnimicaWalletBackend::findPythonInterpreter()
         }
     }
 
+    // 3) Repo checkout venv.
     for (const QString& candidate : repoPythonCandidates()) {
         QFileInfo info(candidate);
         if (info.exists() && info.isExecutable()) {
@@ -171,11 +226,26 @@ QString AnimicaWalletBackend::findPythonInterpreter()
         }
     }
 
-    const QString python3 = QStandardPaths::findExecutable("python3");
-    if (!python3.isEmpty()) {
-        return python3;
+    // 4) No bundled/repo venv (e.g. cross-built bundle). Probe common system
+    //    interpreters and pick the FIRST that can `import animica` — so a
+    //    pip-installed `animica` is found automatically with no env var.
+    QString firstExisting;
+    for (const QString& candidate : systemPythonCandidates()) {
+        QFileInfo info(candidate);
+        if (!info.exists() || !info.isExecutable()) {
+            continue;
+        }
+        const QString abs = info.absoluteFilePath();
+        if (firstExisting.isEmpty()) {
+            firstExisting = abs;
+        }
+        if (pythonHasAnimica(abs)) {
+            return abs;
+        }
     }
-    return QStandardPaths::findExecutable("python");
+    // 5) Nothing had animica — return the first real interpreter so the caller
+    //    can surface a clear "pip install animica" error rather than crashing.
+    return firstExisting;
 }
 
 QJsonObject AnimicaWalletBackend::call(const QString& operation, const QJsonObject& args, int timeoutMs) const

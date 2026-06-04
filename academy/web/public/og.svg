@@ -1,0 +1,22 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0a0a06"/>
+      <stop offset="1" stop-color="#16100a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1200" height="6" fill="url(#accent)"/>
+  <circle cx="990" cy="160" r="220" fill="#fbbf24" opacity="0.08"/>
+
+  <text x="80" y="150" font-family="Arial, Helvetica, sans-serif" font-size="34" fill="#f5cd6b" font-weight="700" letter-spacing="4">ANIMICA ACADEMY</text>
+  <text x="78" y="270" font-family="Arial, Helvetica, sans-serif" font-size="76" fill="#ffffff" font-weight="800">Learn to run a node,</text>
+  <text x="78" y="356" font-family="Arial, Helvetica, sans-serif" font-size="76" fill="#ffffff" font-weight="800">mine &amp; build on <tspan fill="#fbbf24">Animica</tspan></text>
+  <text x="80" y="426" font-family="Arial, Helvetica, sans-serif" font-size="32" fill="#c7bda8">Hands-on CLI tutorials · earn ANM rewards as you learn</text>
+
+  <text x="80" y="585" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#897f68">academy.animica.org</text>
+</svg>

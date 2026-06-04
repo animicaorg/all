@@ -1,0 +1,22 @@
+[Unit]
+Description=Animica rig-rental settlement worker
+Wants=network-online.target
+After=network-online.target pool-rental.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/animica/pool.animica.org-app
+EnvironmentFile=/etc/animica/pool-rental.env
+Environment=NODE_ENV=production
+ExecStart=/root/animica/pool.animica.org-app/node_modules/.bin/tsx scripts/worker.ts
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

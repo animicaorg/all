@@ -2727,20 +2727,22 @@ class BlockImporter:
                     )
                 )
             if tx_hash_b:
-                rxi_writes.append((tx_hash_b, {"h": int(height), "i": int(i), "b": bytes(block_hash)}))
+                rxi_writes.append(
+                    (
+                        tx_hash_b,
+                        {"h": int(height), "i": int(i), "b": bytes(block_hash)},
+                        new_receipts[-1],
+                    )
+                )
 
-        # Re-store the block with receipts populated.
-        new_block = _dc_replace(block, receipts=tuple(new_receipts))
-        try:
-            self.block_db.put_block(new_block)
-        except TypeError:
-            # Fallback for legacy mock DBs.
-            try:
-                self.block_db.put_block(block_hash, new_block)
-            except Exception:
-                pass
-
-        # Write the receipt-pointer index so RPC can find tx → block+idx.
+        # NOTE: do NOT rewrite the block with receipts populated. Block
+        # headers were sealed before execution with receiptsRoot=0; if
+        # we mutate `Block.receipts` after the fact, Block.receipts_root()
+        # recomputes a non-zero hash that no longer matches the stored
+        # header, and chain.getBlockByNumber's verify_against_header
+        # check rejects the block with "receiptsRoot mismatch". Instead
+        # we store receipts in a side-table keyed by tx_hash, and the
+        # tx.getReceipt RPC reads them from there.
         kv = getattr(self.block_db, "kv", None)
         if kv is None or not rxi_writes:
             return
@@ -2749,18 +2751,30 @@ class BlockImporter:
             from core.encoding.cbor import cbor_dumps as _cbor_dumps
         except Exception:
             return
+        # Side-table key prefix for raw per-tx receipts:
+        #   k = b"\x25" || tx_hash   →  CBOR(receipt.to_obj())
+        # 0x25 was the next free byte after PFX_DMI (0x23) at the time
+        # this was added; keep in sync with rpc/methods/receipt.py if you
+        # ever move it.
+        _PFX_TXRCPT = b"\x25"
+
+        def _k_txrcpt(h: bytes) -> bytes:
+            return _PFX_TXRCPT + bytes(h)
+
         try:
             if hasattr(kv, "batch"):
                 with kv.batch() as b:
-                    for tx_hash_b, ptr in rxi_writes:
+                    for tx_hash_b, ptr, rcpt in rxi_writes:
                         b.put(_k_rxi(tx_hash_b), _cbor_dumps(ptr))
+                        b.put(_k_txrcpt(tx_hash_b), rcpt.to_cbor())
                     if hasattr(b, "commit"):
                         b.commit()
             else:
-                for tx_hash_b, ptr in rxi_writes:
+                for tx_hash_b, ptr, rcpt in rxi_writes:
                     kv.put(_k_rxi(tx_hash_b), _cbor_dumps(ptr))
+                    kv.put(_k_txrcpt(tx_hash_b), rcpt.to_cbor())
         except Exception as e:
-            log.debug("receipts: rxi index write failed: %s", e)
+            log.debug("receipts: side-table write failed: %s", e)
 
     def _index_block_if_canonical(
         self, *, height: int, block_hash: bytes, block: Block

@@ -2859,13 +2859,16 @@ class P2PService:
             key = self._addr_key(rec.address)
             if key in exclude:
                 continue
+            # Coerce float timestamps/scores to int: the PEERS message is encoded
+            # with the canonical CBOR encoder, which rejects floats (consensus
+            # determinism). Integer unix-seconds are plenty for addr bookkeeping.
             records[key] = {
                 "addr": rec.address,
-                "last_seen": rec.last_seen,
-                "last_success": rec.last_success,
-                "last_failure": rec.last_failure,
+                "last_seen": int(rec.last_seen or 0),
+                "last_success": int(rec.last_success) if rec.last_success is not None else None,
+                "last_failure": int(rec.last_failure) if rec.last_failure is not None else None,
                 "failure_reason": rec.failure_reason,
-                "score": rec.score,
+                "score": int(rec.score or 0),
                 "source": rec.source,
             }
         try:
@@ -2882,8 +2885,8 @@ class P2PService:
                     continue
                 records[key] = {
                     "addr": normalized,
-                    "last_seen": last_seen,
-                    "score": 0.0,
+                    "last_seen": int(last_seen or 0),
+                    "score": 0,
                     "source": "peerstore",
                 }
         except Exception:

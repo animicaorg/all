@@ -1,0 +1,15 @@
+[Unit]
+Description=Animica Pool reconciliation worker (rental completion + payout polling)
+Wants=network-online.target
+After=network-online.target animica-pool-api.service
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/animica/animica-pool
+EnvironmentFile=/etc/animica/animica-pool.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node apps/api/dist/recon.js
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target

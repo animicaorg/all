@@ -298,6 +298,16 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  // Bare-number circulating supply (whole ANM) for exchanges/aggregators —
+  // CMC/CoinGecko expect a plain JSON number body, not an object or string.
+  app.get('/api/circulating-supply', async (_req, res, next) => {
+    try {
+      res.json(await service.getCirculatingSupply())
+    } catch (err) {
+      next(err)
+    }
+  })
+
 
   app.post('/api/admin/backfill/confirmed-txs', async (req, res, next) => {
     try {

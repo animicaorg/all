@@ -186,6 +186,10 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
         server = StratumPoolServer(adapter, config, job_manager, logger=logger)
         metrics = PoolMetrics(config, job_manager, server.stratum)
         server.set_submit_hook(metrics.record_share)
+        # Wire the rig-rental redirect so a rented rig's XMR credit is routed
+        # to the renter (ANM credit is redirected in metrics.record_share).
+        if hasattr(server, "set_rental_resolver"):
+            server.set_rental_resolver(metrics.active_rental)
         # Expose XMR handles to the API so /api/pool/xmr/summary can
         # answer with live status. The pool server starts its XMR
         # subsystem lazily inside .start() — so we attach a callable

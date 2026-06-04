@@ -203,6 +203,17 @@ class StratumPoolServer:
     ) -> None:
         self._external_submit_hook = hook
 
+    def set_rental_resolver(
+        self,
+        resolver: Optional[Callable[[str, str], Optional[dict]]],
+    ) -> None:
+        """Wire the rig-rental lookup (metrics.active_rental) so the XMR
+        stratum handler can redirect a rented rig's credit to the renter."""
+        self._rental_resolver = resolver
+        xmr = getattr(self, "_xmr_stratum", None)
+        if xmr is not None:
+            xmr.set_rental_resolver(resolver)
+
     def _difficulty_value_to_threshold_micro(self, value: float, theta_micro: int) -> int:
         """
         Normalize configured difficulty values into θµ thresholds.
@@ -370,7 +381,10 @@ class StratumPoolServer:
             )
             return
         try:
-            from animica.stratum_pool.xmr import make_default_components
+            from animica.stratum_pool.xmr import (
+                difficulty_to_target_hex,
+                make_default_components,
+            )
         except Exception as exc:
             self._log.warning("XMR module unavailable (%s); skipping", exc)
             return
@@ -382,6 +396,9 @@ class StratumPoolServer:
                 ),
                 num_validator_workers=int(
                     os.environ.get("ANIMICA_POOL_XMR_VALIDATOR_WORKERS", "4")
+                ),
+                share_difficulty=int(
+                    os.environ.get("ANIMICA_POOL_XMR_SHARE_DIFF", "10000")
                 ),
             )
         except Exception as exc:
@@ -400,7 +417,10 @@ class StratumPoolServer:
                 await self._server.push_xmr_job(
                     job_id=job.job_id,
                     blob_hex=job.blockhashing_blob.hex(),
-                    target_hex=f"{job.pool_difficulty:016x}",
+                    # Proper cryptonote target (top 4 bytes of 2^256/diff, LE).
+                    # NOT the difficulty integer as hex — that made xmrig mine
+                    # at diff ~2 and every share got rejected low_difficulty.
+                    target_hex=difficulty_to_target_hex(job.pool_difficulty),
                     seed_hash_hex=job.seed_hash.hex(),
                     height=job.height,
                 )
@@ -424,6 +444,7 @@ class StratumPoolServer:
         stratum_xmr = XmrStratumServer(
             host=bind_host, port=sep_port or 0,
             job_manager=jm, validator=validator, ledger=ledger,
+            rental_resolver=getattr(self, "_rental_resolver", None),
         )
         if sep_port > 0:
             try:
@@ -440,9 +461,19 @@ class StratumPoolServer:
                     bind_host, sep_port, exc,
                 )
         else:
+            # Single-port mode: no separate TCP listener, BUT we must still
+            # subscribe the cryptonote broadcaster to the job manager so the
+            # sessions adopted via protocol-detect takeover receive new-block
+            # `job` notifications. Without this they only ever get the login
+            # job; once it ages out of the validator's 5-min cache (a couple
+            # of blocks later) every submitted share is rejected
+            # `stale_or_unknown_job`. start() would do this subscribe too, but
+            # it also binds a listener we don't want here — so subscribe directly.
+            jm.subscribe(stratum_xmr._broadcast_job)
             self._log.info(
                 "XMR single-port mode: cryptonote login routes through the "
-                "Animica stratum port (no separate TCP listener)."
+                "Animica stratum port (no separate TCP listener); new-block "
+                "jobs pushed to adopted sessions."
             )
         self._xmr_stratum = stratum_xmr
 
@@ -486,20 +517,24 @@ class StratumPoolServer:
         from animica.stratum_pool.xmr_stratum import XmrSession
         import secrets as _secrets
 
+        # Capture the XMR server in a local — a concurrent pool shutdown can
+        # null self._xmr_stratum mid-handler, and we'd crash on `._lock`.
+        xmr = self._xmr_stratum
+
         # Build a minimal session and dispatch as if the line had just
         # arrived. We bypass the per-connection accept-loop and drive
         # the same _dispatch logic.
         session_id = _secrets.token_hex(8)
         sess = XmrSession(session_id=session_id, writer=writer)
-        async with self._xmr_stratum._lock:
-            self._xmr_stratum._sessions[session_id] = sess
+        async with xmr._lock:
+            xmr._sessions[session_id] = sess
         self._log.info(
             "xmr session %s adopted from animica port (single-port mode)",
             session_id,
         )
         try:
             # Process the login we already parsed
-            await self._xmr_stratum._dispatch(sess, first_msg)
+            await xmr._dispatch(sess, first_msg)
             # Then continue reading from the wire
             while not sess.closed:
                 line = await reader.readline()
@@ -509,14 +544,14 @@ class StratumPoolServer:
                     msg = _json.loads(line.decode("utf-8").strip())
                 except Exception:
                     continue
-                await self._xmr_stratum._dispatch(sess, msg)
+                await xmr._dispatch(sess, msg)
         except Exception as exc:
             self._log.warning("xmr single-port session %s error: %s",
                               session_id, exc, exc_info=False)
         finally:
             sess.closed = True
-            async with self._xmr_stratum._lock:
-                self._xmr_stratum._sessions.pop(session_id, None)
+            async with xmr._lock:
+                xmr._sessions.pop(session_id, None)
             self._log.info(
                 "xmr single-port session %s closed (accepted=%d rejected=%d)",
                 session_id, sess.shares_accepted, sess.shares_rejected,

@@ -790,6 +790,25 @@ export class ExplorerService {
     })
   }
 
+  /** Circulating supply in whole ANM as a plain JS number — CMC/CoinGecko-style
+   *  supply endpoints expect a bare JSON number, not a hex/string quantity.
+   *  All mined ANM is liquid (no foundation locks), so circulating = total.
+   *  BigInt division first keeps precision beyond Number's 2^53 in raw nANM. */
+  async getCirculatingSupply(): Promise<number> {
+    return this.coalescer.run('supply:circulating', async () => {
+      if (!this.rpc.getTotalSupply) {
+        throw new HttpError(501, 'Circulating supply not available', 'Node does not support state.getTotalSupply RPC method')
+      }
+      const raw = await this.safeRpc(() => this.rpc.getTotalSupply!())
+      const rawRecord = asRecord(raw)
+      const totalSupplyBig = toBigIntLike(
+        rawRecord.totalSupply ?? rawRecord.total_supply ?? rawRecord.supply ?? rawRecord.value ?? '0x0'
+      )
+      const NANO_PER_ANM = 1_000_000_000n
+      return Number(totalSupplyBig / NANO_PER_ANM) + Number(totalSupplyBig % NANO_PER_ANM) / 1e9
+    })
+  }
+
   private async attachClassification<
     T extends TxDetail & {
       tx_hash?: string

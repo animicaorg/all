@@ -579,6 +579,16 @@ main() {
     configure_and_build
     deploy_runtime_dependencies
 
+    # Bundle a relocatable Windows Python + animica so the wallet is fully
+    # self-contained (no system Python needed). Cross-builds can't create a
+    # valid Windows venv, so we stage a prepared python-build-standalone tree
+    # from $WINDOWS_NODE_BUNDLE (dir containing venv/python.exe + site-packages).
+    if [ -n "${WINDOWS_NODE_BUNDLE:-}" ] && [ -d "${WINDOWS_NODE_BUNDLE}/venv" ]; then
+        log "Bundling self-contained Python from ${WINDOWS_NODE_BUNDLE}"
+        rm -rf "$STAGE_DIR/node"
+        cp -a "${WINDOWS_NODE_BUNDLE}" "$STAGE_DIR/node"
+    fi
+
     "$SCRIPT_DIR/verify-bundle-layout.py" --platform windows --path "$STAGE_DIR" --skip-bundled-node
 
     package_artifacts "$(resolve_version)"

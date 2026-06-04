@@ -1,0 +1,26 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+<BaseLayout
+  title="Rent a mining rig — Animica Pool"
+  description="Rent hashpower by the hour and mine ANM or Monero to your own payout. Pay in any crypto."
+>
+  <section class="max-w-3xl mx-auto px-4 py-16">
+    <h1 class="text-3xl md:text-4xl font-semibold tracking-tight">Rent a rig</h1>
+    <p class="mt-4 text-ink-300">
+      Pick a live rig, choose how many hours and which coin to mine — ANM
+      (PPS or solo) or Monero — and point the rewards at your own payout
+      address for the rental window. Pay in the crypto of your choice; a 5%
+      marketplace fee applies. When your window ends, the rig automatically
+      goes back to mining for its owner.
+    </p>
+    <div class="mt-8 flex gap-4">
+      <a href="/app/browse" class="rounded-lg bg-amber-500 px-5 py-3 font-medium text-ink-950 hover:bg-amber-400 transition">
+        Browse rigs →
+      </a>
+      <a href="/app/login" class="rounded-lg border border-white/15 px-5 py-3 hover:border-amber-400 transition">
+        Sign in
+      </a>
+    </div>
+  </section>
+</BaseLayout>

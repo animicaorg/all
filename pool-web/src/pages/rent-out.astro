@@ -1,0 +1,27 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+<BaseLayout
+  title="Rent out your rig — Animica Pool"
+  description="List your mining rig for rent and earn 95% of every rental, auto-converted to your payout coin."
+>
+  <section class="max-w-3xl mx-auto px-4 py-16">
+    <h1 class="text-3xl md:text-4xl font-semibold tracking-tight">Rent out your rig</h1>
+    <p class="mt-4 text-ink-300">
+      Keep mining for yourself, and list your rig so others can rent it when
+      you want. Prove your payout address, set an hourly price and the coin you
+      want to be paid in, and earn <strong>95%</strong> of every rental —
+      auto-converted through NOWPayments. While a rig is rented its mined ANM
+      or Monero is credited to the renter; the instant the rental ends it
+      reverts to mining for you, no reconnect needed.
+    </p>
+    <div class="mt-8 flex gap-4">
+      <a href="/app/owner/list" class="rounded-lg bg-amber-500 px-5 py-3 font-medium text-ink-950 hover:bg-amber-400 transition">
+        List a rig →
+      </a>
+      <a href="/app/owner" class="rounded-lg border border-white/15 px-5 py-3 hover:border-amber-400 transition">
+        Your rigs
+      </a>
+    </div>
+  </section>
+</BaseLayout>
