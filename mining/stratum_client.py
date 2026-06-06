@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -73,6 +74,16 @@ class StratumClient:
         self._id = 1
         self._pending: Dict[int, asyncio.Future] = {}
         self._rx_task: Optional[asyncio.Task] = None
+        self._keepalive_task: Optional[asyncio.Task] = None
+        # Seconds of *send* inactivity before pushing an application-level
+        # `keepalived` frame upstream. TCP keepalive probes are empty ACKs
+        # that NAT middleboxes (WinNAT under WSL2, CGNAT, consumer routers)
+        # often ignore — they time sessions on upstream *payload*, and a
+        # miner only sends payload when it finds a share. Observed in the
+        # wild as connections reset like clockwork at ~20 min while the
+        # job stream is flowing fine. 0 disables.
+        self._keepalive_secs = float(os.environ.get("ANIMICA_STRATUM_KEEPALIVE", "60") or 0)
+        self._last_tx_at: float = 0.0
         self._closed = False
         # Stats used to make EOF diagnostics actionable: was the server
         # disconnecting us silently after subscribe (protocol mismatch)
@@ -130,6 +141,9 @@ class StratumClient:
         except Exception:
             pass
         self._rx_task = self.loop.create_task(self._rx_loop())
+        self._last_tx_at = time.monotonic()
+        if self._keepalive_secs > 0:
+            self._keepalive_task = self.loop.create_task(self._keepalive_loop())
         log.info(
             f"[client] connected to {self.host}:{self.port} framing={self.framing}"
             f"{' tls' if self.tls else ''}"
@@ -146,6 +160,8 @@ class StratumClient:
             pass
         if self._rx_task:
             self._rx_task.cancel()
+        if self._keepalive_task:
+            self._keepalive_task.cancel()
         # Reject any pending futures with the same hint we logged from the
         # rx loop, so callers (CLI) see *why* the connection closed instead
         # of a generic "connection closed".
@@ -169,6 +185,46 @@ class StratumClient:
             data = encode_lines(obj)
         self.writer.write(data)
         await self.writer.drain()
+        self._last_tx_at = time.monotonic()
+
+    async def _keepalive_loop(self) -> None:
+        """Push a `keepalived` request after `_keepalive_secs` of send
+        inactivity, mirroring xmrig's --keepalive. The reply (or an error
+        from pools that don't know the method) is consumed and discarded —
+        the only goal is upstream payload bytes that keep NAT/firewall
+        session tracking alive between rare share submissions."""
+        check_every = max(min(self._keepalive_secs / 4.0, 15.0), 1.0)
+        try:
+            while not self._closed:
+                await asyncio.sleep(check_every)
+                if self._closed:
+                    return
+                if time.monotonic() - self._last_tx_at < self._keepalive_secs:
+                    continue
+                req_id = self._next_id()
+                fut: asyncio.Future = self.loop.create_future()
+                self._pending[req_id] = fut
+                try:
+                    await self._send_obj(
+                        {"jsonrpc": "2.0", "id": req_id, "method": "keepalived", "params": {}}
+                    )
+                    await asyncio.wait_for(fut, timeout=10.0)
+                    log.debug("[client] keepalive acked")
+                except asyncio.TimeoutError:
+                    # Old pools may simply not answer; the bytes still went out,
+                    # which is all the NAT needed.
+                    log.debug("[client] keepalive sent (no reply)")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    # Send failure means the connection is dead; the rx loop
+                    # surfaces that with its own diagnostics.
+                    log.debug(f"[client] keepalive send failed: {e}")
+                    return
+                finally:
+                    self._pending.pop(req_id, None)
+        except asyncio.CancelledError:  # pragma: no cover
+            return
 
     async def _call(self, method: str, params: JSON) -> JSON:
         req_id = self._next_id()
