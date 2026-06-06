@@ -207,24 +207,37 @@ def _tx_view(
     block_hash: str | None = None,
 ) -> dict[str, t.Any]:
     """Project a Tx dataclass/object into a JSON-friendly view."""
+    # Persisted txs are Tx dataclasses whose fields live on .unsigned (with
+    # to/amount/data nested under .unsigned.payload). Unwrap before reading.
+    inner = getattr(tx, "unsigned", None) or tx
+    payload = getattr(inner, "payload", None)
+
     # Read common fields defensively
-    _from = getattr(tx, "sender", getattr(tx, "frm", getattr(tx, "from_", None)))
-    to = getattr(tx, "to", None)
-    valid_after = getattr(tx, "valid_after", getattr(tx, "validAfter", None))
-    valid_until = getattr(tx, "valid_until", getattr(tx, "validUntil", None))
-    salt = getattr(tx, "salt", None)
-    fork_id = getattr(tx, "fork_id", getattr(tx, "forkId", None))
-    gas = getattr(tx, "gas_limit", getattr(tx, "gas", None))
-    tip = getattr(tx, "tip", getattr(tx, "gas_price", None))
-    value = getattr(tx, "value", 0)
-    kind = getattr(tx, "kind", getattr(tx, "tx_kind", None))
+    _from = getattr(inner, "sender", getattr(inner, "frm", getattr(inner, "from_", None)))
+    to = getattr(inner, "to", None)
+    if to is None and payload is not None:
+        to = getattr(payload, "to", None)
+    valid_after = getattr(inner, "valid_after", getattr(inner, "validAfter", None))
+    valid_until = getattr(inner, "valid_until", getattr(inner, "validUntil", None))
+    salt = getattr(inner, "salt", None)
+    fork_id = getattr(inner, "fork_id", getattr(inner, "forkId", None))
+    gas = getattr(inner, "gas_limit", getattr(inner, "gas", None))
+    tip = getattr(inner, "tip", getattr(inner, "gas_price", None))
+    value = getattr(inner, "value", None)
+    if value is None and payload is not None:
+        value = getattr(payload, "amount", None)
+    if value is None:
+        value = 0
+    kind = getattr(inner, "kind", getattr(inner, "tx_kind", None))
     access_list = getattr(tx, "access_list", None)
-    data = getattr(tx, "data", getattr(tx, "payload", None))
+    data = getattr(inner, "data", None)
+    if data is None and payload is not None:
+        data = getattr(payload, "data", None)
 
     v = {
         "hash": _compute_tx_hash(tx),
-        "from": _from,
-        "to": to,
+        "from": _hex(_from) if isinstance(_from, (bytes, bytearray)) else _from,
+        "to": _hex(to) if isinstance(to, (bytes, bytearray)) else to,
         "gas": int(gas) if gas is not None else None,
         "tip": int(tip) if tip is not None else None,
         "validAfter": int(valid_after) if valid_after is not None else None,

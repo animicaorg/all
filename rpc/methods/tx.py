@@ -2088,6 +2088,10 @@ def _tx_view(
             tx_obj = obj["body"]
         elif "tx" in obj:
             tx_obj = obj["tx"]
+        elif "unsigned" in obj:
+            # Persisted Tx dataclasses decode (via dataclasses.asdict) to
+            # {"unsigned": {...}, "sigs": [...]} rather than the wire envelope.
+            tx_obj = obj["unsigned"]
         else:
             tx_obj = obj
     else:
@@ -2116,7 +2120,11 @@ def _tx_view(
 
     payload_obj = tx_obj.get("payload")
     if isinstance(payload_obj, dict):
-        payload_v = payload_obj.get("v", {})
+        # Wire envelope nests the payload under "v" ({"t": kind, "v": {...}});
+        # persisted dataclass dicts hold the fields flat ({to, amount, data}).
+        payload_v = payload_obj.get("v")
+        if not isinstance(payload_v, dict):
+            payload_v = payload_obj
         value = payload_v.get("amount", payload_v.get("value", 0))
         data = payload_v.get("data")
         if to is None:
