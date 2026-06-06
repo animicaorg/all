@@ -4183,13 +4183,48 @@ def _download_animica_xmrig(dest: Path) -> Optional[str]:
         return None
 
 
+def _cached_xmrig_stale(cache: Path) -> bool:
+    """Cheap freshness probe for the cached fork binary: HEAD the pool's
+    served asset and compare Content-Length to the local file size. A stale
+    cached miner against an updated pool protocol connects, rejects the
+    handshake, and retries forever — until xmrig gives up with
+    "no active pools, stop mining". Offline / HEAD failure ⇒ keep the cache
+    (best effort, never blocks mining)."""
+    tag = _xmrig_platform_tag()
+    if not tag:
+        return False
+    base = os.environ.get("ANIMICA_DOWNLOADS_URL", "https://pool.animica.org/downloads").rstrip("/")
+    suffix = ".exe" if tag.startswith("windows") else ""
+    url = f"{base}/xmrig-animica-{tag}{suffix}"
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "animica-cli"})
+        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 (trusted host)
+            served = int(r.headers.get("Content-Length") or 0)
+        return served > 100_000 and served != cache.stat().st_size
+    except Exception:
+        return False
+
+
 def _resolve_animica_xmrig(explicit: Optional[str]) -> Optional[str]:
     """Locate the Animica-fork xmrig (SHA3 'animica' algo). Order:
-    explicit flag -> $ANIMICA_XMRIG -> cached download -> PATH -> package bundle
-    -> dev build dirs -> auto-download. Returns None if nothing works."""
+    explicit flag -> $ANIMICA_XMRIG -> cached download (refreshed if the pool
+    serves a different build) -> PATH -> package bundle -> dev build dirs ->
+    auto-download. Returns None if nothing works."""
     import shutil
 
     cache = Path.home() / ".animica" / "bin" / ("xmrig-animica" + (".exe" if sys.platform.startswith("win") else ""))
+    # Self-heal a stale cache BEFORE the candidate scan would pick it up:
+    # the cache wins over PATH/bundle, so an outdated download otherwise
+    # sticks forever no matter how often the pool's build is updated.
+    if not explicit and not os.environ.get("ANIMICA_XMRIG") and cache.is_file() and _cached_xmrig_stale(cache):
+        typer.echo(
+            "[dual-mine] cached Animica xmrig differs from the pool's current "
+            "build — refreshing ...", err=True,
+        )
+        refreshed = _download_animica_xmrig(cache)
+        if refreshed:
+            return refreshed
     candidates = []
     if explicit:
         candidates.append(explicit)
@@ -4437,7 +4472,8 @@ def dual_mine(
     total = threads if threads > 0 else auto_threads
     worker_tag = worker or socket.gethostname().split(".")[0][:16]
 
-    procs: list = []
+    # (label, argv) per miner — spawned and supervised below.
+    specs: list = []
 
     ran_animica = False
     ran_xmr = False
@@ -4461,7 +4497,7 @@ def dual_mine(
                 "--keepalive",
             ]
             typer.echo(f"[dual-mine] starting animica miner: {' '.join(animica_cmd)}")
-            procs.append(_sp.Popen(animica_cmd))
+            specs.append(("animica", animica_cmd))
             ran_animica = True
             _start_hashrate_reporter(
                 http_port=http_port,
@@ -4491,7 +4527,7 @@ def dual_mine(
                 "Install it from https://xmrig.com/ and re-run.",
                 err=True,
             )
-            if not procs:
+            if not specs:
                 raise typer.Exit(1)
         else:
             # If the Animica side is running, split 50/50; otherwise (pure XMR,
@@ -4509,10 +4545,10 @@ def dual_mine(
                 "--no-color",
             ]
             typer.echo(f"[dual-mine] starting xmr miner: {' '.join(xmr_cmd)}")
-            procs.append(_sp.Popen(xmr_cmd))
+            specs.append(("xmr", xmr_cmd))
             ran_xmr = True
 
-    if not procs:
+    if not specs:
         typer.echo("[dual-mine] nothing started", err=True)
         raise typer.Exit(1)
 
@@ -4532,29 +4568,71 @@ def dual_mine(
         summary = "mining " + ", ".join(active)
     typer.echo(f"[dual-mine] {summary}")
     typer.echo(
-        f"[dual-mine] {len(procs)} process(es) running. Ctrl-C to stop both."
+        f"[dual-mine] {len(specs)} miner(s) supervised — auto-restart on exit "
+        "or 'no active pools'. Ctrl-C to stop."
     )
+
+    import threading as _threading
+    import time as _time
+
+    def _spawn(label: str, cmd: list):
+        """Start a miner with a line-forwarding watcher. xmrig never exits on
+        its own when a pool dies — it pauses with 'no active pools, stop
+        mining' and limps along — so the watcher terminates it on that line
+        and the supervisor loop below brings it back with a fresh socket."""
+        p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.STDOUT)
+
+        def _pump(proc=p):
+            try:
+                for raw in iter(proc.stdout.readline, b""):
+                    line = raw.decode(errors="replace").rstrip()
+                    print(f"[{label}] {line}", flush=True)
+                    if "no active pools" in line:
+                        typer.secho(
+                            f"[dual-mine] {label}: miner reports no active pools "
+                            "— restarting it for a clean reconnect",
+                            fg=typer.colors.YELLOW, err=True,
+                        )
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        _threading.Thread(target=_pump, daemon=True, name=f"pump-{label}").start()
+        return p
+
+    running = {
+        label: {"cmd": cmd, "proc": _spawn(label, cmd), "fails": 0, "started": _time.monotonic()}
+        for label, cmd in specs
+    }
     try:
-        # Wait for any process to exit; if one dies, kill the rest.
         while True:
-            for p in procs:
-                if p.poll() is not None:
-                    typer.echo(
-                        f"[dual-mine] process pid={p.pid} exited "
-                        f"with code {p.returncode}; stopping the rest.",
-                        err=True,
-                    )
-                    for other in procs:
-                        if other is not p and other.poll() is None:
-                            other.terminate()
-                    raise SystemExit(1)
-            import time as _time
             _time.sleep(2.0)
+            for label, st in running.items():
+                p = st["proc"]
+                if p.poll() is None:
+                    # Stable for 10 minutes ⇒ forget past failures so a later
+                    # blip restarts quickly instead of at the capped delay.
+                    if st["fails"] and _time.monotonic() - st["started"] > 600:
+                        st["fails"] = 0
+                    continue
+                st["fails"] += 1
+                delay = min(10 * (2 ** (st["fails"] - 1)), 300)
+                typer.secho(
+                    f"[dual-mine] {label} miner exited (code {p.returncode}) — "
+                    f"restarting in {delay}s (attempt {st['fails']})",
+                    fg=typer.colors.YELLOW, err=True,
+                )
+                _time.sleep(delay)
+                st["proc"] = _spawn(label, st["cmd"])
+                st["started"] = _time.monotonic()
     except KeyboardInterrupt:
         typer.echo("[dual-mine] interrupt — stopping miners")
-        for p in procs:
+        for st in running.values():
             try:
-                p.terminate()
+                st["proc"].terminate()
             except Exception:
                 pass
 

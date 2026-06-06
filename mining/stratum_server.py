@@ -1253,6 +1253,18 @@ class StratumServer:
         # breaking existing structured clients.
         raw_params = obj.get("params")
         method_name = obj.get("method")
+        # Cryptonote-style keepalive: xmrig sends `keepalived` on its
+        # stratum-v1/EthStratum connections too when --keepalive is on
+        # (the timer lives in the base Client class). Answer like a
+        # cryptonote pool would — replying METHOD_NOT_FOUND makes xmrig
+        # treat the connection as broken, drop it on every keepalive
+        # round, and eventually park with "no active pools, stop mining".
+        if method_name == "keepalived":
+            session.touch()
+            await self._send(
+                session, make_result(obj.get("id"), {"status": "KEEPALIVED"})
+            )
+            return
         if isinstance(raw_params, list):
             if method_name == Method.SUBSCRIBE.value:
                 session.is_v1 = True
