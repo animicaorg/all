@@ -58,7 +58,7 @@ from core.encoding.canonical import \
     header_signing_bytes  # canonical SignBytes for header hashing
 from core.encoding.cbor import dumps as cbor_dumps
 from core.encoding.cbor import loads as cbor_loads
-from core.errors import AnimicaError
+from core.errors import AnimicaError, CoreErrorCode
 from core.genesis.genesis_loader import get_genesis
 from core.genesis.loader import load_chain_params_from_genesis
 from core.types.block import Block
@@ -130,7 +130,25 @@ class ImportResult(NamedTuple):
 
 
 class BlockImportError(AnimicaError):
-    pass
+    """Raised when a block fails to import/validate.
+
+    ``AnimicaError`` is a dataclass whose generated ``__init__`` requires
+    both ``code`` and ``message`` positionally. Almost every call site here
+    raises with a single human-readable message
+    (e.g. ``BlockImportError("header missing height")``), so we supply the
+    error code automatically. Without this, single-arg raises blew up with
+    ``TypeError: AnimicaError.__init__() missing 1 required positional
+    argument: 'message'`` — masking the real rejection reason and wedging
+    sync (the block stays queued and is retried forever).
+    """
+
+    def __init__(self, message: str = "block import failed", **data: Any) -> None:
+        super().__init__(
+            code=CoreErrorCode.BLOCK_INVALID,
+            message=message,
+            data=dict(data),
+            retryable=False,
+        )
 
 
 def _as_bytes(x: Any, *, name: str) -> bytes:
@@ -360,7 +378,7 @@ def _validate_coinbase_outputs_nonzero(block: Block) -> None:
         payload = getattr(unsigned, "payload", None)
         to_addr = getattr(payload, "to", None) if payload is not None else None
         if to_addr is not None and _is_zero_address(to_addr):
-            raise BlockImportError("CORE/BLOCK_IMPORT", "invalid coinbase: zero-address output is forbidden")
+            raise BlockImportError("invalid coinbase: zero-address output is forbidden")
 def _is_coinbase_tx(tx: Any) -> bool:
     unsigned = _tx_unsigned(tx)
     if unsigned is None:
