@@ -97,7 +97,14 @@ class Block:
                 f"txids={txids_hex} "
                 "algorithm=sha3_256/merkle_root(sorted tx.hash bytes, duplicate_odd)"
             )
-        if rcr != self.header.receiptsRoot:
+        # receiptsRoot is sealed as the ZERO32 sentinel before execution:
+        # receipts are non-consensus and live in a side-table, never in the
+        # header (see core/chain/block_import.py "sealed before execution").
+        # When the header commits zero, the network does not enforce a
+        # receipts root, so an in-memory block that happens to carry receipts
+        # must not be rejected. Only enforce equality when the header
+        # actually commits a (non-zero) receiptsRoot.
+        if self.header.receiptsRoot != ZERO32 and rcr != self.header.receiptsRoot:
             raise ValueError(
                 f"receiptsRoot mismatch: computed {rcr.hex()} header {self.header.receiptsRoot.hex()}"
             )

@@ -164,7 +164,11 @@ class BlockStore:
             want = self._root_receipts(receipts)
             got = getattr(getattr(block, "header", None), "receiptsRoot", None)
             if isinstance(got, (bytes, bytearray)):
-                if got != want:
+                # An all-zero receiptsRoot is the sentinel for "not committed"
+                # (headers are sealed before execution; receipts are
+                # non-consensus side-table data). Only enforce a root when the
+                # header actually commits a non-zero one.
+                if any(got) and got != want:
                     raise ReceiptsRootMismatch("receiptsRoot mismatch")
             # If header doesn't expose receiptsRoot, we skip verification.
 
