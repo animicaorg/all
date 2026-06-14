@@ -1,22 +1,19 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Header from "../components/Header.astro";
-import Footer from "../components/Footer.astro";
 
 const title = "Support";
 const description =
-  "AICF support channels for API incidents, provider worker troubleshooting, payout issues, and contract-job disputes.";
+  "Get help with Animica: wallets, mining, RPC, AICF compute, and provider workers — via GitHub issues, email, or X.";
 ---
 
 <BaseLayout title={title} description={description}>
-  <Header slot="header" />
-
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Support</span>
-      <h1 class="aicf-heading">Developer and Provider Operations Support</h1>
+      <h1 class="aicf-heading">Get Help with Animica</h1>
       <p class="aicf-subheading">
-        Use this page for incident routing, onboarding help, and escalation for billing, payout, or contract-job disputes.
+        Whether you are running a wallet, mining on the pool, calling the RPC, or operating an AICF
+        provider worker — here is how to reach us and what to include so we can help fast.
       </p>
     </div>
   </section>
@@ -24,29 +21,66 @@ const description =
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-3">
       <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">API and Billing</h2>
+        <h2 style="font-size:1.15rem;">GitHub Issues</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">
+          Best for bugs, feature requests, and anything reproducible — node, wallets, miner bundles,
+          SDKs, and pool tooling all live in one monorepo.
+        </p>
+        <div class="aicf-btn-row" style="margin-top:0.9rem;">
+          <a class="aicf-btn" href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">Open an Issue</a>
+        </div>
+      </article>
+
+      <article class="aicf-card">
+        <h2 style="font-size:1.15rem;">Email</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">
+          Best for account-specific questions, payout issues, billing disputes, and anything you'd
+          rather not post publicly.
+        </p>
+        <div class="aicf-btn-row" style="margin-top:0.9rem;">
+          <a class="aicf-btn" href="mailto:contact@animica.org">contact@animica.org</a>
+        </div>
+      </article>
+
+      <article class="aicf-card">
+        <h2 style="font-size:1.15rem;">X / Twitter</h2>
+        <p class="aicf-muted" style="margin-top:0.55rem;">
+          Best for quick questions and staying current — release announcements and network updates are
+          posted there first.
+        </p>
+        <div class="aicf-btn-row" style="margin-top:0.9rem;">
+          <a class="aicf-btn" href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container aicf-grid-3">
+      <article class="aicf-card">
+        <h2 style="font-size:1.15rem;">Wallets &amp; Transactions</h2>
         <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Failed model calls and timeout diagnostics</li>
-          <li>Usage row mismatch and settlement questions</li>
-          <li>ANM balance funding and escrow verification</li>
+          <li>Wallet install, restore, and checksum verification</li>
+          <li>Stuck or missing transactions (include the tx hash)</li>
+          <li>anim1&hellip; address questions</li>
         </ul>
       </article>
 
       <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">Provider Operations</h2>
+        <h2 style="font-size:1.15rem;">Mining &amp; Pool</h2>
         <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Worker install and benchmark troubleshooting</li>
-          <li>GPU detection and runtime health issues</li>
+          <li>Miner setup, shares, and dual-mining XMR</li>
+          <li>Pool payouts and hashrate reporting</li>
+          <li>Connection and stratum issues</li>
+        </ul>
+      </article>
+
+      <article class="aicf-card">
+        <h2 style="font-size:1.15rem;">AICF Compute</h2>
+        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
+          <li>Provider worker install and benchmark troubleshooting</li>
+          <li>Failed model calls and usage/settlement questions</li>
           <li>Payout, reputation, and staking support</li>
-        </ul>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">Contract Workloads</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Contract-triggered job failures</li>
-          <li>Challenge windows and dispute escalation</li>
-          <li>Treasury subsidy configuration issues</li>
         </ul>
       </article>
     </div>
@@ -55,26 +89,25 @@ const description =
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-2">
       <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Support Intake Checklist</h2>
+        <h2 style="font-size:1.25rem;">What to Include</h2>
         <ol style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.42rem;">
-          <li>Include project ID, request ID, and affected endpoint/job class.</li>
-          <li>Provide timestamp, expected behavior, and observed behavior.</li>
-          <li>Attach worker logs or API response snippets where possible.</li>
-          <li>Include ANM settlement ID when reporting billing or payout issues.</li>
+          <li>What you were doing, what you expected, and what happened instead.</li>
+          <li>Timestamps, and a transaction hash or anim1&hellip; address where relevant.</li>
+          <li>Logs or error output (miner logs, worker logs, API responses).</li>
+          <li>Your platform and version (wallet build, CLI version, miner bundle).</li>
         </ol>
       </article>
 
       <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Contact Channels</h2>
+        <h2 style="font-size:1.25rem;">Self-Service</h2>
         <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.42rem;">
-          <li>Email: <strong>aicf@animica.org</strong></li>
-          <li>Status page updates: <a href="/status">/status</a></li>
+          <li>Network status: <a href="/status">/status</a></li>
           <li>Documentation: <a href="/docs">/docs</a></li>
-          <li>Releases and issues: <a href="https://github.com/animica/animica" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+          <li>Mining guides: <a href="/mine">/mine</a></li>
+          <li>Wallet downloads: <a href="/wallet">/wallet</a></li>
+          <li>Explorer: <a href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">explorer.animica.org</a></li>
         </ul>
       </article>
     </div>
   </section>
-
-  <Footer slot="footer" />
 </BaseLayout>

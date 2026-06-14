@@ -1,7 +1,4 @@
 ---
-import { links } from "../config/links";
-import { docsUrl } from "../env";
-
 interface Feature {
   id: string;
   title: string;
@@ -17,15 +14,13 @@ interface Props {
   class?: string;
 }
 
-const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
-
 const defaults: Feature[] = [
   {
     id: "poies",
     title: "PoIES consensus",
     blurb:
       "Proof-of-Integrated-External-Services: combines hash shares with useful work (AI/Quantum/Storage/VDF) under caps & fairness.",
-    href: `${docsHref}#poies`,
+    href: "https://github.com/animicaorg/all/blob/main/spec/poies_math.md",
     icon: "poies",
   },
   {
@@ -33,7 +28,7 @@ const defaults: Feature[] = [
     title: "Data Availability (DA)",
     blurb:
       "Namespaced Merkle Trees + erasure coding. Light clients verify blob availability via DAS proofs.",
-    href: `${docsHref}#data-availability`,
+    href: "https://github.com/animicaorg/all/blob/main/docs/DA.md",
     icon: "da",
   },
   {
@@ -41,7 +36,7 @@ const defaults: Feature[] = [
     title: "Python VM (deterministic)",
     blurb:
       "Validate → compile → run contracts in a sandboxed Python VM with a tiny, auditable stdlib.",
-    href: `${docsHref}#vm-py`,
+    href: "https://github.com/animicaorg/all/tree/main/docs/vm",
     icon: "vm",
   },
   {
@@ -49,7 +44,7 @@ const defaults: Feature[] = [
     title: "AI Compute Fund (AICF)",
     blurb:
       "Queue, assign, attest, and settle off-chain AI/Quantum jobs with verifiable proofs and SLAs.",
-    href: `${docsHref}#aicf`,
+    href: "https://github.com/animicaorg/all/blob/main/docs/AICF.md",
     icon: "aicf",
   },
   {
@@ -57,7 +52,7 @@ const defaults: Feature[] = [
     title: "Post-Quantum (PQ) accounts",
     blurb:
       "Addresses and signatures using Dilithium / SPHINCS+. Domain separation and bech32m addresses.",
-    href: `${docsHref}#post-quantum`,
+    href: "https://github.com/animicaorg/all/tree/main/docs/pq",
     icon: "pq",
   },
   {
@@ -65,7 +60,7 @@ const defaults: Feature[] = [
     title: "Quantum proofs",
     blurb:
       "Provider attestations + trap circuits and QoS metrics map into ψ inputs alongside hash work.",
-    href: `${docsHref}#quantum`,
+    href: "https://github.com/animicaorg/all/tree/main/docs/quantum",
     icon: "quantum",
   },
 ];

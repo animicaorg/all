@@ -1,6 +1,6 @@
 /**
  * Roadmap Data
- * 
+ *
  * Development milestones and feature status.
  * Edit this file to update roadmap items and statuses.
  */
@@ -23,8 +23,8 @@ export interface RoadmapPhase {
 
 export const roadmapData: RoadmapPhase[] = [
   {
-    phase: "Foundation (Q4 2024 - Q1 2025)",
-    description: "Core protocol implementation and local development environment",
+    phase: "Foundation (Q4 2024 – Q1 2025)",
+    description: "Core protocol implementation and local development environment — shipped",
     items: [
       {
         title: "Core Blockchain Infrastructure",
@@ -59,8 +59,8 @@ export const roadmapData: RoadmapPhase[] = [
     ]
   },
   {
-    phase: "Devnet & Tooling (Q1 - Q2 2025)",
-    description: "Multi-node networking, developer tools, and initial ecosystem apps",
+    phase: "Devnet & Tooling (Q1 – Q2 2025)",
+    description: "Multi-node networking, developer tools, and initial ecosystem apps — shipped",
     items: [
       {
         title: "P2P Networking Layer",
@@ -75,14 +75,14 @@ export const roadmapData: RoadmapPhase[] = [
         category: "infrastructure"
       },
       {
-        title: "Python SDK (omni_sdk)",
-        description: "Full-featured SDK with wallet, transaction building, and contract deployment",
+        title: "Python SDK & CLI",
+        description: "The animica package: wallet, transaction building, contract deployment, and mining commands",
         status: "done",
         category: "tooling"
       },
       {
-        title: "TypeScript SDK (@animica/sdk)",
-        description: "Browser and Node.js compatible SDK for web3 integration",
+        title: "TypeScript SDK",
+        description: "Browser and Node.js compatible SDK for web integration",
         status: "done",
         category: "tooling"
       },
@@ -93,185 +93,123 @@ export const roadmapData: RoadmapPhase[] = [
         category: "ecosystem"
       },
       {
-        title: "Desktop Wallet (Flutter)",
-        description: "Cross-platform wallet for key management and transaction signing",
-        status: "in-progress",
-        category: "ecosystem"
-      },
-      {
         title: "Browser Extension Wallet (MV3)",
         description: "Browser extension for dApp connectivity and transaction signing",
-        status: "in-progress",
-        category: "ecosystem"
-      },
-      {
-        title: "Studio IDE (Web)",
-        description: "In-browser contract editor with simulation and deployment",
         status: "done",
-        category: "tooling"
+        category: "ecosystem"
       }
     ]
   },
   {
-    phase: "Testnet (Q2 - Q3 2025)",
-    description: "Public testnet launch with enhanced features and stability",
+    phase: "Testnet (Q2 – Q3 2025)",
+    description: "Public testnet with multi-node validation and pool infrastructure — shipped",
     items: [
       {
         title: "Multi-Node Testnet",
-        description: "Public testnet with multiple validator nodes and open participation",
-        status: "in-progress",
+        description: "Public testnet with multiple nodes and open participation",
+        status: "done",
         category: "infrastructure"
       },
       {
         title: "Mining Pool Infrastructure",
-        description: "Mining pool protocol and reference implementation",
-        status: "in-progress",
+        description: "Stratum pool protocol and reference implementation",
+        status: "done",
         category: "infrastructure"
-      },
-      {
-        title: "Testnet Faucet",
-        description: "Automated faucet for test token distribution",
-        status: "in-progress",
-        category: "tooling"
       },
       {
         title: "Data Availability Layer",
         description: "NMT-based data availability with light client verification",
-        status: "in-progress",
+        status: "done",
         category: "infrastructure"
       },
       {
         title: "AICF Integration",
-        description: "AI Capability Framework for off-chain AI and quantum task coordination",
-        status: "in-progress",
-        category: "execution"
-      },
-      {
-        title: "Enhanced Monitoring",
-        description: "Prometheus metrics, grafana dashboards, and alerting",
-        status: "planned",
-        category: "tooling"
-      },
-      {
-        title: "Rust SDK (animica-sdk)",
-        description: "High-performance Rust SDK for native applications",
-        status: "planned",
-        category: "tooling"
-      }
-    ]
-  },
-  {
-    phase: "Mainnet Preparation (Q3 - Q4 2025)",
-    description: "Security audits, performance optimization, and mainnet readiness",
-    items: [
-      {
-        title: "Security Audit",
-        description: "Third-party security audit of core protocol and cryptography",
-        status: "planned",
-        category: "infrastructure"
-      },
-      {
-        title: "Performance Optimization",
-        description: "Transaction throughput, sync speed, and resource optimization",
-        status: "planned",
-        category: "infrastructure"
-      },
-      {
-        title: "Governance Framework",
-        description: "On-chain governance for parameter updates and protocol upgrades",
-        status: "planned",
-        category: "consensus"
-      },
-      {
-        title: "Wallet Binary Releases",
-        description: "Signed desktop and mobile wallet binaries with auto-updates",
-        status: "planned",
-        category: "ecosystem"
-      },
-      {
-        title: "Documentation Completion",
-        description: "Comprehensive docs for operators, developers, and users",
-        status: "in-progress",
-        category: "tooling"
-      },
-      {
-        title: "Contract Standard Library",
-        description: "Common contract patterns and reusable libraries",
-        status: "planned",
+        description: "AI compute lane for off-chain AI and quantum task coordination",
+        status: "done",
         category: "execution"
       }
     ]
   },
   {
     phase: "Mainnet Launch (Q4 2025)",
-    description: "Production mainnet with full ecosystem support",
+    description: "Production mainnet genesis and public infrastructure — live",
     items: [
       {
         title: "Mainnet Genesis",
-        description: "Production mainnet launch with initial validators and parameters",
-        status: "planned",
-        date: "Q4 2025",
+        description: "Production mainnet launch — the chain is live and producing blocks",
+        status: "done",
         category: "infrastructure"
       },
       {
-        title: "Bridge Infrastructure",
-        description: "Cross-chain bridges for asset transfers",
-        status: "planned",
-        category: "infrastructure"
-      },
-      {
-        title: "DEX and DeFi Primitives",
-        description: "Decentralized exchange and basic DeFi contracts",
-        status: "planned",
+        title: "Public Explorer, Wallet & RPC",
+        description: "explorer.animica.org, wallet.animica.org, and the public JSON-RPC endpoint",
+        status: "done",
         category: "ecosystem"
       },
       {
-        title: "NFT Standards",
-        description: "Non-fungible token standards and marketplace support",
-        status: "planned",
-        category: "execution"
-      },
-      {
-        title: "Mobile Wallet Apps",
-        description: "Native iOS and Android wallet applications",
-        status: "planned",
+        title: "Wallet Binary Releases",
+        description: "Signed desktop and extension wallet builds with published checksums",
+        status: "done",
         category: "ecosystem"
       }
     ]
   },
   {
-    phase: "Post-Launch (2026+)",
-    description: "Ongoing development and ecosystem growth",
+    phase: "Live Operations (2026)",
+    description: "Running the network in production: mining, compute, markets, and tooling",
     items: [
       {
-        title: "Zero-Knowledge Proof Support",
-        description: "ZK verifier adapters for Groth16, PLONK, and STARK proofs",
-        status: "planned",
-        category: "execution"
-      },
-      {
-        title: "Light Client Implementation",
-        description: "Resource-efficient light clients for mobile and embedded devices",
-        status: "planned",
+        title: "Mining Pool with XMR Dual-Mining",
+        description: "Production pool at pool.animica.org — mine ANM on CPU and dual-mine XMR on the same hardware",
+        status: "done",
+        date: "Q2 2026",
         category: "infrastructure"
       },
       {
-        title: "Advanced Contract Features",
-        description: "Contract upgrades, proxies, and advanced patterns",
-        status: "planned",
-        category: "execution"
-      },
-      {
-        title: "Ecosystem Grants Program",
-        description: "Funding for community projects and protocol development",
-        status: "planned",
+        title: "Bittensor Compute Dashboard",
+        description: "GPU compute integration with live dashboard at pool.animica.org/bittensor",
+        status: "done",
+        date: "Q2 2026",
         category: "ecosystem"
       },
       {
-        title: "Quantum Task Marketplace",
-        description: "Decentralized marketplace for quantum computing tasks",
-        status: "planned",
+        title: "animica.xyz Marketplace",
+        description: "Live marketplace for trading ANM and ecosystem assets",
+        status: "done",
+        date: "Q2 2026",
         category: "ecosystem"
+      },
+      {
+        title: "Qt Desktop Wallet",
+        description: "Native desktop wallet builds for Windows and macOS",
+        status: "done",
+        date: "Q2 2026",
+        category: "ecosystem"
+      },
+      {
+        title: "animica CLI 0.4.x on PyPI",
+        description: "pip install animica — wallet, mining, dual-mine, and Bittensor commands",
+        status: "done",
+        date: "Q2 2026",
+        category: "tooling"
+      },
+      {
+        title: "Studio Web IDE Rebuild",
+        description: "The in-browser contract IDE is being rebuilt; a holding page is up meanwhile",
+        status: "in-progress",
+        category: "tooling"
+      },
+      {
+        title: "Buy Desk Relaunch",
+        description: "Fiat/SOL purchase flow for ANM is being reworked; card purchases are paused until it ships",
+        status: "in-progress",
+        category: "ecosystem"
+      },
+      {
+        title: "wANM Solana Bridge Return",
+        description: "The wrapped-ANM bridge is offline while it is hardened for relaunch",
+        status: "in-progress",
+        category: "infrastructure"
       }
     ]
   }

@@ -45,13 +45,6 @@ const sizeCls =
     ? "text-sm px-3 py-2 gap-3"
     : "text-sm px-2.5 py-1.5 gap-2";
 const dotSize = size === "sm" ? "size-2" : size === "lg" ? "size-2.5" : "size-2";
-const uid = `status-badge-${Math.random().toString(36).slice(2, 9)}`;
-
-const statusStyles: Record<RpcHealth, { ring: string; dot: string; label: string }> = {
-  healthy: { ring: "ring-emerald-500/25", dot: "bg-emerald-500", label: "Healthy" },
-  degraded: { ring: "ring-amber-500/25", dot: "bg-amber-500", label: "Degraded" },
-  offline: { ring: "ring-rose-500/25", dot: "bg-rose-500", label: "Offline" },
-};
 
 const config = JSON.stringify({
   url: rpcUrl,
@@ -62,20 +55,20 @@ const config = JSON.stringify({
 });
 ---
 <div
-  id={uid}
+  data-status-badge
   class={`inline-flex items-center rounded-full border bg-[var(--bg-elevated)]
-    border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] ring-4 ${statusStyles.offline.ring}
+    border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] ring-4 ring-zinc-500/15
     ${sizeCls} ${className} status-badge`}
   data-config={config}
   aria-live="polite"
   role="status"
 >
   <span
-    class={`inline-block rounded-full ${dotSize} ${statusStyles.offline.dot} status-dot`}
+    class={`inline-block rounded-full ${dotSize} bg-zinc-500 status-dot`}
     data-role="dot"
     aria-hidden="true"
   />
-  <span class="font-medium" data-role="label">{statusStyles.offline.label}</span>
+  <span class="font-medium" data-role="label">Checking…</span>
   {showLatency && <span class="ml-1 tabular-nums opacity-75" data-role="latency">—</span>}
 </div>
 
@@ -84,20 +77,20 @@ const config = JSON.stringify({
     backdrop-filter: blur(12px);
     transition: all 0.3s ease;
   }
-  
+
   .status-badge:hover {
     transform: scale(1.02);
   }
-  
+
   .status-dot {
     transition: all 0.3s ease;
   }
-  
+
   /* Pulse animation for healthy status */
   .status-badge:has(.bg-emerald-500) .status-dot {
     animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
-  
+
   @keyframes pulse {
     0%, 100% {
       opacity: 1;
@@ -119,123 +112,152 @@ const config = JSON.stringify({
     healthy: { ring: "ring-emerald-500/25", dot: "bg-emerald-500", label: "Healthy" },
     degraded: { ring: "ring-amber-500/25", dot: "bg-amber-500", label: "Degraded" },
     offline: { ring: "ring-rose-500/25", dot: "bg-rose-500", label: "Offline" },
+    idle: { ring: "ring-zinc-500/15", dot: "bg-zinc-500", label: "Checking…" },
   };
+  const ALL_RINGS = Object.values(statusStyles).map((s) => s.ring);
+  const ALL_DOTS = Object.values(statusStyles).map((s) => s.dot);
 
-  const root = document.getElementById("${uid}");
-  if (!root) return;
+  function initBadge(root) {
+    if (root.dataset.statusBadgeInit === "1") return;
+    root.dataset.statusBadgeInit = "1";
 
-  const cfg = (() => {
-    try {
-      return JSON.parse(root.dataset.config || "{}");
-    } catch {
-      return {};
+    const cfg = (() => {
+      try {
+        return JSON.parse(root.dataset.config || "{}");
+      } catch {
+        return {};
+      }
+    })();
+
+    const url = cfg.url || "/rpc";
+    const intervalMs = Number(cfg.intervalMs) || 4000;
+    const timeoutMs = Number(cfg.timeoutMs) || 2500;
+    const thresholds = Object.assign({}, DEFAULT_THRESHOLDS, cfg.thresholds || {});
+    const showLatency = Boolean(cfg.showLatency);
+
+    const dotEl = root.querySelector('[data-role="dot"]');
+    const labelEl = root.querySelector('[data-role="label"]');
+    const latencyEl = root.querySelector('[data-role="latency"]');
+
+    let status = "idle";
+    let latencyMs = null;
+    let lastOkAt = null;
+    let head = null;
+    let errMsg = null;
+    let failStreak = 0;
+    let timer = null;
+    let everOk = false;
+
+    function deriveStatus() {
+      const now = Date.now();
+      const stale = lastOkAt != null ? now - lastOkAt > thresholds.staleMs : true;
+      if (failStreak >= thresholds.offlineConsecutiveFails || stale) return "offline";
+      if (latencyMs == null) return "degraded";
+      if (latencyMs <= thresholds.healthyLatencyMs) return "healthy";
+      return "degraded";
     }
-  })();
 
-  const url = cfg.url || "/rpc";
-  const intervalMs = Number(cfg.intervalMs) || 4000;
-  const timeoutMs = Number(cfg.timeoutMs) || 2500;
-  const thresholds = Object.assign({}, DEFAULT_THRESHOLDS, cfg.thresholds || {});
-  const showLatency = Boolean(cfg.showLatency);
+    function updateVisuals(nextStatus) {
+      const styles = statusStyles[nextStatus] || statusStyles.idle;
+      root.classList.remove(...ALL_RINGS);
+      root.classList.add(styles.ring);
+      if (dotEl) {
+        dotEl.classList.remove(...ALL_DOTS);
+        dotEl.classList.add(styles.dot);
+      }
+      if (labelEl) labelEl.textContent = styles.label;
+      if (latencyEl && showLatency) {
+        latencyEl.textContent = latencyMs != null ? `${Math.round(latencyMs)} ms` : "—";
+      }
+    }
 
-  const dotEl = root.querySelector('[data-role="dot"]');
-  const labelEl = root.querySelector('[data-role="label"]');
-  const latencyEl = root.querySelector('[data-role="latency"]');
+    function renderUnavailable() {
+      // Endpoint not reachable from the browser — degrade quietly and stop polling.
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      root.classList.remove(...ALL_RINGS);
+      root.classList.add(statusStyles.idle.ring);
+      if (dotEl) {
+        dotEl.classList.remove(...ALL_DOTS);
+        dotEl.classList.add(statusStyles.idle.dot);
+      }
+      if (labelEl) labelEl.textContent = "Status unavailable";
+      if (latencyEl) latencyEl.remove();
+      root.removeAttribute("title");
+    }
 
-  let status = "offline";
-  let latencyMs = null;
-  let lastOkAt = null;
-  let head = null;
-  let errMsg = null;
-  let failStreak = 0;
-  let timer = null;
+    function updateTooltip() {
+      const tooltip = [
+        showLatency && latencyMs != null ? `RTT: ${latencyMs.toFixed(0)} ms` : "",
+        head != null ? `Head: ${head}` : "",
+        lastOkAt ? `Last OK: ${new Date(lastOkAt).toLocaleTimeString()}` : "",
+        errMsg ? `Last error: ${errMsg}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      if (tooltip) root.setAttribute("title", tooltip);
+    }
 
-  function deriveStatus() {
-    const now = Date.now();
-    const stale = lastOkAt != null ? now - lastOkAt > thresholds.staleMs : true;
-    if (failStreak >= thresholds.offlineConsecutiveFails || stale) return "offline";
-    if (latencyMs == null) return "degraded";
-    if (latencyMs <= thresholds.healthyLatencyMs) return "healthy";
-    if (latencyMs <= thresholds.degradeLatencyMs) return "degraded";
-    return "degraded";
+    async function rpcCall(method, params) {
+      const id = Math.floor(Math.random() * 1e9);
+      const ctrl = new AbortController();
+      const to = window.setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        if (body?.error) throw new Error(body.error.message || "RPC error");
+        return { ok: true, result: body.result };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
+      } finally {
+        clearTimeout(to);
+      }
+    }
+
+    async function ping() {
+      const t0 = performance.now();
+      const res = await rpcCall("chain.getHead");
+      const t1 = performance.now();
+      if (res.ok) {
+        const rtt = Math.max(0, t1 - t0);
+        latencyMs = rtt;
+        lastOkAt = Date.now();
+        head = res.result?.number ?? null;
+        errMsg = null;
+        failStreak = 0;
+        everOk = true;
+      } else {
+        errMsg = res.error?.message || "RPC error";
+        failStreak += 1;
+        if (!everOk && failStreak >= thresholds.offlineConsecutiveFails) {
+          renderUnavailable();
+          return;
+        }
+      }
+
+      const nextStatus = deriveStatus();
+      if (nextStatus !== status) {
+        status = nextStatus;
+        updateVisuals(status);
+      } else if (showLatency && latencyEl) {
+        latencyEl.textContent = latencyMs != null ? `${Math.round(latencyMs)} ms` : "—";
+      }
+      updateTooltip();
+    }
+
+    ping();
+    timer = window.setInterval(ping, intervalMs);
+    window.addEventListener("pagehide", () => timer && clearInterval(timer), { once: true });
   }
 
-  function updateVisuals(nextStatus) {
-    const styles = statusStyles[nextStatus];
-    root.classList.remove(statusStyles.healthy.ring, statusStyles.degraded.ring, statusStyles.offline.ring);
-    root.classList.add(styles.ring);
-    if (dotEl) {
-      dotEl.classList.remove(statusStyles.healthy.dot, statusStyles.degraded.dot, statusStyles.offline.dot);
-      dotEl.classList.add(styles.dot);
-    }
-    if (labelEl) labelEl.textContent = styles.label;
-    if (latencyEl && showLatency) {
-      latencyEl.textContent = latencyMs != null ? `${Math.round(latencyMs)} ms` : "—";
-    }
-  }
-
-  function updateTooltip() {
-    const tooltip = [
-      showLatency && latencyMs != null ? `RTT: ${latencyMs.toFixed(0)} ms` : "",
-      head != null ? `Head: ${head}` : "",
-      lastOkAt ? `Last OK: ${new Date(lastOkAt).toLocaleTimeString()}` : "",
-      errMsg ? `Last error: ${errMsg}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-    if (tooltip) root.setAttribute("title", tooltip);
-  }
-
-  async function rpcCall(method, params) {
-    const id = Math.floor(Math.random() * 1e9);
-    const ctrl = new AbortController();
-    const to = window.setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = await res.json();
-      if (body?.error) throw new Error(body.error.message || "RPC error");
-      return { ok: true, result: body.result };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
-    } finally {
-      clearTimeout(to);
-    }
-  }
-
-  async function ping() {
-    const t0 = performance.now();
-    const res = await rpcCall("chain.getHead");
-    const t1 = performance.now();
-    if (res.ok) {
-      const rtt = Math.max(0, t1 - t0);
-      latencyMs = rtt;
-      lastOkAt = Date.now();
-      head = res.result?.number ?? null;
-      errMsg = null;
-      failStreak = 0;
-    } else {
-      errMsg = res.error?.message || "RPC error";
-      failStreak += 1;
-    }
-
-    const nextStatus = deriveStatus();
-    if (nextStatus !== status) {
-      status = nextStatus;
-      updateVisuals(status);
-    } else if (showLatency && latencyEl) {
-      latencyEl.textContent = latencyMs != null ? `${Math.round(latencyMs)} ms` : "—";
-    }
-    updateTooltip();
-  }
-
-  ping();
-  timer = window.setInterval(ping, intervalMs);
-  window.addEventListener("pagehide", () => timer && clearInterval(timer), { once: true });
+  document.querySelectorAll("[data-status-badge]").forEach(initBadge);
 })();
 </script>

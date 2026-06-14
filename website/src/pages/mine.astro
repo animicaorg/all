@@ -417,6 +417,56 @@ const mineRuntimeConfig = JSON.stringify({
     </section>
 
     <section class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <div class="grid gap-5 lg:grid-cols-3">
+        <div class="rounded-[28px] border border-slate-200/10 bg-[color:var(--bg-elevated)] p-6 shadow-xl shadow-slate-950/10">
+          <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Pool Dashboard</p>
+          <h3 class="mt-2 text-xl font-semibold text-white">Live stats at pool.animica.org</h3>
+          <p class="mt-3 text-sm text-slate-300">
+            Track pool hashrate, your workers, accepted shares, found blocks, and payouts on the
+            official pool dashboard.
+          </p>
+          <a
+            href="https://pool.animica.org"
+            target="_blank"
+            rel="noopener"
+            class="mt-5 inline-flex items-center rounded-xl border border-sky-400/30 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:border-sky-300 hover:bg-sky-500/20"
+          >
+            Open pool dashboard →
+          </a>
+        </div>
+
+        <div class="rounded-[28px] border border-slate-200/10 bg-[color:var(--bg-elevated)] p-6 shadow-xl shadow-slate-950/10">
+          <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">CLI Quick Path</p>
+          <h3 class="mt-2 text-xl font-semibold text-white">Dual-mine ANM + XMR</h3>
+          <p class="mt-3 text-sm text-slate-300">
+            Prefer a terminal? The <code>animica</code> CLI installs from PyPI and includes mining
+            commands — including Monero dual-mining on the same CPU.
+          </p>
+          <pre class="mt-4 overflow-x-auto rounded-2xl bg-black/40 p-4 text-sm text-slate-100">pip install animica
+animica miner dual-mine &lt;anm-address&gt; \
+  --pool-host pool.animica.org</pre>
+        </div>
+
+        <div class="rounded-[28px] border border-slate-200/10 bg-[color:var(--bg-elevated)] p-6 shadow-xl shadow-slate-950/10">
+          <p class="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">GPU Compute</p>
+          <h3 class="mt-2 text-xl font-semibold text-white">Bittensor GPU pool</h3>
+          <p class="mt-3 text-sm text-slate-300">
+            Have GPU capacity? Animica Pool integrates with Bittensor so rigs can earn from AI
+            compute alongside CPU mining. Eligibility and enrollment run through the pool.
+          </p>
+          <a
+            href="https://pool.animica.org/bittensor"
+            target="_blank"
+            rel="noopener"
+            class="mt-5 inline-flex items-center rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-100 transition hover:border-emerald-300 hover:bg-emerald-500/20"
+          >
+            Bittensor dashboard →
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div class="rounded-[28px] border border-slate-200/10 bg-[color:var(--bg-elevated)] p-6 shadow-xl shadow-slate-950/10">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>

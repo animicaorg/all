@@ -196,6 +196,20 @@ main#main {
   margin-top: 1rem;
 }
 
+.aicf-heading--sm {
+  font-size: clamp(1.8rem, 3vw, 2.8rem);
+}
+
+.aicf-link-card-cta {
+  display: inline-flex;
+  margin-top: 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--brand-300);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .aicf-subheading {
   margin-top: 1rem;
   font-size: clamp(1.02rem, 2.2vw, 1.25rem);
@@ -410,6 +424,8 @@ main#main {
   width: 0.95rem;
   height: 2px;
   background: var(--text-primary);
+  transition: top var(--duration-150) var(--easing-standard),
+    transform var(--duration-150) var(--easing-standard);
 }
 
 .aicf-mobile-toggle span:first-child {
@@ -418,6 +434,16 @@ main#main {
 
 .aicf-mobile-toggle span:last-child {
   top: 1.3rem;
+}
+
+.aicf-mobile-toggle.open span:first-child {
+  top: 1.075rem;
+  transform: rotate(45deg);
+}
+
+.aicf-mobile-toggle.open span:last-child {
+  top: 1.075rem;
+  transform: rotate(-45deg);
 }
 
 .aicf-mobile-nav {
@@ -440,6 +466,23 @@ main#main {
 .aicf-mobile-link {
   padding: 0.5rem 0;
   color: var(--text-secondary);
+}
+
+.aicf-mobile-link.active {
+  color: var(--text-primary);
+}
+
+/* Visible keyboard focus for navigation links and buttons */
+.aicf-nav-link:focus-visible,
+.aicf-mobile-link:focus-visible,
+.aicf-brand:focus-visible,
+.aicf-btn:focus-visible,
+.aicf-cta-btn:focus-visible,
+.aicf-ghost-btn:focus-visible,
+.aicf-mobile-toggle:focus-visible {
+  outline: 2px solid var(--ring-color);
+  outline-offset: 2px;
+  border-radius: 0.4rem;
 }
 
 .aicf-footer {

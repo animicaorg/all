@@ -46,19 +46,20 @@ const baseStyles = `
 
 const variantStyles = {
   default: `
-    bg-white dark:bg-dark-100
-    border border-gray-200 dark:border-dark-300
+    bg-[var(--color-surface)]
+    border border-[var(--color-border)]
   `,
   bordered: `
     bg-transparent
-    border-2 border-gray-300 dark:border-dark-400
+    border-2 border-[var(--color-border)]
   `,
   elevated: `
-    bg-white dark:bg-dark-100
+    bg-[var(--bg-elevated)]
+    border border-[var(--color-border)]
     shadow-lg hover:shadow-xl
   `,
   flat: `
-    bg-gray-50 dark:bg-dark-50
+    bg-[var(--bg-elevated-2)]
   `,
 };
 

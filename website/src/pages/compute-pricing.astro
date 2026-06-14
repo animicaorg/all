@@ -18,6 +18,7 @@ const description =
       <h1 class="aicf-heading">Compute Pricing in ANM</h1>
       <p class="aicf-subheading">
         Developers pay in ANM. Jobs reserve ANM in escrow before execution. Settlements distribute ANM to providers and treasury with transparent economics.
+        Rates below are indicative — final rates are shown at key creation.
       </p>
       <div class="aicf-btn-row">
         <a class="aicf-btn" href="https://aicf.animica.org">Get API Access</a>
@@ -34,7 +35,7 @@ const description =
             <tr>
               <th>Workload</th>
               <th>Unit</th>
-              <th>Base Price</th>
+              <th>Indicative Price</th>
               <th>Provider Share</th>
               <th>Treasury Share</th>
             </tr>
@@ -52,6 +53,10 @@ const description =
           </tbody>
         </table>
       </div>
+      <p class="aicf-muted" style="margin-top:0.75rem; font-size:0.9rem;">
+        Indicative — final rates are shown at key creation. Values above are read from the live AICF model registry
+        (<code>GET https://aicf.animica.org/api/models</code>) and may change with governance updates.
+      </p>
     </div>
   </section>
 

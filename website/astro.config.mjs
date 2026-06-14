@@ -55,8 +55,11 @@ export default defineConfig({
       applyBaseStyles: true,
     }),
     sitemap({
-      filter: (page) => !page.includes('/drafts/'), // skip drafts if any
-      i18n: false,
+      filter: (page) =>
+        !page.includes('/drafts/') &&
+        !page.includes('/admin/') &&
+        !page.includes('/index-old') &&
+        !page.includes('/roadmap-old'),
     }),
   ],
 

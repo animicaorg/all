@@ -22,7 +22,7 @@ const {
 
 const studioHref = links.studio.page();
 const explorerHref = links.explorer.home();
-const docsHref = links.docs.home();
+const docsHref = "/docs";
 ---
 
 <section
@@ -115,9 +115,9 @@ const docsHref = links.docs.home();
             </div>
             <span class="code-card-title">Quickstart</span>
           </div>
-          <pre class="code-card-content"><code>pip install omni-sdk  # Python
-npx @animica/sdk@latest init
-# Deploy from Studio in seconds</code></pre>
+          <pre class="code-card-content"><code>pip install animica   # CLI + Python SDK
+animica wallet create --label mywallet
+animica miner dual-mine &lt;address&gt; --pool-host pool.animica.org</code></pre>
         </div>
       </div>
 

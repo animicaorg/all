@@ -10,7 +10,7 @@ const description =
 const aicfApiBaseUrl =
   (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
   (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
-  "/api";
+  "https://aicf.animica.org/api";
 ---
 
 <BaseLayout title={title} description={description}>
@@ -27,7 +27,7 @@ const aicfApiBaseUrl =
       <div class="aicf-btn-row">
         <a class="aicf-btn" href="/downloads">Download Worker</a>
         <a class="aicf-ghost-btn" href="/docs">Provider Docs</a>
-        <a class="aicf-ghost-btn" href="/app">Open Provider Dashboard</a>
+        <a class="aicf-ghost-btn" href="https://aicf.animica.org">Open Provider Dashboard</a>
       </div>
     </div>
   </section>
@@ -110,7 +110,7 @@ aicf-provider-worker start --config provider.config.json</code></pre>
         </ol>
       </article>
 
-      <article class="aicf-card">
+      <article class="aicf-card" data-aicf-provider-root data-aicf-api-base={aicfApiBaseUrl}>
         <span class="aicf-kicker">Live Network Snapshot</span>
         <div class="aicf-grid-2" style="margin-top:0.7rem;">
           <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
@@ -139,7 +139,7 @@ aicf-provider-worker start --config provider.config.json</code></pre>
     </div>
   </section>
 
-  <script define:vars={{ aicfApiBaseUrl }}>
+  <script>
     import {
       deriveAicfCounts,
       fetchAicfStatus,
@@ -147,10 +147,12 @@ aicf-provider-worker start --config provider.config.json</code></pre>
       formatUtc,
     } from "../features/aicf/liveMetricsClient";
 
+    const rootEl = document.querySelector<HTMLElement>("[data-aicf-provider-root]");
+    const aicfApiBaseUrl = rootEl?.dataset.aicfApiBase || "https://aicf.animica.org/api";
     const messageEl = document.querySelector("[data-aicf-provider-message]");
     const metricEls = Array.from(document.querySelectorAll("[data-aicf-provider-metric]"));
 
-    const setMetric = (key, value) => {
+    const setMetric = (key: string, value: string) => {
       for (const el of metricEls) {
         if (el.getAttribute("data-aicf-provider-metric") === key) {
           el.textContent = value;
@@ -163,7 +165,7 @@ aicf-provider-worker start --config provider.config.json</code></pre>
         el.textContent = "Unavailable";
       }
       if (messageEl) {
-        messageEl.textContent = "Live AICF metrics unavailable.";
+        messageEl.textContent = "Live AICF telemetry is temporarily unavailable. Try again shortly.";
       }
     };
 

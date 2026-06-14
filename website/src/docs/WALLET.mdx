@@ -7,7 +7,7 @@ layout: ../layouts/DocsLayout.astro
 import InlineLink from "../components/InlineLink.astro";
 
 > This guide covers **both** the MV3 **browser extension** (Chromium/Firefox) and the **Flutter wallet** (desktop/mobile).  
-> It assumes you have an RPC endpoint handy (devnet or testnet). See <InlineLink href="/docs/QUICKSTART">Quickstart</InlineLink>.
+> It assumes you have an RPC endpoint handy — the public mainnet endpoint is `https://rpc.animica.org/rpc` (JSON-RPC, POST only). See the <InlineLink href="/docs">docs hub</InlineLink>.
 
 ---
 
@@ -128,7 +128,7 @@ Example: send a transfer (Dart)
 
 import 'package:animica_wallet/sdk.dart' as sdk;
 
-final rpc = sdk.Rpc(url: 'http://localhost:8545');
+final rpc = sdk.Rpc(url: 'https://rpc.animica.org/rpc');
 final wallet = await sdk.Wallet.fromMnemonic(mnemonic,
   alg: sdk.Alg.dilithium3);
 final acct = await wallet.defaultAccount();
@@ -139,7 +139,7 @@ final tx = sdk.TransferTx(
   nonce: await rpc.getNonce(acct.address),
   gasPrice: BigInt.one,
   gasLimit: BigInt.from(21000),
-  chainId: 1337,
+  chainId: 1, // mainnet
 );
 
 final signed = await wallet.sign(tx);
@@ -182,6 +182,6 @@ You can disable in Settings → Privacy.
 ⸻
 
 5) Next steps
-	•	Try the Studio to simulate and deploy a contract: Open Studio
+	•	Simulate and deploy contracts with the Studio desktop build (/studio) — the hosted web Studio is being rebuilt
 	•	Inspect live status & head height: /status
-	•	Explore SDK recipes: Quickstart
+	•	Explore SDK recipes: https://github.com/animicaorg/all/tree/main/sdk

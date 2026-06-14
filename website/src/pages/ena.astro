@@ -1,0 +1,165 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+
+const title = "ENA — Open AI, trained by everyone";
+const description =
+  "ENA is Animica's open AI training and inference network. Contribute compute from any machine, run useful-work and fine-tuning jobs, and earn ANM. Live progress and contributor tutorials.";
+
+const enaApiBase =
+  (import.meta.env.PUBLIC_ENA_API_BASE as string | undefined)?.trim() ||
+  "https://ena.animica.org/api";
+const enaSite = "https://ena.animica.org";
+
+const features = [
+  { ic: "🧹", h: "Useful-work", p: "Curate, dedupe, label, embed and index data — CPU-friendly jobs any machine can run." },
+  { ic: "🎯", h: "Training", p: "SFT, LoRA/QLoRA and DPO fine-tuning, orchestrated with manifests, checkpoints and evals." },
+  { ic: "⚡", h: "Inference", p: "OpenAI-compatible serving across a fleet of contributor nodes and routed providers." },
+  { ic: "🧾", h: "On-chain receipts", p: "Deterministic SHA3 receipts tie every job to a payable credit event." },
+];
+---
+
+<BaseLayout title={title} description={description}>
+  <Header slot="header" />
+
+  <main class="ena" data-ena-api={enaApiBase}>
+    <section class="ena-hero">
+      <span class="ena-tag">◆ Open, community-trained AI on Animica</span>
+      <h1>Open AI, <span class="grad">trained by everyone.</span></h1>
+      <p class="lead">
+        Lend your machine — laptop, rig, or GPU box — to run real AI work and earn <b>ANM</b>.
+        Every verified job mints an on-chain receipt. This is ENA.
+      </p>
+      <div class="ena-cta">
+        <a class="ena-btn primary" href={`${enaSite}/#contribute`}>⛏ Contribute compute</a>
+        <a class="ena-btn ghost" href={enaSite}>Open ena.animica.org ↗</a>
+      </div>
+      <div class="ena-ticker">
+        <span>Jobs verified <b data-stat="jobs_verified">—</b></span>
+        <span>Training runs <b data-stat="training_runs_total">—</b></span>
+        <span>Contributors <b data-stat="contributors">—</b></span>
+        <span>Receipts <b data-stat="receipts_total">—</b></span>
+        <span class="ena-live" data-live><span class="pulse"></span><span data-live-text>connecting…</span></span>
+      </div>
+    </section>
+
+    <section class="ena-stats">
+      <div class="ena-stat"><div class="n" data-stat="jobs_total">—</div><div class="l">Jobs submitted</div></div>
+      <div class="ena-stat"><div class="n" data-stat="jobs_verified">—</div><div class="l">Jobs verified</div></div>
+      <div class="ena-stat"><div class="n" data-stat="training_runs_total">—</div><div class="l">Training runs</div></div>
+      <div class="ena-stat"><div class="n" data-stat="contributors">—</div><div class="l">Contributors</div></div>
+      <div class="ena-stat"><div class="n" data-stat="chunks_total">—</div><div class="l">Indexed chunks</div></div>
+      <div class="ena-stat"><div class="n" data-stat="receipts_total">—</div><div class="l">Receipts</div></div>
+    </section>
+
+    <section class="ena-feat">
+      {features.map((f) => (
+        <div class="ena-card"><div class="ic">{f.ic}</div><h3>{f.h}</h3><p>{f.p}</p></div>
+      ))}
+    </section>
+
+    <section class="ena-contribute">
+      <h2>Contribute &amp; <span class="grad">earn ANM</span></h2>
+      <p class="lead">Two commands to start. CPU jobs run on any machine; GPU operators run fine-tuning.</p>
+      <pre><code>pip install --upgrade animica
+animica ena worker start --worker-id "$(hostname)" --endpoint {enaApiBase}</code></pre>
+      <div class="ena-cta">
+        <a class="ena-btn primary" href={`${enaSite}/#contribute`}>Full tutorials &amp; GPU track ↗</a>
+        <a class="ena-btn ghost" href="/docs">Read the docs</a>
+      </div>
+    </section>
+  </main>
+
+  <Footer slot="footer" />
+</BaseLayout>
+
+<style>
+  .ena { max-width: 1080px; margin: 0 auto; padding: 0 22px 60px; }
+  .grad {
+    background: linear-gradient(100deg, var(--brand-grad-from, #16d9c3), var(--brand-grad-to, #3a9bff));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .ena-hero { text-align: center; padding: 60px 0 26px; }
+  .ena-tag {
+    display: inline-flex; gap: .45rem; font-size: .82rem; color: var(--brand-grad-accent, #8debdc);
+    border: 1px solid var(--color-border, rgba(133,170,210,.2)); border-radius: 999px;
+    padding: .32rem .8rem; background: rgba(22,217,195,.06);
+  }
+  .ena-hero h1 { font-size: clamp(2.2rem, 6vw, 3.7rem); line-height: 1.05; font-weight: 820;
+    letter-spacing: -1px; margin: .7rem 0 .3rem; }
+  .lead { color: var(--color-muted, #95aac6); max-width: 640px; margin: .4rem auto 1.4rem;
+    font-size: clamp(1rem, 2vw, 1.18rem); }
+  .ena-cta { display: flex; gap: .7rem; justify-content: center; flex-wrap: wrap; }
+  .ena-btn { display: inline-flex; align-items: center; gap: .4rem; border-radius: 11px;
+    padding: .7rem 1.1rem; font-weight: 650; border: 1px solid var(--color-border, rgba(133,170,210,.2));
+    transition: transform .18s ease; text-decoration: none; }
+  .ena-btn:hover { transform: translateY(-2px); }
+  .ena-btn.primary { background: linear-gradient(100deg, var(--brand-grad-from, #16d9c3), var(--brand-grad-to, #3a9bff));
+    color: #04121a; border-color: transparent; }
+  .ena-btn.ghost { background: rgba(255,255,255,.03); color: var(--color-fg, #e9f4ff); }
+  .ena-ticker { display: flex; gap: 1.3rem; justify-content: center; flex-wrap: wrap;
+    margin-top: 30px; color: var(--color-muted, #95aac6); font-size: .92rem; align-items: center; }
+  .ena-ticker b { color: var(--color-fg, #e9f4ff); font-variant-numeric: tabular-nums; }
+  .ena-live { display: inline-flex; align-items: center; gap: .4rem; }
+  .ena-live .pulse { width: 8px; height: 8px; border-radius: 50%; background: #3ad07a;
+    animation: enapulse 2s infinite; }
+  .ena-live.off .pulse { background: #f5b14b; animation: none; }
+  @keyframes enapulse { 0% { box-shadow: 0 0 0 0 rgba(58,208,122,.5); }
+    70% { box-shadow: 0 0 0 9px rgba(58,208,122,0); } 100% { box-shadow: 0 0 0 0 rgba(58,208,122,0); } }
+  .ena-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin: 26px 0; }
+  .ena-stat { background: var(--color-surface-2, #0a1324); border: 1px solid var(--color-border, rgba(133,170,210,.2));
+    border-radius: 14px; padding: 16px; text-align: center; }
+  .ena-stat .n { font-size: 1.7rem; font-weight: 800; font-variant-numeric: tabular-nums;
+    background: linear-gradient(100deg, var(--brand-grad-from, #16d9c3), var(--brand-grad-to, #3a9bff));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .ena-stat .l { color: var(--color-muted, #95aac6); font-size: .78rem; margin-top: 2px; }
+  .ena-feat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 10px 0 40px; }
+  .ena-card { background: var(--color-surface, rgba(10,18,33,.7)); border: 1px solid var(--color-border, rgba(133,170,210,.2));
+    border-radius: 14px; padding: 18px; transition: transform .2s ease, border-color .2s ease; }
+  .ena-card:hover { transform: translateY(-3px); border-color: rgba(22,217,195,.45); }
+  .ena-card .ic { font-size: 1.4rem; }
+  .ena-card h3 { margin: .3rem 0 .25rem; font-size: 1.05rem; }
+  .ena-card p { color: var(--color-muted, #95aac6); margin: 0; font-size: .92rem; }
+  .ena-contribute { text-align: center; }
+  .ena-contribute h2 { font-size: clamp(1.6rem, 3.4vw, 2.1rem); font-weight: 760; }
+  .ena-contribute pre { text-align: left; max-width: 760px; margin: 8px auto 18px;
+    background: #060c18; border: 1px solid var(--color-border, rgba(133,170,210,.2));
+    border-radius: 12px; padding: 14px; overflow: auto; }
+  .ena-contribute code { font-family: ui-monospace, Menlo, monospace; font-size: .86rem; color: #cfe7ff; }
+  @media (max-width: 900px) { .ena-stats { grid-template-columns: repeat(3, 1fr); } .ena-feat { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .ena-stats { grid-template-columns: repeat(2, 1fr); } .ena-feat { grid-template-columns: 1fr; } }
+</style>
+
+<script>
+  (function () {
+    const main = document.querySelector(".ena");
+    if (!main) return;
+    const api = (main.getAttribute("data-ena-api") || "https://ena.animica.org/api").replace(/\/$/, "");
+    const SAMPLE = { jobs_total: 0, jobs_verified: 0, training_runs_total: 0,
+      contributors: 0, chunks_total: 0, receipts_total: 0, _offline: true };
+    function fmt(n) {
+      n = Number(n || 0);
+      if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+      if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
+      return String(n);
+    }
+    function render(s) {
+      document.querySelectorAll("[data-stat]").forEach((el) => {
+        el.textContent = fmt(s[el.getAttribute("data-stat")]);
+      });
+      const live = document.querySelector("[data-live]");
+      const txt = document.querySelector("[data-live-text]");
+      if (live && txt) {
+        if (s._offline) { live.classList.add("off"); txt.textContent = "coordinator offline"; }
+        else { live.classList.remove("off"); txt.textContent = "live"; }
+      }
+    }
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 4000);
+    fetch(api + "/stats", { signal: ctrl.signal })
+      .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
+      .then((d) => { clearTimeout(to); render(d); })
+      .catch(() => { clearTimeout(to); render(SAMPLE); });
+  })();
+</script>

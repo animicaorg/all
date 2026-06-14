@@ -1836,8 +1836,8 @@ importers:
         specifier: ^3.1.9
         version: 3.1.9(astro@4.16.19(@types/node@20.19.30)(rollup@4.56.0)(typescript@5.9.3))
       '@astrojs/sitemap':
-        specifier: ^3.6.0
-        version: 3.7.0
+        specifier: ^3.2.1
+        version: 3.2.1
       '@types/node':
         specifier: ^20.19.24
         version: 20.19.30
@@ -1977,8 +1977,8 @@ packages:
     resolution: {integrity: sha512-Z9IYjuXSArkAUx3N6xj6+Bnvx8OdUSHA8YoOgyepp3+zJmtVYJIl/I18GozdJVW1p5u/CNpl3Km7/gwTJK85cw==}
     engines: {node: ^18.17.1 || ^20.3.0 || >=21.0.0}
 
-  '@astrojs/sitemap@3.7.0':
-    resolution: {integrity: sha512-+qxjUrz6Jcgh+D5VE1gKUJTA3pSthuPHe6Ao5JCxok794Lewx8hBFaWHtOnN0ntb2lfOf7gvOi9TefUswQ/ZVA==}
+  '@astrojs/sitemap@3.2.1':
+    resolution: {integrity: sha512-uxMfO8f7pALq0ADL6Lk68UV6dNYjJ2xGUzyjjVj60JLBs5a6smtlkBYv3tQ0DzoqwS7c9n4FUx5lgv0yPo/fgA==}
 
   '@astrojs/tailwind@5.1.5':
     resolution: {integrity: sha512-1diguZEau7FZ9vIjzE4BwavGdhD3+JkdS8zmibl1ene+EHgIU5hI0NMgRYG3yea+Niaf7cyMwjeWeLvzq/maxg==}
@@ -9721,7 +9721,7 @@ snapshots:
     dependencies:
       prismjs: 1.30.0
 
-  '@astrojs/sitemap@3.7.0':
+  '@astrojs/sitemap@3.2.1':
     dependencies:
       sitemap: 8.0.2
       stream-replace-string: 2.0.0

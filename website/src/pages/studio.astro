@@ -10,8 +10,7 @@ const pageDesc =
   "Download the official Animica Studio Linux desktop build and verify its checksum before installing.";
 
 const studioDownloads = loadStudioDownloadPageData();
-const hostedStudio = links.studio.home();
-const studioDocs = links.docs.page("studio/overview");
+const studioDocs = "https://github.com/animicaorg/all/blob/main/docs/studio_deploy_quickstart.md";
 ---
 
 <BaseLayout title={pageTitle} description={pageDesc}>
@@ -19,8 +18,8 @@ const studioDocs = links.docs.page("studio/overview");
     <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Animica Studio</h1>
     <p class="mt-3 opacity-80">
       Download the official Linux desktop build of Studio for local contract work, node-connected
-      workflows, and bundled Qt desktop tooling. The hosted web Studio remains available when you
-      only need browser-based editing.
+      workflows, and bundled Qt desktop tooling. The hosted web Studio is currently being rebuilt —
+      the desktop build below remains fully available in the meantime.
     </p>
 
     <div class="mt-8 grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -106,19 +105,19 @@ const studioDocs = links.docs.page("studio/overview");
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
         <h2 class="text-xl font-semibold">Need the browser version?</h2>
         <p class="mt-2 text-sm opacity-80">
-          The hosted web Studio is still available for quick edit, simulate, and deploy sessions.
+          The hosted web Studio is being rebuilt. A holding page is live while we work — use the
+          Linux desktop build for edit, simulate, and deploy sessions in the meantime.
         </p>
         <div class="mt-4 flex flex-col gap-3">
-          <a
-            href={hostedStudio}
+          <span
             class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-                   border border-[color-mix(in_srgb,var(--text-primary)_/_20%,transparent)]
-                   hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]"
-            target="_blank"
-            rel="noopener noreferrer"
+                   border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]
+                   opacity-60 cursor-not-allowed select-none"
+            aria-disabled="true"
+            title="The hosted web Studio is being rebuilt"
           >
-            Open hosted Studio
-          </a>
+            Hosted Studio — rebuilding
+          </span>
           <InlineLink href={studioDocs}>Read Studio docs</InlineLink>
         </div>
       </div>

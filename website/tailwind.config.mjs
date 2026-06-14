@@ -7,19 +7,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand colors
+        // Brand colors (teal family — mirrors --brand-* in src/styles/tokens.css)
         brand: {
-          50: '#f0f9ff',
-          100: '#e0f2fe',
-          200: '#bae6fd',
-          300: '#7dd3fc',
-          400: '#38bdf8',
-          500: '#0ea5e9', // Primary brand color
-          600: '#0284c7',
-          700: '#0369a1',
-          800: '#075985',
-          900: '#0c4a6e',
-          950: '#082f49',
+          50: '#e6fffb',
+          100: '#c9fff5',
+          200: '#8ff7e6',
+          300: '#5eead4',
+          400: '#2ad4bd',
+          500: '#16d9c3', // Primary brand color
+          600: '#0eb8a4',
+          700: '#0a8e80',
+          800: '#0b6f64',
+          900: '#0a5d56',
+          950: '#06443f',
         },
         // Semantic colors
         success: {
@@ -59,24 +59,17 @@ export default {
       },
       fontFamily: {
         sans: [
-          'Inter Variable',
-          'Inter',
-          'system-ui',
-          '-apple-system',
-          'BlinkMacSystemFont',
+          'Space Grotesk',
+          'Sora',
+          'IBM Plex Sans',
           'Segoe UI',
-          'Roboto',
-          'Helvetica Neue',
-          'Arial',
+          'system-ui',
           'sans-serif',
         ],
         mono: [
-          'SF Mono',
-          'Monaco',
-          'Inconsolata',
-          'Fira Code',
-          'Droid Sans Mono',
-          'Source Code Pro',
+          'IBM Plex Mono',
+          'JetBrains Mono',
+          'SFMono-Regular',
           'monospace',
         ],
       },
@@ -116,8 +109,8 @@ export default {
         'xl': '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)',
         '2xl': '0 25px 50px -12px rgb(0 0 0 / 0.25)',
         'inner': 'inset 0 2px 4px 0 rgb(0 0 0 / 0.05)',
-        'glow': '0 0 20px rgb(14 165 233 / 0.3)',
-        'glow-lg': '0 0 40px rgb(14 165 233 / 0.4)',
+        'glow': '0 0 20px rgb(22 217 195 / 0.3)',
+        'glow-lg': '0 0 40px rgb(22 217 195 / 0.4)',
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-in-out',

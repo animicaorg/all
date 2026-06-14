@@ -3,72 +3,96 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 import AdBanner from "../components/AdBanner.astro";
+import ParticleLogo from "../components/ParticleLogo.astro";
 
 const title = "Animica — Post-Quantum Blockchain for Verifiable Compute";
 const description =
-  "Animica is a production-ready L1 with post-quantum security, useful-work consensus, deterministic Python contracts, and operator-grade infrastructure.";
+  "Animica is a live post-quantum L1: Dilithium3 + SPHINCS+ signatures, deterministic Python smart contracts, and PoIES useful-work consensus — with a working mining pool, explorer, wallet, and public RPC.";
+
+const jsonLd = [
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "Animica",
+    url: "https://animica.org",
+    logo: "https://animica.org/icons/logo.svg",
+    sameAs: ["https://x.com/animicaorg", "https://github.com/animicaorg/all"],
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "Animica",
+    url: "https://animica.org",
+  },
+];
+
+const heroFacts: Array<{ label: string; value: string; href?: string; linkText?: string }> = [
+  { label: "Post-quantum", value: "Dilithium3 + SPHINCS+ signatures" },
+  { label: "Contracts", value: "Deterministic Python VM" },
+  { label: "Consensus", value: "PoIES useful work" },
+  {
+    label: "Mainnet",
+    value: "Live",
+    href: "https://explorer.animica.org",
+    linkText: "explorer.animica.org",
+  },
+];
 
 const corePillars = [
   {
     title: "Post-Quantum Security",
     detail:
-      "Dilithium and SPHINCS+ signatures protect accounts and transactions against future cryptographic threats.",
+      "Dilithium3 and SPHINCS+ signatures protect every account and transaction against both classical and future quantum attackers.",
   },
   {
     title: "Useful-Work Consensus",
     detail:
-      "PoIES aligns block production with practical compute instead of pure waste.",
+      "PoIES points mining power at useful compute — the pool supports XMR dual-mining and Bittensor GPU workloads on the same rig.",
   },
   {
     title: "Deterministic Python VM",
     detail:
-      "Write contracts in Python with predictable execution and auditable state transitions.",
+      "Write contracts in Python with deterministic execution and auditable state transitions, then deploy them with the animica CLI.",
   },
   {
-    title: "Operator Tooling",
+    title: "Live Infrastructure",
     detail:
-      "Wallets, explorer, status pages, and deployment docs are designed for production operations.",
+      "Mainnet runs today with a public explorer, web and desktop wallets, JSON-RPC at rpc.animica.org, and a working mining pool.",
   },
 ];
 
 const startPaths = [
   {
-    title: "Run a Node",
+    title: "Mine ANM",
     description:
-      "Join mainnet with Docker or native setup, then secure RPC and monitor sync health.",
-    href: "/node",
+      "Point a miner at the pool and earn ANM — with optional XMR dual-mining and Bittensor GPU compute on the same hardware.",
+    href: "/mine",
   },
   {
     title: "Build on Animica",
     description:
-      "Use SDKs and Studio to deploy deterministic contracts and integrate apps quickly.",
+      "Write deterministic Python contracts, deploy with the animica CLI, and read chain state over the public JSON-RPC endpoint.",
     href: "/developers",
   },
   {
-    title: "Mine and Secure",
+    title: "Hold & Use ANM",
     description:
-      "Contribute hash power with CPU/GPU guides and pool-ready workflows.",
-    href: "https://pool.animica.org",
+      "Create an anim1… address with the web or desktop wallet, send and receive ANM, and verify everything in the explorer.",
+    href: "/wallet",
   },
 ];
 
 const ecosystemProducts = [
   {
-    title: "Launchpad",
+    title: "Mining Pool",
     description:
-      "animica.xyz — discover, launch, and follow new Animica ecosystem projects from one Animica-native launchpad.",
-    href: "https://animica.xyz",
-  },
-  {
-    title: "Buy ANM",
-    description:
-      "buy.animica.org — custodial OTC desk to buy and sell native ANM with SOL, priced on a linear bonding curve.",
-    href: "https://buy.animica.org",
+      "Mine ANM with XMR dual-mining and Bittensor GPU compute, with a public dashboard at pool.animica.org.",
+    href: "/mine",
   },
   {
     title: "Wallet",
     description:
-      "Desktop wallet releases for key management, transfers, and day-to-day ANM operations.",
+      "Web wallet at wallet.animica.org plus desktop releases for key management, transfers, and day-to-day ANM operations.",
     href: "/wallet",
   },
   {
@@ -80,126 +104,79 @@ const ecosystemProducts = [
   {
     title: "Studio",
     description:
-      "Web IDE for contract authoring, simulation, and deployment pipelines.",
+      "Contract IDE for authoring, simulation, and deployment. The hosted web version is being rebuilt.",
     href: "/studio",
+  },
+  {
+    title: "Academy",
+    description:
+      "academy.animica.org — the official learning hub for getting started with Animica, from wallets to contracts.",
+    href: "https://academy.animica.org",
   },
   {
     title: "AICF Compute",
     description:
-      "AICF is one major workload lane on Animica, focused on decentralized AI and provider markets.",
-    href: "/providers",
+      "Animica's AI-compute lane for decentralized AI workloads and provider markets, with a dashboard at aicf.animica.org.",
+    href: "https://aicf.animica.org",
+  },
+  {
+    title: "Open Source",
+    description:
+      "github.com/animicaorg — the node, wallets, pool, and tooling are public and open to contributions.",
+    href: "https://github.com/animicaorg/all",
   },
 ];
 ---
 
-<BaseLayout title={title} description={description}>
-  <Fragment slot="header">
-    <AdBanner />
-    <Header />
-  </Fragment>
+<BaseLayout title={title} description={description} jsonLd={jsonLd}>
+  <Header slot="header" />
 
-  <section class="aicf-trade-alert-wrap" aria-label="Trading announcement">
-    <div class="aicf-container">
-      <a
-        class="aicf-trade-alert"
-        href="https://trade.animica.org"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        <span class="aicf-trade-pill">Big Announcement</span>
-        <h2 class="aicf-trade-title">ANIMICA TRADE IS LIVE</h2>
-        <p class="aicf-trade-subtitle">Click here to open the official trading portal.</p>
-        <span class="aicf-trade-cta">Launch trade.animica.org -></span>
-      </a>
-    </div>
-  </section>
+  <ParticleLogo />
 
-  <section class="aicf-section">
+  <section class="aicf-section aicf-hero">
     <div class="aicf-container">
-      <span class="aicf-kicker">Post-quantum · Useful work · Python VM</span>
-      <h1 class="aicf-heading">Animica is built for verifiable, real-world compute</h1>
+      <span class="aicf-kicker">Live mainnet · Post-quantum L1 · Native coin ANM</span>
+      <h1 class="aicf-heading">The post-quantum chain where mining does useful work</h1>
       <p class="aicf-subheading">
-        A production-ready chain for builders, miners, and node operators who need transparent infrastructure,
-        deterministic execution, and durable cryptographic guarantees.
+        Animica mainnet is live: Dilithium3 + SPHINCS+ signatures, smart contracts in
+        deterministic Python, and PoIES consensus that rewards useful compute instead of
+        wasted hashes.
       </p>
 
       <div class="aicf-btn-row">
-        <a class="aicf-btn" href="/studio">Open Studio</a>
-        <a class="aicf-ghost-btn" href="/explorer">Open Explorer</a>
-        <a class="aicf-ghost-btn" href="/docs">Read Docs</a>
+        <a class="aicf-btn" href="/mine">Start Mining</a>
+        <a class="aicf-ghost-btn" href="/docs">Read the Docs</a>
       </div>
 
-      <div class="aicf-btn-row" style="margin-top:0.75rem;">
-        <a class="aicf-ghost-btn" href="/node">Run a Node</a>
-        <a class="aicf-ghost-btn" href="/wallet">Get Wallet</a>
-        <a class="aicf-ghost-btn" href="https://pool.animica.org">Mine</a>
+      <div class="aicf-pip-chip">
+        <code data-pip-cmd>pip install animica</code>
+        <button
+          type="button"
+          class="aicf-pip-copy"
+          data-copy-pip
+          aria-label="Copy command: pip install animica"
+        >Copy</button>
       </div>
 
-      <div class="aicf-grid-4" style="margin-top:1.25rem;">
-        <article class="aicf-card aicf-home-stat">
-          <p class="aicf-muted">Security</p>
-          <p class="aicf-value">PQ</p>
-          <p class="aicf-muted">Dilithium + SPHINCS+</p>
-        </article>
-        <article class="aicf-card aicf-home-stat">
-          <p class="aicf-muted">Execution</p>
-          <p class="aicf-value">Python VM</p>
-          <p class="aicf-muted">Deterministic contracts</p>
-        </article>
-        <article class="aicf-card aicf-home-stat">
-          <p class="aicf-muted">Consensus</p>
-          <p class="aicf-value">PoIES</p>
-          <p class="aicf-muted">Useful-work oriented</p>
-        </article>
-        <article class="aicf-card aicf-home-stat">
-          <p class="aicf-muted">Infrastructure</p>
-          <p class="aicf-value">Mainnet</p>
-          <p class="aicf-muted">Wallet, explorer, RPC, docs</p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="aicf-section aicf-launchpad-section" aria-label="Animica launchpad">
-    <div class="aicf-container">
-      <a class="aicf-launchpad-card" href="https://animica.xyz" target="_blank" rel="noopener noreferrer">
-        <div class="aicf-launchpad-text">
-          <span class="aicf-launchpad-pill">Launchpad · animica.xyz</span>
-          <h2 class="aicf-launchpad-title">Launch on Animica.</h2>
-          <p class="aicf-launchpad-desc">
-            Discover, launch, and follow new Animica ecosystem projects from one Animica-native launchpad.
-            Browse upcoming token sales, find emerging builders, and follow what's shipping next on the chain.
-          </p>
-          <span class="aicf-launchpad-cta">Open animica.xyz -></span>
-        </div>
-        <div class="aicf-launchpad-glyph" aria-hidden="true">▲</div>
-      </a>
-    </div>
-  </section>
-
-  <section class="aicf-section aicf-otc-section" aria-label="Buy ANM with SOL">
-    <div class="aicf-container">
-      <a class="aicf-otc-card" href="https://buy.animica.org" target="_blank" rel="noopener noreferrer">
-        <div class="aicf-otc-text">
-          <span class="aicf-otc-pill">OTC desk · buy.animica.org</span>
-          <h2 class="aicf-otc-title">Buy ANM with SOL.</h2>
-          <p class="aicf-otc-desc">
-            A custodial OTC checkout that prices native ANM on a linear bonding curve. Pay SOL,
-            receive ANM on the Animica chain — and sell it back when reserves are available.
-            Connect Phantom on the Solana side and either the Animica browser extension or
-            wallet.animica.org for the ANM destination.
-          </p>
-          <span class="aicf-otc-cta">Open buy.animica.org -></span>
-        </div>
-        <div class="aicf-otc-glyph" aria-hidden="true">◬</div>
-      </a>
+      <ul class="aicf-fact-strip" aria-label="Chain facts">
+        {heroFacts.map((fact) => (
+          <li>
+            <span class="aicf-fact-label">{fact.label}</span>
+            <span class="aicf-fact-value">
+              {fact.value}{fact.href && (
+                <> — <a href={fact.href}>{fact.linkText}</a></>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   </section>
 
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Why Animica</span>
-      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Core Capabilities</h2>
+      <h2 class="aicf-heading aicf-h2">Core Capabilities</h2>
       <div class="aicf-grid-4" style="margin-top:1rem;">
         {corePillars.map((item) => (
           <article class="aicf-card">
@@ -214,7 +191,7 @@ const ecosystemProducts = [
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Get Started</span>
-      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Choose Your Path</h2>
+      <h2 class="aicf-heading aicf-h2">Choose Your Path</h2>
       <div class="aicf-grid-3" style="margin-top:1rem;">
         {startPaths.map((path) => (
           <a class="aicf-card aicf-link-card" href={path.href}>
@@ -224,15 +201,21 @@ const ecosystemProducts = [
           </a>
         ))}
       </div>
+      <aside class="aicf-get-anm">
+        <strong>How do I get ANM today?</strong>
+        <a href="/mine">Mine it through the pool</a> — that is the only official
+        channel today. There is no other sales channel.
+      </aside>
     </div>
   </section>
 
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Ecosystem</span>
-      <h2 class="aicf-heading" style="font-size:clamp(1.8rem,3vw,2.8rem);">Products on Animica</h2>
+      <h2 class="aicf-heading aicf-h2">Products on Animica</h2>
       <p class="aicf-subheading" style="margin-top:0.7rem;">
-        Animica supports multiple product lanes. AICF remains important, but it is one part of the broader platform.
+        Every product below runs against the live chain — same coin, same anim1… addresses,
+        same explorer-verifiable state.
       </p>
       <div class="aicf-grid-4" style="margin-top:1rem;">
         {ecosystemProducts.map((product) => (
@@ -251,9 +234,10 @@ const ecosystemProducts = [
       <article class="aicf-card aicf-final-cta">
         <div>
           <span class="aicf-kicker">Build and Operate</span>
-          <h2 style="font-size:clamp(1.6rem,2.8vw,2.3rem); margin-top:0.85rem;">Ship production workloads on Animica</h2>
+          <h2 class="aicf-final-cta-title">Everything here is live and open source</h2>
           <p class="aicf-muted" style="margin-top:0.7rem; max-width:62ch;">
-            Start with node operations, contracts, wallets, or compute services and scale into the full ecosystem.
+            Run a node, deploy a Python contract, or point a miner at the pool — the chain,
+            the tools, and the source are public today.
           </p>
         </div>
         <div class="aicf-btn-row" style="margin-top:1.1rem;">
@@ -265,210 +249,116 @@ const ecosystemProducts = [
     </div>
   </section>
 
+  <AdBanner />
+
   <style>
-    /* ── animica.xyz launchpad section ──────────────────────────── */
-    .aicf-launchpad-section {
-      padding-top: 0;
+    /* ── shared heading scale ───────────────────────────────────── */
+    .aicf-h2 {
+      font-size: clamp(1.8rem, 3vw, 2.8rem);
     }
-    .aicf-launchpad-card {
-      position: relative;
-      display: flex;
+
+    /* ── hero ───────────────────────────────────────────────────── */
+    .aicf-pip-chip {
+      display: inline-flex;
       align-items: center;
-      gap: clamp(1rem, 3vw, 2.4rem);
-      overflow: hidden;
-      border-radius: 1.2rem;
+      gap: 0.7rem;
+      margin-top: 1.1rem;
+      padding: 0.55rem 0.6rem 0.55rem 1rem;
+      border-radius: 0.78rem;
       border: 1px solid color-mix(in oklab, var(--brand-400), transparent 55%);
-      background:
-        radial-gradient(circle at 18% 22%, color-mix(in oklab, var(--brand-grad-from), transparent 70%), transparent 60%),
-        radial-gradient(circle at 82% 78%, color-mix(in oklab, var(--brand-grad-to), transparent 72%), transparent 60%),
-        linear-gradient(133deg, #0c1438 0%, #0e1a4a 55%, #0a2247 100%);
-      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-      padding: clamp(1.5rem, 3.4vw, 2.6rem) clamp(1.2rem, 4vw, 3rem);
-      color: #f1f6ff;
-      text-decoration: none;
-      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+      background: rgba(7, 11, 22, 0.72);
     }
-    .aicf-launchpad-card:hover {
-      transform: translateY(-2px);
-      border-color: color-mix(in oklab, var(--brand-300), transparent 25%);
-      box-shadow: 0 24px 50px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(94, 234, 212, 0.18);
-    }
-    .aicf-launchpad-text {
-      flex: 1 1 auto;
-      min-width: 0;
-    }
-    .aicf-launchpad-pill {
-      display: inline-flex;
-      align-items: center;
-      border-radius: 999px;
-      padding: 0.34rem 0.78rem;
+
+    .aicf-pip-chip code {
       font-family: var(--font-mono);
-      font-size: 0.72rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #0a2a26;
-      background: linear-gradient(130deg, var(--brand-300), var(--brand-grad-to));
-      box-shadow: 0 4px 12px rgba(58, 155, 255, 0.28);
-    }
-    .aicf-launchpad-title {
-      margin: 0.85rem 0 0;
-      font-size: clamp(1.7rem, 4vw, 2.7rem);
-      letter-spacing: 0.01em;
-      font-weight: 800;
-      line-height: 1.05;
-      color: #ffffff;
-      text-wrap: balance;
-    }
-    .aicf-launchpad-desc {
-      margin: 0.85rem 0 0;
-      max-width: 62ch;
-      font-size: clamp(0.96rem, 1.6vw, 1.04rem);
-      color: rgba(232, 242, 255, 0.84);
-      text-wrap: balance;
-    }
-    .aicf-launchpad-cta {
-      display: inline-flex;
-      align-items: center;
-      margin-top: 1.1rem;
-      border-radius: 0.78rem;
-      border: 1px solid color-mix(in oklab, var(--brand-300), transparent 40%);
-      background: rgba(10, 22, 56, 0.6);
+      font-size: 0.92rem;
       color: var(--brand-200);
-      font-family: var(--font-mono);
-      font-size: 0.86rem;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-      padding: 0.6rem 0.95rem;
-    }
-    .aicf-launchpad-glyph {
-      flex: 0 0 auto;
-      font-size: clamp(3.5rem, 9vw, 6rem);
-      font-weight: 800;
-      line-height: 1;
-      background: linear-gradient(150deg, var(--brand-300), var(--brand-grad-to));
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      filter: drop-shadow(0 6px 18px rgba(58, 155, 255, 0.35));
-    }
-    @media (max-width: 720px) {
-      .aicf-launchpad-card {
-        flex-direction: column;
-        align-items: flex-start;
-        text-align: left;
-      }
-      .aicf-launchpad-glyph {
-        align-self: flex-end;
-        margin-top: -2rem;
-      }
+      white-space: nowrap;
     }
 
-    /* ── buy.animica.org OTC section ─────────────────────────────── */
-    .aicf-otc-section {
-      padding-top: 0;
-    }
-    .aicf-otc-card {
-      position: relative;
-      display: flex;
-      align-items: center;
-      gap: clamp(1rem, 3vw, 2.4rem);
-      overflow: hidden;
-      border-radius: 1.2rem;
-      border: 1px solid rgba(167, 139, 250, 0.45);
-      background:
-        radial-gradient(circle at 18% 22%, rgba(167, 139, 250, 0.32), transparent 60%),
-        radial-gradient(circle at 82% 78%, rgba(99, 102, 241, 0.28), transparent 58%),
-        linear-gradient(133deg, #1a0f3d 0%, #210d49 55%, #15103f 100%);
-      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-      padding: clamp(1.5rem, 3.4vw, 2.6rem) clamp(1.2rem, 4vw, 3rem);
-      color: #f3eeff;
-      text-decoration: none;
-      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
-    }
-    .aicf-otc-card:hover {
-      transform: translateY(-2px);
-      border-color: rgba(196, 181, 253, 0.7);
-      box-shadow: 0 24px 50px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(196, 181, 253, 0.22);
-    }
-    .aicf-otc-text {
-      flex: 1 1 auto;
-      min-width: 0;
-    }
-    .aicf-otc-pill {
-      display: inline-flex;
-      align-items: center;
-      border-radius: 999px;
-      padding: 0.34rem 0.78rem;
+    .aicf-pip-copy {
+      border: 1px solid color-mix(in oklab, var(--brand-400), transparent 45%);
+      border-radius: 0.55rem;
+      background: transparent;
+      color: var(--brand-300);
       font-family: var(--font-mono);
       font-size: 0.72rem;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
-      color: #1a0a3d;
-      background: linear-gradient(130deg, #c4b5fd, #818cf8);
-      box-shadow: 0 4px 12px rgba(129, 140, 248, 0.32);
+      padding: 0.35rem 0.62rem;
+      cursor: pointer;
+      transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
     }
-    .aicf-otc-title {
-      margin: 0.85rem 0 0;
-      font-size: clamp(1.7rem, 4vw, 2.7rem);
-      letter-spacing: 0.01em;
-      font-weight: 800;
-      line-height: 1.05;
-      color: #ffffff;
-      text-wrap: balance;
+
+    .aicf-pip-copy:hover,
+    .aicf-pip-copy:focus-visible {
+      color: #07120f;
+      background: var(--brand-300);
+      border-color: var(--brand-300);
+      outline: none;
     }
-    .aicf-otc-desc {
-      margin: 0.85rem 0 0;
-      max-width: 64ch;
-      font-size: clamp(0.96rem, 1.6vw, 1.04rem);
-      color: rgba(238, 230, 255, 0.84);
-      text-wrap: balance;
+
+    .aicf-pip-copy.is-copied {
+      color: #07120f;
+      background: var(--brand-300);
+      border-color: var(--brand-300);
     }
-    .aicf-otc-cta {
-      display: inline-flex;
-      align-items: center;
-      margin-top: 1.1rem;
-      border-radius: 0.78rem;
-      border: 1px solid rgba(196, 181, 253, 0.45);
-      background: rgba(20, 13, 47, 0.6);
-      color: #d8c8ff;
+
+    .aicf-fact-strip {
+      list-style: none;
+      margin: 1.4rem 0 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+
+    .aicf-fact-strip li {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 0.85rem;
+      background: rgba(255, 255, 255, 0.02);
+      padding: 0.75rem 0.95rem;
+    }
+
+    .aicf-fact-label {
       font-family: var(--font-mono);
-      font-size: 0.86rem;
-      letter-spacing: 0.02em;
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
       text-transform: uppercase;
-      padding: 0.6rem 0.95rem;
+      color: color-mix(in oklab, var(--brand-300), transparent 25%);
     }
-    .aicf-otc-glyph {
-      flex: 0 0 auto;
-      font-size: clamp(3.5rem, 9vw, 6rem);
-      font-weight: 800;
-      line-height: 1;
-      background: linear-gradient(150deg, #c4b5fd, #818cf8);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      filter: drop-shadow(0 6px 18px rgba(129, 140, 248, 0.38));
+
+    .aicf-fact-value {
+      font-size: 0.92rem;
+      color: rgba(241, 246, 255, 0.88);
     }
-    @media (max-width: 720px) {
-      .aicf-otc-card {
-        flex-direction: column;
-        align-items: flex-start;
-        text-align: left;
+
+    .aicf-fact-value a {
+      color: var(--brand-200);
+      text-decoration: none;
+      border-bottom: 1px solid color-mix(in oklab, var(--brand-300), transparent 55%);
+    }
+
+    .aicf-fact-value a:hover {
+      border-bottom-color: var(--brand-200);
+    }
+
+    @media (max-width: 900px) {
+      .aicf-fact-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
-      .aicf-otc-glyph {
-        align-self: flex-end;
-        margin-top: -2rem;
+    }
+
+    @media (max-width: 480px) {
+      .aicf-fact-strip {
+        grid-template-columns: 1fr;
       }
     }
 
-    .aicf-home-stat .aicf-muted {
-      font-size: 0.84rem;
-    }
-
-    .aicf-home-stat .aicf-value {
-      font-size: clamp(1.3rem, 2.4vw, 1.8rem);
-      margin: 0.15rem 0;
-    }
-
+    /* ── path & ecosystem cards ─────────────────────────────────── */
     .aicf-link-card {
       display: block;
       transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
@@ -485,140 +375,64 @@ const ecosystemProducts = [
       margin-top: 0.85rem;
       font-family: var(--font-mono);
       font-size: 0.82rem;
-      color: #ffe581;
+      color: var(--brand-300);
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
 
+    .aicf-get-anm {
+      margin-top: 1.1rem;
+      border: 1px solid color-mix(in oklab, var(--brand-400), transparent 60%);
+      border-left: 3px solid var(--brand-400);
+      border-radius: 0.85rem;
+      background: rgba(22, 217, 195, 0.05);
+      padding: 0.85rem 1.1rem;
+      font-size: 0.95rem;
+      color: rgba(241, 246, 255, 0.85);
+    }
+
+    .aicf-get-anm strong {
+      color: #ffffff;
+    }
+
+    .aicf-get-anm a {
+      color: var(--brand-200);
+    }
+
+    /* ── final CTA ──────────────────────────────────────────────── */
     .aicf-final-cta {
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
     }
 
-    .aicf-trade-alert-wrap {
-      padding: 1rem 0 0;
-    }
-
-    .aicf-trade-alert {
-      position: relative;
-      display: block;
-      overflow: hidden;
-      border-radius: 1.2rem;
-      border: 2px solid rgba(249, 214, 74, 0.85);
-      background:
-        radial-gradient(circle at 20% 24%, rgba(255, 210, 66, 0.32), transparent 55%),
-        radial-gradient(circle at 84% 74%, rgba(48, 220, 214, 0.24), transparent 58%),
-        linear-gradient(133deg, #1d205d 0%, #0c1238 42%, #0d1e47 100%);
-      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 239, 156, 0.2) inset;
-      padding: clamp(1.4rem, 3.2vw, 2.4rem) clamp(1rem, 3.8vw, 2.8rem);
-      text-align: center;
-      isolation: isolate;
-      transition: transform 160ms ease, box-shadow 160ms ease;
-      animation: tradePulse 2.6s ease-in-out infinite;
-    }
-
-    .aicf-trade-alert::before {
-      content: "";
-      position: absolute;
-      inset: -40% auto -40% -20%;
-      width: 40%;
-      background: linear-gradient(
-        90deg,
-        transparent 0%,
-        rgba(255, 255, 255, 0.1) 35%,
-        rgba(255, 255, 255, 0.55) 50%,
-        rgba(255, 255, 255, 0.1) 65%,
-        transparent 100%
-      );
-      transform: rotate(18deg);
-      animation: tradeSweep 3.4s linear infinite;
-      pointer-events: none;
-      z-index: -1;
-    }
-
-    .aicf-trade-alert:hover {
-      transform: translateY(-2px) scale(1.008);
-      box-shadow: 0 26px 54px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 239, 156, 0.4) inset;
-    }
-
-    .aicf-trade-pill {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 999px;
-      background: linear-gradient(130deg, #f8ecb0, #ffe252);
-      color: #2d2100;
-      font-size: 0.72rem;
-      font-weight: 800;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      padding: 0.38rem 0.8rem;
-      box-shadow: 0 5px 16px rgba(255, 226, 82, 0.32);
-    }
-
-    .aicf-trade-title {
+    .aicf-final-cta-title {
+      font-size: clamp(1.6rem, 2.8vw, 2.3rem);
       margin-top: 0.85rem;
-      font-size: clamp(1.7rem, 5.7vw, 3.9rem);
-      line-height: 0.96;
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-      font-weight: 900;
-      color: #f8fbff;
-      text-wrap: balance;
-      text-shadow: 0 4px 24px rgba(14, 23, 64, 0.5);
-    }
-
-    .aicf-trade-subtitle {
-      margin-top: 0.8rem;
-      font-size: clamp(0.98rem, 2.4vw, 1.22rem);
-      font-weight: 520;
-      color: rgba(232, 242, 255, 0.96);
-      text-wrap: balance;
-    }
-
-    .aicf-trade-cta {
-      margin-top: 1rem;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 0.78rem;
-      border: 1px solid rgba(255, 220, 71, 0.58);
-      background: rgba(8, 13, 32, 0.58);
-      color: #ffe581;
-      font-family: var(--font-mono);
-      font-size: clamp(0.86rem, 1.8vw, 0.96rem);
-      padding: 0.62rem 0.95rem;
-      font-weight: 620;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-    }
-
-    @keyframes tradeSweep {
-      0% {
-        left: -30%;
-      }
-      100% {
-        left: 120%;
-      }
-    }
-
-    @keyframes tradePulse {
-      0%,
-      100% {
-        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 239, 156, 0.2) inset;
-      }
-      50% {
-        box-shadow: 0 24px 54px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 239, 156, 0.46) inset;
-      }
-    }
-
-    @media (max-width: 760px) {
-      .aicf-trade-alert {
-        border-radius: 1rem;
-      }
     }
   </style>
+
+  <script>
+    // Copy-to-clipboard for the pip install chip. Without JS the command
+    // is still plain selectable text; the button is simply inert.
+    const copyBtn = document.querySelector<HTMLButtonElement>("[data-copy-pip]");
+    const pipCmd = document.querySelector<HTMLElement>("[data-pip-cmd]");
+    if (copyBtn && pipCmd) {
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(pipCmd.textContent?.trim() ?? "");
+          copyBtn.textContent = "Copied";
+          copyBtn.classList.add("is-copied");
+          window.setTimeout(() => {
+            copyBtn.textContent = "Copy";
+            copyBtn.classList.remove("is-copied");
+          }, 1600);
+        } catch {
+          // Clipboard API unavailable — leave the command selectable by hand.
+        }
+      });
+    }
+  </script>
 
   <Footer slot="footer" />
 </BaseLayout>

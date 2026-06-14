@@ -5,11 +5,38 @@ import Footer from "../components/Footer.astro";
 
 const title = "Network";
 const description =
-  "AICF network telemetry derived from live status payloads for providers, nodes, jobs, usage, and settlements.";
+  "The Animica network: live post-quantum L1 chain endpoints (explorer, RPC, mining pool) plus AICF compute telemetry fetched from the live status endpoint.";
 const aicfApiBaseUrl =
   (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
   (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
-  "/api";
+  "https://aicf.animica.org/api";
+
+const chainEndpoints = [
+  {
+    name: "Block Explorer",
+    detail: "Blocks, transactions, and addresses on Animica mainnet (chain id 1).",
+    href: "https://explorer.animica.org",
+    label: "explorer.animica.org",
+  },
+  {
+    name: "Public JSON-RPC",
+    detail: "JSON-RPC 2.0 over HTTPS, POST only. See the developer docs for a curl example.",
+    href: "/developers#rpc",
+    label: "rpc.animica.org/rpc",
+  },
+  {
+    name: "Mining Pool",
+    detail: "PoIES useful-work mining with XMR dual-mining and live pool stats.",
+    href: "https://pool.animica.org",
+    label: "pool.animica.org",
+  },
+  {
+    name: "Web Wallet",
+    detail: "Post-quantum accounts with bech32m addresses (anim1...).",
+    href: "https://wallet.animica.org",
+    label: "wallet.animica.org",
+  },
+];
 
 const summaryMetrics = [
   { key: "providers", label: "Providers" },
@@ -35,23 +62,54 @@ const healthMetrics = [
 
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">Network Telemetry</span>
-      <h1 class="aicf-heading">Live AICF Compute Network</h1>
+      <span class="aicf-kicker">Animica Network</span>
+      <h1 class="aicf-heading">One Chain, Two Workloads: Consensus + Compute</h1>
       <p class="aicf-subheading">
-        This page shows only live values fetched from the AICF status endpoint. If data is unavailable,
-        metrics are marked unavailable instead of showing placeholders.
+        Animica mainnet is a live post-quantum L1 secured by useful-work consensus (PoIES). The chain endpoints below are
+        always available; AICF compute telemetry further down is fetched live from the AICF status endpoint.
+      </p>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="https://explorer.animica.org">Open Explorer</a>
+        <a class="aicf-ghost-btn" href="/mine">Start Mining</a>
+        <a class="aicf-ghost-btn" href="/developers#rpc">RPC Reference</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Chain Endpoints</span>
+      <div class="aicf-grid-4" style="margin-top:0.95rem;">
+        {chainEndpoints.map((ep) => (
+          <article class="aicf-card">
+            <h3 style="font-size:1.1rem;">{ep.name}</h3>
+            <p class="aicf-muted" style="margin-top:0.45rem;">{ep.detail}</p>
+            <p style="margin-top:0.6rem;"><a href={ep.href}><code>{ep.label}</code></a></p>
+          </article>
+        ))}
+      </div>
+      <p class="aicf-muted" style="margin-top:0.75rem; font-size:0.9rem;">
+        The RPC endpoint accepts JSON-RPC over POST only — <code>https://rpc.animica.org/rpc</code>. GET requests are not served.
       </p>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container aicf-grid-4">
-      {summaryMetrics.map((metric) => (
-        <article class="aicf-card">
-          <p class="aicf-muted" style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.07em;">{metric.label}</p>
-          <p class="aicf-value" data-aicf-network-metric={metric.key}>--</p>
-        </article>
-      ))}
+    <div class="aicf-container" data-aicf-network-root data-aicf-api-base={aicfApiBaseUrl}>
+      <span class="aicf-kicker">AICF Compute Telemetry</span>
+      <h2 class="aicf-heading" style="font-size:1.6rem;">Live Compute Network Metrics</h2>
+      <p class="aicf-subheading">
+        Values below are fetched live from the AICF status endpoint. If the endpoint cannot be reached, metrics are marked
+        unavailable instead of showing placeholders.
+      </p>
+      <div class="aicf-grid-4" style="margin-top:0.95rem;">
+        {summaryMetrics.map((metric) => (
+          <article class="aicf-card">
+            <p class="aicf-muted" style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.07em;">{metric.label}</p>
+            <p class="aicf-value" data-aicf-network-metric={metric.key}>--</p>
+          </article>
+        ))}
+      </div>
     </div>
   </section>
 
@@ -135,7 +193,7 @@ const healthMetrics = [
     </div>
   </section>
 
-  <script define:vars={{ aicfApiBaseUrl }}>
+  <script>
     import {
       deriveAicfCounts,
       fetchAicfStatus,
@@ -143,11 +201,13 @@ const healthMetrics = [
       formatUtc,
     } from "../features/aicf/liveMetricsClient";
 
+    const rootEl = document.querySelector<HTMLElement>("[data-aicf-network-root]");
+    const aicfApiBaseUrl = rootEl?.dataset.aicfApiBase || "https://aicf.animica.org/api";
     const messageEl = document.querySelector("[data-aicf-network-message]");
     const rawEl = document.querySelector("[data-aicf-network-raw]");
     const metricEls = Array.from(document.querySelectorAll("[data-aicf-network-metric]"));
 
-    const setMetric = (key, value) => {
+    const setMetric = (key: string, value: string) => {
       for (const el of metricEls) {
         if (el.getAttribute("data-aicf-network-metric") === key) {
           el.textContent = value;
@@ -163,7 +223,8 @@ const healthMetrics = [
         rawEl.textContent = "Unavailable";
       }
       if (messageEl) {
-        messageEl.textContent = "Live AICF metrics unavailable.";
+        messageEl.textContent =
+          "Live AICF telemetry is temporarily unavailable. Chain endpoints above are unaffected.";
       }
     };
 

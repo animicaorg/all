@@ -1,30 +1,105 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Header from "../components/Header.astro";
-import Footer from "../components/Footer.astro";
 import { loadProviderDownloadsPageData } from "../features/provider/downloads";
 
 const title = "Downloads";
 const description =
-  "Download AICF provider worker bundles for Windows, Linux, and Python. Includes versioned artifacts, checksums, install flow, benchmark commands, and troubleshooting.";
+  "Download Animica software: wallets for desktop, mobile, and browser, CPU miner bundles, the animica CLI from PyPI, and AICF provider worker bundles.";
 
-const data = loadProviderDownloadsPageData();
+const provider = loadProviderDownloadsPageData();
 ---
 
 <BaseLayout title={title} description={description}>
-  <Header slot="header" />
-
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">Provider Worker Releases</span>
-      <h1 class="aicf-heading">Download GPU Contribution Bundles</h1>
+      <span class="aicf-kicker">Downloads</span>
+      <h1 class="aicf-heading">Everything You Need to Run Animica</h1>
       <p class="aicf-subheading">
-        Version <strong>{data.version}</strong>
-        {data.generatedAt ? ` · generated ${data.generatedAt}` : ''}.
+        Wallets, miner bundles, the command-line tools, and the AICF provider worker — all builds ship
+        with SHA256 checksums. Verify before you run.
+      </p>
+    </div>
+  </section>
+
+  <!-- Wallet -->
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <article class="aicf-card">
+        <span class="aicf-kicker">Wallet</span>
+        <h2 style="font-size:1.3rem; margin-top:0.5rem;">Animica Wallet</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          Desktop builds for Windows, macOS, and Linux, an Android APK, and a Chrome extension — all
+          hosted on the wallet page with install guides and checksums. Prefer not to install anything?
+          The web wallet runs in your browser.
+        </p>
+        <div class="aicf-btn-row" style="margin-top:0.95rem;">
+          <a class="aicf-btn" href="/wallet">Wallet Downloads</a>
+          <a class="aicf-ghost-btn" href="https://wallet.animica.org" target="_blank" rel="noopener noreferrer">Open Web Wallet</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Miner -->
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <article class="aicf-card">
+        <span class="aicf-kicker">Mining</span>
+        <h2 style="font-size:1.3rem; margin-top:0.5rem;">CPU Miner Bundles</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          Miner bundles for Windows, macOS, and Linux, with step-by-step pool setup — including
+          dual-mining XMR on the same CPU. Pool stats live at
+          <a href="https://pool.animica.org" target="_blank" rel="noopener noreferrer">pool.animica.org</a>.
+        </p>
+        <div class="aicf-btn-row" style="margin-top:0.95rem;">
+          <a class="aicf-btn" href="/mine">Miner Downloads &amp; Setup</a>
+          <a class="aicf-ghost-btn" href="https://pool.animica.org" target="_blank" rel="noopener noreferrer">Pool Dashboard</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- CLI -->
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <article class="aicf-card">
+        <span class="aicf-kicker">Command Line</span>
+        <h2 style="font-size:1.3rem; margin-top:0.5rem;">animica CLI &amp; Python SDK</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          One pip install gives you the <code>animica</code> CLI: wallet management, transactions,
+          mining (including dual-mine), and node interaction. Python 3.10+.
+        </p>
+        <div class="aicf-code" style="margin-top:0.85rem; display:flex; align-items:center; justify-content:space-between; gap:0.75rem;">
+<pre style="margin:0;"><code id="pip-snippet">pip install animica</code></pre>
+          <button
+            id="copy-pip"
+            class="aicf-ghost-btn"
+            type="button"
+            style="flex-shrink:0; font-size:0.8rem; padding:0.35rem 0.8rem;"
+            data-copy-text="pip install animica"
+            aria-label="Copy pip install command"
+          >Copy</button>
+        </div>
+        <div class="aicf-btn-row" style="margin-top:0.95rem;">
+          <a class="aicf-btn" href="https://pypi.org/project/animica/" target="_blank" rel="noopener noreferrer">View on PyPI</a>
+          <a class="aicf-ghost-btn" href="/docs">CLI Docs</a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Provider worker -->
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">AICF Provider Worker</span>
+      <h2 class="aicf-heading" style="font-size:1.5rem;">GPU Contribution Bundles</h2>
+      <p class="aicf-subheading">
+        Version <strong>{provider.version}</strong>
+        {provider.generatedAt ? ` · generated ${provider.generatedAt}` : ''}.
         Download your platform bundle, benchmark hardware, start worker mode, and begin earning ANM.
       </p>
       <div class="aicf-btn-row">
-        {data.checksumFile ? <a class="aicf-ghost-btn" href={data.checksumFile}>Checksums</a> : null}
+        {provider.checksumFile ? <a class="aicf-ghost-btn" href={provider.checksumFile}>Checksums</a> : null}
         <a class="aicf-ghost-btn" href="/providers">Provider Overview</a>
         <a class="aicf-btn" href="/support">Need Installation Help</a>
       </div>
@@ -33,10 +108,10 @@ const data = loadProviderDownloadsPageData();
 
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-3">
-      {data.cards.map((card) => (
+      {provider.cards.map((card) => (
         <article class="aicf-card">
           <p class="aicf-kicker" style="margin-bottom:0.6rem;">{card.platform}</p>
-          <h2 style="font-size:1.15rem;">{card.label}</h2>
+          <h3 style="font-size:1.15rem;">{card.label}</h3>
           <p class="aicf-muted" style="margin-top:0.55rem;">{card.notes}</p>
           <dl style="margin-top:0.7rem; display:grid; grid-template-columns:auto 1fr; gap:0.4rem 0.6rem; font-size:0.9rem;">
             <dt class="aicf-muted">Version</dt>
@@ -59,9 +134,9 @@ const data = loadProviderDownloadsPageData();
 
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-2">
-      {data.cards.map((card) => (
+      {provider.cards.map((card) => (
         <article class="aicf-card">
-          <h2 style="font-size:1.15rem;">Install · {card.label}</h2>
+          <h3 style="font-size:1.15rem;">Install · {card.label}</h3>
           <ol style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
             {card.installSteps.map((step) => (
               <li class="aicf-muted">{step}</li>
@@ -78,58 +153,46 @@ const data = loadProviderDownloadsPageData();
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-2">
       <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Supported GPUs and Minimum Requirements</h2>
-        <ul style="margin-top:0.7rem; padding-left:1rem; display:grid; gap:0.45rem;">
-          <li>NVIDIA driver 535+ recommended for production queues</li>
-          <li>CUDA-compatible GPUs with at least 12GB VRAM for baseline inference queues</li>
-          <li>16GB system RAM minimum, 32GB recommended</li>
-          <li>Stable internet + open outbound HTTPS to AICF API</li>
-          <li>Wallet payout address on Animica mainnet</li>
-        </ul>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Benchmark Before Joining</h2>
+        <h2 style="font-size:1.25rem;">Verify Your Downloads</h2>
         <p class="aicf-muted" style="margin-top:0.55rem;">
-          Worker benchmark mode detects your hardware and emits throughput metrics used by scheduler assignment. Do not skip this step.
+          Every artifact ships with a SHA256 checksum file alongside it. Compare before running:
         </p>
         <div class="aicf-code" style="margin-top:0.75rem;">
-<pre style="margin:0;"><code>aicf-provider-worker benchmark --config provider.config.json
-# verifies GPU detection, throughput, memory, and health checks</code></pre>
+<pre style="margin:0;"><code>sha256sum &lt;downloaded-file&gt;
+# compare against the published .sha256 file</code></pre>
         </div>
-      </article>
-    </div>
-  </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Provider Earnings and Economics</h2>
-        <p class="aicf-muted" style="margin-top:0.55rem;">
-          Providers earn ANM from completed workloads. Better benchmark class, lower failure rate, and strong uptime increase routing priority and earnings consistency.
-        </p>
-        <ul style="margin-top:0.7rem; padding-left:1rem; display:grid; gap:0.45rem;">
-          <li>Jobs escrow ANM before compute starts</li>
-          <li>Receipts settle rewards and update reputation</li>
-          <li>Treasury subsidy can boost strategic job classes</li>
-        </ul>
       </article>
 
       <article class="aicf-card">
         <h2 style="font-size:1.25rem;">Troubleshooting</h2>
         <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.45rem;">
           <li>If no GPU is detected, verify drivers and rerun benchmark mode.</li>
-          <li>If wallet binding fails, regenerate config and confirm payout address format.</li>
-          <li>If heartbeat fails, inspect `logs/provider-worker.log` and network ACLs.</li>
+          <li>If wallet binding fails, regenerate config and confirm the anim1&hellip; payout address.</li>
+          <li>If heartbeat fails, inspect <code>logs/provider-worker.log</code> and network ACLs.</li>
           <li>If jobs are not assigned, review reputation, stake, and benchmark tier.</li>
         </ul>
         <div class="aicf-btn-row">
-          <a class="aicf-ghost-btn" href="/docs">Provider Docs</a>
+          <a class="aicf-ghost-btn" href="/docs">Docs</a>
           <a class="aicf-btn" href="/support">Open Support</a>
         </div>
       </article>
     </div>
   </section>
 
-  <Footer slot="footer" />
+  <script>
+    const btn = document.getElementById('copy-pip');
+    if (btn) {
+      btn.addEventListener('click', async () => {
+        const text = btn.getAttribute('data-copy-text') || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          btn.textContent = 'Copied';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        } catch {
+          btn.textContent = 'Copy failed';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        }
+      });
+    }
+  </script>
 </BaseLayout>

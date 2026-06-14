@@ -11,20 +11,20 @@ import InlineLink from "../components/InlineLink.astro";
 
 ## What is Animica?
 
-Animica is a modular L1/L2 stack that combines **PoIES consensus** (Proof-of-Integrated-External-Services), **Data Availability** with Namespaced Merkle Trees and erasure coding, a **deterministic Python VM**, **ZK verification** helpers, an **AI Compute Fund (AICF)**, and a **PQ-first key system**. It ships with a developer **Studio** (web IDE), **Explorer**, browser **wallet**, and SDKs in **Python**, **TypeScript**, and **Rust**.
+Animica is a modular L1/L2 stack that combines **PoIES consensus** (Proof-of-Integrated-External-Services), **Data Availability** with Namespaced Merkle Trees and erasure coding, a **deterministic Python VM**, **ZK verification** helpers, an **AI Compute Fund (AICF)**, and a **PQ-first key system**. It ships with a developer **Studio** (desktop IDE; the hosted web version is being rebuilt), **Explorer**, browser **wallet**, and SDKs in **Python**, **TypeScript**, and **Rust**.
 
 ---
 
 ## Quick links
 
-- **Getting started** → <InlineLink href="/docs/get-started">/docs/get-started</InlineLink>  
-- **Consensus (PoIES)** → <InlineLink href="/docs/consensus/poies">/docs/consensus/poies</InlineLink>  
-- **Data Availability** → <InlineLink href="/docs/da/overview">/docs/da/overview</InlineLink>  
-- **Python VM** → <InlineLink href="/docs/vm/overview">/docs/vm/overview</InlineLink>  
-- **ZK Verifiers** → <InlineLink href="/docs/zk/overview">/docs/zk/overview</InlineLink>  
-- **AICF** → <InlineLink href="/docs/aicf/overview">/docs/aicf/overview</InlineLink>  
-- **SDKs** → <InlineLink href="/docs/sdk/overview">/docs/sdk/overview</InlineLink>  
-- **Operations/Devnet** → <InlineLink href="/docs/ops/devnet">/docs/ops/devnet</InlineLink>
+- **Getting started** → <InlineLink href="https://github.com/animicaorg/all/blob/main/docs/quickstart-devnet.md">docs/quickstart-devnet.md</InlineLink>  
+- **Consensus (PoIES)** → <InlineLink href="https://github.com/animicaorg/all/blob/main/spec/poies_math.md">spec/poies_math.md</InlineLink>  
+- **Data Availability** → <InlineLink href="https://github.com/animicaorg/all/blob/main/docs/DA.md">docs/DA.md</InlineLink>  
+- **Python VM** → <InlineLink href="https://github.com/animicaorg/all/tree/main/docs/vm">docs/vm</InlineLink>  
+- **ZK Verifiers** → <InlineLink href="https://github.com/animicaorg/all/tree/main/zk">zk/</InlineLink>  
+- **AICF** → <InlineLink href="https://github.com/animicaorg/all/blob/main/docs/AICF.md">docs/AICF.md</InlineLink>  
+- **SDKs** → <InlineLink href="https://github.com/animicaorg/all/tree/main/sdk">sdk/</InlineLink>  
+- **Operations/Devnet** → <InlineLink href="https://github.com/animicaorg/all/tree/main/docs/ops">docs/ops</InlineLink>
 
 ---
 
@@ -40,26 +40,25 @@ Animica is a modular L1/L2 stack that combines **PoIES consensus** (Proof-of-Int
 
 ---
 
-## Hello, devnet (60 seconds)
+## Hello, mainnet (60 seconds)
+
+The `animica` package on PyPI ships the CLI and Python client libraries.
+The commands below are illustrative — run `animica --help` for the exact surface.
 
 ```bash
-# 1) Run a local node (or attach to an existing devnet)
-omni node --devnet
+# 1) Install the CLI + Python SDK
+pip install animica
 
-# 2) Use the SDK to send a transfer (Python example)
-pip install omni-sdk
-python - <<'PY'
-from omni_sdk.tx import build, send
-from omni_sdk.wallet.mnemonic import create_mnemonic
-mn = create_mnemonic()
-tx = build.transfer(to="anim1qq...xyz", amount=12345)
-receipt = send(tx, mnemonic=mn, rpc_url="http://localhost:8545")
-print("Status:", receipt["status"], "Gas:", receipt["gasUsed"])
-PY
+# 2) Create a wallet (keys stay local; addresses are bech32m anim1...)
+animica wallet create --label mywallet
+animica wallet show mywallet
 
-# 3) Open Studio in your browser to compile & simulate contracts
-#    (If deployed separately, substitute your ANIMICA_STUDIO_URL)
-open https://studio.animica.org
+# 3) Talk to the live network via the public RPC
+#    (JSON-RPC, POST only: https://rpc.animica.org/rpc)
+animica chain head --rpc-url https://rpc.animica.org/rpc
+
+# 4) Studio: the hosted web IDE is being rebuilt — use the Linux
+#    desktop build from /studio for compile & simulate workflows.
 
 
 ⸻
@@ -90,19 +89,19 @@ ZK verification (outline)
 	•	Poseidon — hash parameters used in circuits.
 	•	VK pinning — registry with signatures/hashes to prevent malleability.
 
-See /docs/zk/overview.
+See <InlineLink href="https://github.com/animicaorg/all/tree/main/zk">zk/ on GitHub</InlineLink>.
 
 ⸻
 
 Where to next?
-	•	Read the PoIES math & policy → /docs/consensus/poies
-	•	Try the Studio quickstart → /studio
+	•	Read the PoIES math & policy → https://github.com/animicaorg/all/blob/main/spec/poies_math.md
+	•	Get the Studio desktop build → /studio
 	•	Explore the network status → /status
-	•	Browse SDK examples → /docs/sdk/overview
+	•	Browse SDK examples → https://github.com/animicaorg/all/tree/main/sdk
 
 ⸻
 
 Feedback
 
 Found a bug or have a question?
-Open an issue on GitHub or email docs@animica.dev. Contributions welcome!
+Open an issue at https://github.com/animicaorg/all/issues. Contributions welcome!

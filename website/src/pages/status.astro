@@ -4,11 +4,51 @@ import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 
 const title = "Status";
-const description = "AICF service status derived from live status endpoint metrics only.";
+const description =
+  "Animica service directory: chain endpoints (explorer, RPC, pool, wallet) plus live AICF compute status fetched from the status endpoint.";
 const aicfApiBaseUrl =
   (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
   (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
-  "/api";
+  "https://aicf.animica.org/api";
+
+const chainServices = [
+  {
+    name: "Block Explorer",
+    href: "https://explorer.animica.org",
+    label: "explorer.animica.org",
+    detail: "Browse blocks, transactions, and addresses on mainnet.",
+  },
+  {
+    name: "Public JSON-RPC",
+    href: "/developers#rpc",
+    label: "rpc.animica.org/rpc",
+    detail: "JSON-RPC 2.0 over HTTPS, POST only. Chain id 1.",
+  },
+  {
+    name: "Mining Pool",
+    href: "https://pool.animica.org",
+    label: "pool.animica.org",
+    detail: "Useful-work mining with XMR dual-mining and live stats.",
+  },
+  {
+    name: "Web Wallet",
+    href: "https://wallet.animica.org",
+    label: "wallet.animica.org",
+    detail: "Post-quantum accounts, bech32m addresses (anim1...).",
+  },
+  {
+    name: "AICF Compute",
+    href: "https://aicf.animica.org",
+    label: "aicf.animica.org",
+    detail: "API keys, project budgets, and the compute dashboard.",
+  },
+  {
+    name: "Marketplace",
+    href: "https://animica.xyz/",
+    label: "animica.xyz",
+    detail: "The Animica marketplace.",
+  },
+];
 
 const topMetrics = [
   { key: "serviceStatus", label: "Service Status" },
@@ -24,21 +64,43 @@ const topMetrics = [
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Service Health</span>
-      <h1 class="aicf-heading">AICF Platform Status</h1>
+      <h1 class="aicf-heading">Animica Service Status</h1>
       <p class="aicf-subheading">
-        Live operational data from the AICF status endpoint. No synthetic uptime, latency, or incident values are shown.
+        Chain services below are linked directly so you can verify them yourself. AICF compute status is fetched live from
+        the AICF status endpoint — no synthetic uptime, latency, or incident values are shown.
       </p>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container aicf-grid-4">
-      {topMetrics.map((metric) => (
-        <article class="aicf-card">
-          <p class="aicf-muted" style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.07em;">{metric.label}</p>
-          <p class="aicf-value" data-aicf-status-metric={metric.key}>--</p>
-        </article>
-      ))}
+    <div class="aicf-container">
+      <span class="aicf-kicker">Chain Services</span>
+      <div class="aicf-grid-3" style="margin-top:0.95rem;">
+        {chainServices.map((svc) => (
+          <article class="aicf-card">
+            <h3 style="font-size:1.1rem;">{svc.name}</h3>
+            <p class="aicf-muted" style="margin-top:0.45rem;">{svc.detail}</p>
+            <p style="margin-top:0.6rem;"><a href={svc.href}><code>{svc.label}</code></a></p>
+          </article>
+        ))}
+      </div>
+      <p class="aicf-muted" style="margin-top:0.75rem; font-size:0.9rem;">
+        Contract Studio (studio.animica.org) is being rebuilt and currently serves a holding page.
+      </p>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container" data-aicf-status-root data-aicf-api-base={aicfApiBaseUrl}>
+      <span class="aicf-kicker">AICF Compute Status</span>
+      <div class="aicf-grid-4" style="margin-top:0.95rem;">
+        {topMetrics.map((metric) => (
+          <article class="aicf-card">
+            <p class="aicf-muted" style="font-size:0.8rem; text-transform:uppercase; letter-spacing:0.07em;">{metric.label}</p>
+            <p class="aicf-value" data-aicf-status-metric={metric.key}>--</p>
+          </article>
+        ))}
+      </div>
     </div>
   </section>
 
@@ -109,7 +171,7 @@ const topMetrics = [
     <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-status-message>Loading live AICF metrics...</p>
   </section>
 
-  <script define:vars={{ aicfApiBaseUrl }}>
+  <script>
     import {
       deriveAicfCounts,
       fetchAicfStatus,
@@ -117,11 +179,13 @@ const topMetrics = [
       formatUtc,
     } from "../features/aicf/liveMetricsClient";
 
+    const rootEl = document.querySelector<HTMLElement>("[data-aicf-status-root]");
+    const aicfApiBaseUrl = rootEl?.dataset.aicfApiBase || "https://aicf.animica.org/api";
     const messageEl = document.querySelector("[data-aicf-status-message]");
     const rawEl = document.querySelector("[data-aicf-status-raw]");
     const metricEls = Array.from(document.querySelectorAll("[data-aicf-status-metric]"));
 
-    const setMetric = (key, value) => {
+    const setMetric = (key: string, value: string) => {
       for (const el of metricEls) {
         if (el.getAttribute("data-aicf-status-metric") === key) {
           el.textContent = value;
@@ -137,7 +201,8 @@ const topMetrics = [
         rawEl.textContent = "Unavailable";
       }
       if (messageEl) {
-        messageEl.textContent = "Live AICF metrics unavailable.";
+        messageEl.textContent =
+          "Live AICF telemetry is temporarily unavailable. Chain services above are unaffected.";
       }
     };
 

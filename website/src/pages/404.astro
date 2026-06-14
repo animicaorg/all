@@ -5,9 +5,18 @@ import InlineLink from "../components/InlineLink.astro";
 
 const title = "404 — Page not found";
 const description = "The page you were looking for doesn’t exist or has moved.";
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  name: title,
+  description,
+  isPartOf: { "@type": "WebSite", name: "Animica" },
+  inLanguage: "en",
+};
 ---
 
-<BaseLayout title={title} description={description}>
+<BaseLayout title={title} description={description} noIndex jsonLd={jsonLd}>
   <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16 sm:py-24 text-center">
     <p class="text-sm tracking-widest uppercase opacity-60">Error</p>
     <h1 class="mt-2 text-4xl sm:text-5xl font-semibold">404 — Nothing to see here</h1>
@@ -38,16 +47,5 @@ const description = "The page you were looking for doesn’t exist or has moved.
       </div>
     </div>
 
-    <script type="application/ld+json" is:inline>
-      {JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "WebPage",
-        name: "404 — Page not found",
-        description,
-        isPartOf: { "@type": "WebSite", name: "Animica" },
-        inLanguage: "en",
-        dateModified: new Date().toISOString()
-      })}
-    </script>
   </section>
 </BaseLayout>

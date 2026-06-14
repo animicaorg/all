@@ -51,9 +51,17 @@ async def test_pool_stratum_miner_finds_and_submits_block():
     pytest.importorskip("animica.cli.mining")
     from animica.cli.mining import _parse_pool_stratum_url, _run_pool_stratum_miner
 
-    # URL parser sanity
-    host_parsed, port_parsed = _parse_pool_stratum_url("stratum+tcp://127.0.0.1:1234")
-    assert (host_parsed, port_parsed) == ("127.0.0.1", 1234)
+    # URL parser sanity: returns (host, port, tls).
+    host_parsed, port_parsed, tls_parsed = _parse_pool_stratum_url(
+        "stratum+tcp://127.0.0.1:1234"
+    )
+    assert (host_parsed, port_parsed, tls_parsed) == ("127.0.0.1", 1234, False)
+    # A TLS scheme must flip the tls flag.
+    assert _parse_pool_stratum_url("stratum+ssl://127.0.0.1:1234") == (
+        "127.0.0.1",
+        1234,
+        True,
+    )
 
     theta_micro = 800_000
     share_ratio = 0.05

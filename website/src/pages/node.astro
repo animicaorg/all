@@ -1,7 +1,6 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import InlineLink from "../components/InlineLink.astro";
-import { links } from "../config/links";
 
 const pageTitle = "Run a Node — mainnet-ready";
 const pageDesc =
@@ -28,6 +27,10 @@ const pageDesc =
           animica peer list
         </div>
         <p class="mt-3 text-xs opacity-70">Default RPC: http://127.0.0.1:8545/rpc</p>
+        <p class="mt-1 text-xs opacity-70">
+          Public RPC: <code>https://rpc.animica.org/rpc</code> (JSON-RPC, POST only) — useful for
+          wallets and SDKs while your node syncs.
+        </p>
       </div>
 
       <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
@@ -67,7 +70,7 @@ const pageDesc =
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
         <h3 class="font-semibold">Need the full guide?</h3>
         <p class="mt-2 text-sm opacity-80">The docs include config files, security, and monitoring.</p>
-        <InlineLink href={links.docs.page("ops/devnet")}>Read node operations docs →</InlineLink>
+        <InlineLink href="https://github.com/animicaorg/all/tree/main/docs/ops">Read node operations docs →</InlineLink>
       </div>
     </div>
   </section>

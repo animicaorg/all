@@ -15,20 +15,19 @@ const className = (Astro.props as Props).className ?? "";
 const compact = (Astro.props as Props).compact ?? false;
 const rpcUrl = (Astro.props as Props).rpcUrl ?? defaultRpcUrl ?? "/rpc";
 
-const uid = `metric-ticker-${Math.random().toString(36).slice(2, 9)}`;
 const config = JSON.stringify({ pollMs, windowSeconds, compact, rpcUrl });
 ---
 {compact ? (
-  <div class={`inline-flex items-center gap-3 text-sm ${className}`} id={uid} data-config={config} aria-live="polite">
+  <div class={`inline-flex items-center gap-3 text-sm ${className}`} data-metric-ticker data-config={config} aria-live="polite">
     <span class="inline-block size-2 rounded-full bg-zinc-500" data-role="badge" />
     <span class="tabular-nums" data-role="height">Head: —</span>
-    <span aria-hidden="true">•</span>
+    <span aria-hidden="true" data-role="sep">•</span>
     <span class="tabular-nums" data-role="tps">TPS: —</span>
     <span class="opacity-70" data-role="age">(age —)</span>
   </div>
 ) : (
   <div
-    id={uid}
+    data-metric-ticker
     data-config={config}
     class={`flex items-center gap-4 rounded-lg border px-3 py-2 text-sm
       border-[color-mix(in_srgb,var(--text-primary)_/_.12,transparent)]
@@ -58,151 +57,181 @@ const config = JSON.stringify({ pollMs, windowSeconds, compact, rpcUrl });
     error: "bg-rose-500",
     idle: "bg-zinc-500",
   };
+  const MAX_CONSECUTIVE_FAILS = 3;
 
-  const root = document.getElementById("${uid}");
-  if (!root) return;
+  function initTicker(root) {
+    if (root.dataset.metricTickerInit === "1") return;
+    root.dataset.metricTickerInit = "1";
 
-  const cfg = (() => {
-    try {
-      return JSON.parse(root.dataset.config || "{}");
-    } catch {
-      return {};
-    }
-  })();
-
-  const pollMs = Number(cfg.pollMs) || 2000;
-  const windowSeconds = Number(cfg.windowSeconds) || 60;
-  const rpcUrl = cfg.rpcUrl || "/rpc";
-  const windowMs = windowSeconds * 1000;
-
-  const badgeEl = root.querySelector('[data-role="badge"]');
-  const heightEl = root.querySelector('[data-role="height"]');
-  const tpsEl = root.querySelector('[data-role="tps"]');
-  const ageEl = root.querySelector('[data-role="age"]');
-
-  let samples = [];
-  let lastFetchedHeight = -1;
-  let lastUpdateMs = null;
-  let status = "idle";
-  let timer = null;
-
-  const setBadge = (state) => {
-    if (!badgeEl) return;
-    badgeEl.classList.remove(
-      badgeClasses.ok,
-      badgeClasses.warn,
-      badgeClasses.error,
-      badgeClasses.idle,
-    );
-    badgeEl.classList.add(badgeClasses[state] || badgeClasses.idle);
-  };
-
-  const rpcCall = async (method, params) => {
-    const id = Math.floor(Math.random() * 1e9);
-    const res = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-    });
-    if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
-    const body = await res.json();
-    if (body?.error) throw new Error(body.error.message || "RPC error");
-    return body.result;
-  };
-
-  const getHead = () => rpcCall("chain.getHead");
-
-  const getBlockByNumber = async (n) => {
-    try {
-      return await rpcCall("chain.getBlockByNumber", [n, { includeTxs: true }]);
-    } catch {
+    const cfg = (() => {
       try {
-        return await rpcCall("chain.getBlockByNumber", [n, true]);
+        return JSON.parse(root.dataset.config || "{}");
+      } catch {
+        return {};
+      }
+    })();
+
+    const pollMs = Number(cfg.pollMs) || 2000;
+    const windowSeconds = Number(cfg.windowSeconds) || 60;
+    const compact = Boolean(cfg.compact);
+    const rpcUrl = cfg.rpcUrl || "/rpc";
+    const windowMs = windowSeconds * 1000;
+
+    const badgeEl = root.querySelector('[data-role="badge"]');
+    const heightEl = root.querySelector('[data-role="height"]');
+    const tpsEl = root.querySelector('[data-role="tps"]');
+    const ageEl = root.querySelector('[data-role="age"]');
+
+    let samples = [];
+    let lastFetchedHeight = -1;
+    let lastUpdateMs = null;
+    let status = "idle";
+    let failStreak = 0;
+    let timer = null;
+
+    const setBadge = (state) => {
+      if (!badgeEl) return;
+      badgeEl.classList.remove(
+        badgeClasses.ok,
+        badgeClasses.warn,
+        badgeClasses.error,
+        badgeClasses.idle,
+      );
+      badgeEl.classList.add(badgeClasses[state] || badgeClasses.idle);
+    };
+
+    const renderUnavailable = () => {
+      // Quiet static fallback: stop polling, no dashes left on screen.
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      setBadge("idle");
+      if (heightEl) heightEl.textContent = compact ? "Live metrics unavailable" : "n/a";
+      if (tpsEl) {
+        if (compact) tpsEl.remove();
+        else tpsEl.textContent = "n/a";
+      }
+      if (ageEl) ageEl.remove();
+      const sepEl = root.querySelector('[data-role="sep"]');
+      if (sepEl) sepEl.remove();
+    };
+
+    const rpcCall = async (method, params) => {
+      const id = Math.floor(Math.random() * 1e9);
+      const res = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+      });
+      if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
+      const body = await res.json();
+      if (body?.error) throw new Error(body.error.message || "RPC error");
+      return body.result;
+    };
+
+    const getHead = () => rpcCall("chain.getHead");
+
+    const getBlockByNumber = async (n) => {
+      try {
+        return await rpcCall("chain.getBlockByNumber", [n, { includeTxs: true }]);
       } catch {
         try {
-          return await rpcCall("chain.getBlockByNumber", [n]);
+          return await rpcCall("chain.getBlockByNumber", [n, true]);
         } catch {
-          return null;
+          try {
+            return await rpcCall("chain.getBlockByNumber", [n]);
+          } catch {
+            return null;
+          }
         }
       }
-    }
-  };
+    };
 
-  const computeTps = () => {
-    const now = Date.now();
-    const windowStart = now - windowMs;
-    const windowSamples = samples.filter((s) => s.tMs >= windowStart);
-    if (windowSamples.length === 0) return 0;
-    const totalTx = windowSamples.reduce((acc, s) => acc + s.txCount, 0);
-    const times = windowSamples.map((s) => s.tMs);
-    const spanMs = Math.max(1, Math.max(...times) - Math.min(...times));
-    return totalTx / (spanMs / 1000);
-  };
+    const computeTps = () => {
+      const now = Date.now();
+      const windowStart = now - windowMs;
+      const windowSamples = samples.filter((s) => s.tMs >= windowStart);
+      if (windowSamples.length === 0) return 0;
+      const totalTx = windowSamples.reduce((acc, s) => acc + s.txCount, 0);
+      const times = windowSamples.map((s) => s.tMs);
+      const spanMs = Math.max(1, Math.max(...times) - Math.min(...times));
+      return totalTx / (spanMs / 1000);
+    };
 
-  const formatTps = (value) => {
-    if (!isFinite(value)) return "—";
-    if (value >= 1000) return `${value.toFixed(0)}`;
-    if (value >= 100) return `${value.toFixed(1)}`;
-    return `${value.toFixed(2)}`;
-  };
+    const formatTps = (value) => {
+      if (!isFinite(value)) return "—";
+      if (value >= 1000) return `${value.toFixed(0)}`;
+      if (value >= 100) return `${value.toFixed(1)}`;
+      return `${value.toFixed(2)}`;
+    };
 
-  const formatAge = (ms) => {
-    if (ms == null) return "—";
-    const s = Math.floor(ms / 1000);
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60);
-    const rs = s % 60;
-    return `${m}m ${rs}s`;
-  };
+    const formatAge = (ms) => {
+      if (ms == null) return "—";
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return `${s}s`;
+      const m = Math.floor(s / 60);
+      const rs = s % 60;
+      return `${m}m ${rs}s`;
+    };
 
-  const updateUi = () => {
-    const tps = computeTps();
-    const age = lastUpdateMs == null ? null : Math.max(0, Date.now() - lastUpdateMs);
-    if (heightEl) {
-      heightEl.textContent = compact ? `Head: ${lastFetchedHeight >= 0 ? lastFetchedHeight : "—"}` : `${lastFetchedHeight >= 0 ? lastFetchedHeight : "—"}`;
-    }
-    if (tpsEl) tpsEl.textContent = compact ? `TPS: ${formatTps(tps)}` : formatTps(tps);
-    if (ageEl) ageEl.textContent = compact ? `(age ${formatAge(age)})` : formatAge(age);
-    setBadge(status);
-  };
-
-  const tick = async () => {
-    try {
-      const head = await getHead();
-      const h = head?.number;
-      if (typeof h !== "number") throw new Error("Invalid head height");
-      const prev = lastFetchedHeight;
+    const updateUi = () => {
+      const tps = computeTps();
+      const age = lastUpdateMs == null ? null : Math.max(0, Date.now() - lastUpdateMs);
       if (heightEl) {
-        heightEl.textContent = compact ? `Head: ${h}` : `${h}`;
+        heightEl.textContent = compact
+          ? `Head: ${lastFetchedHeight >= 0 ? lastFetchedHeight : "—"}`
+          : `${lastFetchedHeight >= 0 ? lastFetchedHeight : "—"}`;
       }
-      const start = prev >= 0 ? prev + 1 : h;
-      for (let n = start; n <= h; n++) {
-        const block = await getBlockByNumber(n);
-        if (!block) continue;
-        const txs = Array.isArray(block.txs)
-          ? block.txs
-          : Array.isArray(block.transactions)
-          ? block.transactions
-          : [];
-        const tSec = block.timestamp ?? block.time ?? head.timestamp ?? head.time ?? Math.floor(Date.now() / 1000);
-        const tMs = typeof tSec === "number" ? tSec * 1000 : Date.now();
-        samples.push({ tMs, txCount: txs.length });
-        if (samples.length > 512) samples.splice(0, samples.length - 512);
-      }
-      lastFetchedHeight = h;
-      const cutoff = Date.now() - windowMs * 2;
-      samples = samples.filter((s) => s.tMs >= cutoff);
-      lastUpdateMs = Date.now();
-      status = "ok";
-    } catch (err) {
-      console.error("[MetricTicker] poll error:", err);
-      status = status === "error" ? "error" : "warn";
-    }
-    updateUi();
-  };
+      if (tpsEl) tpsEl.textContent = compact ? `TPS: ${formatTps(tps)}` : formatTps(tps);
+      if (ageEl) ageEl.textContent = compact ? `(age ${formatAge(age)})` : formatAge(age);
+      setBadge(status);
+    };
 
-  tick();
-  timer = window.setInterval(tick, pollMs);
-  window.addEventListener("pagehide", () => timer && clearInterval(timer), { once: true });
+    const tick = async () => {
+      try {
+        const head = await getHead();
+        const h = head?.number;
+        if (typeof h !== "number") throw new Error("Invalid head height");
+        const prev = lastFetchedHeight;
+        const start = prev >= 0 ? prev + 1 : h;
+        for (let n = start; n <= h; n++) {
+          const block = await getBlockByNumber(n);
+          if (!block) continue;
+          const txs = Array.isArray(block.txs)
+            ? block.txs
+            : Array.isArray(block.transactions)
+            ? block.transactions
+            : [];
+          const tSec = block.timestamp ?? block.time ?? head.timestamp ?? head.time ?? Math.floor(Date.now() / 1000);
+          const tMs = typeof tSec === "number" ? tSec * 1000 : Date.now();
+          samples.push({ tMs, txCount: txs.length });
+          if (samples.length > 512) samples.splice(0, samples.length - 512);
+        }
+        lastFetchedHeight = h;
+        const cutoff = Date.now() - windowMs * 2;
+        samples = samples.filter((s) => s.tMs >= cutoff);
+        lastUpdateMs = Date.now();
+        status = "ok";
+        failStreak = 0;
+        updateUi();
+      } catch {
+        failStreak += 1;
+        if (failStreak >= MAX_CONSECUTIVE_FAILS && lastUpdateMs == null) {
+          // Endpoint unreachable from the browser — degrade quietly, no console spam.
+          renderUnavailable();
+          return;
+        }
+        status = "warn";
+        updateUi();
+      }
+    };
+
+    tick();
+    timer = window.setInterval(tick, pollMs);
+    window.addEventListener("pagehide", () => timer && clearInterval(timer), { once: true });
+  }
+
+  document.querySelectorAll("[data-metric-ticker]").forEach(initTicker);
 })();
 </script>

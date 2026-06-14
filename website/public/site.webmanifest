@@ -7,8 +7,8 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#0b0f1a",
-  "theme_color": "#0ea5e9",
+  "background_color": "#070b16",
+  "theme_color": "#16d9c3",
   "dir": "ltr",
   "lang": "en",
   "categories": ["finance", "productivity", "utilities"],
@@ -42,14 +42,6 @@
     {
       "protocol": "web+animica",
       "url": "/?request=%s"
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "/images/og/landing-light.png",
-      "type": "image/png",
-      "sizes": "1200x630",
-      "label": "Landing"
     }
   ],
   "prefer_related_applications": false

@@ -88,6 +88,9 @@
   --color-surface: rgba(10, 18, 33, 0.7);
   --color-surface-2: #0a1324;
   --color-surface-3: #0f1d34;
+  /* Aliases used by pages/components that reference elevated surfaces */
+  --bg-elevated: var(--color-surface-2);
+  --bg-elevated-2: var(--color-surface-3);
   --color-border: rgba(133, 170, 210, 0.2);
   --color-muted: #95aac6;
   --color-accent: var(--brand-500);

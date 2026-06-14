@@ -172,6 +172,15 @@ class CpuStratumMiner:
         # this when a new notify arrives prevents stale work from racing
         # with the new job.
         self._mine_task: Optional[asyncio.Task] = None
+        # Auto-reconnect state. The pool can reset the TCP session mid-stream
+        # (server restart, load-balancer recycle, NAT idle timeout). Rather
+        # than stranding the miner, _handle_disconnect re-establishes the same
+        # client with exponential backoff. _reconnecting guards against the
+        # several close() callbacks a flapping connection can emit so only one
+        # backoff loop runs at a time.
+        self._reconnecting = False
+        self._reconnect_min_backoff = 1.0
+        self._reconnect_max_backoff = 60.0
         # Threads count used to fan out parallel CPU scans across worker
         # processes. 0 means "use all CPUs minus one" (the default in
         # resolve_worker_count). Stored for the continuous-scan loop.
@@ -251,9 +260,75 @@ class CpuStratumMiner:
     async def start(self) -> None:
         self._client.on_notify = self._on_notify
         self._client.on_set_difficulty = self._on_set_difficulty
+        self._client.on_close = self._handle_disconnect
         await self._client.connect()
         await self._client.subscribe()
         await self._client.authorize(worker=self._worker, address=self._address)
+
+    async def _handle_disconnect(self) -> None:
+        """Reconnect the same client after an unexpected drop, then resume.
+
+        Fired by ``StratumClient.close()`` (the rx loop calls it on EOF /
+        reset). We re-run ``connect()`` + ``subscribe()`` + ``authorize()`` on
+        the *existing* client on purpose — the CLI layer monkey-patches
+        ``submit_share`` / ``on_notify`` / AICF handlers onto it after
+        ``start()``, and a fresh client would silently drop all of them. The
+        pool's first post-reconnect ``mining.notify`` spawns a new mine task
+        via ``on_notify``, so PoW resumes on its own; we don't restart it here.
+        """
+        # Deliberate shutdown (stop()) also routes through close(); don't
+        # fight it by reconnecting.
+        if self._stop.is_set():
+            return
+        # A flapping connection can fire close() several times; keep a single
+        # backoff loop.
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        try:
+            # The mine task for the dead job is stale — cancel it so it stops
+            # burning CPU on a template the pool will replace on reconnect.
+            task = self._mine_task
+            if task is not None and not task.done():
+                task.cancel()
+            backoff = self._reconnect_min_backoff
+            attempt = 0
+            while not self._stop.is_set():
+                attempt += 1
+                # Full jitter so a fleet of rigs doesn't reconnect in lockstep
+                # after a pool restart.
+                delay = backoff * (0.5 + secrets.randbelow(1000) / 1000.0)
+                log.warning(
+                    "[stratum-miner] connection lost; reconnect attempt %d in %.1fs",
+                    attempt,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                if self._stop.is_set():
+                    return
+                try:
+                    self._client.prepare_reconnect()
+                    await self._client.connect()
+                    await self._client.subscribe()
+                    await self._client.authorize(
+                        worker=self._worker, address=self._address
+                    )
+                    log.warning(
+                        "[stratum-miner] reconnected after %d attempt(s); resuming",
+                        attempt,
+                    )
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    log.warning(
+                        "[stratum-miner] reconnect attempt %d failed: %s",
+                        attempt,
+                        exc,
+                    )
+                    backoff = min(backoff * 2.0, self._reconnect_max_backoff)
+        finally:
+            self._reconnecting = False
 
     async def stop(self) -> None:
         self._stop.set()
@@ -442,7 +517,22 @@ class CpuStratumMiner:
                             share = cand
                 windows += n_workers
                 if share is not None:
-                    await self._submit_found_share(job, share)
+                    try:
+                        await self._submit_found_share(job, share)
+                    except (OSError, RuntimeError) as exc:
+                        # Socket died between finding the share and submitting
+                        # it: ConnectionResetError from writer.drain(), or the
+                        # "connection closed" RuntimeError from a pending
+                        # future the client rejected on EOF. The client's rx
+                        # loop fires on_close -> _handle_disconnect, which
+                        # reconnects; this job is now stale, so end the task
+                        # cleanly instead of letting it die as an unretrieved
+                        # task exception.
+                        log.warning(
+                            "[stratum-miner] share submit failed (connection down): %s",
+                            exc,
+                        )
+                        return
                 # Slide the search window forward; wrap at 64-bit nonce
                 # space to avoid overflow during long mining runs.
                 next_start = (next_start + n_workers * self._scan_window) & 0xFFFFFFFFFFFFFFFF

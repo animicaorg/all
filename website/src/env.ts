@@ -29,17 +29,17 @@ const rawEnv: RawEnv = {
 };
 
 const DEFAULTS = {
-  ANIMICA_RPC_URL: 'http://127.0.0.1:8545',
+  ANIMICA_RPC_URL: 'https://rpc.animica.org/rpc',
   ANIMICA_EXPLORER_URL: 'https://explorer.animica.org',
   ANIMICA_EXPLORER2_URL: '',
-  ANIMICA_DOCS_URL: 'https://docs.animica.org',
+  ANIMICA_DOCS_URL: 'https://animica.org/docs',
   ANIMICA_GITHUB_URL: 'https://github.com/animicaorg/all',
   ANIMICA_FAUCET_URL: '',
   ANIMICA_POOL_URL: '',
   ANIMICA_MINING_API_BASE_URL: '',
   ANIMICA_DISCORD_URL: 'https://discord.gg/vQHJc2jWUJ',
   ANIMICA_TELEGRAM_URL: '',
-  ANIMICA_X_URL: 'https://x.com/animica',
+  ANIMICA_X_URL: 'https://x.com/animicaorg',
   ANIMICA_STUDIO_URL: 'https://studio.animica.org',
   ANIMICA_CHAIN_ID: '1',
 };

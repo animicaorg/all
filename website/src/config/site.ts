@@ -96,17 +96,11 @@ export const SITE: SiteConfig = {
 
   nav: {
     top: [
-      { label: 'Home', href: '/' },
-      { label: 'Marketplace', href: 'https://animica.xyz/marketplace', external: true, target: '_blank', rel: 'noopener' },
+      { label: 'ENA', href: '/ena' },
       { label: 'Developers', href: '/developers' },
-      { label: 'Providers', href: '/providers' },
+      { label: 'Mine', href: '/mine' },
       { label: 'Wallet', href: '/wallet' },
-      { label: 'Buy ANM', href: 'https://buy.animica.org' },
-      { label: 'Mine', href: 'https://pool.animica.org' },
-      { label: 'Downloads', href: '/downloads' },
-      { label: 'Pricing', href: '/pricing' },
       { label: 'Network', href: '/network' },
-      { label: 'Explorer', href: ENV.EXPLORER_URL, external: true, target: '_blank', rel: 'noopener' },
       { label: 'Docs', href: '/docs' },
       { label: 'Status', href: '/status' },
     ],
@@ -114,15 +108,12 @@ export const SITE: SiteConfig = {
       {
         title: 'Platform',
         items: [
-          { label: 'Marketplace', href: 'https://animica.xyz/marketplace' },
-          { label: 'Founders Pass', href: 'https://animica.xyz/marketplace/founders' },
           { label: 'Developers', href: '/developers' },
           { label: 'Providers', href: '/providers' },
           { label: 'Wallet', href: '/wallet' },
-          { label: 'Buy ANM', href: 'https://buy.animica.org' },
-          { label: 'Mine', href: 'https://pool.animica.org' },
+          { label: 'Mine', href: '/mine' },
           { label: 'Downloads', href: '/downloads' },
-          { label: 'Pricing', href: '/pricing' },
+          { label: 'Compute Pricing', href: '/compute-pricing' },
         ],
       },
       {
@@ -131,7 +122,7 @@ export const SITE: SiteConfig = {
           { label: 'Network', href: '/network' },
           { label: 'Status', href: '/status' },
           { label: 'Explorer', href: '/explorer' },
-          { label: 'RPC', href: ENV.RPC_URL, external: true, target: '_blank', rel: 'noopener' },
+          { label: 'RPC', href: '/developers#rpc' },
         ],
       },
       {

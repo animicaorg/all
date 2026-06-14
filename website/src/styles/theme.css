@@ -39,27 +39,6 @@
   border-radius: var(--radius-pill);
 }
 
-/* Theming helpers to show/hide content per theme */
-.theme-dark-only { display: none !important; }
-[data-theme="dark"] .theme-dark-only { display: initial !important; }
-[data-theme="dark"] .theme-light-only { display: none !important; }
-[data-theme="light"] .theme-light-only { display: initial !important; }
-
-/* If no explicit data-theme is set, mirror user preference to light visuals.
-   (Default tokens are dark; this rule flips to light if the user prefers light.) */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) {
-    /* opt-in: map key vars to light palette */
-    --color-bg:        #ffffff;
-    --color-fg:        #0f172a;
-    --color-surface:   #ffffff;
-    --color-surface-2: #f8fafc;
-    --color-border:    rgba(15, 23, 42, 0.12);
-    --color-muted:     #475569;
-    --ring-color: color-mix(in oklab, var(--brand-500), #000 5%);
-  }
-}
-
 /* ----------------------------- Components --------------------------------- */
 
 /* App shell */
@@ -203,35 +182,35 @@ blockquote {
 /* Primary button with gradient and glow */
 .btn--primary, .button--primary {
   border-color: transparent;
-  background: linear-gradient(135deg, var(--legendary-purple-500), var(--legendary-violet-500), var(--legendary-indigo-500));
+  background: linear-gradient(135deg, var(--brand-grad-from), var(--brand-grad-to));
   color: var(--color-accent-contrast);
-  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.3);
+  box-shadow: 0 4px 14px rgba(22, 217, 195, 0.3);
 }
 .btn--primary:hover, .button--primary:hover {
-  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.5), 0 0 40px rgba(34, 211, 238, 0.3);
+  box-shadow: 0 6px 20px rgba(22, 217, 195, 0.5), 0 0 40px rgba(58, 155, 255, 0.3);
   transform: translateY(-2px);
 }
 
 /* Outline button with enhanced border */
 .btn--outline, .button--outline {
   background: rgba(255, 255, 255, 0.03);
-  border-color: rgba(139, 92, 246, 0.3);
+  border-color: rgba(22, 217, 195, 0.3);
   backdrop-filter: blur(8px);
 }
 .btn--outline:hover, .button--outline:hover {
-  border-color: rgba(139, 92, 246, 0.6);
-  background: rgba(139, 92, 246, 0.1);
-  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.2);
+  border-color: rgba(22, 217, 195, 0.6);
+  background: rgba(22, 217, 195, 0.1);
+  box-shadow: 0 4px 14px rgba(22, 217, 195, 0.2);
 }
 
 /* Ghost button */
-.btn--ghost, .button--ghost { 
+.btn--ghost, .button--ghost {
   background: transparent;
   border-color: transparent;
 }
 .btn--ghost:hover, .button--ghost:hover {
-  background: rgba(139, 92, 246, 0.08);
-  border-color: rgba(139, 92, 246, 0.2);
+  background: rgba(22, 217, 195, 0.08);
+  border-color: rgba(22, 217, 195, 0.2);
 }
 
 /* Button sizes */

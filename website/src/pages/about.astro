@@ -1,46 +1,127 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Header from "../components/Header.astro";
-import Footer from "../components/Footer.astro";
 
-const title = "About";
+const title = "About Animica";
 const description =
-  "AICF vision: useful decentralized AI compute on Animica with ANM-native economics for developers and providers.";
+  "Animica is a live post-quantum layer-1 blockchain: Dilithium3/SPHINCS+ signatures, deterministic Python smart contracts, and PoIES useful-work consensus.";
 ---
 
 <BaseLayout title={title} description={description}>
-  <Header slot="header" />
-
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">About AICF</span>
-      <h1 class="aicf-heading">Useful AI Compute, Not Hype</h1>
+      <span class="aicf-kicker">About Animica</span>
+      <h1 class="aicf-heading">A Post-Quantum Layer&#8209;1, Live on Mainnet</h1>
       <p class="aicf-subheading">
-        AICF exists to turn decentralized infrastructure into productive AI compute.
-        Developers should be able to buy inference and training with ANM. Providers should be able to monetize real hardware with clear economics and accountable quality.
+        Animica is a layer-1 blockchain built for the post-quantum era. Every transaction is signed with
+        NIST-standardized post-quantum cryptography (Dilithium3, with SPHINCS+ as an alternative), smart
+        contracts run in a deterministic Python VM, and consensus rewards useful computation — not just hashing.
+        The native coin is <strong>ANM</strong>; addresses use bech32m encoding with the <code>anim1&hellip;</code> prefix.
       </p>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">Open the Explorer</a>
+        <a class="aicf-ghost-btn" href="/technology">How It Works</a>
+        <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+      </div>
     </div>
   </section>
 
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-3">
       <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Mission</h2>
+        <h2 style="font-size:1.2rem;">Post-Quantum by Default</h2>
         <p class="aicf-muted" style="margin-top:0.6rem;">
-          Build a decentralized compute cloud on Animica where model workloads settle natively in ANM and quality is enforced through measurable performance.
+          Signatures use Dilithium3 (ML-DSA-65) with SPHINCS+ as a hash-based alternative — no
+          quantum-vulnerable elliptic-curve keys anywhere in the protocol. Funds stay safe against
+          harvest-now-decrypt-later attacks.
         </p>
       </article>
       <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Developer Promise</h2>
+        <h2 style="font-size:1.2rem;">Python Smart Contracts</h2>
         <p class="aicf-muted" style="margin-top:0.6rem;">
-          Fast APIs, clear pricing, deterministic budget controls, and a path from quick inference to contract-funded orchestration.
+          Contracts are written in Python and executed in a deterministic, gas-metered VM. Every node
+          reproduces the exact same result — no custom contract language to learn.
         </p>
       </article>
       <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Provider Promise</h2>
+        <h2 style="font-size:1.2rem;">Useful-Work Consensus</h2>
         <p class="aicf-muted" style="margin-top:0.6rem;">
-          Simple onboarding, benchmark-driven routing, transparent rewards, and a fair reputation/staking framework.
+          PoIES (Proof-of-Integrated-External-Services) combines hash-based mining with verifiable proofs
+          of useful work, steering network energy toward AI and quantum-relevant compute instead of
+          throwing it away.
         </p>
+      </article>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Live Today</span>
+      <h2 class="aicf-heading" style="font-size:1.7rem;">What You Can Use Right Now</h2>
+      <div class="aicf-grid-3" style="margin-top:1.2rem;">
+        <article class="aicf-card">
+          <h3 style="font-size:1.1rem;">Mainnet &amp; Explorer</h3>
+          <p class="aicf-muted" style="margin-top:0.55rem;">
+            The chain is producing blocks on mainnet. Browse blocks, transactions, and addresses at
+            <a href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">explorer.animica.org</a>,
+            or query the public RPC directly.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <h3 style="font-size:1.1rem;">Wallets</h3>
+          <p class="aicf-muted" style="margin-top:0.55rem;">
+            Use the web wallet at
+            <a href="https://wallet.animica.org" target="_blank" rel="noopener noreferrer">wallet.animica.org</a>,
+            or download the desktop wallet and browser extension from the <a href="/wallet">wallet page</a>.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <h3 style="font-size:1.1rem;">Mining Pool</h3>
+          <p class="aicf-muted" style="margin-top:0.55rem;">
+            Mine ANM with your CPU and dual-mine XMR on the same hardware via the official pool at
+            <a href="https://pool.animica.org" target="_blank" rel="noopener noreferrer">pool.animica.org</a>.
+            Setup guides are on the <a href="/mine">mining page</a>.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <h3 style="font-size:1.1rem;">GPU Compute via Bittensor</h3>
+          <p class="aicf-muted" style="margin-top:0.55rem;">
+            Animica integrates with Bittensor for GPU compute. Track it on the
+            <a href="https://pool.animica.org/bittensor" target="_blank" rel="noopener noreferrer">Bittensor dashboard</a>.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <h3 style="font-size:1.1rem;">Marketplace</h3>
+          <p class="aicf-muted" style="margin-top:0.55rem;">
+            Trade ANM and ecosystem assets on the marketplace at
+            <a href="https://animica.xyz/" target="_blank" rel="noopener noreferrer">animica.xyz</a>.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <h3 style="font-size:1.1rem;">CLI &amp; SDK</h3>
+          <p class="aicf-muted" style="margin-top:0.55rem;">
+            <code>pip install animica</code> gives you the <code>animica</code> CLI for wallets,
+            transactions, mining, and node interaction. See <a href="/downloads">downloads</a> and
+            <a href="/docs">docs</a>.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <article class="aicf-card">
+        <span class="aicf-kicker">AICF</span>
+        <h2 style="font-size:1.35rem; margin-top:0.5rem;">The AI Compute Lane</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          AICF is Animica's AI-compute lane: a marketplace where developers buy inference and training
+          paid in ANM, and providers earn ANM by contributing benchmarked GPU hardware. It settles
+          natively on the chain, so escrow, receipts, and rewards stay on-chain and auditable.
+        </p>
+        <div class="aicf-btn-row" style="margin-top:0.9rem;">
+          <a class="aicf-btn" href="https://aicf.animica.org" target="_blank" rel="noopener noreferrer">AICF Compute Dashboard</a>
+          <a class="aicf-ghost-btn" href="/providers">Become a Provider</a>
+        </div>
       </article>
     </div>
   </section>
@@ -48,25 +129,21 @@ const description =
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-2">
       <article class="aicf-card">
-        <h2 style="font-size:1.35rem;">Why Decentralized AI Compute Matters</h2>
-        <ul style="margin-top:0.75rem; padding-left:1rem; display:grid; gap:0.45rem;">
-          <li>Distributes supply across many providers instead of a single centralized point.</li>
-          <li>Creates open market pressure for better pricing and performance.</li>
-          <li>Aligns incentives between useful workload demand and infrastructure supply.</li>
-          <li>Anchors payment and settlement in a native chain economy (ANM).</li>
-        </ul>
+        <h2 style="font-size:1.25rem;">Open Source</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          The full node, wallets, SDKs, and tooling are public at
+          <a href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">github.com/animicaorg/all</a>.
+          Issues and contributions are welcome.
+        </p>
       </article>
       <article class="aicf-card">
-        <h2 style="font-size:1.35rem;">Operating Principles</h2>
-        <ul style="margin-top:0.75rem; padding-left:1rem; display:grid; gap:0.45rem;">
-          <li>Practical API usability over marketing abstractions.</li>
-          <li>Transparent job economics and provider reward math.</li>
-          <li>Security and dispute controls for critical workloads.</li>
-          <li>Continuous provider tooling improvements and release discipline.</li>
-        </ul>
+        <h2 style="font-size:1.25rem;">Stay in Touch</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          Follow <a href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg on X</a>
+          for releases and network updates, or reach the team at
+          <a href="mailto:contact@animica.org">contact@animica.org</a>.
+        </p>
       </article>
     </div>
   </section>
-
-  <Footer slot="footer" />
 </BaseLayout>

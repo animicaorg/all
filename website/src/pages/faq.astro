@@ -1,37 +1,50 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Header from "../components/Header.astro";
-import Footer from "../components/Footer.astro";
-import { faqItems } from "../data/aicf";
+import faqData from "../data/faq";
 
 const title = "FAQ";
 const description =
-  "Frequently asked questions on AICF ANM billing, provider earnings, contract-funded AI jobs, and contributor onboarding.";
+  "Frequently asked questions about Animica: ANM, post-quantum security, Python smart contracts, wallets, mining, and AICF compute billing.";
 ---
 
 <BaseLayout title={title} description={description}>
-  <Header slot="header" />
-
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">FAQ</span>
       <h1 class="aicf-heading">Common Questions</h1>
       <p class="aicf-subheading">
-        Clear answers for developers spending ANM and providers earning ANM through decentralized compute on Animica.
+        Straight answers about the Animica chain, ANM, wallets, mining, and the AICF compute lane.
       </p>
     </div>
   </section>
 
+  {faqData.map((group) => (
+    <section class="aicf-section">
+      <div class="aicf-container" style="display:grid; gap:0.85rem;">
+        <span class="aicf-kicker">{group.category}</span>
+        {group.items.map((item) => (
+          <article class="aicf-card">
+            <h2 style="font-size:1.1rem;">{item.question}</h2>
+            <p class="aicf-muted" style="margin-top:0.6rem;">{item.answer}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  ))}
+
   <section class="aicf-section">
-    <div class="aicf-container" style="display:grid; gap:0.85rem;">
-      {faqItems.map((item) => (
-        <article class="aicf-card">
-          <h2 style="font-size:1.1rem;">{item.question}</h2>
-          <p class="aicf-muted" style="margin-top:0.6rem;">{item.answer}</p>
-        </article>
-      ))}
+    <div class="aicf-container">
+      <article class="aicf-card">
+        <h2 style="font-size:1.2rem;">Still have a question?</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">
+          Open an issue on GitHub, email us, or ask on X — we read all three.
+        </p>
+        <div class="aicf-btn-row" style="margin-top:0.9rem;">
+          <a class="aicf-btn" href="/support">Get Support</a>
+          <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a class="aicf-ghost-btn" href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg</a>
+        </div>
+      </article>
     </div>
   </section>
-
-  <Footer slot="footer" />
 </BaseLayout>

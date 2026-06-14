@@ -2,8 +2,8 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import InlineLink from "../components/InlineLink.astro";
 import CodeBlock from "../components/CodeBlock.astro";
-import StatusBadge from "../components/StatusBadge.astro";
 import MetricTicker from "../components/MetricTicker.astro";
+import StatusBadge from "../components/StatusBadge.astro";
 import { links } from "../config/links";
 
 const pageTitle = "Explorer — browse blocks, txs, events";
@@ -53,30 +53,34 @@ const pageDesc =
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
       <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-medium opacity-80">Network Status</h3>
-          <StatusBadge rpcUrl={links.rpc.url} />
+        <h3 class="text-sm font-medium opacity-80">Live Head &amp; Blocks</h3>
+        <div class="mt-3">
+          <MetricTicker compact />
         </div>
-        <p class="mt-3 text-2xl font-semibold tracking-tight">
-          <MetricTicker rpcUrl={links.rpc.url} kind="height" />
+        <p class="text-xs opacity-70 mt-2">
+          Full block, tx, and event detail on the{" "}
+          <InlineLink href={links.explorer.home()} underline>Explorer</InlineLink>.
         </p>
-        <p class="text-xs opacity-70 mt-1">Current head height</p>
       </div>
 
       <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="text-sm font-medium opacity-80">Approx. TPS</h3>
-        <p class="mt-3 text-2xl font-semibold tracking-tight">
-          <MetricTicker rpcUrl={links.rpc.url} kind="tps" />
+        <h3 class="text-sm font-medium opacity-80">Network Metrics</h3>
+        <p class="mt-3 text-2xl font-semibold tracking-tight">Realtime</p>
+        <p class="text-xs opacity-70 mt-1">
+          Throughput and mining stats live on the{" "}
+          <InlineLink href="https://pool.animica.org" underline>pool dashboard</InlineLink>.
         </p>
-        <p class="text-xs opacity-70 mt-1">Recent 60s average</p>
       </div>
 
       <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
         <h3 class="text-sm font-medium opacity-80">RPC Endpoint</h3>
         <p class="mt-3 font-mono text-sm break-all">{links.rpc.url}</p>
-        <p class="text-xs opacity-70 mt-1">Configured target</p>
+        <div class="mt-2 flex items-center gap-2">
+          <StatusBadge size="sm" />
+          <span class="text-xs opacity-70">JSON-RPC · POST only</span>
+        </div>
       </div>
     </div>
   </section>
@@ -114,7 +118,7 @@ const pageDesc =
         <p class="mt-2 text-sm opacity-85">Explorer uses the same JSON-RPC you can call directly:</p>
         <div class="mt-3">
           <CodeBlock lang="bash" title="Query head via JSON-RPC">
-{`curl -s ${links.rpc.url}/rpc \\
+{`curl -s -X POST ${links.rpc.url} \\
   -H 'content-type: application/json' \\
   -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq .`}
           </CodeBlock>

@@ -15,8 +15,10 @@ const walletExtension = loadWalletExtensionDownloadData();
   <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
     <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Wallet</h1>
     <p class="mt-3 opacity-80">
-      Official wallets keep keys local and support post-quantum signatures. Verify every download
-      and always confirm addresses before sending funds.
+      Official wallets keep keys local and support post-quantum signatures (Dilithium3 / SPHINCS+).
+      Pick the web wallet for instant access, the desktop builds for Windows, macOS, and Linux,
+      the browser extension for dApps, or the <code>animica</code> CLI for automation. Verify every
+      download and always confirm addresses before sending funds.
     </p>
 
     <!-- Web wallet — newest, fastest path. No install. -->
@@ -54,8 +56,9 @@ const walletExtension = loadWalletExtensionDownloadData();
           <div>
             <h2 class="text-xl font-semibold">Desktop Wallet</h2>
             <p class="mt-2 text-sm opacity-80">
-              This page reads <code>/wallet/manifest.json</code> when release artifacts are published
-              into the website. GitHub Releases remain the fallback.
+              Native builds for Windows (installer <code>.exe</code>), macOS (<code>.dmg</code>),
+              and Linux (<code>.deb</code>). Every artifact ships with a SHA-256 checksum —
+              verify before installing.
             </p>
           </div>
           {walletDownloads.versionLabel && (
@@ -163,7 +166,7 @@ const walletExtension = loadWalletExtensionDownloadData();
             )}
           </div>
           <a
-            href={walletExtension.download?.href ?? links.docs.page("WALLET")}
+            href={walletExtension.download?.href ?? "/docs"}
             target="_blank"
             rel="noopener noreferrer"
             class="sm:hidden inline-flex h-9 w-9 items-center justify-center rounded-full border
@@ -193,7 +196,9 @@ const walletExtension = loadWalletExtensionDownloadData();
                 Download Extension ZIP
               </a>
               <a
-                href={links.docs.page("WALLET")}
+                href="https://github.com/animicaorg/all/tree/main/docs/wallets"
+                target="_blank"
+                rel="noopener noreferrer"
                 class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium border
                        border-[color-mix(in_srgb,var(--text-primary)_/_20%,transparent)]
                        hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]"
@@ -253,7 +258,9 @@ const walletExtension = loadWalletExtensionDownloadData();
         animica wallet export mywallet --out cold.key
       </div>
       <p class="mt-2 text-xs opacity-70">
-        Learn more in <InlineLink href={links.docs.page("wallet/overview")}>Wallet docs</InlineLink>.
+        Install with <code>pip install animica</code>. Learn more in the{" "}
+        <InlineLink href="https://github.com/animicaorg/all/tree/main/docs/wallets">wallet docs on GitHub</InlineLink>{" "}
+        or the <InlineLink href="/docs">docs hub</InlineLink>.
       </p>
     </div>
 

@@ -1,6 +1,6 @@
 /**
  * FAQ Data
- * 
+ *
  * Frequently asked questions organized by category.
  * Edit this file to add, remove, or update FAQ entries.
  */
@@ -17,103 +17,77 @@ export interface FAQCategory {
 
 export const faqData: FAQCategory[] = [
   {
-    category: "General",
+    category: "Animica & ANM",
     items: [
       {
         question: "What is Animica?",
-        answer: "Animica is a post-quantum layer-1 blockchain designed for security, transparency, and verifiable compute. It combines post-quantum cryptography (Dilithium3, SPHINCS+), a deterministic Python-based smart contract execution layer (Python-VM), and the PoIES (Proof-of-Integrated-External-Services) consensus mechanism that rewards both traditional mining and useful computational work."
+        answer: "Animica is a live post-quantum layer-1 blockchain. It combines post-quantum signatures (Dilithium3, SPHINCS+), a deterministic Python-based smart contract VM, and PoIES (Proof-of-Integrated-External-Services) consensus that rewards useful computational work alongside traditional mining. Mainnet is running today with a public explorer, wallets, RPC, and a mining pool."
       },
       {
-        question: "What makes Animica different from other blockchains?",
-        answer: "Animica stands out with its post-quantum security built-in from day one, Python-based smart contracts for easier development, and PoIES consensus that rewards meaningful computation alongside traditional mining. It also provides production-ready tooling including wallets, explorer, SDKs, and comprehensive monitoring."
+        question: "What is ANM and how do I get it today?",
+        answer: "ANM is Animica's native coin, used for transaction fees, contract execution, and compute settlement. Today you can earn it by mining through the pool at pool.animica.org, or trade it on the marketplace at animica.xyz. Buying with a card is temporarily unavailable while the buy desk is relaunched."
       },
       {
-        question: "Is Animica production-ready?",
-        answer: "Animica is actively being developed with devnet and testnet environments available. The core protocol, consensus, execution layer, and supporting tools are functional. Check the roadmap for current status and upcoming mainnet milestones."
-      }
-    ]
-  },
-  {
-    category: "Technical",
-    items: [
+        question: "What does an anim1... address mean?",
+        answer: "Animica addresses use bech32m encoding with the 'anim1' prefix — the same modern, checksummed format family used by Bitcoin taproot addresses. Addresses are derived from post-quantum public keys (Dilithium3 or SPHINCS+), so a typo is caught by the checksum before any funds move."
+      },
       {
-        question: "What is post-quantum cryptography?",
-        answer: "Post-quantum cryptography refers to cryptographic algorithms that are secure against attacks from quantum computers. Animica uses Dilithium3 (ML-DSA-65) for signatures and SPHINCS+ as an alternative, both of which are quantum-resistant algorithms standardized by NIST."
+        question: "Why post-quantum cryptography?",
+        answer: "Classical signatures (ECDSA, Ed25519) can be broken by a sufficiently large quantum computer, and adversaries can record transactions now to attack them later — the 'harvest now, decrypt later' problem. Animica avoids this entirely by signing with Dilithium3 (ML-DSA-65) and SPHINCS+, both NIST-standardized post-quantum algorithms, from day one."
       },
       {
         question: "What are Python smart contracts?",
-        answer: "Animica's execution layer runs Python-based smart contracts in a deterministic virtual machine (Python-VM). This allows developers to write contracts in Python with gas metering, reproducible execution, and predictable behavior. The VM enforces determinism to ensure all nodes execute contracts identically."
+        answer: "Animica contracts are written in Python and run in a deterministic, gas-metered virtual machine. The VM enforces reproducible execution so every node computes the identical result. You get a mainstream language and tooling instead of a niche contract DSL."
       },
       {
-        question: "What is PoIES consensus?",
-        answer: "PoIES (Proof-of-Integrated-External-Services) is Animica's consensus mechanism that combines traditional hash-based mining with verifiable proofs of useful work (AI computation, quantum tasks, storage proofs, etc.). Miners submit both hash shares and optional proofs, with blocks accepted when the combined score exceeds a moving threshold."
-      },
-      {
-        question: "What are block times and finality?",
-        answer: "Animica targets block production based on policy parameters defined in the chain. The consensus is deterministic with probabilistic finality improving over time. Check the chain specs for the current network's target block interval."
+        question: "Where is the code?",
+        answer: "The full monorepo — node, wallets, SDKs, pool, and tooling — is public at github.com/animicaorg/all. Issues and pull requests are welcome."
       }
     ]
   },
   {
-    category: "Development",
+    category: "Wallets & Mining",
     items: [
       {
-        question: "How do I deploy a smart contract?",
-        answer: "Write your contract in Python following the Python-VM spec, compile it using the vm_py compiler, and deploy using one of our SDKs (Python, TypeScript, or Rust). See the Developers page and documentation for quickstart guides and examples."
+        question: "Which wallets exist?",
+        answer: "There is a web wallet at wallet.animica.org, a desktop Qt wallet for Windows and macOS, and a browser extension wallet. The CLI (pip install animica) also includes wallet commands for hot and cold workflows. See the /wallet page for downloads and checksums."
       },
       {
-        question: "Which SDKs are available?",
-        answer: "Animica provides official SDKs in Python (omni_sdk), TypeScript (@animica/sdk), and Rust (animica-sdk). All SDKs support wallet management, transaction building, contract deployment, and RPC communication."
-      },
-      {
-        question: "Is there a test network?",
-        answer: "Yes, Animica provides both devnet and testnet environments for development and testing. Use the testnet faucet to request test tokens, and connect your SDK to the testnet RPC endpoint."
-      },
-      {
-        question: "Where can I find code examples?",
-        answer: "Check the SDK examples in the GitHub repository under sdk/python/examples/, sdk/typescript/examples/, and templates/ directory. The documentation also includes quickstart guides and tutorials."
-      }
-    ]
-  },
-  {
-    category: "Mining & Node Operation",
-    items: [
-      {
-        question: "How do I run a node?",
-        answer: "Install dependencies using the setup script, choose your network (mainnet/testnet/devnet), and start your node using the CLI or Docker Compose. See the Node page and README for detailed instructions."
-      },
-      {
-        question: "Can I mine with CPU or GPU?",
-        answer: "Yes, Animica supports both CPU and GPU mining. The mining implementation works with standard hardware. Check the Mining page for commands and pool information."
-      },
-      {
-        question: "What are the mining rewards?",
-        answer: "Mining rewards follow the emission schedule defined in the chain parameters. Rewards are distributed to the miner's address specified in the mining configuration. Block rewards may also include transaction fees."
+        question: "How do I mine?",
+        answer: "Point a RandomX CPU miner at the pool at pool.animica.org — and you can dual-mine XMR on the same hardware at the same time. Step-by-step setup, miner bundles, and pool stats are on the /mine page."
       },
       {
         question: "Do I need to run a node to mine?",
-        answer: "You can mine solo by running your own node, or join a mining pool which runs nodes on your behalf. Solo mining gives you full control but requires running and maintaining infrastructure."
+        answer: "No. The pool at pool.animica.org runs the chain infrastructure for you — you just connect a miner and a payout address. You can also mine solo against your own node if you prefer full control."
+      },
+      {
+        question: "How do I secure my wallet?",
+        answer: "Back up your mnemonic phrase offline and never share it. Wallet files are encrypted, but protect access to them as well. Verify the SHA256 checksum of any downloaded binary against the published checksum files before running it."
       }
     ]
   },
   {
-    category: "Wallets & Security",
+    category: "AICF compute",
     items: [
       {
-        question: "Which wallets support Animica?",
-        answer: "Animica provides an official desktop wallet (Flutter-based) and browser extension wallet (MV3). You can also use the CLI wallet for hot and cold storage workflows. Check the Wallet page for download links."
+        question: "What is AICF?",
+        answer: "AICF is Animica's AI-compute lane: developers buy inference and training paid in ANM, and providers earn ANM by contributing benchmarked GPU hardware. The dashboard is at aicf.animica.org and provider onboarding is at /providers."
       },
       {
-        question: "How do I secure my wallet?",
-        answer: "Always backup your mnemonic phrase in a secure offline location. Use hardware security modules (HSM) for production environments. Never share your private keys or mnemonic. The wallet files are encrypted, but you should still protect access to them."
+        question: "Why ANM-only billing?",
+        answer: "AICF settles natively on Animica. ANM billing keeps accounting, escrow, rewards, and governance on-chain and auditable."
       },
       {
-        question: "What address format does Animica use?",
-        answer: "Animica uses bech32m encoding with the 'anim1' prefix for addresses. Addresses are derived from post-quantum public keys (Dilithium3 or SPHINCS+)."
+        question: "How do providers earn ANM?",
+        answer: "Providers run benchmarked workers, receive jobs, submit receipts, and claim rewards. Routing weight depends on uptime, quality, and stake/reputation."
       },
       {
-        question: "How do I verify downloads?",
-        answer: "All official releases include checksums and signatures. Verify the SHA256 checksum of downloaded files and check the signature against the published public key. Never run unverified binaries."
+        question: "Can smart contracts fund AI jobs?",
+        answer: "Yes. Contracts can lock ANM into escrow and trigger model jobs through contract-driven workflows with dispute windows and deterministic receipts."
+      },
+      {
+        question: "Is there a Python source option for providers?",
+        answer: "Yes. AICF ships a Python bundle for providers who want source-level control, custom runtimes, and local instrumentation."
       }
     ]
   }

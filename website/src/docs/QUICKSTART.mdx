@@ -7,7 +7,7 @@ layout: ../layouts/DocsLayout.astro
 import InlineLink from "../components/InlineLink.astro";
 
 > This page is a fast path into the **specs**, **Studio**, and **SDK** docs.  
-> If your canonical docs are hosted elsewhere, the links below will 302 to the external site.
+> Deep-dive material lives in the public monorepo: https://github.com/animicaorg/all
 
 ## 1) Prerequisites
 
@@ -28,17 +28,21 @@ rustc --version
 
 2) Start a local devnet
 
-# Start a local single-node devnet (example CLI)
-omni node --devnet
+# Install the CLI, then start a local node (Docker-backed)
+pip install animica
+animica node up
+animica node status
 # Keep this running in a terminal; it exposes HTTP RPC and WS endpoints locally.
+# Don't want to run a node yet? Use the public mainnet RPC instead:
+# https://rpc.animica.org/rpc (JSON-RPC, POST only)
 
 
 ⸻
 
-3) Open Studio (web IDE)
+3) Open Studio
 
-Use the hosted Studio or a self-hosted one.
-	•	Hosted: Open Studio
+The hosted web Studio is being rebuilt — a holding page is live at studio.animica.org
+in the meantime. Use the Linux desktop build from /studio, or run the web app locally:
 	•	Self-hosted (example):
 
 # if you cloned the monorepo
@@ -52,73 +56,50 @@ From Studio you can edit → simulate → deploy → verify contracts end-to-end
 
 ⸻
 
-4) Use an SDK
+4) Use the CLI & SDKs
 
-Python
+Python (published on PyPI as `animica` — CLI + client libraries):
 
-pip install omni-sdk
-python - <<'PY'
-from omni_sdk.tx import build, send
-from omni_sdk.wallet.mnemonic import create_mnemonic
+pip install animica
 
-mn = create_mnemonic()
-tx = build.transfer(to="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxyza", amount=12345)
-rcpt = send(tx, mnemonic=mn, rpc_url="http://localhost:8545")
-print("status:", rcpt["status"], "gas:", rcpt["gasUsed"])
-PY
+# Create a wallet and inspect it (keys stay local)
+animica wallet create --label mywallet
+animica wallet show mywallet
 
-Doc: SDK overview ·
-Python SDK
+# Query the live chain over the public RPC (illustrative —
+# run `animica --help` for the exact command surface)
+animica chain head --rpc-url https://rpc.animica.org/rpc
 
-TypeScript
+Doc: https://github.com/animicaorg/all/tree/main/sdk
 
-npm i @animica/sdk
-# or: pnpm add @animica/sdk
-node - <<'JS'
-import { http } from '@animica/sdk/rpc/http.js'
-import { build, send } from '@animica/sdk/tx/send.js'
+TypeScript and Rust SDKs live in the monorepo (illustrative; build from
+source — see the sdk/ README for current install instructions):
 
-const rpc = http({ url: 'http://localhost:8545' })
-const tx = await build.transfer({ to: 'anim1qqqq...xyza', amount: 12345 })
-const rcpt = await send({ tx, rpc })
-console.log('status:', rcpt.status, 'gas:', rcpt.gasUsed)
-JS
-
-Doc: TypeScript SDK
-
-Rust
-
-cargo add animica-sdk
-# examples
-cargo run --example quickstart
-
-Doc: Rust SDK
+https://github.com/animicaorg/all/tree/main/sdk
 
 ⸻
 
 5) Quick links into spec/
 
-Foundational specs and schemas:
-	•	Consensus — PoIES: /docs/consensus/poies
-	•	Data Availability: /docs/da/overview
-	•	Python VM: /docs/vm/overview
-	•	OpenRPC (RPC surface): /docs/specs/openrpc
-	•	ABI schema (contracts): /docs/specs/abi
-	•	Tx/Header/Blob CDDL: /docs/specs/formats
-	•	ZK verifiers (Groth16/PLONK/STARK, Poseidon, KZG): /docs/zk/overview
-
-The /docs/* routes will either serve local MDX (if present) or redirect to the canonical docs site.
+Foundational specs and schemas (on GitHub):
+	•	Consensus — PoIES: https://github.com/animicaorg/all/blob/main/spec/poies_math.md
+	•	Data Availability: https://github.com/animicaorg/all/blob/main/docs/DA.md
+	•	Python VM: https://github.com/animicaorg/all/tree/main/docs/vm
+	•	OpenRPC (RPC surface): https://github.com/animicaorg/all/blob/main/spec/openrpc.json
+	•	ABI schema (contracts): https://github.com/animicaorg/all/blob/main/spec/abi.schema.json
+	•	Tx/Header/Blob CDDL: https://github.com/animicaorg/all/tree/main/spec
+	•	ZK verifiers (Groth16/PLONK/STARK, Poseidon, KZG): https://github.com/animicaorg/all/tree/main/zk
 
 ⸻
 
 6) Common env vars
 
-If pointing UI/SDKs to your devnet:
+If pointing UI/SDKs to your local devnet (for mainnet, use the public RPC
+https://rpc.animica.org/rpc and chain ID 1):
 
-export ANIMICA_RPC_URL="http://localhost:8545"
-export ANIMICA_CHAIN_ID="1337"
-export ANIMICA_STUDIO_URL="http://localhost:4321"
-export ANIMICA_EXPLORER_URL="http://localhost:3000"
+export ANIMICA_RPC_URL="http://localhost:8545"   # or https://rpc.animica.org/rpc
+export ANIMICA_CHAIN_ID="1337"                   # mainnet: 1
+export ANIMICA_EXPLORER_URL="https://explorer.animica.org"
 
 
 ⸻
@@ -131,6 +112,6 @@ export ANIMICA_EXPLORER_URL="http://localhost:3000"
 ⸻
 
 Next
-	•	Read the Overview: /docs/OVERVIEW
+	•	Read the docs hub: /docs
 	•	Explore the network status: /status
-	•	Dive into examples in the SDKs or open Studio to compile the Counter contract.
+	•	Dive into examples in the SDKs (https://github.com/animicaorg/all/tree/main/sdk) or use the Studio desktop build (/studio) to compile the Counter contract.

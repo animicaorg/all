@@ -1625,7 +1625,9 @@ async def _run_pool_stratum_miner(
     """
     Run the CPU stratum miner against `host:port` and return the number of
     accepted blocks. Stops when `target_blocks` accepted blocks have been
-    submitted or when the connection drops / SIGINT is received.
+    submitted or when SIGINT/SIGTERM is received. A dropped pool connection
+    no longer ends the run: the client auto-reconnects with exponential
+    backoff (see `CpuStratumMiner._handle_disconnect`) and resumes mining.
 
     When `enable_useful_work` is True (default), AI/quantum/storage/VDF
     workers are spawned alongside the miner so completed useful-work

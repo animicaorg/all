@@ -64,7 +64,7 @@ Start with `--threads` set to about the number of physical cores you can spare (
 ## Where to go next
 
 - [Set up mining on the Animica pool](https://pool.animica.org/mine) — pick pure ANM, pure XMR, or dual.
-- [What is RandomX?](/blog/what-is-randomx) — the algorithm that keeps Monero CPU-mineable.
+- [Dual-mine XMR + ANM with one command](/blog/dual-mining-one-command) — put your spare threads to work.
 - [Run a full node](https://academy.animica.org/tutorials/run-a-node) — for the fully self-reliant setup.
 
 Mining is the most hands-on way to learn how a blockchain actually works. Start small, watch your shares land, and scale from there.

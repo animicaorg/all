@@ -1,12 +1,12 @@
 ---
-// A-Ads adaptive banner — front-page-only, top-of-page, dismissable.
+// A-Ads adaptive banner — front-page-only, end-of-page, dismissable.
 //
 // Design notes:
-//  - The wrapper is a thin band at the very top of the page (above the
-//    site header). Tinted to blend with the dark site shell, with a
-//    subtle bottom border so users perceive it as part of the chrome
-//    rather than content. Height is bounded so the hero stays
-//    above-the-fold on standard viewports.
+//  - The wrapper is a thin band at the bottom of the page (after the
+//    main content, before the footer). Tinted to blend with the dark
+//    site shell, with a subtle top border so users perceive it as part
+//    of the chrome rather than content. Height is bounded so it never
+//    dominates the page.
 //  - "Sponsored" label + a close (×) button mark this clearly as an
 //    ad and let users dismiss it. Dismissal is persisted in
 //    sessionStorage so navigating between pages within the same tab
@@ -40,7 +40,6 @@ const iframeSrc = `//acceptable.a-ads.com/${unitId}/?size=Adaptive`;
       <span class="ad-banner__label">{label}</span>
       <span class="ad-banner__cta">
         <strong>Support Animica</strong>
-        <span class="ad-banner__cta-sub">— a click on the ad helps fund our open infrastructure.</span>
       </span>
     </div>
     <div class="ad-banner__frame">
@@ -74,7 +73,7 @@ const iframeSrc = `//acceptable.a-ads.com/${unitId}/?size=Adaptive`;
   .ad-banner {
     width: 100%;
     background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-top: 1px solid rgba(255,255,255,0.06);
     /* Stays in flow; no position: sticky so it scrolls away. */
     position: relative;
     z-index: 1;
@@ -110,9 +109,6 @@ const iframeSrc = `//acceptable.a-ads.com/${unitId}/?size=Adaptive`;
   .ad-banner__cta strong {
     color: rgba(255,255,255,0.95);
     font-weight: 600;
-  }
-  .ad-banner__cta-sub {
-    color: rgba(255,255,255,0.55);
   }
   .ad-banner__frame {
     flex: 1 1 auto;
@@ -161,8 +157,8 @@ const iframeSrc = `//acceptable.a-ads.com/${unitId}/?size=Adaptive`;
   }
 
   /* Mobile: drop the leaderboard target and let A-Ads serve a 320×50
-     mobile banner. The longer "support" sub-copy collapses; we keep
-     the short "Support Animica" headline so the framing survives. */
+     mobile banner. The "Sponsored" micro-label collapses; we keep the
+     short "Support Animica" headline so the framing survives. */
   @media (max-width: 640px) {
     .ad-banner__inner {
       padding: 6px 12px;
@@ -171,8 +167,7 @@ const iframeSrc = `//acceptable.a-ads.com/${unitId}/?size=Adaptive`;
     .ad-banner__copy {
       max-width: 110px;
     }
-    .ad-banner__label,
-    .ad-banner__cta-sub {
+    .ad-banner__label {
       display: none;
     }
     .ad-banner__cta {

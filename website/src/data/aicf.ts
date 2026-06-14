@@ -40,27 +40,20 @@ export const useCases = [
   },
 ];
 
+// Verified against the live registry (GET https://aicf.animica.org/api/models)
+// on 2026-06-10. Rates are indicative — final rates are shown at key creation.
 export const modelCatalog = [
   {
     model: 'aicf-chat-1',
     type: 'Chat Completion',
-    context: '128k',
-    latency: '620 ms p50',
-    price: '0.72 ANM / 1K in tokens · 1.08 ANM / 1K out tokens',
+    status: 'Active',
+    price: '0.012 ANM / 1K input tokens · 0.018 ANM / 1K output tokens',
   },
   {
     model: 'aicf-embed-1',
     type: 'Embeddings',
-    context: '32k',
-    latency: '190 ms p50',
-    price: '0.22 ANM / 1K input tokens',
-  },
-  {
-    model: 'aicf-agent-1',
-    type: 'Agent Runtime',
-    context: '256k',
-    latency: 'job-based',
-    price: 'Per step + tool execution + compute-seconds',
+    status: 'Active',
+    price: '0.008 ANM / 1K input tokens · 0.00005 ANM / vector',
   },
 ];
 
@@ -83,48 +76,60 @@ export const architectureLayers = [
   },
 ];
 
+// Verified against the live registry (GET https://aicf.animica.org/api/models)
+// on 2026-06-10: aicf-chat-1 splits 85/15, aicf-embed-1 splits 82/18.
+// Rates are indicative — final rates are shown at key creation.
 export const pricingRows = [
   {
-    item: 'Chat Inference',
+    item: 'Chat Input (aicf-chat-1)',
     unit: '1K input tokens',
-    basePrice: '0.72 ANM',
+    basePrice: '0.012 ANM',
+    providerShare: '85%',
+    treasuryShare: '15%',
+  },
+  {
+    item: 'Chat Output (aicf-chat-1)',
+    unit: '1K output tokens',
+    basePrice: '0.018 ANM',
+    providerShare: '85%',
+    treasuryShare: '15%',
+  },
+  {
+    item: 'Chat Request Base Fee',
+    unit: 'request',
+    basePrice: '0.00015 ANM',
+    providerShare: '85%',
+    treasuryShare: '15%',
+  },
+  {
+    item: 'Embeddings Input (aicf-embed-1)',
+    unit: '1K input tokens',
+    basePrice: '0.008 ANM',
     providerShare: '82%',
     treasuryShare: '18%',
   },
   {
-    item: 'Chat Output',
-    unit: '1K output tokens',
-    basePrice: '1.08 ANM',
-    providerShare: '84%',
-    treasuryShare: '16%',
+    item: 'Embedding Vectors (aicf-embed-1)',
+    unit: 'vector',
+    basePrice: '0.00005 ANM',
+    providerShare: '82%',
+    treasuryShare: '18%',
   },
   {
-    item: 'Embeddings',
-    unit: '1K input tokens',
-    basePrice: '0.22 ANM',
-    providerShare: '80%',
-    treasuryShare: '20%',
-  },
-  {
-    item: 'Batch Compute',
-    unit: 'GPU-minute',
-    basePrice: '1.95 ANM',
-    providerShare: '86%',
-    treasuryShare: '14%',
-  },
-  {
-    item: 'Agent Tasks',
-    unit: 'task-step',
-    basePrice: '0.34 ANM',
-    providerShare: '79%',
-    treasuryShare: '21%',
+    item: 'Embeddings Request Base Fee',
+    unit: 'request',
+    basePrice: '0.0001 ANM',
+    providerShare: '82%',
+    treasuryShare: '18%',
   },
 ];
 
+// VRAM floors match runtimeRequirements in the live model registry:
+// aicf-embed-1 needs 8 GB+ GPU memory, aicf-chat-1 needs 16 GB+.
 export const providerHardware = [
-  { class: 'Entry', gpu: 'RTX 3060 / A2000', vram: '12 GB+', expected: 'Inference + embeddings' },
-  { class: 'Recommended', gpu: 'RTX 4090 / L40S', vram: '24 GB+', expected: 'High-throughput inference + agents' },
-  { class: 'Pro', gpu: 'A100 / H100 / MI300', vram: '80 GB+', expected: 'Enterprise latency + training jobs' },
+  { class: 'Entry', gpu: 'RTX 3060 / A2000', vram: '8 GB+', expected: 'Embeddings (aicf-embed-1)' },
+  { class: 'Recommended', gpu: 'RTX 4090 / L40S', vram: '16 GB+', expected: 'Chat inference (aicf-chat-1) + embeddings' },
+  { class: 'Pro', gpu: 'A100 / H100 / MI300', vram: '24 GB+', expected: 'High-throughput inference + batch queues' },
 ];
 
 export const providerSteps = [

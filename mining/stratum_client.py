@@ -102,6 +102,12 @@ class StratumClient:
         # Callbacks (set by user)
         self.on_notify: Optional[Callable[[JSON], Awaitable[None]]] = None
         self.on_set_difficulty: Optional[Callable[[float, int], Awaitable[None]]] = None
+        # Fired once from close() when the transport goes away (EOF / reset /
+        # explicit close). Owners (CpuStratumMiner) use it to reconnect or
+        # shut down — without it a dropped pool connection silently strands
+        # the miner. The handler must swallow its own exceptions; it is
+        # scheduled, not awaited.
+        self.on_close: Optional[Callable[[], Awaitable[None]]] = None
 
     # ------------- transport -------------
 
@@ -171,6 +177,36 @@ class StratumClient:
                 fut.set_exception(RuntimeError(f"connection closed: {hint}"))
         self._pending.clear()
         log.info("[client] closed")
+        # Notify the owner the transport is gone so it can reconnect or stop.
+        # Scheduled rather than awaited: close() runs inside the rx loop's
+        # `finally`, and the handler may block for seconds doing
+        # backoff+reconnect — we don't want to pin rx teardown on it.
+        cb = self.on_close
+        if cb is not None:
+            try:
+                self.loop.create_task(cb())
+            except Exception:  # pragma: no cover - loop already torn down
+                pass
+
+    def prepare_reconnect(self) -> None:
+        """Reset per-connection state so ``connect()`` can re-establish the
+        transport on this same client object.
+
+        Reusing the object (rather than building a fresh ``StratumClient``)
+        is deliberate: callers monkey-patch ``submit_share`` / ``on_notify`` /
+        AICF handlers onto the client after the first connect, and a new
+        instance would silently drop all of them. Callbacks and the framing
+        negotiated earlier are preserved; only the dead socket, pending
+        futures, and per-connection diagnostics are cleared.
+        """
+        self._closed = False
+        self._pending.clear()
+        self.session = None
+        self._connect_started_at = 0.0
+        self._first_byte_at = 0.0
+        self._frames_received = 0
+        self._bytes_received = 0
+        self._last_tx_at = 0.0
 
     # ------------- JSON-RPC helpers -------------
 

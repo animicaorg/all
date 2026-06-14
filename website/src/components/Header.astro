@@ -4,6 +4,11 @@ import { links } from "../config/links";
 
 const nav = site.nav.top;
 const activePath = Astro.url.pathname;
+
+function isActive(href: string): boolean {
+  if (href.startsWith("http")) return false;
+  return activePath === href || activePath.startsWith(href + "/");
+}
 ---
 
 <header class="aicf-header">
@@ -18,12 +23,13 @@ const activePath = Astro.url.pathname;
 
     <nav class="aicf-nav" aria-label="Primary">
       {nav.map((item) => {
-        const isActive = activePath === item.href || activePath.startsWith(item.href + "/");
+        const active = isActive(item.href);
         return (
           <a
             href={item.href}
-            class={`aicf-nav-link ${isActive ? "active" : ""}`}
-            aria-current={isActive ? "page" : undefined}
+            class={`aicf-nav-link ${active ? "active" : ""}`}
+            aria-current={active ? "page" : undefined}
+            {...(item.external ? { target: item.target ?? "_blank", rel: item.rel ?? "noopener" } : {})}
           >
             {item.label}
           </a>
@@ -35,20 +41,42 @@ const activePath = Astro.url.pathname;
       <a class="aicf-ghost-btn" href={links.explorer.home()} target="_blank" rel="noopener noreferrer">
         Explorer
       </a>
-      <a class="aicf-cta-btn" href="https://buy.animica.org">Buy ANM</a>
-      <button class="aicf-mobile-toggle" aria-label="Toggle menu" data-mobile-toggle>
+      <a class="aicf-cta-btn" href="/mine">Start Mining</a>
+      <button
+        class="aicf-mobile-toggle"
+        type="button"
+        aria-label="Toggle menu"
+        aria-expanded="false"
+        aria-controls="aicf-mobile-nav"
+        data-mobile-toggle
+      >
         <span></span>
         <span></span>
       </button>
     </div>
   </div>
 
-  <div class="aicf-mobile-nav" data-mobile-nav>
+  <div class="aicf-mobile-nav" id="aicf-mobile-nav" data-mobile-nav>
     <div class="aicf-mobile-nav-inner">
-      {nav.map((item) => (
-        <a href={item.href} class="aicf-mobile-link">{item.label}</a>
-      ))}
-      <a class="aicf-cta-btn" href="https://buy.animica.org">Buy ANM</a>
+      {nav.map((item) => {
+        const active = isActive(item.href);
+        return (
+          <a
+            href={item.href}
+            class={`aicf-mobile-link ${active ? "active" : ""}`}
+            aria-current={active ? "page" : undefined}
+            {...(item.external ? { target: item.target ?? "_blank", rel: item.rel ?? "noopener" } : {})}
+          >
+            {item.label}
+          </a>
+        );
+      })}
+      <div class="aicf-btn-row" style="margin-top:0.75rem;">
+        <a class="aicf-ghost-btn" href={links.explorer.home()} target="_blank" rel="noopener noreferrer">
+          Explorer
+        </a>
+        <a class="aicf-cta-btn" href="/mine">Start Mining</a>
+      </div>
     </div>
   </div>
 
@@ -58,9 +86,30 @@ const activePath = Astro.url.pathname;
       const nav = document.querySelector('[data-mobile-nav]') as HTMLDivElement | null;
       if (!toggle || !nav) return;
 
-      toggle.addEventListener('click', () => {
-        nav.classList.toggle('open');
-        toggle.classList.toggle('open');
+      const setOpen = (open: boolean) => {
+        nav.classList.toggle('open', open);
+        toggle.classList.toggle('open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+      };
+
+      toggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setOpen(!nav.classList.contains('open'));
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && nav.classList.contains('open')) {
+          setOpen(false);
+          toggle.focus();
+        }
+      });
+
+      document.addEventListener('click', (event) => {
+        if (!nav.classList.contains('open')) return;
+        const target = event.target as Node;
+        if (!nav.contains(target) && !toggle.contains(target)) {
+          setOpen(false);
+        }
       });
     });
   </script>
