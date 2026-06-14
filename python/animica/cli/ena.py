@@ -282,6 +282,38 @@ def ds_validate(path: str = typer.Argument(...)):
         raise typer.Exit(1)
 
 
+@ds_app.command("contribute")
+def ds_contribute(file: Optional[str] = typer.Argument(None, help="JSONL file of training rows"),
+                  url: Optional[str] = typer.Option(None, "--url", help="URL to scrape into data"),
+                  name: Optional[str] = typer.Option(None, "--name"),
+                  kind: str = typer.Option("contributed", "--kind"),
+                  no_curate: bool = typer.Option(False, "--no-curate")):
+    """Contribute training data: a local JSONL file or a --url to scrape."""
+    e = _ena()
+    rows = None
+    if file:
+        from animica.ena import datasets as d
+        rows = list(_guard(lambda: list(d.read_jsonl(file))))
+    if not rows and not url:
+        console.print("[red]provide a JSONL file or --url[/red]")
+        raise typer.Exit(1)
+    _emit(_guard(e.contribute_dataset, name=name, kind=kind, rows=rows, url=url,
+                 curate=not no_curate), title="contributed")
+
+
+@ds_app.command("list")
+def ds_list():
+    e = _ena()
+    rows = e.list_datasets()
+    if _state.json:
+        return _emit({"datasets": rows})
+    table = Table("dataset_id", "kind", "rows", "sha256")
+    for r in rows:
+        table.add_row(r.get("name", r["dataset_id"]), r["kind"], str(r.get("row_count", 0)),
+                      (r.get("sha256") or "")[:16])
+    console.print(table)
+
+
 @ds_app.command("export")
 def ds_export(path: str = typer.Argument(...), out: str = typer.Option(..., "--out"),
               fmt: str = typer.Option("jsonl", "--format")):

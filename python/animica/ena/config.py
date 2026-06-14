@@ -50,6 +50,13 @@ class ENAConfig(Schema):
     embedding_providers: dict[str, EmbeddingProviderConfig] = field(default_factory=dict)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     source_paths: list[str] = field(default_factory=list)
+    # --- demand side (wallet-funded jobs) ---
+    treasury_address: Optional[str] = None       # anim1… that receives ANM job funding
+    rpc_url: str = "http://127.0.0.1:8545/rpc"   # Animica node RPC for payment verify
+    chain_id: int = 1
+    demand_min_anm: float = 0.1                   # minimum reward a requester may fund
+    payment_confirmations: int = 1                # confirmations required before funding
+    public_url: str = "https://ena.animica.org"   # public origin (web-wallet callback)
 
     # -- resolved helpers -------------------------------------------------
     def home_path(self) -> Path:
@@ -68,6 +75,9 @@ class ENAConfig(Schema):
         # Synthesize a deterministic fallback so ENA always has a usable model.
         return ModelProviderConfig(name=key, provider="deterministic",
                                    transport="fallback", model="deterministic")
+
+    def demand_enabled(self) -> bool:
+        return bool(self.treasury_address)
 
     def embedding_provider(self, name: Optional[str] = None) -> EmbeddingProviderConfig:
         key = name or self.default_embedding_provider
@@ -201,6 +211,17 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             section["api_key_env_vars"] = [env["ANIMICA_ENA_EMBEDDING_API_KEY_ENV"]]
     if env.get("ANIMICA_ENA_HOME"):
         raw.setdefault("storage", {})["home"] = env["ANIMICA_ENA_HOME"]
+    demand = raw.setdefault("demand", {})
+    if env.get("ENA_TREASURY_ADDRESS"):
+        demand["treasury_address"] = env["ENA_TREASURY_ADDRESS"]
+    if env.get("ANIMICA_RPC_URL"):
+        demand["rpc_url"] = env["ANIMICA_RPC_URL"]
+    if env.get("ANIMICA_CHAIN_ID"):
+        demand["chain_id"] = int(env["ANIMICA_CHAIN_ID"])
+    if env.get("ENA_DEMAND_MIN_ANM"):
+        demand["demand_min_anm"] = float(env["ENA_DEMAND_MIN_ANM"])
+    if env.get("ENA_PUBLIC_URL"):
+        demand["public_url"] = env["ENA_PUBLIC_URL"]
     return raw
 
 
@@ -236,6 +257,7 @@ def load_config(config_path: Optional[str] = None) -> ENAConfig:
     models, embeds = _build_providers(raw)
     storage = raw.get("storage") or {}
     network = NetworkConfig.from_dict(raw.get("network") or {})
+    demand = raw.get("demand") or {}
     return ENAConfig(
         version=str(raw.get("version", ENA_CONFIG_VERSION)),
         log_level=str(raw.get("log_level", "INFO")),
@@ -247,6 +269,12 @@ def load_config(config_path: Optional[str] = None) -> ENAConfig:
         embedding_providers=embeds,
         network=network,
         source_paths=sources,
+        treasury_address=demand.get("treasury_address"),
+        rpc_url=str(demand.get("rpc_url", "http://127.0.0.1:8545/rpc")),
+        chain_id=int(demand.get("chain_id", 1)),
+        demand_min_anm=float(demand.get("demand_min_anm", 0.1)),
+        payment_confirmations=int(demand.get("payment_confirmations", 1)),
+        public_url=str(demand.get("public_url", "https://ena.animica.org")),
     )
 
 

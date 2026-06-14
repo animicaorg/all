@@ -108,6 +108,24 @@ CREATE TABLE IF NOT EXISTS memory (
     created_at  INTEGER NOT NULL,
     metadata    TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS payments (
+    txid        TEXT PRIMARY KEY,
+    job_id      TEXT NOT NULL,
+    value_nano  INTEGER NOT NULL,
+    from_addr   TEXT,
+    status      TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payments_job ON payments(job_id);
+CREATE TABLE IF NOT EXISTS wallet_connect (
+    request_id  TEXT PRIMARY KEY,
+    nonce       TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    address     TEXT,
+    accounts    TEXT NOT NULL DEFAULT '[]',
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL
+);
 """
 
 
@@ -390,6 +408,65 @@ class Store:
             "WHERE worker_id IS NOT NULL AND status IN ('completed','verified') "
             "GROUP BY worker_id ORDER BY jobs DESC LIMIT ?", (limit,))
         return [{"worker_id": r["worker_id"], "jobs": int(r["jobs"])} for r in rows]
+
+    # -- payments (demand side) -------------------------------------------
+    def payment_seen(self, txid: str) -> bool:
+        return bool(self._query("SELECT 1 FROM payments WHERE txid=?", (txid,)))
+
+    def record_payment(self, pmt: dict[str, Any]) -> bool:
+        """Insert a payment; returns False if the txid was already used."""
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO payments (txid, job_id, value_nano, from_addr, status, created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (pmt["txid"], pmt["job_id"], int(pmt["value_nano"]),
+                     pmt.get("from_addr"), pmt.get("status", "verified"),
+                     pmt.get("created_at", 0)))
+                self._conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def payment_for_job(self, job_id: str) -> Optional[dict[str, Any]]:
+        rows = self._query(
+            "SELECT txid, value_nano, from_addr, status, created_at FROM payments "
+            "WHERE job_id=? ORDER BY created_at DESC LIMIT 1", (job_id,))
+        return dict(rows[0]) if rows else None
+
+    def total_funded_nano(self) -> int:
+        rows = self._query("SELECT COALESCE(SUM(value_nano),0) FROM payments")
+        return int(rows[0][0] or 0) if rows else 0
+
+    # -- wallet-connect (web/mobile wallet handshake) ---------------------
+    def create_wc(self, wc: dict[str, Any]) -> None:
+        self._exec(
+            "INSERT OR REPLACE INTO wallet_connect "
+            "(request_id, nonce, status, address, accounts, created_at, expires_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (wc["request_id"], wc["nonce"], wc["status"], wc.get("address"),
+             json.dumps(wc.get("accounts", [])), wc["created_at"], wc["expires_at"]))
+
+    def get_wc(self, request_id: str) -> Optional[dict[str, Any]]:
+        rows = self._query(
+            "SELECT request_id, nonce, status, address, accounts, created_at, expires_at "
+            "FROM wallet_connect WHERE request_id=?", (request_id,))
+        if not rows:
+            return None
+        r = rows[0]
+        return {"request_id": r["request_id"], "nonce": r["nonce"], "status": r["status"],
+                "address": r["address"], "accounts": json.loads(r["accounts"] or "[]"),
+                "created_at": r["created_at"], "expires_at": r["expires_at"]}
+
+    def set_wc_result(self, request_id: str, status: str, address: Optional[str],
+                      accounts: list[str]) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE wallet_connect SET status=?, address=?, accounts=? "
+                "WHERE request_id=? AND status='pending'",
+                (status, address, json.dumps(accounts), request_id))
+            self._conn.commit()
+            return cur.rowcount > 0
 
     # -- sessions / traces ------------------------------------------------
     def save_session(self, session: dict[str, Any]) -> None:

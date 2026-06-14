@@ -38,8 +38,12 @@ class ENA:
         self.store = Store(self.cfg.db_path())
         from .jobs import JobService
         from .agent import Agent
+        from .demand import DemandService
+        from .walletconnect import WalletConnectService
         self.jobs = JobService(self.cfg, self.store)
         self.agent = Agent(self.cfg, self.store)
+        self.demand = DemandService(self.cfg, self.store, self.jobs)
+        self.walletconnect = WalletConnectService(self.cfg, self.store)
 
     # -- retrieval --------------------------------------------------------
     def build_index(self, paths: list[str], *, name: str,
@@ -98,6 +102,45 @@ class ENA:
         from . import training
         return training.export_run(self.store, run_id, out)
 
+    # -- training data ----------------------------------------------------
+    def list_datasets(self) -> list[dict[str, Any]]:
+        return self.store.list_datasets()
+
+    def contribute_dataset(self, *, name: Optional[str] = None,
+                           kind: str = "contributed", rows: Optional[list] = None,
+                           url: Optional[str] = None, curate: bool = True,
+                           contributor: Optional[str] = None) -> dict[str, Any]:
+        """Accept community training data: inline JSONL ``rows`` (curated +
+        registered) or a ``url`` (queued as a scrape job for the fleet)."""
+        from . import datasets as d
+        from .models import new_uuid, now_ts
+        if url:
+            job = self.jobs.create("scrape", {"url": url}, requester=contributor)
+            return {"mode": "url", "job_id": job["job_id"], "status": job["status"],
+                    "note": "queued as a scrape job; run a worker to fetch it"}
+        if not rows:
+            from .errors import DatasetError
+            raise DatasetError("contribute requires either rows or url")
+        ddir = self.cfg.artifacts_dir() / "contributed"
+        ddir.mkdir(parents=True, exist_ok=True)
+        raw = ddir / f"{new_uuid()[:12]}.jsonl"
+        d.write_jsonl(raw, rows)
+        path = raw
+        curated = None
+        if curate:
+            norm = ddir / (raw.stem + ".norm.jsonl")
+            clean = ddir / (raw.stem + ".clean.jsonl")
+            d.normalize(raw, norm)
+            curated = d.dedupe(norm, clean)
+            path = clean
+        rec = d.ingest(path, kind, self.store)
+        rec["name"] = name or rec["dataset_id"]
+        rec["contributor"] = contributor
+        if curated:
+            rec["curated"] = {"clean_rows": curated["rows"], "removed": curated["removed"]}
+        self.store.upsert_dataset(rec)
+        return {"mode": "rows", **rec}
+
     # -- memory -----------------------------------------------------------
     def memory_add(self, text: str, source: Optional[str] = None) -> dict[str, Any]:
         from .models import new_uuid, now_ts
@@ -115,6 +158,10 @@ class ENA:
         s["recent_jobs"] = self.store.recent_jobs(10)
         s["leaderboard"] = self.store.leaderboard(10)
         s["model_providers"] = list(self.cfg.model_providers.keys())
+        from .payments import nano_to_anm
+        s["demand_enabled"] = self.cfg.demand_enabled()
+        s["anm_funded_total"] = round(nano_to_anm(self.store.total_funded_nano()), 6)
+        s["jobs_awaiting_payment"] = s.get("jobs_by_status", {}).get("awaiting_payment", 0)
         s["generated_at"] = __import__("time").time()
         return s
 

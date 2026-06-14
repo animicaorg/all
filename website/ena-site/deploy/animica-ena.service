@@ -6,6 +6,10 @@ After=network.target
 Type=simple
 User=root
 Environment=ANIMICA_ENA_HOME=/var/lib/animica-ena
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+Environment=ANIMICA_CHAIN_ID=1
+Environment=ENA_TREASURY_ADDRESS=anim1zqpfpwctgp7zkfhj8qr77g3d0ucvp52n7fsv3xsjdclyzwzsjryp4gs07vma0
+Environment=ENA_DEMAND_MIN_ANM=0.1
 ExecStart=/root/animica/.venv/bin/animica ena serve --host 127.0.0.1 --port 8791
 Restart=on-failure
 RestartSec=3

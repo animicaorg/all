@@ -82,6 +82,20 @@ def _make_handler(facade):
                     return self._send(200, facade.run_status(path.rsplit("/", 1)[1]))
                 if path == "/stats":
                     return self._send(200, facade.stats())
+                if path == "/datasets":
+                    return self._send(200, {"datasets": facade.list_datasets()})
+                if path == "/demand/config":
+                    return self._send(200, facade.demand.config())
+                if path == "/demand/status":
+                    jid = q.get("job_id")
+                    if not jid:
+                        return self._send(400, {"error": "job_id required"})
+                    return self._send(200, facade.demand.status(jid))
+                if path == "/wallet/poll":
+                    rid = q.get("id") or q.get("requestId")
+                    if not rid:
+                        return self._send(400, {"error": "id required"})
+                    return self._send(200, facade.walletconnect.poll(rid))
                 return self._send(404, {"error": "not found", "path": path})
             except Exception as exc:  # noqa: BLE001
                 return self._send(400, {"error": str(exc)})
@@ -98,6 +112,25 @@ def _make_handler(facade):
                 if path == "/jobs/claim":
                     claimed = facade.jobs.claim(body["worker_id"], body.get("types"))
                     return self._send(200, claimed or {})
+                if path == "/datasets/contribute":
+                    return self._send(200, facade.contribute_dataset(
+                        name=body.get("name"), kind=body.get("kind", "contributed"),
+                        rows=body.get("rows"), url=body.get("url"),
+                        curate=body.get("curate", True),
+                        contributor=body.get("contributor")))
+                if path == "/demand/quote":
+                    return self._send(200, facade.demand.quote(
+                        body["job_type"], body.get("params", {}),
+                        body["reward_anm"], requester=body.get("requester")))
+                if path == "/demand/confirm":
+                    return self._send(200, facade.demand.confirm(
+                        body["job_id"], body["txid"]))
+                if path == "/wallet/start":
+                    return self._send(200, facade.walletconnect.start(body.get("appOrigin")))
+                if path == "/wallet/callback":
+                    return self._send(200, facade.walletconnect.callback(
+                        body["requestId"], bool(body.get("approved")),
+                        body.get("accounts", [])))
                 if path == "/search":
                     return self._send(200, {"results": facade.search(
                         body["query"], mode=body.get("mode", "hybrid"),

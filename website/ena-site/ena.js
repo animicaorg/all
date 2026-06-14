@@ -110,3 +110,300 @@
     setInterval(loadStats, 30000); // refresh every 30s
   });
 })();
+
+/* ---- Demand: wallet-funded job requests ---------------------------------- */
+(function () {
+  "use strict";
+  var cfg = null, account = null;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function log(msg, cls) {
+    var ol = $("reqLog");
+    if (!ol) return;
+    var li = document.createElement("li");
+    if (cls) li.className = cls;
+    li.innerHTML = "<b>" + msg + "</b>";
+    ol.insertBefore(li, ol.firstChild);
+  }
+  function setStatus(t) { var el = $("reqStatus"); if (el) el.textContent = t; }
+
+  function paramsFor(jobType, val) {
+    if (jobType === "scrape") return { url: val };
+    if (["dataset_clean", "embed", "training_records", "train_prepare", "eval", "label"].indexOf(jobType) >= 0)
+      return { dataset: val };
+    return { source: val }; // extract, chunk, index, summarize
+  }
+
+  function api(path, body) {
+    return fetch("/api" + path, {
+      method: body ? "POST" : "GET",
+      headers: { "content-type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+  }
+
+  function loadConfig() {
+    if (!$("reqForm")) return;
+    api("/demand/config").then(function (res) {
+      cfg = res.j;
+      if (!cfg.enabled) {
+        $("reqForm").style.display = "none";
+        $("reqDisabled").style.display = "block";
+        return;
+      }
+      var sel = $("jobType");
+      sel.innerHTML = cfg.job_types.map(function (t) { return "<option>" + t + "</option>"; }).join("");
+      $("treasury").textContent = cfg.treasury_address;
+      $("minHint").textContent = "(min " + cfg.min_anm + ")";
+      $("reward").min = cfg.min_anm;
+    }).catch(function () {
+      if ($("reqDisabled")) { $("reqForm").style.display = "none"; $("reqDisabled").style.display = "block"; }
+    });
+  }
+
+  // The extension injects window.animica asynchronously and fires
+  // 'animica#initialized' when ready — wait for it rather than assuming.
+  function getProvider(timeoutMs) {
+    return new Promise(function (resolve) {
+      if (window.animica && window.animica.request) return resolve(window.animica);
+      var done = false;
+      function settle() {
+        if (done) return; done = true;
+        resolve(window.animica && window.animica.request ? window.animica : null);
+      }
+      window.addEventListener("animica#initialized", settle, { once: true });
+      window.addEventListener("ethereum#initialized", settle, { once: true });
+      setTimeout(settle, timeoutMs || 1800);
+    });
+  }
+
+  function noWallet() {
+    var a = $("acct");
+    if (a) a.innerHTML = 'No Animica wallet detected — <a class="grad" href="https://animica.org/wallet" target="_blank" rel="noopener">install it</a>, then reload.';
+    log("Animica wallet extension not found.", "err");
+  }
+
+  function esc2(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function setAccount(addr) {
+    account = addr || null;
+    var btn = $("connectBtn"), acct = $("acct");
+    if (account) {
+      if (acct) acct.textContent = account.slice(0, 10) + "…" + account.slice(-6);
+      if (btn) { btn.textContent = "✓ Connected"; btn.classList.add("btn-ghost"); btn.classList.remove("btn-primary"); }
+      log("Wallet connected: " + account.slice(0, 12) + "…", "ok");
+      closeModal();
+    }
+  }
+
+  function openModal() { var m = $("wcModal"); if (m) { m.style.display = "flex"; wcPanel(""); } }
+  function closeModal() { var m = $("wcModal"); if (m) m.style.display = "none"; }
+  function wcPanel(html) { var p = $("wcPanel"); if (p) p.innerHTML = html; }
+
+  // 1) Browser extension — triggers the extension's own approval popup.
+  function connectExtension() {
+    wcPanel("<p class='note'>Opening the extension — approve the connection there.</p>");
+    return getProvider(1800).then(function (prov) {
+      if (!prov) {
+        wcPanel("<p class='note'>No Animica extension detected. <a class='grad' href='https://animica.org/wallet' target='_blank' rel='noopener'>Install it</a> and reload, or use the web/mobile option.</p>");
+        return;
+      }
+      return prov.request({ method: "animica_requestAccounts" }).then(function (accts) {
+        var a = (accts && accts[0]) || null;
+        if (a) setAccount(a); else wcPanel("<p class='note'>No account was returned.</p>");
+      }).catch(function (e) {
+        wcPanel("<p class='note'>Connection " + (e && e.message ? esc2(e.message) : "rejected") + ".</p>");
+      });
+    });
+  }
+
+  function startWC() {
+    return api("/wallet/start", { appOrigin: location.origin }).then(function (res) {
+      if (!res.ok) throw new Error(res.j && res.j.error ? res.j.error : "could not start");
+      return res.j; // {requestId, popupUrl, expiresAt}
+    });
+  }
+
+  function pollWC(requestId) {
+    var tries = 0;
+    var iv = setInterval(function () {
+      tries++;
+      fetch("/api/wallet/poll?id=" + encodeURIComponent(requestId))
+        .then(function (r) { return r.json(); }).then(function (j) {
+          if (j.status === "approved" && j.address) { clearInterval(iv); setAccount(j.address); }
+          else if (j.status === "rejected") { clearInterval(iv); wcPanel("<p class='note'>Connection was rejected.</p>"); }
+          else if (j.status === "expired" || tries > 90) { clearInterval(iv); wcPanel("<p class='note'>Request expired — please try again.</p>"); }
+        }).catch(function () {});
+    }, 2000);
+  }
+
+  // 2) Web wallet — opens wallet.animica.org connect popup; user approves there.
+  function connectWeb() {
+    wcPanel("<p class='note'>Opening wallet.animica.org…</p>");
+    startWC().then(function (s) {
+      window.open(s.popupUrl, "animica-wallet", "width=460,height=760");
+      wcPanel("<p class='note'>Approve the connection in the popup window.<br>" +
+        "<a class='grad wclink' href='" + s.popupUrl + "' target='_blank' rel='noopener'>Popup blocked? Open it here</a></p>");
+      pollWC(s.requestId);
+    }).catch(function (e) { wcPanel("<p class='note'>Error: " + esc2(e.message) + "</p>"); });
+  }
+
+  // 3) Mobile wallet — QR + deep link to the same approve page on a phone.
+  function connectMobile() {
+    wcPanel("<p class='note'>Preparing a secure link…</p>");
+    startWC().then(function (s) {
+      var qr = "https://api.qrserver.com/v1/create-qr-code/?size=190x190&data=" + encodeURIComponent(s.popupUrl);
+      wcPanel("<p class='note'>Scan with your phone's camera, or open on this device:</p>" +
+        "<img alt='Connect QR' width='180' height='180' src='" + qr + "'/>" +
+        "<p><a class='btn btn-primary' style='display:inline-block;text-decoration:none' href='" + s.popupUrl + "' target='_blank' rel='noopener'>Open wallet</a></p>");
+      pollWC(s.requestId);
+    }).catch(function (e) { wcPanel("<p class='note'>Error: " + esc2(e.message) + "</p>"); });
+  }
+
+  function wcDispatch(kind) {
+    if (kind === "extension") return connectExtension();
+    if (kind === "web") return connectWeb();
+    if (kind === "mobile") return connectMobile();
+  }
+
+  function poll(jobId, txid, tries) {
+    tries = tries || 0;
+    return api("/demand/confirm", { job_id: jobId, txid: txid }).then(function (res) {
+      var j = res.j;
+      if (j.funded) {
+        log("Funded ✓ — job is now in the queue (reward " + (j.reward_anm || "") + " ANM)", "ok");
+        setStatus("Funded. Workers can now claim job " + jobId.slice(0, 14) + "…");
+        return j;
+      }
+      if (j.pending && tries < 30) {
+        setStatus("Payment seen, awaiting confirmation… (" + (j.tx_status || "pending") + ")");
+        return new Promise(function (r) { setTimeout(r, 5000); }).then(function () {
+          return poll(jobId, txid, tries + 1);
+        });
+      }
+      log("Not funded: " + (j.reason || "unknown") + (j.tx_status ? " [" + j.tx_status + "]" : ""), "err");
+      setStatus("Could not fund the job: " + (j.reason || "unknown"));
+      return j;
+    });
+  }
+
+  function submit() {
+    if (!cfg || !cfg.enabled) return;
+    var jobType = $("jobType").value;
+    var src = ($("jobSource").value || "").trim();
+    var reward = parseFloat($("reward").value);
+    if (!src) { log("Enter a source / dataset / URL first", "err"); return; }
+    if (!(reward >= cfg.min_anm)) { log("Reward must be ≥ " + cfg.min_anm + " ANM", "err"); return; }
+
+    if (!account) { openModal(); log("Connect a wallet to fund a job.", ""); return; }
+    var acct = account;
+    Promise.resolve().then(function () {
+      setStatus("Requesting a quote…");
+      return api("/demand/quote", {
+        job_type: jobType, params: paramsFor(jobType, src), reward_anm: reward, requester: acct
+      }).then(function (res) {
+        if (!res.ok) { log("Quote failed: " + (res.j.error || res.j.reason || "error"), "err"); return; }
+        var q = res.j;
+        log("Quote: " + q.required_anm + " ANM for " + jobType + " (job " + q.job_id.slice(0, 12) + "…)");
+        setStatus("Approve the payment in your wallet…");
+        return getProvider(1800).then(function (prov) {
+          if (!prov) { noWallet(); throw new Error("no wallet"); }
+          return prov.request({
+            method: "animica_sendTransaction",
+            params: [{ from: acct, to: q.treasury_address, value: String(q.required_nano), memo: q.memo }]
+          });
+        }).then(function (txid) {
+          log("Payment sent: " + String(txid).slice(0, 18) + "…", "ok");
+          setStatus("Verifying payment on-chain…");
+          return poll(q.job_id, txid);
+        });
+      });
+    }).catch(function (e) {
+      log("Error: " + (e && e.message ? e.message : e), "err");
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    if (!$("reqForm")) return;
+    loadConfig();
+    var c = $("connectBtn"); if (c) c.addEventListener("click", openModal);
+    var s = $("submitBtn"); if (s) s.addEventListener("click", submit);
+    var x = $("wcClose"); if (x) x.addEventListener("click", closeModal);
+    var modal = $("wcModal");
+    if (modal) modal.addEventListener("click", function (e) { if (e.target === modal) closeModal(); });
+    var opts = document.querySelectorAll(".wc-opt");
+    for (var i = 0; i < opts.length; i++) {
+      (function (b) { b.addEventListener("click", function () { wcDispatch(b.getAttribute("data-wc")); }); })(opts[i]);
+    }
+  });
+})();
+
+/* ---- Training data: contribute + list ------------------------------------ */
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function loadDatasets() {
+    if (!$("dsList")) return;
+    fetch("/api/datasets").then(function (r) { return r.json(); }).then(function (d) {
+      var rows = d.datasets || [];
+      if ($("dsCount")) $("dsCount").textContent = rows.length;
+      $("dsList").innerHTML = rows.length
+        ? rows.slice(0, 12).map(function (r) {
+            return "<tr><td class='mono'>" + esc((r.name || r.dataset_id).slice(0, 20)) +
+              "</td><td>" + esc(r.kind) + "</td><td>" + (r.row_count || 0) + "</td></tr>";
+          }).join("")
+        : "<tr><td class='mono'>none yet — be the first</td><td>—</td><td>—</td></tr>";
+    }).catch(function () {});
+  }
+
+  function contribute() {
+    var msg = $("dataMsg");
+    var url = ($("dataUrl").value || "").trim();
+    var text = ($("dataRows").value || "").trim();
+    var body = null;
+    if (text) {
+      var rows = [];
+      var bad = 0;
+      text.split("\n").forEach(function (ln) {
+        ln = ln.trim(); if (!ln) return;
+        try { rows.push(JSON.parse(ln)); } catch (e) { bad++; }
+      });
+      if (!rows.length) { msg.textContent = "No valid JSONL rows found."; return; }
+      if (bad) msg.textContent = "Note: skipped " + bad + " unparseable line(s).";
+      body = { rows: rows, kind: "contributed" };
+    } else if (url) {
+      body = { url: url };
+    } else {
+      msg.textContent = "Paste JSONL rows or enter a URL first."; return;
+    }
+    msg.textContent = "Submitting…";
+    fetch("/api/datasets/contribute", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j.error) { msg.textContent = "Error: " + j.error; return; }
+      if (j.mode === "url") {
+        msg.innerHTML = "✓ Queued as scrape job <span class='kbd'>" + esc((j.job_id || "").slice(0, 14)) + "…</span>";
+      } else {
+        msg.innerHTML = "✓ Contributed " + (j.row_count || 0) + " rows (deduped). Thank you!";
+        $("dataRows").value = "";
+      }
+      loadDatasets();
+    }).catch(function (e) { msg.textContent = "Error: " + (e && e.message ? e.message : e); });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    if (!$("dsList")) return;
+    loadDatasets();
+    var b = $("dataBtn"); if (b) b.addEventListener("click", contribute);
+  });
+})();

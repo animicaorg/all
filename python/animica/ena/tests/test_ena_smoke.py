@@ -148,6 +148,128 @@ def test_stats_aggregate(ena, tmp_path):
     assert any(row["worker_id"] == "miner-A" for row in s["leaderboard"])
 
 
+TREASURY = "anim1zqpfpwctgp7zkfhj8qr77g3d0ucvp52n7fsv3xsjdclyzwzsjryp4gs07vma0"
+
+
+class _FakeRPC:
+    """Stand-in for the node RPC: returns one crafted tx keyed by hash."""
+    def __init__(self, txs):
+        self.txs = txs
+
+    def get_transaction(self, txhash):
+        from animica.ena.payments import _norm_hex
+        return self.txs.get(_norm_hex(txhash))
+
+    def get_status(self, txhash):
+        tx = self.get_transaction(txhash) or {}
+        return {"status": tx.get("status", "unknown")}
+
+
+@pytest.fixture()
+def demand_ena(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANIMICA_ENA_HOME", str(tmp_path / "ena"))
+    monkeypatch.setenv("ENA_TREASURY_ADDRESS", TREASURY)
+    return ENA(cfg=load_config())
+
+
+def _tx(to_digest, memo, value_nano, status="confirmed", frm="anim1payer"):
+    return {"to_addr": "0x" + to_digest, "memo": memo, "value": str(value_nano),
+            "status": status, "from_addr": frm}
+
+
+def test_demand_quote_and_fund(demand_ena, tmp_path, monkeypatch):
+    from animica.ena import payments, demand as demandmod
+    e = demand_ena
+    assert e.cfg.demand_enabled()
+    digest = payments.address_to_digest_hex(TREASURY)
+
+    raw = _write_raw(tmp_path / "raw.jsonl")
+    q = e.demand.quote("dataset_clean", {"dataset": raw}, reward_anm=2.0, requester="anim1buyer")
+    assert q["status"] == "awaiting_payment"
+    assert q["treasury_address"] == TREASURY
+    assert q["required_nano"] == 2_000_000_000  # 2 ANM * 1e9
+    assert q["memo"] == q["job_hash"]
+    # not claimable while awaiting payment
+    assert e.jobs.claim("w", ["dataset_clean"]) is None
+
+    # wrong memo -> rejected
+    bad = _FakeRPC({"aa": _tx(digest, "WRONG", 2_000_000_000)})
+    monkeypatch.setattr(e.demand, "_rpc", lambda: bad)
+    r = e.demand.confirm(q["job_id"], "aa")
+    assert r["funded"] is False and r["reason"] == "memo_mismatch"
+
+    # underpaid -> rejected
+    bad2 = _FakeRPC({"bb": _tx(digest, q["job_hash"], 1_000_000_000)})
+    monkeypatch.setattr(e.demand, "_rpc", lambda: bad2)
+    assert e.demand.confirm(q["job_id"], "bb")["reason"] == "underpaid"
+
+    # pending tx -> pending (retryable)
+    pend = _FakeRPC({"cc": _tx(digest, q["job_hash"], 2_000_000_000, status="pending")})
+    monkeypatch.setattr(e.demand, "_rpc", lambda: pend)
+    r = e.demand.confirm(q["job_id"], "cc")
+    assert r["pending"] is True and r["funded"] is False
+
+    # valid + confirmed -> funded, becomes claimable
+    good = _FakeRPC({"dd": _tx(digest, q["job_hash"], 2_500_000_000)})
+    monkeypatch.setattr(e.demand, "_rpc", lambda: good)
+    r = e.demand.confirm(q["job_id"], "dd")
+    assert r["funded"] is True and r["status"] == "proposed"
+    assert r["reward_anm"] == 2.5  # actual paid amount
+
+    # txid reuse on a fresh job -> rejected
+    q2 = e.demand.quote("extract", {"source": raw}, reward_anm=1.0)
+    assert e.demand.confirm(q2["job_id"], "dd")["reason"] == "txid_already_used"
+
+    # funded job is claimable and its receipt carries the reward
+    claimed = e.jobs.claim("worker-Z", ["dataset_clean"])
+    assert claimed and claimed["job_id"] == q["job_id"]
+    e.jobs.run(q["job_id"], worker_id="worker-Z")
+    e.jobs.verify(q["job_id"])
+    rec = e.jobs.receipt(q["job_id"])
+    assert rec["reward"] == "2.5"
+
+    # stats reflect funded ANM
+    s = e.stats()
+    assert s["demand_enabled"] is True and s["anm_funded_total"] == 2.5
+
+
+def test_wallet_connect_flow(ena):
+    from animica.ena.walletconnect import WalletConnectError
+    s = ena.walletconnect.start("https://ena.animica.org")
+    assert s["popupUrl"].startswith("https://wallet.animica.org/connect/?request=")
+    assert "&id=" + s["requestId"] in s["popupUrl"]
+    rid = s["requestId"]
+    assert ena.walletconnect.poll(rid)["status"] == "pending"
+    with pytest.raises(WalletConnectError):
+        ena.walletconnect.callback(rid, True, ["not-an-address"])
+    addr = "anim1zqpfpwctgp7zkfhj8qr77g3d0ucvp52n7fsv3xsjdclyzwzsjryp4gs07vma0"
+    assert ena.walletconnect.callback(rid, True, [addr])["status"] == "approved"
+    p = ena.walletconnect.poll(rid)
+    assert p["status"] == "approved" and p["address"] == addr
+    # second callback can't overwrite an already-resolved request
+    assert ena.walletconnect.poll("nonexistent")["status"] == "unknown"
+
+
+def test_contribute_training_data(ena):
+    rows = [{"prompt": f"Q{i % 3}", "response": f"A{i % 3}"} for i in range(6)]
+    rec = ena.contribute_dataset(name="seed-a", rows=rows, contributor="anim1donor")
+    assert rec["mode"] == "rows"
+    assert rec["row_count"] == 3  # 6 rows, dup on %3 -> 3 after dedupe
+    assert rec["curated"]["removed"] == 3
+    listed = ena.list_datasets()
+    assert any(d.get("name") == "seed-a" for d in listed)
+    # url mode queues a scrape job
+    out = ena.contribute_dataset(url="https://example.org/data.txt")
+    assert out["mode"] == "url" and out["status"] == "proposed"
+
+
+def test_demand_disabled_without_treasury(ena):
+    from animica.ena.payments import PaymentError
+    assert ena.cfg.demand_enabled() is False
+    with pytest.raises(PaymentError):
+        ena.demand.quote("extract", {"source": "x"}, reward_anm=1.0)
+
+
 def test_python_transformers_backend_errors_cleanly(ena, tmp_path):
     raw = _write_raw(tmp_path / "raw.jsonl")
     man = str(tmp_path / "m.json")

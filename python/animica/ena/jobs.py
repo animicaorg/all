@@ -223,7 +223,7 @@ class JobService:
             artifact_hashes=[a["hash"] for a in artifacts],
             score=float(verification.get("score", 1.0 if verification.get("passed") else 0.0)),
             score_components=verification.get("score_components", {}),
-            reward=str(job.get("params", {}).get("reward", "0")),
+            reward=str(job.get("reward", job.get("params", {}).get("reward", "0"))),
         )
         rc.finalize_receipt(receipt)
         rec_dict = receipt.to_dict()
