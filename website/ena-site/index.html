@@ -267,12 +267,14 @@ footer{border-top:1px solid var(--border);padding:34px 0;color:var(--muted)}
       <p class="sub" style="margin:.4rem 0 0">Have a CUDA GPU? Run SFT / LoRA / QLoRA / DPO and earn training credit.</p>
       <div class="step"><div class="num">1</div><div class="body"><b>Install with the training extras</b>
         <pre><code>pip install --upgrade "animica[gpu]"</code></pre></div></div>
-      <div class="step"><div class="num">2</div><div class="body"><b>Prepare a run (LoRA shown)</b>
-        <pre><code>animica ena train prepare --dataset data/train.jsonl --out manifests/run.json --base-model meta-llama/Llama-3.2-1B --backend python_transformers --method lora --auto-split</code></pre></div></div>
-      <div class="step"><div class="num">3</div><div class="body"><b>Train &amp; evaluate</b>
+      <div class="step"><div class="num">2</div><div class="body"><b>Get the starter dataset (all Animica knowledge)</b>
+        <pre><code>curl -O https://ena.animica.org/animica-knowledge.jsonl</code></pre></div></div>
+      <div class="step"><div class="num">3</div><div class="body"><b>Prepare a run on it (LoRA shown)</b>
+        <pre><code>animica ena train prepare --dataset animica-knowledge.jsonl --out manifests/run.json --base-model meta-llama/Llama-3.2-1B --backend python_transformers --method lora --auto-split</code></pre></div></div>
+      <div class="step"><div class="num">4</div><div class="body"><b>Train &amp; evaluate</b>
         <pre><code>animica ena train run  --manifest manifests/run.json
 animica ena train eval --manifest manifests/run.json --model-provider ollama</code></pre></div></div>
-      <div class="step"><div class="num">4</div><div class="body"><b>Anchor the result on-chain</b>
+      <div class="step"><div class="num">5</div><div class="body"><b>Anchor the result on-chain</b>
         <pre><code>animica ena train export &lt;run_id&gt; --out run.json
 # emits a TrainingReceipt (dataset + checkpoint hash, gpu-hours)</code></pre></div></div>
     </div>
@@ -342,6 +344,10 @@ animica ena train eval --manifest manifests/run.json --model-provider ollama</co
       <table class="lb"><thead><tr><th>Dataset</th><th>Kind</th><th>Rows</th></tr></thead>
       <tbody id="dsList"><tr><td class="mono">—</td><td>—</td><td>—</td></tr></tbody></table>
       <p class="note" style="margin-top:10px">From the CLI: <span class="kbd">animica ena datasets contribute rows.jsonl</span></p>
+      <p class="note" style="margin-top:6px"><b>Set up the starter dataset</b> (55 pairs, all Animica knowledge):</p>
+      <pre><code>curl -O https://ena.animica.org/animica-knowledge.jsonl
+animica ena datasets contribute animica-knowledge.jsonl</code></pre>
+      <p class="note" style="margin-top:6px">Download: <a class="grad" href="/animica-knowledge.jsonl">animica-knowledge.jsonl</a></p>
     </div>
   </div>
 </section>
