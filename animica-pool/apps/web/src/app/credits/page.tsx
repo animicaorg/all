@@ -18,36 +18,54 @@ export default function CreditsPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-end justify-between">
-        <h1 className="text-2xl font-semibold">Buy AI credits</h1>
-        <span className="text-sm text-white/60">Balance: <span className="text-neon-green">${(balance?.balanceUsd ?? 0).toFixed(2)}</span></span>
-      </div>
-      <p className="text-white/60">Pay with crypto via NOWPayments. Credits are added once the payment confirms on-chain. 1 USD = 1 credit.</p>
+    <div className="space-y-10">
+      <header className="space-y-4">
+        <span className="badge">Billing</span>
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <h1 className="text-4xl font-semibold tracking-tightest text-white md:text-5xl">
+            Buy AI <span className="grad-text">credits</span>
+          </h1>
+          <span className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-white/60 backdrop-blur">
+            Balance <span className="ml-1 font-semibold text-neon-green">${(balance?.balanceUsd ?? 0).toFixed(2)}</span>
+          </span>
+        </div>
+        <p className="max-w-2xl text-lg text-white/65">
+          Top up once and spend across every model. 1 USD = 1 credit, billed per token at the rates on the AI page.
+        </p>
+      </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {(packages ?? []).map((p) => (
-          <div key={p.id} className="card flex flex-col gap-3">
-            <div>
-              <h3 className="font-medium">{p.label}</h3>
-              <p className="text-2xl font-semibold text-neon-blue">${p.amountUsd}</p>
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-neon-green/80">Packages</h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {(packages ?? []).map((p) => (
+            <div key={p.id} className="card flex flex-col gap-4">
+              <div className="space-y-1">
+                <h3 className="text-sm font-medium text-white/70">{p.label}</h3>
+                <p className="text-3xl font-semibold text-white">
+                  <span className="text-white/40">$</span>{p.amountUsd}
+                </p>
+              </div>
+              <button className="btn-primary mt-auto" onClick={() => checkout.mutate({ packageId: p.id })} disabled={checkout.isPending}>
+                Buy
+              </button>
             </div>
-            <button className="btn-primary mt-auto" onClick={() => checkout.mutate({ packageId: p.id })} disabled={checkout.isPending}>
-              Buy
-            </button>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </section>
 
-      <div className="card flex items-end gap-3">
-        <label className="flex-1 text-sm">
+      <section className="card flex flex-wrap items-end gap-4">
+        <label className="flex-1 text-sm text-white/70">
           Custom amount (USD)
-          <input className="field mt-1" type="number" min={1} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="100" />
+          <input className="field mt-1.5" type="number" min={1} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="100" />
         </label>
-        <button className="btn-ghost" disabled={checkout.isPending || !custom} onClick={() => checkout.mutate({ amountUsd: Number(custom) })}>
+        <button className="btn-secondary" disabled={checkout.isPending || !custom} onClick={() => checkout.mutate({ amountUsd: Number(custom) })}>
           Buy custom
         </button>
-      </div>
+      </section>
+
+      <p className="text-sm text-white/40">
+        Checkout is handled securely via NOWPayments. Credits land in your balance once the payment confirms.
+      </p>
 
       {checkout.isError && <p className="text-sm text-red-400">{(checkout.error as Error).message}</p>}
     </div>

@@ -28,8 +28,16 @@ export default function StatsPage() {
   const blockItems: any[] = blocks?.items ?? blocks?.recent_blocks ?? [];
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-2xl font-semibold">Pool stats</h1>
+    <div className="space-y-10">
+      <header className="space-y-4">
+        <span className="badge">Live</span>
+        <h1 className="text-4xl font-semibold tracking-tightest text-white md:text-5xl">
+          Pool <span className="grad-text">stats</span>
+        </h1>
+        <p className="max-w-2xl text-lg text-white/65">
+          Real-time hashrate, miners, blocks, and platform metrics — refreshed automatically.
+        </p>
+      </header>
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Network hashrate" value={hr(Number(pool?.network_hashrate_hps ?? 0))} />
@@ -103,23 +111,23 @@ export default function StatsPage() {
         );
       })()}
 
-      <section className="space-y-2">
-        <h2 className="font-medium">Recent blocks</h2>
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-neon-green/80">Recent blocks</h2>
         {blockItems.length === 0 ? (
           <p className="text-white/60">No blocks reported yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-white/10">
+          <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.02] backdrop-blur">
             <table className="w-full text-sm">
               <thead className="bg-white/5 text-left text-white/50"><tr>
-                <th className="px-3 py-2">Height</th><th className="px-3 py-2">Miner</th><th className="px-3 py-2">Reward</th><th className="px-3 py-2">When</th>
+                <th className="px-4 py-3 font-medium">Height</th><th className="px-4 py-3 font-medium">Miner</th><th className="px-4 py-3 font-medium">Reward</th><th className="px-4 py-3 font-medium">When</th>
               </tr></thead>
               <tbody>
                 {blockItems.slice(0, 15).map((b, i) => (
-                  <tr key={i} className="border-t border-white/5">
-                    <td className="px-3 py-2">{b.height}</td>
-                    <td className="px-3 py-2 text-white/60">{(b.worker || b.miner || b.address || "—").toString().slice(0, 20)}</td>
-                    <td className="px-3 py-2">{b.reward ?? "—"}</td>
-                    <td className="px-3 py-2 text-white/40">{b.timestamp || b.ts || ""}</td>
+                  <tr key={i} className="border-t border-white/5 transition-colors hover:bg-white/[0.03]">
+                    <td className="px-4 py-3">{b.height}</td>
+                    <td className="px-4 py-3 text-white/60">{(b.worker || b.miner || b.address || "—").toString().slice(0, 20)}</td>
+                    <td className="px-4 py-3">{b.reward ?? "—"}</td>
+                    <td className="px-4 py-3 text-white/40">{b.timestamp || b.ts || ""}</td>
                   </tr>
                 ))}
               </tbody>
@@ -145,11 +153,11 @@ export default function StatsPage() {
 function Stat({ label, value, sub }: { label: string; value: string; sub?: boolean }) {
   return (
     <div className="card">
-      <p className="text-sm text-white/50">{label}</p>
-      <p className={`mt-1 font-semibold ${sub ? "text-xl" : "text-2xl text-neon-blue"}`}>{value}</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-white/45">{label}</p>
+      <p className={`mt-2 font-semibold tracking-tight ${sub ? "text-xl text-white" : "text-3xl text-neon-blue"}`}>{value}</p>
     </div>
   );
 }
 function Row({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-lg border border-white/5 bg-black/20 p-3"><p className="text-xs text-white/50">{label}</p><p className="mt-1 font-medium">{value}</p></div>;
+  return <div className="rounded-xl border border-white/10 bg-black/20 p-3.5"><p className="text-xs text-white/50">{label}</p><p className="mt-1 font-medium text-white">{value}</p></div>;
 }

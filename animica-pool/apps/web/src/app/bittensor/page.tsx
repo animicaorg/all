@@ -168,7 +168,7 @@ export default function BittensorPage() {
           <h2 className="font-medium text-neon-blue">How the pool splits Bittensor earnings</h2>
           <ul className="list-disc space-y-1 pl-5 text-sm text-white/70">
             <li><span className="text-white">{ov?.supplySide.ownerSharePercent ?? 70}% to rig owners</span> — released after the {ov?.supplySide.holdbackDays ?? 7}-day holdback, withdrawable in ANM/XMR/SOL/BTC/USDT.</li>
-            <li><span className="text-white">{100 - (ov?.supplySide.ownerSharePercent ?? 70)}% to the pool</span> — covers registration burns, executor collateral and ops; flows through the public <a className="text-neon-blue hover:underline" href="/revenue">revenue split</a>.</li>
+            <li><span className="text-white">{100 - (ov?.supplySide.ownerSharePercent ?? 70)}% to the pool</span> — covers registration burns, executor collateral and ops; flows through the public <a className="text-neon-blue hover:underline" href="/stats">revenue split</a>.</li>
             <li><span className="text-white">Slash buffer</span> — Bittensor burns collateral if a rented GPU drops mid-rental; your held-back week absorbs it first, so keep rigs online.</li>
             <li><span className="text-white">Earnings are on-chain</span> — emissions accrue as alpha stake to the pool hotkey on SN{ov?.supplySide.netuid ?? 51}; the poller converts deltas to USD at live prices.</li>
           </ul>
@@ -244,8 +244,8 @@ function EnrollSection({ workers }: { workers: MyWorker[] }) {
       {otherGpus.length > 0 && (
         <p className="text-xs text-white/40">
           Can&apos;t enroll: {otherGpus.map((w) => `${w.name} (${w.gpuModel})`).join(", ")} — SN51 executors need an NVIDIA
-          CUDA GPU. These rigs still earn via <a className="text-neon-blue hover:underline" href="/workers">inference jobs</a>,{" "}
-          <a className="text-neon-blue hover:underline" href="/rent">rentals</a> and <a className="text-neon-blue hover:underline" href="/mine">mining</a>.
+          CUDA GPU. These rigs still earn via <a className="text-neon-blue hover:underline" href="/workers">inference jobs</a> and{" "}
+          <a className="text-neon-blue hover:underline" href="/mine">mining</a>.
         </p>
       )}
       {msg && <p className="text-sm text-white/60">{msg}</p>}

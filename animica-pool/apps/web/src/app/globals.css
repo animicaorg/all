@@ -2,11 +2,127 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
-body { background: #06070c; color: #e6e9f0; }
+:root {
+  color-scheme: dark;
+}
 
-.card { @apply rounded-xl border border-white/10 bg-white/5 p-5; }
-.btn { @apply rounded-lg px-4 py-2 font-medium transition; }
-.btn-primary { @apply btn bg-neon-violet text-white hover:opacity-90; }
-.btn-ghost { @apply btn border border-white/15 hover:border-neon-blue; }
-.field { @apply w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2; }
+/* --- Base canvas: near-black with a subtle layered gradient backdrop --- */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #0a0b0f;
+  background-image:
+    radial-gradient(1200px 600px at 15% -10%, rgba(57, 255, 20, 0.10), transparent 60%),
+    radial-gradient(1000px 500px at 100% 0%, rgba(56, 189, 248, 0.10), transparent 55%),
+    radial-gradient(900px 700px at 50% 120%, rgba(45, 212, 191, 0.08), transparent 60%);
+  background-attachment: fixed;
+  color: #e6e9f0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tighter tracking + balanced wrapping on headings for a premium feel. */
+h1, h2, h3 {
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+::selection {
+  background: rgba(57, 255, 20, 0.25);
+  color: #ffffff;
+}
+
+/* Refined scrollbar (WebKit). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+  background-clip: content-box;
+}
+
+@layer components {
+  /* ============================================================
+     CORE CLASSES — redefined LOOK, SAME names so ~15 pages
+     restyle for free. Do not rename these.
+     ============================================================ */
+
+  /* Glassy surface. */
+  .card {
+    @apply rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-soft backdrop-blur-md transition-colors;
+  }
+  .card:hover {
+    @apply border-white/15;
+  }
+
+  /* Base button shell. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium
+           tracking-tight transition-all duration-200 outline-none
+           focus-visible:ring-2 focus-visible:ring-neon-green/40
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* Primary action = green->teal/cyan gradient. */
+  .btn-primary {
+    @apply btn text-ink-950 font-semibold;
+    background-image: linear-gradient(135deg, #39ff14 0%, #2dd4bf 55%, #22d3ee 100%);
+    box-shadow: 0 8px 24px -10px rgba(57, 255, 20, 0.45);
+  }
+  .btn-primary:hover {
+    filter: brightness(1.06);
+    box-shadow: 0 10px 30px -8px rgba(57, 255, 20, 0.55);
+  }
+
+  /* Ghost / outline button. */
+  .btn-ghost {
+    @apply btn border border-white/15 bg-white/[0.02] text-white/90
+           hover:border-white/30 hover:bg-white/[0.06];
+  }
+
+  /* Additive: subtle filled secondary. */
+  .btn-secondary {
+    @apply btn border border-neon-green/30 bg-neon-green/10 text-neon-green
+           hover:bg-neon-green/15 hover:border-neon-green/50;
+  }
+
+  /* Form field. */
+  .field {
+    @apply w-full rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-sm
+           text-white placeholder:text-white/35 outline-none transition
+           focus:border-neon-green/40 focus:bg-white/[0.06]
+           focus:ring-2 focus:ring-neon-green/20;
+  }
+
+  /* ============================================================
+     ADDITIVE UTILITY CLASSES
+     ============================================================ */
+
+  /* Gradient text — for hero words / brand emphasis. */
+  .grad-text {
+    background-image: linear-gradient(120deg, #39ff14 0%, #2dd4bf 45%, #38bdf8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Small status / category pill. */
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-white/10
+           bg-white/[0.05] px-3 py-1 text-xs font-medium text-white/70 backdrop-blur;
+  }
+
+  /* Consistent vertical rhythm for page sections. */
+  .section {
+    @apply mx-auto w-full max-w-6xl px-4 py-12 md:py-16;
+  }
+}

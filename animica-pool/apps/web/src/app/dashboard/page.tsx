@@ -33,11 +33,10 @@ export default function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Tile href="/api-keys" title="API keys" desc="Create & manage inference keys" />
         <Tile href="/credits" title="Credits" desc="Buy AI credits with crypto" />
-        <Tile href="/mine" title="Mining" desc="Set up ANM / XMR / dual mining" />
+        <Tile href="/mine" title="Mining" desc="Set up CPU mining" />
         <Tile href="/workers" title="Workers" desc="Connect a CPU/GPU machine" />
-        <Tile href="/rent" title="Rentals" desc="Rent compute" />
         <Tile href="/payouts" title="Payouts" desc="Wallets & payout preferences" />
-        {u.role === "ADMIN" && <Tile href="/admin" title="Admin" desc="Revenue, payouts, providers" />}
+        {u.role === "ADMIN" && <Tile href="/admin" title="Admin" desc="Revenue & payouts" />}
       </div>
       {u.referralCode && (
         <p className="text-sm text-white/50">Referral code: <code className="text-neon-green">{u.referralCode}</code></p>

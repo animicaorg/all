@@ -36,16 +36,24 @@ export default function WorkersPage() {
   if (error) return <p className="card">Sign in to manage workers. <Link href="/login" className="text-neon-blue">Sign in</Link></p>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Workers</h1>
+    <div className="space-y-8">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="space-y-4">
+          <span className="badge">Compute</span>
+          <h1 className="text-4xl font-semibold tracking-tightest text-white md:text-5xl">
+            <span className="grad-text">Workers</span>
+          </h1>
+          <p className="max-w-2xl text-lg text-white/65">
+            Register your machines, mint tokens, and put idle compute to work.
+          </p>
+        </div>
         <Link href="/workers/install" className="btn-ghost text-sm">Install guide</Link>
-      </div>
+      </header>
 
-      <div className="card flex flex-wrap items-end gap-3">
-        <label className="text-sm">Name<input className="field mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="my-gpu-box" /></label>
-        <label className="text-sm">Earning mode
-          <select className="field mt-1" value={mode} onChange={(e) => setMode(e.target.value)}>
+      <div className="card flex flex-wrap items-end gap-4">
+        <label className="text-sm text-white/70">Name<input className="field mt-1.5" value={name} onChange={(e) => setName(e.target.value)} placeholder="my-gpu-box" /></label>
+        <label className="text-sm text-white/70">Earning mode
+          <select className="field mt-1.5" value={mode} onChange={(e) => setMode(e.target.value)}>
             {["all", "mining", "inference", "rental"].map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </label>
@@ -53,10 +61,10 @@ export default function WorkersPage() {
       </div>
 
       {token && (
-        <div className="card border-neon-green/40 space-y-2">
+        <div className="card border-neon-green/40 space-y-2.5">
           <p className="text-sm text-white/70">Worker token — use it in the installer (also re-readable any time from the worker’s row below):</p>
           <code className="block break-all text-neon-green">{token}</code>
-          <pre className="overflow-x-auto rounded-lg bg-black/40 p-3 text-sm">{`curl -fsSL https://pool.animica.org/install-worker.sh | bash -s -- ${token}`}</pre>
+          <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/40 p-3.5 text-sm">{`curl -fsSL https://pool.animica.org/install-worker.sh | bash -s -- ${token}`}</pre>
         </div>
       )}
 
@@ -142,14 +150,14 @@ function WorkerRow({ w, onDelete, deleting }: { w: Worker; onDelete: () => void;
 
               <TokenBlock workerId={w.id} token={s.token} />
 
-              {/* Rent out / availability on the marketplace */}
+              {/* Rent out / hourly availability for this worker */}
               <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3">
                 {s.rental.listed ? (
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm">
                       <span className="text-neon-green">● Available for rent</span>
                       <span className="ml-2 text-white/60">at ${Number(s.rental.pricePerHourUsd).toFixed(2)}/hr</span>
-                      <span className="ml-2 text-xs text-white/40">(shown on the Rent marketplace while online)</span>
+                      <span className="ml-2 text-xs text-white/40">(rentable by the hour while online)</span>
                     </p>
                     <button className="text-xs text-red-400/80 hover:text-red-400 disabled:opacity-40" disabled={unlistMut.isPending} onClick={() => unlistMut.mutate()}>
                       {unlistMut.isPending ? "Unlisting…" : "Unlist"}
@@ -260,9 +268,9 @@ function TokenBlock({ workerId, token }: { workerId: string; token: string | nul
 
 function Metric({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
-    <div className="rounded-lg border border-white/5 bg-black/20 p-2">
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
       <p className="text-xs text-white/50">{label}</p>
-      <p className={`mt-0.5 font-medium ${accent ?? ""}`}>{value}</p>
+      <p className={`mt-0.5 font-medium ${accent ?? "text-white"}`}>{value}</p>
     </div>
   );
 }

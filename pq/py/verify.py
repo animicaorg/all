@@ -22,10 +22,34 @@ from pq.py.sign import (
 )
 
 __all__ = [
+    "verify",
     "verify_detached",
     "verify_attached",
     "build_sign_bytes",
 ]
+
+
+def verify(alg_id: int, pubkey: bytes, signature: bytes, message: bytes) -> bool:
+    """Raw verify by numeric algorithm id over a precomputed message.
+
+    Matches the call convention used by rpc/state_service.py
+    (``verify(alg_id, pubkey, signature, sign_bytes)``): resolves ``alg_id`` to a
+    PQ scheme via the registry and verifies the detached signature against the
+    already-canonicalized message bytes. Returns False on any failure (never
+    raises), so callers can treat it as a boolean predicate.
+    """
+    try:
+        import importlib
+
+        from pq.py.registry import ALG_NAMES_BY_ID
+
+        name = ALG_NAMES_BY_ID.get(int(alg_id))
+        if not name:
+            return False
+        mod = importlib.import_module(f"pq.py.algs.{name}")
+        return bool(mod.verify(bytes(pubkey), bytes(message), bytes(signature)))
+    except Exception:
+        return False
 
 
 def verify_detached(
