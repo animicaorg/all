@@ -1,0 +1,40 @@
+# Wine + Windows-Python + PyInstaller image for cross-building the
+# Animica Miner GUI .exe from Linux.
+#
+# Strategy: base on `tobix/pywine`, which ships a Wine prefix with a real
+# Windows CPython already installed and exposed as `wine python`. We then add
+# PyInstaller so a single `wine python -m PyInstaller ...` produces a native
+# Windows onedir/.exe build without ever touching a Windows host.
+#
+# NOTE: This is the Linux -> Windows cross-build path. There is NO equivalent
+# for macOS: Apple's toolchain and code-signing cannot be reproduced on Linux,
+# so the macOS .app/.dmg is produced exclusively on the macOS CI runner.
+#
+# Build the image:
+#   docker build -f apps/miner-gui/build-scripts/Dockerfile.windows-wine \
+#       -t animica-miner-wine apps/miner-gui/build-scripts
+#
+# Then run build_windows_wine.sh which invokes it.
+#
+# Pin a tag that bundles Python 3.12 (Qt6/PySide6 requires Python 3.10+).
+ARG PYWINE_TAG=3.12
+FROM tobix/pywine:${PYWINE_TAG}
+
+# `wine` is preconfigured in this image; WINEPREFIX defaults to /wine/.
+ENV WINEDEBUG=-all \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1
+
+# Pre-warm the Windows Python toolchain inside the Wine prefix so the actual
+# build step is faster and the image fails early if Python is missing.
+RUN wine python --version && \
+    wine python -m pip install --upgrade pip setuptools wheel && \
+    wine python -m pip install --upgrade pyinstaller pyinstaller-hooks-contrib
+
+WORKDIR /src
+
+# The repository is bind-mounted at runtime; the entrypoint runs the shared
+# Windows build script in Wine mode against /src.
+ENTRYPOINT ["/bin/bash", "-lc"]
+CMD ["WINE=wine PYTHON='wine python' /src/apps/miner-gui/build-scripts/build_windows.sh"]

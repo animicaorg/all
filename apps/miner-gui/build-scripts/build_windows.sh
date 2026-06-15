@@ -1,300 +1,150 @@
 #!/usr/bin/env bash
-# Build Windows executable for Animica Miner GUI
-# Creates a standalone .exe and installer
+# Build the Windows Animica Miner GUI binary (AnimicaMiner.exe).
 #
-# Requirements:
-#   - Windows 10/11 or cross-compilation environment
-#   - Python 3.10 or higher for Windows
-#   - Wine (if cross-compiling from Mac/Linux)
+# Produces a PyInstaller onedir build of "AnimicaMiner" and packages it as a
+# .zip. For every artifact it computes SHA256 + size and appends a single JSON
+# line to the per-artifact manifest log so make_manifest.py can aggregate them.
+#
+# This script is designed to run:
+#   - natively on Windows (GitHub `windows-latest` runner, Git Bash), and
+#   - under Wine via build_windows_wine.sh (it auto-detects `wine` Python).
 #
 # Usage:
-#   On Windows (Git Bash/WSL):  ./build_windows.sh
-#   On Mac/Linux:               ./build_windows.sh --cross-compile
+#   On Windows (Git Bash):     ./build_windows.sh
+#   Under Wine (Linux):        WINE=wine PYTHON="wine python" ./build_windows.sh
+#                              (build_windows_wine.sh wires this up for you)
+#
+# Env overrides:
+#   ARTIFACT_LOG   path to the JSON-lines manifest log (default: dist/artifacts.jsonl)
+#   PYTHON         python invocation (default auto: "python"/"python3", or "wine python")
+#   WINE           set to "wine" when running through Wine (affects PyInstaller call)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"          # apps/miner-gui
+REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"        # repo root
 DIST_DIR="${APP_DIR}/dist"
 BUILD_DIR="${APP_DIR}/build"
+SPEC_FILE="${SCRIPT_DIR}/animica-miner-gui.spec"
+ARTIFACT_LOG="${ARTIFACT_LOG:-${DIST_DIR}/artifacts.jsonl}"
+APP_NAME="AnimicaMiner"
 
-CROSS_COMPILE=false
-
-log() { printf "\033[1;34m[build-windows]\033[0m %s\n" "$*"; }
+log()  { printf "\033[1;34m[build-windows]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*" >&2; }
-err() { printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; }
-die() { err "$*"; exit 1; }
+err()  { printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; }
+die()  { err "$*"; exit 1; }
 
-# Parse arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --cross-compile)
-            CROSS_COMPILE=true
-            shift
-            ;;
-        *)
-            die "Unknown option: $1"
-            ;;
-    esac
-done
-
-# Detect OS
-OS="$(uname -s)"
-case "$OS" in
-    MINGW*|MSYS*|CYGWIN*)
-        ON_WINDOWS=true
-        ;;
-    *)
-        ON_WINDOWS=false
-        ;;
+# ---- Detect environment ----
+WINE="${WINE:-}"
+ON_WINDOWS=false
+case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*) ON_WINDOWS=true ;;
 esac
 
-if [[ "$ON_WINDOWS" == "false" && "$CROSS_COMPILE" == "false" ]]; then
-    die "Not running on Windows. Use --cross-compile flag to build for Windows from Mac/Linux (requires Wine)"
+# ---- Resolve python + pyinstaller invocations ----
+if [[ -n "$WINE" ]]; then
+    PY="${PYTHON:-wine python}"
+    log "Wine cross-build mode: PYTHON='$PY'"
+elif [[ "$ON_WINDOWS" == "true" ]]; then
+    if command -v python >/dev/null 2>&1; then PY="${PYTHON:-python}";
+    elif command -v python3 >/dev/null 2>&1; then PY="${PYTHON:-python3}";
+    else die "Python not found. Install Python 3.10+ for Windows."; fi
+else
+    die "Not on Windows and WINE not set. Run on the windows-latest runner, or use build_windows_wine.sh for a Linux cross-build."
 fi
 
-# Clean previous builds
+PY_VERSION="$($PY --version 2>&1 | awk '{print $2}')"
+log "Using Python $PY_VERSION"
+
+# ---- Clean ----
 log "Cleaning previous builds..."
 rm -rf "$DIST_DIR" "$BUILD_DIR"
-mkdir -p "$DIST_DIR"
+mkdir -p "$DIST_DIR" "$BUILD_DIR"
 
-if [[ "$CROSS_COMPILE" == "true" ]]; then
-    log "Cross-compiling for Windows..."
-    
-    # Check for Wine
-    if ! command -v wine >/dev/null 2>&1; then
-        die "Wine is required for cross-compilation. Install with: brew install wine (Mac) or apt install wine (Linux)"
-    fi
-    
-    # Check for Python Windows installation in Wine
-    WINE_PYTHON="wine python"
-    if ! $WINE_PYTHON --version >/dev/null 2>&1; then
-        err "Python for Windows not found in Wine environment"
-        err "Please install Python 3.10+ for Windows in Wine:"
-        err "  1. Download Python installer: https://www.python.org/downloads/windows/"
-        err "  2. Run: wine python-3.XX.X-amd64.exe /quiet InstallAllUsers=1 PrependPath=1"
-        die "Cannot proceed without Windows Python in Wine"
-    fi
-    
-    PYTHON_CMD="$WINE_PYTHON"
-    PIP_CMD="wine pip"
-else
-    # Native Windows build
-    log "Building on Windows..."
-    
-    # Try to find Python
-    if command -v python3 >/dev/null 2>&1; then
-        PYTHON_CMD="python3"
-    elif command -v python >/dev/null 2>&1; then
-        PYTHON_CMD="python"
-    else
-        die "Python not found. Please install Python 3.10 or higher"
-    fi
-    
-    PIP_CMD="$PYTHON_CMD -m pip"
+# ---- Tooling + deps ----
+log "Installing PyInstaller + GUI package..."
+$PY -m pip install --upgrade pip setuptools wheel
+$PY -m pip install --upgrade pyinstaller pyinstaller-hooks-contrib
+$PY -m pip install -e "$APP_DIR"
+if [[ -f "$REPO_ROOT/python/pyproject.toml" ]]; then
+    $PY -m pip install -e "$REPO_ROOT/python" || warn "could not install animica package; bundle may be incomplete"
 fi
 
-# Check Python version
-PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | awk '{print $2}')
-log "Using Python $PYTHON_VERSION"
-
-# Install/upgrade PyInstaller
-log "Installing PyInstaller..."
-$PIP_CMD install --upgrade pip setuptools wheel
-$PIP_CMD install --upgrade pyinstaller
-
-# Install the miner-gui package and its dependencies
-log "Installing miner-gui dependencies..."
-cd "$APP_DIR"
-$PIP_CMD install -e .
-
-# Get version from pyproject.toml
-VERSION=$($PYTHON_CMD -c "import tomllib; print(tomllib.load(open('$APP_DIR/pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")
+# ---- Version ----
+VERSION="$($PY -c "import tomllib; print(tomllib.load(open(r'$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
 log "Building version: $VERSION"
 
-# Create PyInstaller spec
-SPEC_FILE="${BUILD_DIR}/animica-miner-gui-windows.spec"
-mkdir -p "$BUILD_DIR"
-
-log "Creating PyInstaller spec file..."
-cat > "$SPEC_FILE" << 'SPEC_EOF'
-# -*- mode: python ; coding: utf-8 -*-
-import sys
-from pathlib import Path
-
-block_cipher = None
-
-# Resolve repository root for bundled toolchain assets.
-repo_root = Path(__file__).resolve().parents[3]
-app_dir = repo_root / "apps" / "miner-gui"
-
-# Get the logo path
-logo_path = app_dir / 'logo.png'
-if not logo_path.exists():
-    print("Warning: logo.png not found")
-    logo_path = None
-
-schemas_dir = app_dir / "animica_miner_gui" / "ide" / "toolchain" / "schemas"
-
-a = Analysis(
-    ['animica_miner_gui/main.py'],
-    pathex=[str(repo_root), str(app_dir)],
-    binaries=[],
-    datas=[
-        (str(logo_path), '.') if logo_path else None,
-        (str(schemas_dir / 'manifest.schema.json'), 'animica_miner_gui/ide/toolchain/schemas'),
-        (str(schemas_dir / 'abi.schema.json'), 'animica_miner_gui/ide/toolchain/schemas'),
-    ],
-    hiddenimports=[
-        'PySide6.QtCore',
-        'PySide6.QtGui',
-        'PySide6.QtWidgets',
-        'PySide6.QtNetwork',
-        'matplotlib.backends.backend_qt5agg',
-        'pydantic',
-        'httpx',
-        'jsonschema',
-        'omni_sdk',
-        'omni_sdk.contracts.deployer',
-        'omni_sdk.tx',
-        'omni_sdk.tx.encode',
-        'omni_sdk.wallet.signer',
-        'animica_miner_gui.ide',
-        'animica_miner_gui.ide.git_integration',
-        'animica_miner_gui.ide.git_panel',
-        'animica_miner_gui.ide.toolchain.preflight',
-        'animica_miner_gui.packaging.verify',
-        'vm_py',
-        'vm_py.abi',
-        'vm_py.compiler',
-        'vm_py.runtime',
-        'vm_py.stdlib',
-    ],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[
-        'tkinter',
-        'test',
-        'unittest',
-    ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
-    noarchive=False,
-)
-
-# Filter out None from datas
-a.datas = [d for d in a.datas if d is not None]
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='Animica-Miner-GUI',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=None,
-    version='file_version_info.txt',
-)
-SPEC_EOF
-
-# Create version info file
-VERSION_INFO="${BUILD_DIR}/file_version_info.txt"
-cat > "$VERSION_INFO" << VERSION_EOF
-VSVersionInfo(
-  ffi=FixedFileInfo(
-    filevers=(0, 1, 0, 0),
-    prodvers=(0, 1, 0, 0),
-    mask=0x3f,
-    flags=0x0,
-    OS=0x40004,
-    fileType=0x1,
-    subtype=0x0,
-    date=(0, 0)
-  ),
-  kids=[
-    StringFileInfo(
-      [
-      StringTable(
-        u'040904B0',
-        [StringStruct(u'CompanyName', u'Animica'),
-        StringStruct(u'FileDescription', u'Animica Miner GUI'),
-        StringStruct(u'FileVersion', u'$VERSION'),
-        StringStruct(u'InternalName', u'Animica-Miner-GUI'),
-        StringStruct(u'LegalCopyright', u'Copyright (c) 2024 Animica'),
-        StringStruct(u'OriginalFilename', u'Animica-Miner-GUI.exe'),
-        StringStruct(u'ProductName', u'Animica Miner GUI'),
-        StringStruct(u'ProductVersion', u'$VERSION')])
-      ]
-    ),
-    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
-  ]
-)
-VERSION_EOF
-
-# Build with PyInstaller
-log "Running PyInstaller..."
+# ---- PyInstaller ----
+log "Running PyInstaller (onedir, windowed)..."
+export ANIMICA_GUI_SPEC_DIR="$SCRIPT_DIR"
+export ANIMICA_GUI_APP_DIR="$APP_DIR"
+export ANIMICA_GUI_REPO_ROOT="$REPO_ROOT"
+export ANIMICA_GUI_NAME="$APP_NAME"
+export ANIMICA_GUI_VERSION="$VERSION"
 cd "$APP_DIR"
+$PY -m PyInstaller --clean --noconfirm \
+    --distpath "$DIST_DIR" \
+    --workpath "$BUILD_DIR/pyinstaller-work" \
+    "$SPEC_FILE"
 
-if [[ "$CROSS_COMPILE" == "true" ]]; then
-    wine pyinstaller --clean --noconfirm "$SPEC_FILE"
-else
-    $PYTHON_CMD -m PyInstaller --clean --noconfirm "$SPEC_FILE"
-fi
+ONEDIR="${DIST_DIR}/${APP_NAME}"
+EXE_PATH="${ONEDIR}/${APP_NAME}.exe"
+[[ -d "$ONEDIR" ]] || die "Failed to create onedir build at $ONEDIR"
+[[ -f "$EXE_PATH" ]] || warn "Expected ${APP_NAME}.exe not found (continuing; check dist)"
+log "onedir build created at: $ONEDIR"
 
-# Check if executable was created
-EXE_PATH="${DIST_DIR}/Animica-Miner-GUI.exe"
-if [[ ! -f "$EXE_PATH" ]]; then
-    die "Failed to create executable"
-fi
-
-log "Executable created successfully at: $EXE_PATH"
-
-# Create a zip package
-ZIP_NAME="Animica-Miner-GUI-${VERSION}-Windows-x64.zip"
+# ---- ZIP package ----
+ZIP_NAME="AnimicaMiner-${VERSION}-windows-x64.zip"
 ZIP_PATH="${DIST_DIR}/${ZIP_NAME}"
-
 log "Creating ZIP package..."
-cd "$DIST_DIR"
-if command -v zip >/dev/null 2>&1; then
-    zip -q "$ZIP_NAME" "Animica-Miner-GUI.exe"
-elif command -v 7z >/dev/null 2>&1; then
-    7z a "$ZIP_NAME" "Animica-Miner-GUI.exe" > /dev/null
+if command -v 7z >/dev/null 2>&1; then
+    ( cd "$DIST_DIR" && 7z a -y "$ZIP_NAME" "$APP_NAME" >/dev/null )
+elif command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -Command \
+        "Compress-Archive -Path '$ONEDIR' -DestinationPath '$ZIP_PATH' -Force"
+elif command -v zip >/dev/null 2>&1; then
+    ( cd "$DIST_DIR" && zip -q -r "$ZIP_NAME" "$APP_NAME" )
 else
-    warn "No zip utility found, skipping ZIP creation"
-    ZIP_PATH=""
+    # Fallback: Python's shutil works everywhere (incl. Wine).
+    $PY -c "import shutil; shutil.make_archive(r'${DIST_DIR}/AnimicaMiner-${VERSION}-windows-x64','zip',r'$DIST_DIR',r'$APP_NAME')"
 fi
+[[ -f "$ZIP_PATH" ]] || die "ZIP not created at $ZIP_PATH"
+log "Zip: $ZIP_PATH"
 
-log "✅ Build completed successfully!"
-log ""
-log "Artifacts:"
-log "  Executable: $EXE_PATH"
-if [[ -n "$ZIP_PATH" && -f "$ZIP_PATH" ]]; then
-    log "  ZIP:        $ZIP_PATH"
-fi
-log ""
-log "To test the executable:"
-if [[ "$CROSS_COMPILE" == "true" ]]; then
-    log "  wine \"$EXE_PATH\""
-else
-    log "  \"$EXE_PATH\""
-fi
-log ""
-log "Note: For production releases, sign the executable with a code signing certificate"
+# ---- Artifact-record helper (SHA256 + size + JSON line) ----
+emit_artifact() {
+    # $1 = file path, $2 = platform tag, $3 = min_os
+    local file="$1" platform="$2" min_os="$3"
+    local name size sha
+    name="$(basename "$file")"
+    size="$(stat -c %s "$file" 2>/dev/null || stat -f %z "$file")"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha="$(sha256sum "$file" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        sha="$(shasum -a 256 "$file" | awk '{print $1}')"
+    else
+        sha="$($PY -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$file")"
+    fi
+    $PY - "$ARTIFACT_LOG" "$platform" "$name" "$VERSION" "$size" "$sha" "$min_os" <<'PYEOF'
+import json, sys
+log, platform, name, version, size, sha, min_os = sys.argv[1:8]
+rec = {
+    "platform": platform,
+    "name": "AnimicaMiner",
+    "version": version,
+    "filename": name,
+    "size_bytes": int(size),
+    "sha256": sha,
+    "min_os": min_os,
+}
+with open(log, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(rec) + "\n")
+print(f"[artifact] {platform} {name} {size} bytes sha256={sha}")
+PYEOF
+}
+
+emit_artifact "$ZIP_PATH" "windows" "Windows 10+"
+
+log "Build complete. Artifacts in: $DIST_DIR"
+log "Manifest log: $ARTIFACT_LOG"

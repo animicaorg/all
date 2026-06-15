@@ -567,7 +567,25 @@ animica wallet --wallet-file /custom/path/wallets.json list
 
 ## ⛏️ Mining
 
-Mining requires a running node. Mine blocks to earn block rewards.
+### One command — mine + AI (recommended)
+
+```bash
+pip install --upgrade animica
+animica up
+```
+
+`animica up` is the whole setup. It creates a wallet if you don't have one, then a
+single process joins **pool.animica.org** and the **one global model**, running —
+by capability — SHA3 proof-of-work, ENA useful-work, and (on a GPU) model training
++ OpenAI-compatible serving, plus Bittensor serving on qualified GPUs (≥16 GB VRAM).
+**Every reward — PoW, useful-work, training, serving, Bittensor — pays out in ANM
+to your address.** No flags, no separate daemons. Preview what will run with
+`animica up --plan`.
+
+The pool enforces a **minimum miner version (1.0.0)** and rejects older miners, so
+keep `animica` upgraded. Full guide: <https://pool.animica.org/mining-onboard>.
+
+The sections below are advanced/manual paths (`animica up` runs these for you).
 
 ### GUI Miner (Recommended)
 

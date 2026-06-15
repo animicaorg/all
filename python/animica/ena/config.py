@@ -56,7 +56,7 @@ class ENAConfig(Schema):
     chain_id: int = 1
     demand_min_anm: float = 0.1                   # minimum reward a requester may fund
     payment_confirmations: int = 1                # confirmations required before funding
-    public_url: str = "https://ena.animica.org"   # public origin (web-wallet callback)
+    public_url: str = "https://pool.animica.org"   # public origin (web-wallet callback)
 
     # -- resolved helpers -------------------------------------------------
     def home_path(self) -> Path:
@@ -274,7 +274,7 @@ def load_config(config_path: Optional[str] = None) -> ENAConfig:
         chain_id=int(demand.get("chain_id", 1)),
         demand_min_anm=float(demand.get("demand_min_anm", 0.1)),
         payment_confirmations=int(demand.get("payment_confirmations", 1)),
-        public_url=str(demand.get("public_url", "https://ena.animica.org")),
+        public_url=str(demand.get("public_url", "https://pool.animica.org")),
     )
 
 

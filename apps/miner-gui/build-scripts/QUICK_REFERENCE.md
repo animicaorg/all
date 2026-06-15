@@ -12,28 +12,36 @@ apps/miner-gui/build-scripts/
 cd apps/miner-gui/build-scripts
 ./build_macos.sh
 ```
-**Output**: `dist/Animica Miner GUI.app` and `.dmg`
+**Output**: `dist/AnimicaMiner.app`, `.dmg`, `.zip`
 
 ### Windows (on Windows)
 ```bash
 cd apps/miner-gui/build-scripts
 ./build_windows.sh
 ```
-**Output**: `dist/Animica-Miner-GUI.exe` and `.zip`
+**Output**: `dist/AnimicaMiner/AnimicaMiner.exe` and `.zip`
 
-### Windows (cross-compile from Mac/Linux)
+### Windows (cross-compile from Linux, Docker + Wine)
 ```bash
 cd apps/miner-gui/build-scripts
-./build_windows.sh --cross-compile
+./build_windows_wine.sh
 ```
-**Requires**: Wine
+**Requires**: Docker (builds a Wine + Windows-Python + PyInstaller image)
+**Note**: macOS cannot be cross-built from Linux (Apple toolchain) — use the macOS CI runner.
 
 ### Linux (on Linux)
 ```bash
 cd apps/miner-gui/build-scripts
 ./build_linux.sh
 ```
-**Output**: `dist/animica-miner-gui`, `.tar.gz`, and `.AppImage`
+**Output**: `dist/AnimicaMiner/`, `.tar.gz`, and `.AppImage` (if `appimagetool` present)
+
+### Manifest (after collecting `dist/artifacts.jsonl` from each OS)
+```bash
+python make_manifest.py --inputs 'artifacts/**/artifacts.jsonl' \
+  --out downloads/manifest.json --repo OWNER/REPO --tag gui-v0.1.0
+```
+**Output**: `downloads/manifest.json`
 
 ## Prerequisites
 

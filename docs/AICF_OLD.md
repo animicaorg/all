@@ -240,8 +240,8 @@ animica ena aicf epoch-info <epoch>
 ### Environment Variables
 
 ```bash
-# ENA endpoint (default: https://ena.animica.org)
-export ENA_ENDPOINT=https://ena.animica.org
+# ENA endpoint (default: https://pool.animica.org)
+export ENA_ENDPOINT=https://pool.animica.org
 
 # Animica RPC (default: https://mainnet.animica.org/rpc)
 export ANIMICA_RPC_URL=https://mainnet.animica.org/rpc

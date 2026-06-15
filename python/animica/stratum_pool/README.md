@@ -1,5 +1,12 @@
 # Animica Stratum Pool
 
+> **Miners:** you don't run this — just `pip install --upgrade animica && animica up`.
+> That one command joins the pool and runs mining + AI (useful-work, training,
+> serving, Bittensor on qualified GPUs), all paid out in ANM. The pool enforces a
+> **minimum miner version (1.0.0)** — set `ANIMICA_POOL_MIN_MINER_VERSION=1.0.0`
+> and `ANIMICA_POOL_REQUIRE_MIN_VERSION=true` to reject older miners. This README
+> is for **pool operators**.
+
 This package runs the managed Animica Stratum pool. It is wired to the same canonical mining path as `animica miner mine-blocks`:
 
 - Work comes from `miner.getBlockTemplate`.

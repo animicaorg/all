@@ -18,6 +18,7 @@ __all__ = [
     "JobError",
     "TrainingError",
     "VerificationError",
+    "PoolError",
 ]
 
 
@@ -68,3 +69,7 @@ class TrainingError(ENAError):
 
 class VerificationError(ENAError):
     code = "ENA/VERIFICATION"
+
+
+class PoolError(ENAError):
+    code = "ENA/POOL"

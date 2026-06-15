@@ -182,8 +182,8 @@ animica ena deposit 10.0 --rpc-url https://rpc.custom.org
 ### Environment Variables
 
 ```bash
-# ENA endpoint (default: https://ena.animica.org)
-export ENA_ENDPOINT=https://ena.animica.org
+# ENA endpoint (default: https://pool.animica.org)
+export ENA_ENDPOINT=https://pool.animica.org
 
 # Animica RPC (default: https://mainnet.animica.org/rpc)
 export ANIMICA_RPC_URL=https://mainnet.animica.org/rpc
@@ -201,7 +201,7 @@ ENA can run inference locally (CPU) or remotely (GPU cluster):
 animica ena infer "Test" --local
 
 # Remote GPU inference (faster, paid)
-animica ena infer "Test" --remote https://ena.animica.org
+animica ena infer "Test" --remote https://pool.animica.org
 ```
 
 **Note**: `--local` flag is planned for future implementation.
@@ -350,7 +350,7 @@ animica faucet request
 1. Check network connection
 2. Verify endpoint URL:
    ```bash
-   curl https://ena.animica.org/v1/models
+   curl https://pool.animica.org/v1/models
    ```
 3. Use different endpoint:
    ```bash
@@ -374,7 +374,7 @@ import httpx
 import json
 
 # Configuration
-ENA_ENDPOINT = "https://ena.animica.org"
+ENA_ENDPOINT = "https://pool.animica.org"
 ANIMICA_RPC = "https://mainnet.animica.org/rpc"
 
 # Get pricing
@@ -416,7 +416,7 @@ from animica import ENA
 
 # Initialize client
 ena = ENA(
-    endpoint="https://ena.animica.org",
+    endpoint="https://pool.animica.org",
     rpc_url="https://mainnet.animica.org/rpc",
     wallet_path="~/.animica/wallets.json",
 )

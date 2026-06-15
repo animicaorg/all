@@ -35,12 +35,15 @@ class PoolShareValidator:
         *,
         pool_mode: str = "pps",
         logger: Optional[logging.Logger] = None,
+        is_rejected: Optional[Callable[[str], bool]] = None,
     ) -> None:
         self._adapter = adapter
         self._pool_mode = str(pool_mode or "pps").strip().lower()
         if self._pool_mode not in {"pps", "solo", "both"}:
             self._pool_mode = "pps"
         self._log = logger or logging.getLogger("animica.stratum_pool.validator")
+        # Returns True for addresses the pool has rejected on version policy.
+        self._is_rejected = is_rejected or (lambda _addr: False)
 
     async def validate(self, job: StratumJob, submit_params):
         address = str(submit_params.get("_address") or "").strip()
@@ -48,6 +51,8 @@ class PoolShareValidator:
             return False, "missing miner payout address", False, 0
         if not address.startswith("anim1"):
             return False, "invalid miner payout address", False, 0
+        if self._is_rejected(address):
+            return False, "miner version too old — update required", False, 0
         raw_template = job.raw if isinstance(job.raw, dict) else {}
         source_job_id = str(raw_template.get("_sourceJobId") or job.job_id)
         if raw_template.get("_sourceJobId") != source_job_id:
@@ -99,10 +104,15 @@ class StratumPoolServer:
         self._config = config
         self._job_manager = job_manager
         self._log = logger or logging.getLogger("animica.stratum_pool.server")
+        # Addresses rejected by the pool-level miner-version policy (Phase 5).
+        # Populated at authorize time; consulted by the share validator so old
+        # miners earn nothing until they update. Reversible via config.
+        self._version_rejected: set[str] = set()
         self._validator = PoolShareValidator(
             adapter,
             pool_mode=config.pool_mode,
             logger=logger,
+            is_rejected=self._is_version_rejected,
         )
         self._last_published_job_id: Optional[str] = None
         self._last_published_fingerprint: Optional[str] = None
@@ -151,6 +161,38 @@ class StratumPoolServer:
         self._aicf_inflight: Dict[tuple[str, str], float] = {}
         self._aicf_poll_interval_s = 2.0
 
+    def _is_version_rejected(self, address: str) -> bool:
+        return str(address or "") in self._version_rejected
+
+    def _enforce_version(self, session: object, features: dict) -> bool:
+        """Apply the pool-level miner-version policy at authorize time.
+
+        Returns True if the miner is allowed to continue. When enforcement is on
+        and the miner is too old (or reports no version), its address is recorded
+        as rejected — so the share validator refuses its shares — and AICF
+        registration is skipped. Policy only; never affects chain consensus.
+        """
+        from . import version_gate
+        address = str(getattr(session, "address", None)
+                      or getattr(session, "worker", None) or "")
+        verdict = version_gate.evaluate(
+            features, getattr(self._config, "min_miner_version", ""),
+            enforce=bool(getattr(self._config, "require_min_version", False)))
+        if verdict["ok"]:
+            if address:
+                self._version_rejected.discard(address)
+            return True
+        if address:
+            self._version_rejected.add(address)
+        try:  # best-effort: drop authorization so nothing else routes here
+            setattr(session, "authorized", False)
+        except Exception:  # noqa: BLE001
+            pass
+        self._log.warning(
+            "rejected miner on version policy: address=%s reported=%r minimum=%s",
+            address or "?", verdict["reported"], verdict["minimum"])
+        return False
+
     async def _register_aicf_worker(self, session: object, features: dict) -> None:
         """Auto-register the authorized miner as an AICF worker.
 
@@ -166,6 +208,9 @@ class StratumPoolServer:
         miners while letting model-serving miners opt in just by adding
         the features key.
         """
+        # Pool-level version policy: reject old miners before anything routes.
+        if not self._enforce_version(session, features):
+            return
         if not getattr(session, "authorized", False):
             return
         address = getattr(session, "address", None) or getattr(session, "worker", None)

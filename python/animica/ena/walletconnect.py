@@ -55,7 +55,7 @@ class WalletConnectService:
         nonce = secrets.token_hex(32)
         now = now_ts()
         payload = {
-            "app": "ena.animica.org",
+            "app": "pool.animica.org",
             "origin": app_origin or self.cfg.public_url,
             "chainId": self.cfg.chain_id,
             "scopes": ["accounts"],

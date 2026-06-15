@@ -348,7 +348,7 @@ animica chain head
 animica ena doctor
 
 # Manual test
-curl https://ena.animica.org/v1/models
+curl https://pool.animica.org/v1/models
 ```
 
 **Fixes**:
@@ -356,7 +356,7 @@ curl https://ena.animica.org/v1/models
 1. **Network issue**:
    ```bash
    # Test connectivity
-   ping ena.animica.org
+   ping pool.animica.org
    
    # Try with different network
    ```
@@ -422,7 +422,7 @@ animica tx status <hash>
 animica ena aicf doctor
 
 # Check endpoint
-curl https://ena.animica.org/v1/aicf/status
+curl https://pool.animica.org/v1/aicf/status
 ```
 
 **Fixes**:
@@ -440,7 +440,7 @@ curl https://ena.animica.org/v1/aicf/status
    ```bash
    # Use mainnet endpoint
    animica ena aicf worker-register <addr> \
-     --endpoint https://ena.animica.org
+     --endpoint https://pool.animica.org
    ```
 
 #### "No jobs available"

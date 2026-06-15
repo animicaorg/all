@@ -1,10 +1,44 @@
 # Animica Miner GUI - Build Scripts
 
-This directory contains build scripts for creating standalone executables of the Animica Miner GUI for macOS, Windows, and Linux.
+This directory contains the cross-compile pipeline for the three Animica Miner GUI
+desktop binaries (Linux, macOS, Windows) plus a manifest generator and the GitHub
+Actions release matrix that drives them.
 
 ## Overview
 
-The build scripts use [PyInstaller](https://pyinstaller.org/) to bundle the Python application and all its dependencies into standalone executables that can run without requiring a Python installation.
+The build scripts use [PyInstaller](https://pyinstaller.org/) to bundle the Python
+application and all its dependencies into a standalone, windowed app named
+**AnimicaMiner** that runs without a Python installation.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `animica-miner-gui.spec` | Unified, cross-platform PyInstaller spec. Windowed onedir build named `AnimicaMiner`; entry = `animica_miner_gui/main.py`; bundles PySide6/matplotlib/pydantic/httpx/jsonschema **and the `animica` unified-flow package**; excludes tkinter/tests. On macOS it also emits `AnimicaMiner.app` via `BUNDLE()`. |
+| `qt_runtime_hook.py` | PyInstaller runtime hook so Qt finds its platform plugins inside the frozen bundle. |
+| `build_linux.sh` | Linux build: PyInstaller onedir → AppImage (if `appimagetool` is present) else tarball. Always also produces a tarball. |
+| `build_macos.sh` | macOS build: PyInstaller onedir → `.app` → `.dmg` (+ `.zip`). **macOS only.** |
+| `build_windows.sh` | Windows build: PyInstaller onedir → `.zip`. Runs natively on Windows or under Wine. |
+| `build_windows_wine.sh` + `Dockerfile.windows-wine` | Windows-from-Linux cross-build via a Wine + Windows-Python + PyInstaller Docker image. |
+| `make_manifest.py` | Aggregates the per-artifact JSON lines into `downloads/manifest.json`. |
+
+Each per-OS build script computes **SHA256 + size** for every artifact and appends
+one JSON line to `dist/artifacts.jsonl`, which `make_manifest.py` aggregates.
+
+### Cross-compile reality
+
+PyInstaller is **not** a cross-compiler — it freezes the interpreter it runs on:
+
+- **Linux** → built natively on Linux.
+- **Windows** → built natively on the Windows CI runner, **or** cross-built from
+  Linux by running a *Windows* CPython inside Wine (`build_windows_wine.sh`).
+- **macOS** → **cannot** be cross-built from Linux. Apple's SDK and code-signing
+  toolchain are not redistributable and do not run under Wine, so the `.app`/`.dmg`
+  is produced **exclusively on the macOS CI runner** (`build_macos.sh`).
+
+The robust path is the CI matrix (`ubuntu-latest` / `macos-latest` / `windows-latest`)
+in `.github/workflows/gui-miner-release.yml`; the Wine image is the Linux→Windows
+fallback for local builds without a Windows host.
 
 ## Prerequisites
 
@@ -61,31 +95,27 @@ cd apps/miner-gui/build-scripts
 ./build_windows.sh
 ```
 
-#### Option 2: Cross-Compile from Mac/Linux
+#### Option 2: Cross-Compile from Linux (Wine + Docker)
 
-Requires Wine:
+No Windows host required. `build_windows_wine.sh` builds a Wine + Windows-Python +
+PyInstaller image from `Dockerfile.windows-wine`, then runs `build_windows.sh`
+inside it in Wine mode against the bind-mounted repo:
 
 ```bash
-# Install Wine first
-# macOS: brew install wine
-# Ubuntu: sudo apt install wine
-
 cd apps/miner-gui/build-scripts
-./build_windows.sh --cross-compile
+./build_windows_wine.sh
 ```
+
+Under the hood the container runs `WINE=wine PYTHON='wine python' build_windows.sh`,
+so the exact same Windows build script is reused for native and cross builds.
 
 **Output:**
-- `dist/Animica-Miner-GUI.exe` - Windows executable
-- `dist/Animica-Miner-GUI-{version}-Windows-x64.zip` - ZIP package
+- `dist/AnimicaMiner/AnimicaMiner.exe` - Windows onedir executable
+- `dist/AnimicaMiner-{version}-windows-x64.zip` - ZIP package
+- `dist/artifacts.jsonl` - per-artifact SHA256 + size (one JSON line)
 
-**Testing:**
-```bash
-# On Windows:
-./dist/Animica-Miner-GUI.exe
-
-# With Wine (cross-compile):
-wine dist/Animica-Miner-GUI.exe
-```
+> macOS cannot be cross-built from Linux (Apple toolchain). The `.app`/`.dmg` is
+> produced only on the macOS CI runner via `build_macos.sh`.
 
 ### Building for Linux
 
@@ -242,79 +272,68 @@ pip install -e ".[dev]"
 
 ## CI/CD Integration
 
-These scripts can be integrated into CI/CD pipelines:
+The release pipeline lives at **`.github/workflows/gui-miner-release.yml`**. It is
+triggered by `workflow_dispatch` or a `gui-v*` tag push and runs a matrix over
+`ubuntu-latest` / `macos-latest` / `windows-latest`. Each matrix leg:
 
-### GitHub Actions Example
+1. `actions/checkout@v4` + `actions/setup-python@v4`
+2. installs the GUI package + PyInstaller (and the `animica` package, for bundling)
+3. runs the matching OS build script (`build_linux.sh` / `build_macos.sh` / `build_windows.sh`)
+4. `actions/upload-artifact@v4` (binaries + `dist/artifacts.jsonl`)
 
-```yaml
-name: Build Executables
+A final `release` job then:
 
-on:
-  push:
-    tags:
-      - 'v*'
+1. downloads all matrix artifacts
+2. runs `make_manifest.py` over every `artifacts.jsonl` to produce `downloads/manifest.json`
+3. attaches all binaries + `manifest.json` to a GitHub Release via
+   `softprops/action-gh-release@v2`
 
-jobs:
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      - name: Build
-        run: |
-          cd apps/miner-gui/build-scripts
-          ./build_macos.sh
-      - uses: actions/upload-artifact@v3
-        with:
-          name: macos-build
-          path: apps/miner-gui/dist/*.dmg
+### Manifest generator
 
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      - name: Build
-        shell: bash
-        run: |
-          cd apps/miner-gui/build-scripts
-          ./build_windows.sh
-      - uses: actions/upload-artifact@v3
-        with:
-          name: windows-build
-          path: apps/miner-gui/dist/*.zip
+`make_manifest.py` reads the per-artifact JSON lines and writes
+`downloads/manifest.json`:
 
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      - name: Build
-        run: |
-          cd apps/miner-gui/build-scripts
-          ./build_linux.sh
-      - uses: actions/upload-artifact@v3
-        with:
-          name: linux-build
-          path: |
-            apps/miner-gui/dist/*.tar.gz
-            apps/miner-gui/dist/*.AppImage
+```bash
+python make_manifest.py \
+  --inputs 'artifacts/**/artifacts.jsonl' \
+  --out downloads/manifest.json \
+  --repo "$GITHUB_REPOSITORY" \
+  --tag  gui-v0.1.0 \
+  --version 0.1.0
 ```
+
+Output shape (consumed by the pool.animica.org downloads page):
+
+```json
+{
+  "generated_at": "2026-06-15T12:00:00Z",
+  "version": "0.1.0",
+  "miners": [
+    {
+      "platform": "linux",
+      "name": "AnimicaMiner",
+      "version": "0.1.0",
+      "filename": "AnimicaMiner-0.1.0-linux-x86_64.AppImage",
+      "download_url": "https://github.com/<repo>/releases/download/<tag>/<filename>",
+      "size_bytes": 12345678,
+      "sha256": "deadbeef...",
+      "min_os": "Ubuntu 20.04+ / glibc 2.31+"
+    }
+  ]
+}
+```
+
+The `download_url` is templated against the GitHub Release (`--url-template` can
+override the layout for object-storage hosting).
 
 ## Size Optimization
 
 The default builds are optimized but can be further reduced:
 
-1. **Enable UPX compression**: Already enabled in spec files
-2. **Remove debug symbols**: Add `strip=True` to PyInstaller spec
-3. **Exclude unused modules**: Add more to `excludes` list
-4. **One-file mode**: Change to single executable (increases startup time)
+1. **Enable UPX compression**: opt-in via `ANIMICA_GUI_UPX=1` (off by default; UPX is unreliable on macOS arm64)
+2. **Remove debug symbols**: set `strip=True` in `animica-miner-gui.spec`
+3. **Exclude unused modules**: add more to the `excludes` list in the spec
+4. **One-file mode**: the spec uses onedir for fast startup; switch to a one-file EXE only if a single artifact is required
 
 ## Support
 

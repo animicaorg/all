@@ -40,10 +40,12 @@ class ENA:
         from .agent import Agent
         from .demand import DemandService
         from .walletconnect import WalletConnectService
+        from .pool import PoolService
         self.jobs = JobService(self.cfg, self.store)
         self.agent = Agent(self.cfg, self.store)
         self.demand = DemandService(self.cfg, self.store, self.jobs)
         self.walletconnect = WalletConnectService(self.cfg, self.store)
+        self.pool = PoolService(self.cfg, self.store, self.jobs, self.demand)
 
     # -- retrieval --------------------------------------------------------
     def build_index(self, paths: list[str], *, name: str,
@@ -179,3 +181,55 @@ class ENA:
     def serve(self, host: str = "127.0.0.1", port: int = 8787) -> None:
         from . import service
         service.serve(self, host=host, port=port)
+
+    def serve_model(self, pool_id: str, *, worker_id: str,
+                    host: str = "127.0.0.1", port: int = 8799,
+                    address: Optional[str] = None) -> None:
+        """Serve a pool's promoted checkpoint over an OpenAI-compatible API
+        (serve-while-train); credits served tokens to the pool's server ledger."""
+        from . import serving
+        serving.serve(self, pool_id, host=host, port=port,
+                      worker_id=worker_id, address=address)
+
+    def train_shard_once(self, pool_id: str, worker_id: str, *,
+                         address: Optional[str] = None,
+                         backend: Optional[str] = None) -> Optional[dict[str, Any]]:
+        """Claim one pool shard, train it, and submit the checkpoint.
+
+        Returns None when no shard is available; otherwise a result dict. Training
+        failures (e.g. no torch on a CPU box) are reported, not raised, so a
+        train-loop keeps running.
+        """
+        import json as _json
+        from . import training
+        claimed = self.pool.claim_shard(pool_id, worker_id)
+        if not claimed:
+            return None
+        shard_id = claimed["shard_id"]
+        manifest = claimed["manifest"]
+        mpath = (self.cfg.artifacts_dir() / "pools" / pool_id /
+                 f"{shard_id}-manifest.json")
+        mpath.parent.mkdir(parents=True, exist_ok=True)
+        mpath.write_text(_json.dumps(manifest), encoding="utf-8")
+        run = training.run(self.cfg, self.store, manifest_path=str(mpath),
+                           backend=backend or manifest.get("backend"))
+        if run.get("status") != "completed":
+            return {"shard_id": shard_id, "status": "train_failed",
+                    "error": run.get("error")}
+        res = self.pool.submit_shard(
+            pool_id, shard_id, worker_id=worker_id, run_id=run["run_id"],
+            checkpoint_path=run.get("output_dir"), metrics=run.get("metrics", {}),
+            miner_address=address)
+        return {"shard_id": shard_id, "status": "submitted", **res}
+
+    # -- coding agent -----------------------------------------------------
+    def code(self, task: str, *, workdir: str = ".", base_url: Optional[str] = None,
+             model: Optional[str] = None, api_key_env: Optional[str] = None,
+             model_provider: Optional[str] = None, max_steps: int = 24) -> dict[str, Any]:
+        """Run the ENA-native coding agent on a task, against an OpenAI-compatible
+        model (the pool's served model when ``base_url`` is given)."""
+        from .coder import build_coder
+        agent = build_coder(self.cfg, workdir=workdir, base_url=base_url, model=model,
+                            api_key_env=api_key_env, model_provider=model_provider,
+                            store=self.store, max_steps=max_steps)
+        return agent.run_task(task)

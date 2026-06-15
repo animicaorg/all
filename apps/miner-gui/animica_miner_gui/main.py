@@ -146,8 +146,15 @@ def main() -> int:
             )
             clear_crash_marker()
         
+        # Launch straight into unified "mine + AI" mode when requested
+        # (`animica gui full` / `animica gui miner --unified` /
+        #  `animica-miner-gui --unified`).
+        launch_unified = "--unified" in sys.argv or "--full" in sys.argv
+        if launch_unified:
+            logger.info("Launching in unified (mine + AI) mode")
+
         # Show main window
-        window = MainWindow()
+        window = MainWindow(unified=launch_unified)
         instance.raiseRequested.connect(window.raise_and_activate)
         window.show()
         

@@ -407,3 +407,199 @@
     var b = $("dataBtn"); if (b) b.addEventListener("click", contribute);
   });
 })();
+
+/* ---- Training pools: pick, fund, watch ----------------------------------- */
+(function () {
+  "use strict";
+  var account = null, treasury = null;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function msg(t, isErr) {
+    var el = $("poolMsg");
+    if (!el) return;
+    el.textContent = t || "";
+    el.style.color = isErr ? "#f06a6a" : "";
+  }
+
+  function api(path, body) {
+    return fetch("/api" + path, {
+      method: body ? "POST" : "GET",
+      headers: { "content-type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+  }
+
+  // The extension injects window.animica asynchronously and fires
+  // 'animica#initialized' when ready — wait for it rather than assuming.
+  function getProvider(timeoutMs) {
+    return new Promise(function (resolve) {
+      if (window.animica && window.animica.request) return resolve(window.animica);
+      var done = false;
+      function settle() {
+        if (done) return; done = true;
+        resolve(window.animica && window.animica.request ? window.animica : null);
+      }
+      window.addEventListener("animica#initialized", settle, { once: true });
+      window.addEventListener("ethereum#initialized", settle, { once: true });
+      setTimeout(settle, timeoutMs || 1800);
+    });
+  }
+
+  function openModal() { var m = $("wcModal"); if (m) m.style.display = "flex"; }
+  function closeModal() { var m = $("wcModal"); if (m) m.style.display = "none"; }
+
+  function setAccount(addr) {
+    account = addr || null;
+    var btn = $("poolConnectBtn"), acct = $("poolAcct");
+    if (account) {
+      if (acct) acct.textContent = account.slice(0, 10) + "…" + account.slice(-6);
+      if (btn) { btn.textContent = "✓ Connected"; btn.classList.add("btn-ghost"); btn.classList.remove("btn-primary"); }
+      closeModal();
+    }
+  }
+
+  function connect() {
+    return getProvider(1800).then(function (prov) {
+      if (!prov) { openModal(); return; }
+      return prov.request({ method: "animica_requestAccounts" }).then(function (accts) {
+        var a = (accts && accts[0]) || null;
+        if (a) setAccount(a); else openModal();
+      }).catch(function () { openModal(); });
+    });
+  }
+
+  function loadPools() {
+    if (!$("poolSelect")) return;
+    api("/pool/list").then(function (res) {
+      var pools = (res.j && res.j.pools) || [];
+      if (!pools.length) {
+        if ($("poolForm")) $("poolForm").style.display = "none";
+        if ($("poolDisabled")) $("poolDisabled").style.display = "block";
+        return;
+      }
+      var sel = $("poolSelect");
+      if (!sel) return;
+      sel.innerHTML = pools.map(function (p) {
+        var label = p.name || p.pool_id;
+        return "<option value='" + esc(p.pool_id) + "'>" + esc(label) + "</option>";
+      }).join("");
+      loadStatus();
+    }).catch(function () {
+      if ($("poolForm")) $("poolForm").style.display = "none";
+      if ($("poolDisabled")) $("poolDisabled").style.display = "block";
+    });
+  }
+
+  function statusRow(k, v) {
+    return "<tr><td class='mono'>" + esc(k) + "</td><td>" + esc(v) + "</td></tr>";
+  }
+
+  // Render a {key: count} map as "k: v, k2: v2" (raw — statusRow escapes it).
+  function fmtMap(m) {
+    if (!m || typeof m !== "object") return "";
+    var ks = Object.keys(m);
+    if (!ks.length) return "";
+    return ks.map(function (k) { return k + ": " + m[k]; }).join(", ");
+  }
+
+  function loadStatus() {
+    var sel = $("poolSelect");
+    if (!sel || !sel.value) return;
+    var pid = sel.value;
+    api("/pool/status?pool_id=" + encodeURIComponent(pid)).then(function (res) {
+      var s = res.j || {};
+      var tb = $("poolStatus");
+      if (!tb) return;
+      if (!res.ok) {
+        tb.innerHTML = statusRow("error", (s.error || s.reason || "could not load"));
+        return;
+      }
+      var rows = [];
+      rows.push(statusRow("pool_id", s.pool_id || pid));
+      if (s.name != null) rows.push(statusRow("name", s.name));
+      if (s.base_model != null) rows.push(statusRow("base_model", s.base_model));
+      if (s.method != null) rows.push(statusRow("method", s.method));
+      if (s.status != null) rows.push(statusRow("status", s.status));
+      if (s.round != null) rows.push(statusRow("round", s.round));
+      if (s.num_shards != null) rows.push(statusRow("shards (total)", s.num_shards));
+      if (s.shards != null && fmtMap(s.shards)) rows.push(statusRow("shards", fmtMap(s.shards)));
+      if (s.contributions != null && fmtMap(s.contributions)) rows.push(statusRow("contributions", fmtMap(s.contributions)));
+      if (s.budget_anm != null) rows.push(statusRow("budget (ANM)", s.budget_anm));
+      if (s.paid_out_nano != null) rows.push(statusRow("paid out (nano)", s.paid_out_nano));
+      if (s.reward_split != null && fmtMap(s.reward_split)) rows.push(statusRow("reward split (bps)", fmtMap(s.reward_split)));
+      if (s.served_checkpoint) rows.push(statusRow("served checkpoint",
+        "round " + s.served_checkpoint.round + " · " +
+        String(s.served_checkpoint.checkpoint_hash || "").slice(0, 12) + "…"));
+      tb.innerHTML = rows.join("");
+    }).catch(function () {
+      var tb = $("poolStatus");
+      if (tb) tb.innerHTML = statusRow("error", "could not load");
+    });
+  }
+
+  function poll(pid, txid, tries) {
+    tries = tries || 0;
+    return api("/pool/fund/confirm", { pool_id: pid, txid: txid }).then(function (res) {
+      var j = res.j || {};
+      if (j.funded) {
+        msg("Funded ✓ — pool is now bankrolled.");
+        loadStatus();
+        return j;
+      }
+      if (tries < 30) {
+        msg("Payment seen, awaiting confirmation… (" + (j.tx_status || "pending") + ")");
+        return new Promise(function (r) { setTimeout(r, 5000); }).then(function () {
+          return poll(pid, txid, tries + 1);
+        });
+      }
+      msg("Not funded: " + (j.reason || "unknown"), true);
+      return j;
+    });
+  }
+
+  function fund() {
+    var sel = $("poolSelect");
+    if (!sel || !sel.value) { msg("Pick a pool first.", true); return; }
+    var pid = sel.value;
+    var amount = parseFloat(($("poolAmount") && $("poolAmount").value) || "");
+    if (!(amount > 0)) { msg("Enter a reward amount greater than 0.", true); return; }
+    if (!account) { openModal(); msg("Connect a wallet to fund a pool."); return; }
+    var acct = account;
+    Promise.resolve().then(function () {
+      msg("Requesting a quote…");
+      return api("/pool/fund/quote", { pool_id: pid, reward_anm: amount, requester: acct }).then(function (res) {
+        if (!res.ok) { msg("Quote failed: " + (res.j.error || res.j.reason || "error"), true); return; }
+        var q = res.j;
+        treasury = q.treasury_address || treasury;
+        if ($("poolTreasury") && treasury) $("poolTreasury").textContent = treasury;
+        msg("Approve the payment in your wallet…");
+        return getProvider(1800).then(function (prov) {
+          if (!prov) { openModal(); throw new Error("no wallet"); }
+          return prov.request({
+            method: "animica_sendTransaction",
+            params: [{ from: acct, to: q.treasury_address, value: String(q.required_nano), memo: q.memo }]
+          });
+        }).then(function (txid) {
+          msg("Payment sent: " + String(txid).slice(0, 18) + "… — verifying…");
+          return poll(pid, txid);
+        });
+      });
+    }).catch(function (e) {
+      msg("Error: " + (e && e.message ? e.message : e), true);
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    if (!$("poolSelect")) return;
+    loadPools();
+    var sel = $("poolSelect"); if (sel) sel.addEventListener("change", loadStatus);
+    var c = $("poolConnectBtn"); if (c) c.addEventListener("click", connect);
+    var f = $("poolFundBtn"); if (f) f.addEventListener("click", fund);
+  });
+})();

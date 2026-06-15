@@ -19,6 +19,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               Animica <span className="text-blue-400">Rig Rental</span>
             </Link>
             <div className="flex items-center gap-4 text-sm">
+              <Link href="/about-ena" className="hover:text-blue-300">About ENA</Link>
+              <Link href="/training-pools" className="hover:text-blue-300">Training Pools</Link>
+              <Link href="/mining-onboard" className="hover:text-blue-300">Mining</Link>
+              <Link href="/download" className="hover:text-blue-300">Download</Link>
               <Link href="/browse" className="hover:text-blue-300">Rent</Link>
               <Link href="/owner" className="hover:text-blue-300">Rent out</Link>
               {user?.isAdmin && (

@@ -6,6 +6,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
+    QCheckBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -46,9 +47,12 @@ class DashboardTab(QWidget):
         self.setup_ui()
         self.node_controller.rpcChanged.connect(self.on_rpc_changed)
         self.node_controller.statusUpdated.connect(self.on_status_updated)
-        
+
         # Connect signal to slot for thread-safe UI updates
         self.mining_event_received.connect(self._handle_mining_event_in_main_thread)
+
+        # Show which unified components will run for this machine.
+        self.refresh_unified_plan()
     
     def setup_ui(self) -> None:
         """Set up the UI."""
@@ -154,7 +158,32 @@ class DashboardTab(QWidget):
         
         payout_group.setLayout(payout_layout)
         layout.addWidget(payout_group)
-        
+
+        # Unified "mine + AI" mode: when on, the GUI drives the full unified
+        # flow (PoW + AICF inference, ENA useful-work, and — on capable GPUs —
+        # training / serving / Bittensor), not PoW-only.
+        unified_group = QGroupBox("Mining Mode")
+        unified_layout = QVBoxLayout()
+
+        self.unified_checkbox = QCheckBox("Mine everything (mine + AI)")
+        self.unified_checkbox.setToolTip(
+            "Run the unified Animica flow: SHA3 proof-of-work plus AI compute "
+            "(AICF inference, ENA useful-work, and GPU training/serving where "
+            "available). Off = proof-of-work only. Everything is paid to your "
+            "ANM payout address."
+        )
+        self.unified_checkbox.setChecked(True)
+        self.unified_checkbox.toggled.connect(self._on_unified_toggled)
+        unified_layout.addWidget(self.unified_checkbox)
+
+        self.unified_components_label = QLabel("--")
+        self.unified_components_label.setWordWrap(True)
+        self.unified_components_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        unified_layout.addWidget(self.unified_components_label)
+
+        unified_group.setLayout(unified_layout)
+        layout.addWidget(unified_group)
+
         # Control buttons
         control_layout = QHBoxLayout()
         
@@ -175,6 +204,66 @@ class DashboardTab(QWidget):
         layout.addStretch()
         self.setLayout(layout)
     
+    def unified_enabled(self) -> bool:
+        """Whether the unified "mine + AI" mode is selected."""
+        return self.unified_checkbox.isChecked()
+
+    def _on_unified_toggled(self, checked: bool) -> None:
+        """Refresh the displayed plan when the user flips the mode."""
+        self.refresh_unified_plan()
+
+    def refresh_unified_plan(self) -> None:
+        """Preview which unified components will run for this machine.
+
+        Pure: builds the plan via the backend (no launching) and lists the
+        components. When unified mode is off, shows PoW-only.
+        """
+        if not self.unified_checkbox.isChecked():
+            self.unified_components_label.setText(
+                "Proof-of-work only (AI compute disabled)."
+            )
+            return
+        try:
+            from animica_miner_gui.backend.unified_runner import plan_preview
+
+            cfg = {"address": self.config.miner.payout_address or ""}
+            summary = plan_preview(cfg)
+            will_run = summary.get("will_run", [])
+            pending = summary.get("enabled_but_pending", [])
+            caps = summary.get("capabilities", {})
+
+            tier = "GPU" if caps.get("gpu") else "CPU-only"
+            if caps.get("qualified_bittensor"):
+                tier = "GPU (qualified)"
+
+            lines = [f"Will run ({tier}): " + (", ".join(will_run) or "nothing")]
+            if pending:
+                lines.append("Pending (coming soon): " + ", ".join(pending))
+            self.unified_components_label.setText("\n".join(lines))
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to preview unified plan: {e}")
+            self.unified_components_label.setText(
+                "Unified plan unavailable (see logs)."
+            )
+
+    def on_unified_status(self, status: dict) -> None:
+        """Render live per-component status from the unified runner."""
+        if not status:
+            return
+        will_run = status.get("will_run", [])
+        pending = status.get("enabled_but_pending", [])
+        state = status.get("status", "stopped")
+
+        lines = [f"Unified status: {state}"]
+        if will_run:
+            lines.append("Running: " + ", ".join(will_run))
+        if pending:
+            lines.append("Pending (coming soon): " + ", ".join(pending))
+        error = status.get("error")
+        if error:
+            lines.append(f"Error: {error}")
+        self.unified_components_label.setText("\n".join(lines))
+
     def on_rpc_changed(self, rpc_url: str, token: str) -> None:
         """Update the RPC client when the node changes."""
         try:

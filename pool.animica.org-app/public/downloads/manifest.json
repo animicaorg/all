@@ -1,0 +1,34 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-06-15T00:00:00Z",
+  "notes": "Standalone GUI miners for the unified Animica flow (mine + AI training/serving, ANM-only payouts). Built per-OS with PyInstaller from apps/miner-gui and published to GitHub Releases. Replace checksum_sha256/size_bytes/released_at with real values once a release is cut; the page reads this manifest verbatim.",
+  "miners": [
+    {
+      "platform": "windows",
+      "name": "Animica Miner GUI for Windows",
+      "version": "0.1.0",
+      "download_url": "https://github.com/animicaorg/all/releases/download/miner-gui-v0.1.0/Animica-Miner-GUI-0.1.0-Windows-x64.zip",
+      "size_bytes": 0,
+      "checksum_sha256": "TBD",
+      "released_at": null
+    },
+    {
+      "platform": "macos",
+      "name": "Animica Miner GUI for macOS",
+      "version": "0.1.0",
+      "download_url": "https://github.com/animicaorg/all/releases/download/miner-gui-v0.1.0/Animica-Miner-GUI-0.1.0-macOS-arm64.dmg",
+      "size_bytes": 0,
+      "checksum_sha256": "TBD",
+      "released_at": null
+    },
+    {
+      "platform": "linux",
+      "name": "Animica Miner GUI for Linux",
+      "version": "0.1.0",
+      "download_url": "https://github.com/animicaorg/all/releases/download/miner-gui-v0.1.0/Animica-Miner-GUI-0.1.0-Linux-x86_64.tar.gz",
+      "size_bytes": 0,
+      "checksum_sha256": "TBD",
+      "released_at": null
+    }
+  ]
+}

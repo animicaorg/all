@@ -170,6 +170,7 @@ footer{border-top:1px solid var(--border);padding:34px 0;color:var(--muted)}
       <a href="#what">What it is</a>
       <a href="#stats">Live stats</a>
       <a href="#request">Request work</a>
+      <a href="#pools">Training Pools</a>
       <a href="#data">Data</a>
       <a href="#contribute">Contribute</a>
       <a href="#earn">Earn ANM</a>
@@ -316,6 +317,45 @@ animica ena train eval --manifest manifests/run.json --model-provider ollama</co
       <div id="reqStatus" class="note">Connect a wallet and submit a job to see it move through
         <span class="kbd">awaiting_payment → proposed → running → verified</span>.</div>
       <ol id="reqLog" class="reqlog"></ol>
+    </div>
+  </div>
+  <p class="note" style="margin-top:12px">Needs the Animica wallet extension (<span class="kbd">window.animica</span>).
+    Don't have it? <a class="grad" href="https://animica.org/wallet">Get a wallet</a>. Amounts are in ANM (9 decimals).</p>
+</section>
+
+<!-- TRAINING POOLS -->
+<section id="pools" class="wrap">
+  <h2 class="sec">Training <span class="grad">pools</span></h2>
+  <p class="sub">Pool ANM to bankroll an open fine-tune. Workers claim shards, train, and split the
+    reward on verified completion. Pick a pool, fund it from your wallet, and watch it fill.</p>
+  <div class="grid g2" style="align-items:start">
+    <div class="track" id="poolCard">
+      <div class="who">Pools · wallet-funded</div>
+      <div id="poolDisabled" style="display:none" class="note">
+        No training pools are open on this coordinator yet — check back soon.
+      </div>
+      <div id="poolForm">
+        <div class="reqrow">
+          <button class="btn btn-primary" id="poolConnectBtn" type="button">🔗 Connect wallet</button>
+          <span class="note" id="poolAcct" style="margin-left:10px"></span>
+        </div>
+        <label class="flbl">Pool</label>
+        <select id="poolSelect" class="finput"></select>
+        <label class="flbl">Reward to add (ANM)</label>
+        <input id="poolAmount" class="finput" type="number" step="0.1" min="0.1" value="1.0" />
+        <button class="btn btn-primary" id="poolFundBtn" type="button" style="margin-top:14px;width:100%;justify-content:center">
+          Fund pool
+        </button>
+        <div class="note" style="margin-top:8px">Treasury: <span class="kbd" id="poolTreasury">—</span></div>
+        <div class="note" id="poolMsg" style="margin-top:8px"></div>
+      </div>
+    </div>
+    <div class="track">
+      <h3 style="margin-top:0">Pool status</h3>
+      <table class="lb"><thead><tr><th>Field</th><th>Value</th></tr></thead>
+      <tbody id="poolStatus"><tr><td class="mono">—</td><td>—</td></tr></tbody></table>
+      <p class="note" style="margin-top:10px">From the CLI: <span class="kbd">ena pool list</span> ·
+        <span class="kbd">ena pool fund-quote POOL_ID --reward-anm 1.0</span></p>
     </div>
   </div>
   <p class="note" style="margin-top:12px">Needs the Animica wallet extension (<span class="kbd">window.animica</span>).

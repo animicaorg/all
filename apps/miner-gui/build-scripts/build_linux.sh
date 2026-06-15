@@ -1,320 +1,227 @@
 #!/usr/bin/env bash
-# Build Linux executable for Animica Miner GUI
-# Creates a standalone executable and AppImage
+# Build the Linux Animica Miner GUI binary.
+#
+# Produces a PyInstaller *onedir* build of "AnimicaMiner", then packages it as:
+#   - an AppImage (if `appimagetool` is available), otherwise
+#   - a .tar.gz tarball (always produced as the portable fallback).
+#
+# For every artifact it computes SHA256 + size and appends a single JSON line
+# to the per-artifact manifest log so make_manifest.py can aggregate them.
 #
 # Requirements:
 #   - Linux (x86_64 or aarch64)
-#   - Python 3.10 or higher
-#   - FUSE (for AppImage testing)
+#   - Python 3.10+
+#   - FUSE for AppImage (optional; falls back to tarball)
 #
 # Usage:
 #   ./build_linux.sh
+#
+# Env overrides:
+#   ARTIFACT_LOG   path to the JSON-lines manifest log (default: dist/artifacts.jsonl)
+#   ANIMICA_GUI_UPX  "1" to enable UPX compression (default off)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
+APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"          # apps/miner-gui
+REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"        # repo root
 DIST_DIR="${APP_DIR}/dist"
 BUILD_DIR="${APP_DIR}/build"
+SPEC_FILE="${SCRIPT_DIR}/animica-miner-gui.spec"
+ARTIFACT_LOG="${ARTIFACT_LOG:-${DIST_DIR}/artifacts.jsonl}"
+APP_NAME="AnimicaMiner"
 
-log() { printf "\033[1;34m[build-linux]\033[0m %s\n" "$*"; }
+log()  { printf "\033[1;34m[build-linux]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[warn]\033[0m %s\n" "$*" >&2; }
-err() { printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; }
-die() { err "$*"; exit 1; }
+err()  { printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; }
+die()  { err "$*"; exit 1; }
 
-# Check if running on Linux
-if [[ "$(uname -s)" != "Linux" ]]; then
-    die "This script must be run on Linux"
-fi
+[[ "$(uname -s)" == "Linux" ]] || die "This script must be run on Linux"
 
-# Detect architecture
+# ---- Architecture ----
 ARCH="$(uname -m)"
 case "$ARCH" in
-    x86_64|amd64)
-        ARCH_NAME="x86_64"
-        APPIMAGE_ARCH="x86_64"
-        ;;
-    aarch64|arm64)
-        ARCH_NAME="aarch64"
-        APPIMAGE_ARCH="aarch64"
-        ;;
-    *)
-        die "Unsupported architecture: $ARCH"
-        ;;
+    x86_64|amd64)   ARCH_NAME="x86_64";  APPIMAGE_ARCH="x86_64" ;;
+    aarch64|arm64)  ARCH_NAME="aarch64"; APPIMAGE_ARCH="aarch64" ;;
+    *)              die "Unsupported architecture: $ARCH" ;;
 esac
-
 log "Building for Linux $ARCH_NAME"
 
-# Check Python version
-if ! command -v python3 >/dev/null 2>&1; then
-    die "Python 3 is required"
-fi
+# ---- Python ----
+command -v python3 >/dev/null 2>&1 || die "Python 3 is required"
+PY="python3"
+PY_VERSION="$("$PY" --version 2>&1 | awk '{print $2}')"
+log "Using Python $PY_VERSION"
 
-PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-log "Using Python $PYTHON_VERSION"
-
-# Install system dependencies if needed
-log "Checking system dependencies..."
+# ---- System deps (best effort on Debian/Ubuntu) ----
 if command -v apt-get >/dev/null 2>&1; then
-    # Debian/Ubuntu
     MISSING_DEPS=()
-    for pkg in libgl1 libglib2.0-0 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0; do
-        if ! dpkg -l | grep -q "^ii  $pkg"; then
+    for pkg in libgl1 libglib2.0-0 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 \
+               libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+               libxcb-cursor0; do
+        if ! dpkg -l 2>/dev/null | grep -q "^ii  $pkg"; then
             MISSING_DEPS+=("$pkg")
         fi
     done
-    
     if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
         log "Installing missing dependencies: ${MISSING_DEPS[*]}"
         if [[ $EUID -eq 0 ]]; then
-            apt-get update && apt-get install -y "${MISSING_DEPS[@]}"
+            apt-get update && apt-get install -y "${MISSING_DEPS[@]}" || warn "apt install failed; continuing"
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y "${MISSING_DEPS[@]}" || warn "apt install failed; continuing"
         else
-            sudo apt-get update && sudo apt-get install -y "${MISSING_DEPS[@]}"
+            warn "Cannot install system deps (no root/sudo): ${MISSING_DEPS[*]}"
         fi
     fi
-elif command -v yum >/dev/null 2>&1; then
-    # RHEL/Fedora
-    log "Note: Ensure Qt dependencies are installed (mesa-libGL, glib2, xcb libraries)"
 fi
 
-# Clean previous builds
+# ---- Clean ----
 log "Cleaning previous builds..."
 rm -rf "$DIST_DIR" "$BUILD_DIR"
-mkdir -p "$DIST_DIR"
+mkdir -p "$DIST_DIR" "$BUILD_DIR"
 
-# Install/upgrade PyInstaller
-log "Installing PyInstaller..."
-python3 -m pip install --upgrade pip setuptools wheel
-python3 -m pip install --upgrade pyinstaller
-
-# Install the miner-gui package and its dependencies
-log "Installing miner-gui dependencies..."
-cd "$APP_DIR"
-python3 -m pip install -e .
-
-# Get version from pyproject.toml
-VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('$APP_DIR/pyproject.toml', 'rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")
-log "Building version: $VERSION"
-
-# Create PyInstaller spec
-SPEC_FILE="${BUILD_DIR}/animica-miner-gui-linux.spec"
-mkdir -p "$BUILD_DIR"
-
-log "Creating PyInstaller spec file..."
-cat > "$SPEC_FILE" << 'SPEC_EOF'
-# -*- mode: python ; coding: utf-8 -*-
-import sys
-from pathlib import Path
-
-block_cipher = None
-
-# Resolve repository root for bundled toolchain assets.
-repo_root = Path(__file__).resolve().parents[3]
-app_dir = repo_root / "apps" / "miner-gui"
-
-# Get the logo path
-logo_path = app_dir / "logo.png"
-if not logo_path.exists():
-    print("Warning: logo.png not found")
-    logo_path = None
-
-schemas_dir = app_dir / "animica_miner_gui" / "ide" / "toolchain" / "schemas"
-
-a = Analysis(
-    ['animica_miner_gui/main.py'],
-    pathex=[str(repo_root), str(app_dir)],
-    binaries=[],
-    datas=[
-        (str(logo_path), '.') if logo_path else None,
-        (str(schemas_dir / 'manifest.schema.json'), 'animica_miner_gui/ide/toolchain/schemas'),
-        (str(schemas_dir / 'abi.schema.json'), 'animica_miner_gui/ide/toolchain/schemas'),
-    ],
-    hiddenimports=[
-        'PySide6.QtCore',
-        'PySide6.QtGui',
-        'PySide6.QtWidgets',
-        'PySide6.QtNetwork',
-        'matplotlib.backends.backend_qt5agg',
-        'pydantic',
-        'httpx',
-        'jsonschema',
-        'omni_sdk',
-        'omni_sdk.contracts.deployer',
-        'omni_sdk.tx',
-        'omni_sdk.tx.encode',
-        'omni_sdk.wallet.signer',
-        'animica_miner_gui.ide',
-        'animica_miner_gui.ide.git_integration',
-        'animica_miner_gui.ide.git_panel',
-        'animica_miner_gui.ide.toolchain.preflight',
-        'animica_miner_gui.packaging.verify',
-        'vm_py',
-        'vm_py.abi',
-        'vm_py.compiler',
-        'vm_py.runtime',
-        'vm_py.stdlib',
-    ],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[
-        'tkinter',
-        'test',
-        'unittest',
-    ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
-    noarchive=False,
-)
-
-# Filter out None from datas
-a.datas = [d for d in a.datas if d is not None]
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='animica-miner-gui',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-)
-SPEC_EOF
-
-# Build with PyInstaller
-log "Running PyInstaller..."
-cd "$APP_DIR"
-python3 -m PyInstaller --clean --noconfirm "$SPEC_FILE"
-
-# Check if executable was created
-EXE_PATH="${DIST_DIR}/animica-miner-gui"
-if [[ ! -f "$EXE_PATH" ]]; then
-    die "Failed to create executable"
+# ---- Tooling + deps ----
+log "Installing PyInstaller + GUI package..."
+"$PY" -m pip install --upgrade pip setuptools wheel
+"$PY" -m pip install --upgrade pyinstaller pyinstaller-hooks-contrib
+"$PY" -m pip install -e "$APP_DIR"
+# Bundle the unified `animica` flow package when present in the monorepo.
+if [[ -f "$REPO_ROOT/python/pyproject.toml" ]]; then
+    "$PY" -m pip install -e "$REPO_ROOT/python" || warn "could not install animica package; bundle may be incomplete"
 fi
 
-# Make executable
+# ---- Version ----
+VERSION="$("$PY" -c "import tomllib; print(tomllib.load(open(r'$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
+log "Building version: $VERSION"
+
+# ---- PyInstaller ----
+log "Running PyInstaller (onedir, windowed)..."
+export ANIMICA_GUI_SPEC_DIR="$SCRIPT_DIR"
+export ANIMICA_GUI_APP_DIR="$APP_DIR"
+export ANIMICA_GUI_REPO_ROOT="$REPO_ROOT"
+export ANIMICA_GUI_NAME="$APP_NAME"
+export ANIMICA_GUI_VERSION="$VERSION"
+cd "$APP_DIR"
+"$PY" -m PyInstaller --clean --noconfirm \
+    --distpath "$DIST_DIR" \
+    --workpath "$BUILD_DIR/pyinstaller-work" \
+    "$SPEC_FILE"
+
+ONEDIR="${DIST_DIR}/${APP_NAME}"
+EXE_PATH="${ONEDIR}/${APP_NAME}"
+[[ -d "$ONEDIR" && -f "$EXE_PATH" ]] || die "Failed to create onedir build at $ONEDIR"
 chmod +x "$EXE_PATH"
-log "Executable created successfully at: $EXE_PATH"
+log "onedir build created at: $ONEDIR"
 
-# Create tarball
-TAR_NAME="Animica-Miner-GUI-${VERSION}-Linux-${ARCH_NAME}.tar.gz"
+# ---- Artifact-record helper (SHA256 + size + JSON line) ----
+emit_artifact() {
+    # $1 = file path, $2 = platform tag, $3 = min_os
+    local file="$1" platform="$2" min_os="$3"
+    local name size sha
+    name="$(basename "$file")"
+    size="$(stat -c %s "$file" 2>/dev/null || stat -f %z "$file")"
+    sha="$(sha256sum "$file" | awk '{print $1}')"
+    "$PY" - "$ARTIFACT_LOG" "$platform" "$name" "$VERSION" "$size" "$sha" "$min_os" <<'PYEOF'
+import json, sys
+log, platform, name, version, size, sha, min_os = sys.argv[1:8]
+rec = {
+    "platform": platform,
+    "name": "AnimicaMiner",
+    "version": version,
+    "filename": name,
+    "size_bytes": int(size),
+    "sha256": sha,
+    "min_os": min_os,
+}
+with open(log, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(rec) + "\n")
+print(f"[artifact] {platform} {name} {size} bytes sha256={sha}")
+PYEOF
+}
+
+# ---- Tarball (always) ----
+TAR_NAME="AnimicaMiner-${VERSION}-linux-${ARCH_NAME}.tar.gz"
 TAR_PATH="${DIST_DIR}/${TAR_NAME}"
-
 log "Creating tarball..."
-cd "$DIST_DIR"
-tar -czf "$TAR_NAME" "animica-miner-gui"
+tar -C "$DIST_DIR" -czf "$TAR_PATH" "$APP_NAME"
+log "Tarball: $TAR_PATH"
 
-log "Tarball created: $TAR_PATH"
+# ---- AppImage (if appimagetool present, else download attempt; else skip) ----
+APPIMAGE_NAME="AnimicaMiner-${VERSION}-linux-${ARCH_NAME}.AppImage"
+APPIMAGE_PATH="${DIST_DIR}/${APPIMAGE_NAME}"
+APPIMAGE_TOOL=""
 
-# Try to create AppImage
-log "Attempting to create AppImage..."
-
-APPIMAGE_TOOL_URL=""
-case "$ARCH_NAME" in
-    x86_64)
-        APPIMAGE_TOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
-        ;;
-    aarch64)
-        APPIMAGE_TOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage"
-        ;;
-esac
-
-APPDIR="${BUILD_DIR}/AnimicaMinerGUI.AppDir"
-APPIMAGE_TOOL="${BUILD_DIR}/appimagetool.AppImage"
-
-if [[ -n "$APPIMAGE_TOOL_URL" ]]; then
-    # Download appimagetool if not present
-    if [[ ! -f "$APPIMAGE_TOOL" ]]; then
-        log "Downloading appimagetool..."
-        curl -L "$APPIMAGE_TOOL_URL" -o "$APPIMAGE_TOOL"
-        chmod +x "$APPIMAGE_TOOL"
+if command -v appimagetool >/dev/null 2>&1; then
+    APPIMAGE_TOOL="appimagetool"
+elif [[ -x "${APPIMAGETOOL:-}" ]]; then
+    APPIMAGE_TOOL="$APPIMAGETOOL"
+else
+    # Best-effort download (skip silently if offline).
+    TOOL_URL=""
+    case "$ARCH_NAME" in
+        x86_64)  TOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" ;;
+        aarch64) TOOL_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage" ;;
+    esac
+    if [[ -n "$TOOL_URL" ]] && command -v curl >/dev/null 2>&1; then
+        DL="${BUILD_DIR}/appimagetool.AppImage"
+        if curl -fsSL "$TOOL_URL" -o "$DL" 2>/dev/null; then
+            chmod +x "$DL"
+            APPIMAGE_TOOL="$DL"
+        else
+            warn "Could not download appimagetool; will ship tarball only."
+        fi
     fi
-    
-    # Create AppDir structure
+fi
+
+if [[ -n "$APPIMAGE_TOOL" ]]; then
+    log "Building AppImage with $APPIMAGE_TOOL..."
+    APPDIR="${BUILD_DIR}/AnimicaMiner.AppDir"
+    rm -rf "$APPDIR"
     mkdir -p "$APPDIR/usr/bin"
-    mkdir -p "$APPDIR/usr/share/applications"
-    mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-    
-    # Copy executable
-    cp "$EXE_PATH" "$APPDIR/usr/bin/"
-    
-    # Create desktop file
-    cat > "$APPDIR/animica-miner-gui.desktop" << 'DESKTOP_EOF'
+    cp -r "$ONEDIR/." "$APPDIR/usr/bin/"
+
+    cat > "$APPDIR/animica-miner.desktop" <<'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
-Name=Animica Miner GUI
-Comment=Production-quality Qt desktop GUI miner for Animica blockchain
-Exec=animica-miner-gui
-Icon=animica-miner-gui
+Name=Animica Miner
+Comment=Animica blockchain miner (PoW + AICF + useful work)
+Exec=AnimicaMiner
+Icon=animica-miner
 Categories=Finance;Network;
 Terminal=false
 DESKTOP_EOF
-    
-    # Copy logo if exists
+
     if [[ -f "$APP_DIR/logo.png" ]]; then
-        cp "$APP_DIR/logo.png" "$APPDIR/animica-miner-gui.png"
-        cp "$APP_DIR/logo.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/animica-miner-gui.png"
+        cp "$APP_DIR/logo.png" "$APPDIR/animica-miner.png"
     else
-        # Create a minimal icon if logo doesn't exist
-        warn "Logo not found, AppImage will have no icon"
-        touch "$APPDIR/animica-miner-gui.png"
+        warn "logo.png not found; AppImage will have no icon"
+        : > "$APPDIR/animica-miner.png"
     fi
-    
-    # Create AppRun script
-    cat > "$APPDIR/AppRun" << 'APPRUN_EOF'
+
+    cat > "$APPDIR/AppRun" <<'APPRUN_EOF'
 #!/bin/bash
 SELF=$(readlink -f "$0")
 HERE=${SELF%/*}
 export PATH="${HERE}/usr/bin:${PATH}"
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
-exec "${HERE}/usr/bin/animica-miner-gui" "$@"
+export LD_LIBRARY_PATH="${HERE}/usr/bin:${HERE}/usr/lib:${LD_LIBRARY_PATH:-}"
+exec "${HERE}/usr/bin/AnimicaMiner" "$@"
 APPRUN_EOF
     chmod +x "$APPDIR/AppRun"
-    
-    # Build AppImage
-    APPIMAGE_NAME="Animica-Miner-GUI-${VERSION}-${ARCH_NAME}.AppImage"
-    log "Building AppImage: $APPIMAGE_NAME"
-    
-    cd "$BUILD_DIR"
-    ARCH="$APPIMAGE_ARCH" "$APPIMAGE_TOOL" "$APPDIR" "$DIST_DIR/$APPIMAGE_NAME" 2>&1 | grep -v "WARNING" || true
-    
-    if [[ -f "$DIST_DIR/$APPIMAGE_NAME" ]]; then
-        chmod +x "$DIST_DIR/$APPIMAGE_NAME"
-        log "AppImage created: $DIST_DIR/$APPIMAGE_NAME"
+
+    if ARCH="$APPIMAGE_ARCH" "$APPIMAGE_TOOL" "$APPDIR" "$APPIMAGE_PATH" 2>&1 | grep -v "WARNING" || true; then :; fi
+    if [[ -f "$APPIMAGE_PATH" ]]; then
+        chmod +x "$APPIMAGE_PATH"
+        log "AppImage: $APPIMAGE_PATH"
+        emit_artifact "$APPIMAGE_PATH" "linux" "Ubuntu 20.04+ / glibc 2.31+"
     else
-        warn "AppImage creation failed or was skipped"
+        warn "AppImage build failed; tarball remains the Linux artifact."
     fi
 else
-    warn "AppImage creation not available for architecture: $ARCH_NAME"
+    log "appimagetool not present; shipping tarball only."
 fi
 
-log "✅ Build completed successfully!"
-log ""
-log "Artifacts:"
-log "  Executable: $EXE_PATH"
-log "  Tarball:    $TAR_PATH"
-if [[ -f "$DIST_DIR/$APPIMAGE_NAME" ]]; then
-    log "  AppImage:   $DIST_DIR/$APPIMAGE_NAME"
-fi
-log ""
-log "To test the executable, run:"
-log "  $EXE_PATH"
-log ""
-log "To install system-wide, copy to /usr/local/bin:"
-log "  sudo cp $EXE_PATH /usr/local/bin/"
+# Always record the tarball too (portable fallback artifact).
+emit_artifact "$TAR_PATH" "linux" "Ubuntu 20.04+ / glibc 2.31+"
+
+log "Build complete. Artifacts in: $DIST_DIR"
+log "Manifest log: $ARTIFACT_LOG"

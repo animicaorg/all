@@ -183,6 +183,22 @@ def chat(repo: Optional[str] = typer.Option(None, "--repo"),
         console.print(f"[green]ena>[/green] {out['answer']}")
 
 
+@app.command("code")
+def code(task: str = typer.Argument(..., help="the coding task to perform"),
+         workdir: str = typer.Option(".", "--workdir", help="sandbox working directory"),
+         base_url: Optional[str] = typer.Option(None, "--base-url",
+             help="OpenAI-compatible endpoint (e.g. the pool's served model)"),
+         model: Optional[str] = typer.Option(None, "--model"),
+         api_key_env: Optional[str] = typer.Option(None, "--api-key-env"),
+         model_provider: Optional[str] = typer.Option(None, "--model-provider"),
+         steps: int = typer.Option(24, "--steps", help="max tool steps")):
+    """Run the ENA-native coding agent (tool loop) on the pool's served model."""
+    res = _guard(_ena().code, task, workdir=workdir, base_url=base_url, model=model,
+                 api_key_env=api_key_env, model_provider=model_provider, max_steps=steps)
+    _emit(res if _state.json else {"status": res["status"], "steps": res["steps"],
+                                   "summary": res["summary"]}, title="code")
+
+
 # ===========================================================================
 # index / search
 # ===========================================================================
@@ -472,6 +488,165 @@ def train_list():
 @train_app.command("export")
 def train_export(run_id: str = typer.Argument(...), out: Optional[str] = typer.Option(None, "--out")):
     _emit(_guard(_ena().export_run, run_id, out))
+
+
+# ===========================================================================
+# pool (collaborative training pools)
+# ===========================================================================
+
+pool_app = typer.Typer(help="Collaborative training pools.", no_args_is_help=True)
+app.add_typer(pool_app, name="pool")
+
+
+@pool_app.command("create")
+def pool_create(base_model: str = typer.Option(..., "--base-model"),
+                dataset: str = typer.Option(..., "--dataset"),
+                method: str = typer.Option("lora", "--method"),
+                name: Optional[str] = typer.Option(None, "--name"),
+                num_shards: int = typer.Option(4, "--num-shards"),
+                eval_metric: Optional[str] = typer.Option(None, "--eval-metric"),
+                eval_min_score: Optional[float] = typer.Option(None, "--eval-min-score"),
+                model_id: Optional[str] = typer.Option(None, "--model-id",
+                    help="canonical global model this pool contributes to")):
+    eval_gate = ({"metric": eval_metric, "min_score": eval_min_score}
+                 if eval_min_score is not None else None)
+    pool = _guard(_ena().pool.create, base_model, dataset, method=method, name=name,
+                  num_shards=num_shards, eval_gate=eval_gate, model_id=model_id)
+    _emit(pool, title="pool created")
+
+
+@pool_app.command("models")
+def pool_models():
+    """List canonical global models (each is one model, trained by many pools)."""
+    _emit({"models": _guard(_ena().pool.list_models)}, title="models")
+
+
+@pool_app.command("model")
+def pool_model(model_id: str = typer.Argument(..., help="global model id")):
+    """Show a global model's current promoted head (what servers serve)."""
+    _emit(_guard(_ena().pool.get_global_model, model_id), title="model")
+
+
+@pool_app.command("list")
+def pool_list(status: Optional[str] = typer.Option(None, "--status")):
+    e = _ena()
+    rows = e.pool.list_pools(status=status)
+    if _state.json:
+        return _emit({"pools": rows})
+    table = Table("pool_id", "name", "status", "base_model", "round")
+    for r in rows:
+        table.add_row(r["pool_id"], r["name"], r["status"], r["base_model"], str(r["round"]))
+    console.print(table)
+
+
+@pool_app.command("status")
+def pool_status(pool_id: str = typer.Argument(..., help="pool id")):
+    _emit(_guard(_ena().pool.status, pool_id))
+
+
+@pool_app.command("leaderboard")
+def pool_leaderboard(pool_id: str = typer.Argument(..., help="pool id")):
+    _emit({"leaderboard": _guard(_ena().pool.leaderboard, pool_id)})
+
+
+@pool_app.command("fund-quote")
+def pool_fund_quote(pool_id: str = typer.Argument(..., help="pool id"),
+                    reward_anm: float = typer.Option(..., "--reward-anm"),
+                    requester: Optional[str] = typer.Option(None, "--requester")):
+    _emit(_guard(_ena().pool.fund_quote, pool_id, reward_anm, requester=requester),
+          title="fund quote")
+
+
+@pool_app.command("fund-confirm")
+def pool_fund_confirm(pool_id: str = typer.Argument(..., help="pool id"),
+                      txid: str = typer.Option(..., "--txid"),
+                      requester: Optional[str] = typer.Option(None, "--requester")):
+    _emit(_guard(_ena().pool.fund_confirm, pool_id, txid, requester=requester),
+          title="fund confirm")
+
+
+@pool_app.command("claim")
+def pool_claim(pool_id: str = typer.Argument(..., help="pool id"),
+               worker_id: str = typer.Option(..., "--worker-id")):
+    _emit({"claimed": _guard(_ena().pool.claim_shard, pool_id, worker_id)}, title="claim")
+
+
+@pool_app.command("submit")
+def pool_submit(pool_id: str = typer.Argument(..., help="pool id"),
+                shard_id: str = typer.Argument(..., help="shard id"),
+                worker_id: Optional[str] = typer.Option(None, "--worker-id"),
+                run_id: Optional[str] = typer.Option(None, "--run-id"),
+                checkpoint: Optional[str] = typer.Option(None, "--checkpoint"),
+                metrics: Optional[str] = typer.Option(None, "--metrics"),
+                miner_address: Optional[str] = typer.Option(None, "--miner-address")):
+    try:
+        metrics_obj = _json.loads(metrics) if metrics else {}
+    except ValueError as exc:
+        console.print(f"[red]--metrics must be valid JSON: {exc}[/red]")
+        raise typer.Exit(1)
+    _emit(_guard(_ena().pool.submit_shard, pool_id, shard_id, worker_id=worker_id,
+                 run_id=run_id, checkpoint_path=checkpoint, metrics=metrics_obj,
+                 miner_address=miner_address), title="submitted")
+
+
+@pool_app.command("aggregate")
+def pool_aggregate(pool_id: str = typer.Argument(..., help="pool id"),
+                   eval_score: Optional[float] = typer.Option(None, "--eval-score"),
+                   min_submitted: Optional[int] = typer.Option(None, "--min-submitted")):
+    _emit(_guard(_ena().pool.aggregate, pool_id, eval_score=eval_score,
+                 min_submitted=min_submitted), title="aggregate")
+
+
+@pool_app.command("payout")
+def pool_payout(pool_id: str = typer.Argument(..., help="pool id"),
+                round: Optional[int] = typer.Option(None, "--round")):
+    _emit(_guard(_ena().pool.payout, pool_id, round=round), title="payout")
+
+
+@pool_app.command("train-loop")
+def pool_train_loop(pool_id: str = typer.Argument(..., help="pool id"),
+                    worker_id: str = typer.Option(..., "--worker-id"),
+                    address: Optional[str] = typer.Option(None, "--address",
+                        help="ANM payout address for training rewards"),
+                    backend: Optional[str] = typer.Option(None, "--backend"),
+                    once: bool = typer.Option(False, "--once",
+                        help="train a single shard then exit"),
+                    poll: float = typer.Option(10.0, "--poll",
+                        help="seconds to wait when no shard is available")):
+    """Claim → train → submit pool shards in a loop (GPU trainers)."""
+    import time as _time
+    e = _ena()
+    while True:
+        res = _guard(e.train_shard_once, pool_id, worker_id, address=address,
+                     backend=backend)
+        if res is None:
+            if once:
+                _emit({"status": "no_shard"}, title="train-loop")
+                return
+            console.print("[dim]no shard available; waiting…[/dim]")
+            _time.sleep(max(1.0, poll))
+            continue
+        _emit(res, title="train-loop")
+        if once:
+            return
+
+
+@pool_app.command("serve")
+def pool_serve(pool_id: str = typer.Argument(..., help="pool id"),
+               worker_id: str = typer.Option(..., "--worker-id",
+                   help="this server's id (credited for served tokens)"),
+               host: str = typer.Option("127.0.0.1", "--host"),
+               port: int = typer.Option(8799, "--port"),
+               address: Optional[str] = typer.Option(None, "--address",
+                   help="ANM payout address for served-token rewards")):
+    """Serve the pool's promoted checkpoint (OpenAI-compatible; serve-while-train)."""
+    from animica.ena.errors import ENAError
+    try:
+        _ena().serve_model(pool_id, worker_id=worker_id, host=host, port=port,
+                           address=address)
+    except ENAError as exc:
+        console.print(f"[red]{exc.render()}[/red]")
+        raise typer.Exit(1)
 
 
 # ===========================================================================

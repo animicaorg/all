@@ -9,8 +9,8 @@ const description =
 
 const enaApiBase =
   (import.meta.env.PUBLIC_ENA_API_BASE as string | undefined)?.trim() ||
-  "https://ena.animica.org/api";
-const enaSite = "https://ena.animica.org";
+  "https://pool.animica.org/api";
+const enaSite = "https://pool.animica.org";
 
 const features = [
   { ic: "🧹", h: "Useful-work", p: "Curate, dedupe, label, embed and index data — CPU-friendly jobs any machine can run." },
@@ -33,7 +33,7 @@ const features = [
       </p>
       <div class="ena-cta">
         <a class="ena-btn primary" href={`${enaSite}/#contribute`}>⛏ Contribute compute</a>
-        <a class="ena-btn ghost" href={enaSite}>Open ena.animica.org ↗</a>
+        <a class="ena-btn ghost" href={`${enaSite}/about-ena`}>Open pool.animica.org ↗</a>
       </div>
       <div class="ena-ticker">
         <span>Jobs verified <b data-stat="jobs_verified">—</b></span>
@@ -135,7 +135,7 @@ animica ena worker start --worker-id "$(hostname)" --endpoint {enaApiBase}</code
   (function () {
     const main = document.querySelector(".ena");
     if (!main) return;
-    const api = (main.getAttribute("data-ena-api") || "https://ena.animica.org/api").replace(/\/$/, "");
+    const api = (main.getAttribute("data-ena-api") || "https://pool.animica.org/api").replace(/\/$/, "");
     const SAMPLE = { jobs_total: 0, jobs_verified: 0, training_runs_total: 0,
       contributors: 0, chunks_total: 0, receipts_total: 0, _offline: true };
     function fmt(n) {

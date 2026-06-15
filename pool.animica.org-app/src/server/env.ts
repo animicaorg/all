@@ -43,6 +43,10 @@ const Schema = z.object({
   POOL_API_BASE_URL: z.string().url().default("http://127.0.0.1:8550"),
   POOL_RENTAL_SHARED_SECRET: z.string().min(16),
 
+  // ENA training-pool coordinator (server-side only; proxied to the browser).
+  // Deploy listens on :8791; code default tracks the coordinator dev default.
+  ENA_COORDINATOR_BASE_URL: z.string().url().default("http://127.0.0.1:8787"),
+
   // Marketplace economics
   MARKETPLACE_FEE_PERCENT: z.string().default("5"),
   RIG_OFFLINE_GRACE_SECONDS: z.coerce.number().int().positive().default(600),

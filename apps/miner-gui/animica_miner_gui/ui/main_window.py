@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from animica_miner_gui.backend.config import load_config, get_default_config_path, MiningAppConfig
 from animica_miner_gui.backend.miner_runner import get_runner, MiningEvent
+from animica_miner_gui.backend.unified_runner import get_unified_runner
 from animica_miner_gui.backend.node_controller import NodeController
 from animica_miner_gui.backend.app_paths import get_startup_log_path
 from animica_miner_gui.backend.node_paths import resolve_node_executable
@@ -47,10 +48,18 @@ logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
     """Main application window."""
-    
-    def __init__(self, parent: Optional[QWidget] = None):
+
+    # Emitted by the unified runner's (off-thread) status callback; routed to a
+    # main-thread slot so Qt widgets are only touched from the GUI thread.
+    unified_status_changed = Signal(str, str)
+
+    def __init__(self, parent: Optional[QWidget] = None, *, unified: bool = False):
         super().__init__(parent)
-        
+
+        # When True the GUI launches straight into unified "mine + AI" mode
+        # (e.g. `animica gui full` / `animica gui miner --unified`).
+        self._launch_unified = unified
+
         self.setWindowTitle("Animica Miner")
         self.setMinimumSize(1000, 700)
         
@@ -80,15 +89,26 @@ class MainWindow(QMainWindow):
         self.setup_status_bar()
         self.setup_system_tray()
         
-        # Connect to miner runner
+        # Connect to miner runner (PoW-only path)
         self.miner_runner = get_runner()
         self.miner_runner.add_event_callback(self.on_mining_event)
-        
+
+        # Connect to the unified runner (mine + AI path). It runs the whole
+        # animica.unified flow; status is polled in update_ui.
+        self.unified_runner = get_unified_runner()
+        self.unified_status_changed.connect(self._on_unified_status_changed_main)
+        self.unified_runner.add_status_callback(self.on_unified_status_change)
+
+        # Honor the launch-into-unified preference (CLI flag / `animica gui full`).
+        if self._launch_unified:
+            self.dashboard_tab.unified_checkbox.setChecked(True)
+            self.dashboard_tab.refresh_unified_plan()
+
         # Set up update timer
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_ui)
         self.update_timer.start(1000)  # Update every second
-        
+
         # Start network services
         self.start_network_services()
 
@@ -298,15 +318,31 @@ class MainWindow(QMainWindow):
             self.show()
             self.activateWindow()
     
+    def _unified_mode_active(self) -> bool:
+        """Whether the dashboard's "mine + AI" toggle is on."""
+        return self.dashboard_tab.unified_enabled()
+
+    def _any_mining_running(self) -> bool:
+        """True if either the PoW-only or unified flow is running."""
+        return self.miner_runner.is_running() or self.unified_runner.is_running()
+
     def start_mining(self) -> None:
-        """Start the mining process."""
-        if self.miner_runner.is_running():
+        """Start mining.
+
+        Routes to the unified "mine + AI" flow (animica.unified) when the
+        dashboard toggle is on, otherwise the PoW-only miner runner.
+        """
+        if self.miner_runner.is_running() or self.unified_runner.is_running():
             logger.info("Mining already running")
             return
-        
-        logger.info("Starting mining")
+
+        if self._unified_mode_active():
+            self._start_unified_mining()
+            return
+
+        logger.info("Starting mining (proof-of-work only)")
         config_dict = self.config.model_dump()
-        
+
         if self.miner_runner.start(config_dict):
             self.status_bar.showMessage("Mining started")
             if self.config.ui.notifications_enabled and hasattr(self, 'tray_icon'):
@@ -323,15 +359,60 @@ class MainWindow(QMainWindow):
                 "Mining Error",
                 "Failed to start mining. Check logs for details."
             )
-    
+
+    def _start_unified_mining(self) -> None:
+        """Start the full unified flow (PoW + AI), bound to the ANM address."""
+        logger.info("Starting mining (unified: mine + AI)")
+        # Everything binds to the configured payout address; the runner
+        # auto-creates a wallet via the same flow if none is configured.
+        cfg = {
+            "address": self.config.miner.payout_address or "",
+            "threads": self.config.cpu.threads,
+        }
+        if self.unified_runner.start(cfg):
+            # The runner may have auto-created/resolved an address; reflect it.
+            snap = self.unified_runner.status_dict()
+            resolved = snap.get("address")
+            if resolved and resolved != self.config.miner.payout_address:
+                self.config.miner.payout_address = resolved
+                self.dashboard_tab.payout_label.setText(resolved)
+            self.dashboard_tab.on_unified_status(snap)
+            self.status_bar.showMessage("Unified mining started (mine + AI)")
+            if self.config.ui.notifications_enabled and hasattr(self, 'tray_icon'):
+                self.tray_icon.showMessage(
+                    "Animica Miner",
+                    "Unified mining started (mine + AI)",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    3000
+                )
+        else:
+            snap = self.unified_runner.status_dict()
+            self.dashboard_tab.on_unified_status(snap)
+            self.status_bar.showMessage("Failed to start unified mining")
+            QMessageBox.warning(
+                self,
+                "Mining Error",
+                "Failed to start unified mining (mine + AI). "
+                f"{snap.get('error', 'Check logs for details.')}"
+            )
+
     def stop_mining(self) -> None:
-        """Stop the mining process."""
+        """Stop whichever mining flow is running (PoW-only or unified)."""
+        if self.unified_runner.is_running():
+            logger.info("Stopping unified mining")
+            if self.unified_runner.stop():
+                self.dashboard_tab.on_unified_status(self.unified_runner.status_dict())
+                self.status_bar.showMessage("Mining stopped")
+            else:
+                self.status_bar.showMessage("Failed to stop mining")
+            return
+
         if not self.miner_runner.is_running():
             logger.info("Mining not running")
             return
-        
+
         logger.info("Stopping mining")
-        
+
         if self.miner_runner.stop():
             self.status_bar.showMessage("Mining stopped")
         else:
@@ -363,12 +444,41 @@ class MainWindow(QMainWindow):
                     5000
                 )
     
+    def on_unified_status_change(self, status_value: str, reason: str) -> None:
+        """Unified runner status callback (may be called off the main thread).
+
+        Defer to the main thread via a queued signal so Qt widgets are only
+        touched from the GUI thread.
+        """
+        self.unified_status_changed.emit(status_value, reason)
+
+    @Slot(str, str)
+    def _on_unified_status_changed_main(self, status_value: str, reason: str) -> None:
+        """Main-thread handler for unified status changes."""
+        snap = self.unified_runner.status_dict()
+        self.dashboard_tab.on_unified_status(snap)
+        msg = f"Unified: {status_value}"
+        if reason:
+            msg += f" ({reason})"
+        self.status_bar.showMessage(msg)
+
     def update_ui(self) -> None:
         """Update UI periodically."""
+        # When unified mining is active, show its component status and stop here;
+        # the PoW-only stats below do not apply.
+        if self.unified_runner.is_running():
+            snap = self.unified_runner.status_dict()
+            self.dashboard_tab.on_unified_status(snap)
+            running = snap.get("will_run", [])
+            self.status_bar.showMessage(
+                "Unified mining (mine + AI): " + (", ".join(running) or "starting")
+            )
+            return
+
         # Update status bar
         stats = self.miner_runner.get_stats()
         status = stats['status']
-        
+
         if status == 'running':
             hashrate = stats['hashrate']
             if hashrate >= 1e9:
@@ -454,7 +564,7 @@ class MainWindow(QMainWindow):
     
     def quit_app(self) -> None:
         """Quit the application."""
-        if self.miner_runner.is_running():
+        if self._any_mining_running():
             reply = QMessageBox.question(
                 self,
                 "Confirm Quit",
@@ -578,9 +688,9 @@ class MainWindow(QMainWindow):
             return
         
         # Stop mining if running
-        if self.miner_runner.is_running():
+        if self._any_mining_running():
             self.stop_mining()
-        
+
         # Hide main window
         self.hide()
         
@@ -633,7 +743,7 @@ class MainWindow(QMainWindow):
                 )
         else:
             # Stop mining before closing
-            if self.miner_runner.is_running():
+            if self._any_mining_running():
                 self.stop_mining()
             self.node_controller.stop()
             event.accept()

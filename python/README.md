@@ -5,27 +5,36 @@ including data-availability helpers, mempool policy tests, and the
 stratum pool prototype. Installing it as a Python package allows tools
 and tests elsewhere in the repo to import `animica` modules directly.
 
-## Mine & earn
+## Mine & earn — one command
 
 ```bash
-pip install animica
+pip install --upgrade animica
 
-# CPU: dual-mine ANM + Monero on pool.animica.org with one command
-animica miner dual-mine <anm-address> --pool-host pool.animica.org
+# Runs EVERYTHING, bound to your Animica address (auto-creates a wallet if you
+# have none): SHA3 mining + ENA useful-work, plus model training + serving on a
+# GPU, plus Bittensor serving on a qualified GPU (>=16 GB VRAM). Joins the pool
+# and the one global model. Every reward — PoW, useful-work, training, serving,
+# Bittensor — pays out in ANM to your address.
+animica up
 
-# GPU: earn TAO by backing Animica Pool's Bittensor SN51 (Celium) miner —
-# the pool splits on-chain earnings 70/30 with rig owners, paid in
-# ANM/XMR/SOL/BTC/USDT. Token comes from https://pool.animica.org/workers.
-animica bittensor overview                       # pool status (no token)
-animica bittensor status --token anm_worker_…    # this rig: eligibility
-animica bittensor enroll --token anm_worker_…    # join the GPU pool
-animica bittensor up     --token anm_worker_…    # install the SN51 executor
+animica up --plan          # show exactly what will run on this machine first
+animica up --pool-host pool.animica.org --pool-id <pool>   # target a pool
 ```
 
-Rigs need uptime history before they can enroll (default: 97% over 7 days,
-≥16 GB VRAM) because Bittensor slashes collateral for flaky hardware — install
-the worker agent from the Workers page and keep it heartbeating. Full details:
-https://pool.animica.org/bittensor
+`animica up` advertises miner version **1.0.0**; the pool rejects older miners,
+so keep it upgraded. Qualified GPUs (>=16 GB VRAM) also serve Bittensor, with all
+earnings bound to ANM (no external TAO/XMR payout). Full details:
+https://pool.animica.org/mining-onboard
+
+<details><summary>Component commands (advanced — <code>animica up</code> runs these for you)</summary>
+
+```bash
+animica miner dual-mine <anm-address> --pool-host pool.animica.org  # PoW only
+animica ena worker start --worker-id <id>                           # useful-work
+animica ena pool serve <pool-id> --worker-id <id>                   # serve a model
+animica bittensor overview                                          # Bittensor pool status
+```
+</details>
 
 ## Installation
 

@@ -1,0 +1,198 @@
+name: GUI Miner Release
+
+# Cross-compile + release the three Animica Miner GUI desktop binaries:
+#   - Linux  : AppImage (+ tarball fallback)   built on ubuntu-latest
+#   - macOS  : .app .dmg (+ .zip)              built on macos-latest (Apple
+#              toolchain cannot be cross-compiled from Linux)
+#   - Windows: .exe onedir .zip                built on windows-latest
+#              (a Wine cross-build from Linux also exists via
+#               build-scripts/build_windows_wine.sh, but CI uses the native
+#               runner for reliability)
+#
+# A final job aggregates the per-artifact JSON lines into downloads/manifest.json
+# and attaches every binary + the manifest to a GitHub Release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. gui-v0.1.0). Defaults to a dev tag.
+        required: false
+        default: ""
+      draft:
+        description: Create the release as a draft
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+  push:
+    tags:
+      - "gui-v*"
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  build:
+    name: build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+            script: build_linux.sh
+          - os: macos-latest
+            label: macos
+            script: build_macos.sh
+          - os: windows-latest
+            label: windows
+            script: build_windows.sh
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Linux system dependencies (Qt + AppImage)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libglib2.0-0 \
+            libxkbcommon-x11-0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xfixes0 \
+            libxcb-cursor0 \
+            libfuse2
+
+      - name: Install GUI package + PyInstaller
+        shell: bash
+        run: |
+          cd apps/miner-gui
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pyinstaller pyinstaller-hooks-contrib
+          python -m pip install -e .
+          # Bundle the unified `animica` flow package when present.
+          if [ -f "../../python/pyproject.toml" ]; then
+            python -m pip install -e ../../python || echo "animica package install skipped"
+          fi
+
+      - name: Run OS build script
+        shell: bash
+        run: |
+          chmod +x apps/miner-gui/build-scripts/${{ matrix.script }}
+          ./apps/miner-gui/build-scripts/${{ matrix.script }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-miner-${{ matrix.label }}
+          path: |
+            apps/miner-gui/dist/*.AppImage
+            apps/miner-gui/dist/*.tar.gz
+            apps/miner-gui/dist/*.dmg
+            apps/miner-gui/dist/*.zip
+            apps/miner-gui/dist/artifacts.jsonl
+          if-no-files-found: warn
+          retention-days: 14
+
+  release:
+    name: manifest + GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gui-miner-*
+          path: artifacts
+
+      - name: Stage binaries + collect artifact logs
+        shell: bash
+        run: |
+          set -eux
+          mkdir -p release downloads
+          # Flatten binaries into release/ and gather every per-artifact log.
+          find artifacts -type f \
+            \( -name '*.AppImage' -o -name '*.tar.gz' -o -name '*.dmg' -o -name '*.zip' \) \
+            -exec cp -v {} release/ \;
+          find artifacts -type f -name 'artifacts.jsonl' -print
+
+      - name: Resolve release tag + version
+        id: meta
+        shell: bash
+        run: |
+          set -eux
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          if [ -n "${INPUT_TAG}" ]; then
+            TAG="${INPUT_TAG}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="gui-dev-$(date -u +%Y%m%d%H%M%S)"
+          fi
+          VERSION="$(python -c "import tomllib;print(tomllib.load(open('apps/miner-gui/pyproject.toml','rb'))['project']['version'])")"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate downloads/manifest.json
+        shell: bash
+        run: |
+          set -eux
+          python apps/miner-gui/build-scripts/make_manifest.py \
+            --inputs 'artifacts/**/artifacts.jsonl' \
+            --out downloads/manifest.json \
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag "${{ steps.meta.outputs.tag }}" \
+            --version "${{ steps.meta.outputs.version }}"
+          cp downloads/manifest.json release/manifest.json
+          echo "---- manifest.json ----"
+          cat downloads/manifest.json
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-miner-manifest
+          path: downloads/manifest.json
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Animica Miner GUI ${{ steps.meta.outputs.version }}
+          draft: ${{ github.event.inputs.draft != 'false' }}
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+          files: |
+            release/*.AppImage
+            release/*.tar.gz
+            release/*.dmg
+            release/*.zip
+            release/manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

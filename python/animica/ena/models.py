@@ -251,3 +251,82 @@ class TrainingRun(Schema):
     error: Optional[str] = None
     created_at: int = field(default_factory=now_ts)
     updated_at: int = field(default_factory=now_ts)
+
+
+# ---------------------------------------------------------------------------
+# Training-pool schemas (collaborative training — see docs/ena/training-pool.md)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Pool(Schema):
+    """A collaborative training pool: many contributors train one model in rounds."""
+    pool_id: str
+    pool_hash: str
+    name: str
+    status: str  # open | training | paused | closed
+    base_model: str
+    method: str = "lora"
+    # canonical global model this pool contributes to (one model, many pools)
+    model_id: Optional[str] = None
+    dataset_id: str = ""
+    dataset_path: str = ""
+    dataset_sha256: str = ""
+    dataset_rows: int = 0
+    num_shards: int = 4
+    round: int = 1
+    hyperparameters: dict[str, Any] = field(default_factory=dict)
+    # basis points across earning roles; must sum to 10000.
+    reward_split: dict[str, int] = field(
+        default_factory=lambda: {"funders": 2000, "trainers": 6000, "servers": 2000})
+    # promotion gate; None ⇒ auto-promote each aggregated round.
+    eval_gate: Optional[dict[str, Any]] = None
+    # the currently promoted checkpoint that serving workers load.
+    served_checkpoint: Optional[dict[str, Any]] = None
+    budget_nano: int = 0          # confirmed funding not yet paid out
+    paid_out_nano: int = 0
+    treasury_address: Optional[str] = None
+    requester: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: int = field(default_factory=now_ts)
+    updated_at: int = field(default_factory=now_ts)
+
+
+@dataclass
+class PoolShard(Schema):
+    """A deterministic slice of a pool's dataset for one round, claimed by a trainer."""
+    shard_id: str
+    pool_id: str
+    round: int
+    ordinal: int
+    total: int
+    path: str
+    row_count: int
+    sha256: str
+    status: str = "open"  # open | claimed | submitted | verified | rejected
+    worker_id: Optional[str] = None
+    miner_address: Optional[str] = None
+    run_id: Optional[str] = None
+    checkpoint_path: Optional[str] = None
+    checkpoint_hash: Optional[str] = None
+    metrics: dict[str, Any] = field(default_factory=dict)
+    training_receipt: dict[str, Any] = field(default_factory=dict)
+    created_at: int = field(default_factory=now_ts)
+    updated_at: int = field(default_factory=now_ts)
+
+
+@dataclass
+class PoolContribution(Schema):
+    """A ledger entry crediting one contributor (funder/trainer/server) for a round."""
+    contribution_id: str
+    pool_id: str
+    round: int
+    role: str  # funder | trainer | server
+    address: Optional[str] = None
+    worker_id: Optional[str] = None
+    weight: float = 0.0       # ANM (funder) | work-weight (trainer) | tokens (server)
+    amount_nano: int = 0      # ANM paid in (funders); 0 for earned roles
+    ref: Optional[str] = None  # txid (funder) | shard_id/run_id (trainer)
+    receipt_hash: Optional[str] = None
+    paid: bool = False
+    created_at: int = field(default_factory=now_ts)
+    metadata: dict[str, Any] = field(default_factory=dict)
