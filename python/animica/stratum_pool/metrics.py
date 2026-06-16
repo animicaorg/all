@@ -57,6 +57,17 @@ class PoolMetrics:
             self._pool_mode = "pps"
         self._job_manager = job_manager
         self._server = server
+        # ENA training-treasury fee: skim this fraction (basis points) of each
+        # accepted share's ANM credit and route it to the ENA training treasury.
+        # The treasury accrues as a synthetic worker balance and is paid out by
+        # the normal payout scheduler. 0 / unset disables the fee.
+        self._ena_fee_bps = max(
+            0, min(10_000, int(getattr(config, "ena_fee_bps", 0) or 0))
+        )
+        self._ena_treasury_address = str(
+            getattr(config, "ena_treasury_address", "") or ""
+        ).strip()
+        self._ena_fee_worker = "__ena_treasury_fee__"
         self._share_events: Deque[ShareEvent] = deque(maxlen=5000)
         self._block_events: Deque[Dict[str, object]] = deque(maxlen=200)
         self._accounting_events: Deque[AccountingEvent] = deque(maxlen=5000)
@@ -1391,6 +1402,62 @@ class PoolMetrics:
             return 0
         return int(float(reward) * ratio)
 
+    def _ena_fee_split(
+        self, miner_address: str, pps_credit: int, solo_credit: int
+    ) -> Tuple[int, int]:
+        """Return (pps_fee, solo_fee) to route to the ENA treasury for one share.
+
+        Disabled (returns 0,0) when no fee is configured, no treasury address is
+        set, or the credited address is itself the treasury (no self-skim).
+        """
+        if self._ena_fee_bps <= 0 or not self._ena_treasury_address:
+            return 0, 0
+        if miner_address == self._ena_treasury_address:
+            return 0, 0
+        bps = self._ena_fee_bps
+        pps_fee = (int(pps_credit) * bps) // 10_000 if pps_credit > 0 else 0
+        solo_fee = (int(solo_credit) * bps) // 10_000 if solo_credit > 0 else 0
+        return pps_fee, solo_fee
+
+    def _credit_ena_treasury_fee(
+        self,
+        *,
+        ts: float,
+        from_worker: str,
+        from_address: str,
+        job_id: str,
+        accounting_mode: str,
+        ena_fee_pps: int,
+        ena_fee_solo: int,
+        defer_commit: bool = False,
+    ) -> None:
+        """Credit a skimmed ENA training-treasury fee to the treasury balance."""
+        if ena_fee_pps <= 0 and ena_fee_solo <= 0:
+            return
+        self._apply_balance_delta(
+            ts=ts,
+            worker=self._ena_fee_worker,
+            address=self._ena_treasury_address,
+            pps_credit=ena_fee_pps,
+            solo_credit=ena_fee_solo,
+            defer_commit=defer_commit,
+        )
+        self._record_accounting_event(
+            ts=ts,
+            worker=self._ena_fee_worker,
+            address=self._ena_treasury_address,
+            event="ena_treasury_fee",
+            amount=int(ena_fee_pps) + int(ena_fee_solo),
+            job_id=job_id,
+            details={
+                "fee_bps": self._ena_fee_bps,
+                "from_worker": from_worker,
+                "from_address": from_address,
+                "pool_mode": accounting_mode,
+            },
+            defer_commit=defer_commit,
+        )
+
     def _apply_balance_delta(
         self,
         *,
@@ -1556,34 +1623,54 @@ class PoolMetrics:
             solo_credit = 0
             if accounting_mode == "pps":
                 pps_credit = self._credit_for_share(reward, difficulty)
-                if pps_credit > 0 and self._ledger_record_pps_share_credit:
-                    self._record_accounting_event(
-                        ts=ts,
-                        worker=worker,
-                        address=address,
-                        event="pps_share_credit",
-                        amount=pps_credit,
-                        job_id=job_id,
-                        details={
-                            "difficulty_ratio": difficulty,
-                            "reward": reward,
-                            "pool_mode": accounting_mode,
-                        },
-                        defer_commit=defer_commit,
-                    )
             elif accounting_mode == "solo" and is_block:
                 solo_credit = int(reward)
-                if solo_credit > 0:
-                    self._record_accounting_event(
-                        ts=ts,
-                        worker=worker,
-                        address=address,
-                        event="solo_block_credit",
-                        amount=solo_credit,
-                        job_id=job_id,
-                        details={"reward": reward, "pool_mode": accounting_mode},
-                        defer_commit=defer_commit,
-                    )
+
+            # ENA training-treasury fee: skim a fixed fraction of this share's
+            # credit before the miner is paid. The miner keeps the remainder;
+            # the fee accrues to the treasury address (paid out as usual). Never
+            # skim from a share that is itself credited to the treasury.
+            ena_fee_pps, ena_fee_solo = self._ena_fee_split(
+                address, pps_credit, solo_credit
+            )
+            pps_credit -= ena_fee_pps
+            solo_credit -= ena_fee_solo
+
+            if (
+                accounting_mode == "pps"
+                and pps_credit > 0
+                and self._ledger_record_pps_share_credit
+            ):
+                self._record_accounting_event(
+                    ts=ts,
+                    worker=worker,
+                    address=address,
+                    event="pps_share_credit",
+                    amount=pps_credit,
+                    job_id=job_id,
+                    details={
+                        "difficulty_ratio": difficulty,
+                        "reward": reward,
+                        "pool_mode": accounting_mode,
+                        "ena_fee": ena_fee_pps,
+                    },
+                    defer_commit=defer_commit,
+                )
+            elif accounting_mode == "solo" and is_block and solo_credit > 0:
+                self._record_accounting_event(
+                    ts=ts,
+                    worker=worker,
+                    address=address,
+                    event="solo_block_credit",
+                    amount=solo_credit,
+                    job_id=job_id,
+                    details={
+                        "reward": reward,
+                        "pool_mode": accounting_mode,
+                        "ena_fee": ena_fee_solo,
+                    },
+                    defer_commit=defer_commit,
+                )
             self._apply_balance_delta(
                 ts=ts,
                 worker=worker,
@@ -1593,6 +1680,16 @@ class PoolMetrics:
                 solo_credit=solo_credit,
                 accepted_shares_delta=1,
                 accepted_blocks_delta=1 if is_block else 0,
+                defer_commit=defer_commit,
+            )
+            self._credit_ena_treasury_fee(
+                ts=ts,
+                from_worker=worker,
+                from_address=address,
+                job_id=job_id,
+                accounting_mode=accounting_mode,
+                ena_fee_pps=ena_fee_pps,
+                ena_fee_solo=ena_fee_solo,
                 defer_commit=defer_commit,
             )
             return

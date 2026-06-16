@@ -56,6 +56,10 @@ class ENAConfig(Schema):
     chain_id: int = 1
     demand_min_anm: float = 0.1                   # minimum reward a requester may fund
     payment_confirmations: int = 1                # confirmations required before funding
+    payment_require_memo: bool = True             # bind payment→job via the tx memo. Set False
+                                                  # when the node's tx wire shape omits memo (the
+                                                  # mainnet v2 tx format does); binding then relies
+                                                  # on recipient + amount + txid de-duplication.
     public_url: str = "https://pool.animica.org"   # public origin (web-wallet callback)
 
     # -- resolved helpers -------------------------------------------------
@@ -220,6 +224,11 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         demand["chain_id"] = int(env["ANIMICA_CHAIN_ID"])
     if env.get("ENA_DEMAND_MIN_ANM"):
         demand["demand_min_anm"] = float(env["ENA_DEMAND_MIN_ANM"])
+    if env.get("ENA_PAYMENT_REQUIRE_MEMO") is not None:
+        demand["payment_require_memo"] = (
+            str(env["ENA_PAYMENT_REQUIRE_MEMO"]).strip().lower()
+            in ("1", "true", "yes", "on")
+        )
     if env.get("ENA_PUBLIC_URL"):
         demand["public_url"] = env["ENA_PUBLIC_URL"]
     return raw
@@ -274,6 +283,7 @@ def load_config(config_path: Optional[str] = None) -> ENAConfig:
         chain_id=int(demand.get("chain_id", 1)),
         demand_min_anm=float(demand.get("demand_min_anm", 0.1)),
         payment_confirmations=int(demand.get("payment_confirmations", 1)),
+        payment_require_memo=bool(demand.get("payment_require_memo", True)),
         public_url=str(demand.get("public_url", "https://pool.animica.org")),
     )
 

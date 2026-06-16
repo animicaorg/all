@@ -109,12 +109,18 @@ class AnimicaRPC:
 
 def verify_payment(rpc: AnimicaRPC, txid: str, *, treasury_address: str,
                    min_nano: int, expect_memo: str,
-                   require_confirmed: bool = True) -> dict[str, Any]:
+                   require_confirmed: bool = True,
+                   require_memo: bool = True) -> dict[str, Any]:
     """Verify an ANM payment funds a specific job.
 
     Returns ``{ok, reason, status, value_nano, from_addr, pending}``. ``pending``
     is True when the tx exists but isn't confirmed yet (caller should retry),
     distinct from a hard failure (``ok=False, pending=False``).
+
+    ``require_memo`` binds the payment to a specific job via ``tx.memo ==
+    expect_memo``. Some node tx wire formats (the Animica mainnet v2 tx) don't
+    surface a memo field; pass ``require_memo=False`` there and rely on
+    recipient + amount + txid de-duplication for binding instead.
     """
     out = {"ok": False, "reason": "", "status": "unknown", "value_nano": 0,
            "from_addr": None, "pending": False, "txid": _norm_hex(txid)}
@@ -135,7 +141,7 @@ def verify_payment(rpc: AnimicaRPC, txid: str, *, treasury_address: str,
         return out
 
     memo = str(tx.get("memo") or "")
-    if memo != expect_memo:
+    if require_memo and memo != expect_memo:
         out["reason"] = "memo_mismatch"
         return out
 

@@ -318,7 +318,8 @@ class PoolService:
             treasury_address=self.cfg.treasury_address,
             min_nano=pay.anm_to_nano(self.cfg.demand_min_anm),
             expect_memo=pool["pool_hash"],
-            require_confirmed=self.cfg.payment_confirmations > 0)
+            require_confirmed=self.cfg.payment_confirmations > 0,
+            require_memo=self.cfg.payment_require_memo)
         if result["pending"]:
             return {"pool_id": pool_id, "funded": False, "pending": True,
                     "reason": result["reason"], "tx_status": result["status"]}

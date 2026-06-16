@@ -49,6 +49,12 @@ class PoolConfig:
     # are refused until they update. Reversible by clearing the flag.
     min_miner_version: str = ""
     require_min_version: bool = False
+    # ENA training-treasury fee: route this fraction (in basis points) of each
+    # accepted share's ANM credit to the ENA training treasury. The miner keeps
+    # the remainder. 0 disables the fee. The treasury accrues as an ordinary
+    # credited balance and is paid out by the normal payout scheduler.
+    ena_fee_bps: int = 0
+    ena_treasury_address: str = ""
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -152,6 +158,15 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         overrides.get("require_min_version"),
         _env("ANIMICA_POOL_REQUIRE_MIN_VERSION", "false"),
     )
+    ena_fee_bps = int(
+        overrides.get("ena_fee_bps")
+        or _env("ANIMICA_POOL_ENA_FEE_BPS", "0")
+    )
+    ena_treasury_address = str(
+        overrides.get("ena_treasury_address")
+        or _env("ANIMICA_POOL_ENA_TREASURY_ADDRESS", "")
+        or ""
+    ).strip()
 
     if not str(host or "").strip():
         raise ValueError("host must be non-empty")
@@ -198,6 +213,13 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         raise ValueError(
             "payout_wallet is required when payout_interval_seconds is enabled"
         )
+    if ena_fee_bps < 0 or ena_fee_bps > 10_000:
+        raise ValueError("ena_fee_bps must be between 0 and 10000 (basis points)")
+    if ena_fee_bps > 0 and not ena_treasury_address:
+        raise ValueError(
+            "ena_treasury_address is required when ena_fee_bps > 0 "
+            "(set ANIMICA_POOL_ENA_TREASURY_ADDRESS)"
+        )
 
     return PoolConfig(
         host=host,
@@ -222,4 +244,6 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         payout_wallet=payout_wallet,
         min_miner_version=min_miner_version,
         require_min_version=require_min_version,
+        ena_fee_bps=ena_fee_bps,
+        ena_treasury_address=ena_treasury_address,
     )

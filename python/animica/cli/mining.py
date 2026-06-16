@@ -149,13 +149,76 @@ def _is_truthy_env(var_name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _mine_header_gpu(
+    header: "Header",
+    target_int: int,
+    *,
+    device: str,
+    stats: dict | None = None,
+) -> tuple[int | None, bytes | None]:
+    """Solo PoW search on a GPU via the batched torch Keccak.
+
+    The hand-written ``mining/gpu_*.py`` kernels compute the pool u-draw digest
+    ``sha3(signBytes||mixSeed||nonce_le8)``; solo work is validated by the node
+    as ``Header.hash() <= target`` (a CBOR digest with the nonce embedded), so
+    solo GPU mining uses ``mining.gpu_torch_sha3`` instead. Every candidate is
+    re-verified against the canonical ``Header.hash()`` before being returned,
+    so any solution is node-acceptable. Raises on backend failure so the caller
+    can fall back to the CPU scanner."""
+    from mining.gpu_torch_sha3 import NONCE_BAND_HI, NONCE_BAND_LO, scan_solo
+    import secrets
+
+    batch = max(1, int(os.getenv("ANIMICA_MINER_GPU_BATCH", str(1 << 18))))
+    window = max(batch, int(os.getenv("ANIMICA_MINER_GPU_WINDOW", str(1 << 23))))
+    max_total = max(window, int(os.getenv("ANIMICA_MINER_GPU_MAX_TOTAL", str(1 << 31))))
+    total_windows = max(1, max_total // window)
+
+    if stats is not None:
+        stats.setdefault("hashes", 0)
+        stats["t_start"] = time.monotonic()
+
+    span = NONCE_BAND_HI - NONCE_BAND_LO
+    start = NONCE_BAND_LO + secrets.randbelow(max(1, span - window))
+    try:
+        for _ in range(total_windows):
+            nonce, digest = scan_solo(
+                header,
+                target_int,
+                start_nonce=start,
+                iterations=window,
+                device=device,
+                batch_size=batch,
+                stats=stats,
+            )
+            if nonce is not None and digest is not None:
+                return nonce, digest
+            start += window
+            if start + window >= NONCE_BAND_HI:
+                start = NONCE_BAND_LO
+        return None, None
+    finally:
+        if stats is not None:
+            stats["elapsed_s"] = max(1e-6, time.monotonic() - stats["t_start"])
+
+
 def _mine_header(
     header: "Header",
     target_int: int,
     *,
     workers: int | None = None,
     stats: dict | None = None,
+    device: str = "cpu",
 ) -> tuple[int | None, bytes | None]:
+    # GPU solo path: batched torch Keccak over the canonical header digest.
+    # Only engaged when the caller resolved a usable GPU device; on any failure
+    # we fall through to the CPU scanner below.
+    if device and str(device).strip().lower() not in ("cpu", ""):
+        try:
+            return _mine_header_gpu(header, target_int, device=device, stats=stats)
+        except Exception as exc:  # pragma: no cover - hardware/runtime dependent
+            logging.getLogger("animica.miner").warning(
+                "GPU PoW scan failed (%s); falling back to CPU scanner", exc
+            )
     # Increased from 1000000 to 10000000 for better PoW success rate
     max_nonce = max(1, int(os.getenv("ANIMICA_MINER_MAX_NONCE", "10000000")))
     retry_windows = max(1, int(os.getenv("ANIMICA_MINER_POW_RETRY_WINDOWS", "4")))
@@ -2621,8 +2684,11 @@ def mine_blocks(
       and uses the best available device in priority order: CUDA > ROCm > OpenCL > Metal > CPU.
       Falls back to CPU if no GPU is detected or if detection fails.
       
-      Note: Device selection is a local CLI feature for future use. The RPC node
-      handles mining execution and does not receive the device parameter.
+      GPU (cuda/mps) runs the solo PoW search on-device via a batched torch
+      Keccak over the canonical header digest (mining.gpu_torch_sha3); cpu uses
+      the multi-process scanner. rocm/opencl currently fall back to CPU. The
+      device parameter is local to the miner — the RPC node only validates the
+      submitted nonce and does not receive it. Requires a CUDA/MPS torch build.
       
       Default is 'auto'. Can also be set via ANIMICA_MINER_DEVICE environment variable.
       The --gpu flag is a shortcut for --device cuda.
@@ -2803,7 +2869,23 @@ def mine_blocks(
     from mining.parallel_nonce_search import resolve_worker_count
 
     resolved_workers = resolve_worker_count(threads)
-    
+
+    # Resolve whether a torch-backed GPU PoW scanner is actually usable for
+    # solo work. The hand-written gpu_*.py kernels target the pool u-draw
+    # digest, not the solo Header.hash() digest, so solo GPU mining runs the
+    # batched torch Keccak in mining.gpu_torch_sha3 (CUDA/MPS only). When a GPU
+    # backend is requested but unavailable we fall back to the CPU scanner and
+    # say so plainly rather than printing a misleading "Using device: cuda".
+    solo_gpu_device: str | None = None
+    gpu_requested = str(device_normalized).strip().lower() not in ("cpu", "")
+    if gpu_requested:
+        try:
+            from mining.gpu_torch_sha3 import solo_device_available
+
+            solo_gpu_device = solo_device_available(device_normalized)
+        except Exception:
+            solo_gpu_device = None
+
     # Validate count. Pool mining supports count=0 as "run until stopped";
     # local RPC mining keeps the historical finite-count behavior.
     if count < 0 or (count == 0 and not pool_stratum):
@@ -3036,13 +3118,24 @@ def mine_blocks(
     typer.echo(
         f"Mining {count} block(s) {mode_str} with payout to address {resolved_address} via RPC {url}"
     )
-    typer.secho(
-        f"Using device: {device_normalized}",
-        fg=typer.colors.CYAN,
-    )
-    typer.echo(
-        f"Using {resolved_workers} CPU thread(s) for PoW search",
-    )
+    if solo_gpu_device is not None:
+        import torch as _torch
+
+        typer.secho(
+            f"Using GPU device: {solo_gpu_device} (torch {_torch.__version__}) "
+            f"— batched Keccak over the canonical header digest",
+            fg=typer.colors.CYAN,
+        )
+    elif gpu_requested:
+        typer.secho(
+            f"⚠ GPU backend '{device_normalized}' requested but no usable GPU was "
+            f"found (need a CUDA/MPS torch build + a GPU). Falling back to CPU.",
+            fg=typer.colors.YELLOW,
+        )
+        typer.echo(f"Using {resolved_workers} CPU thread(s) for PoW search")
+    else:
+        typer.secho(f"Using device: {device_normalized}", fg=typer.colors.CYAN)
+        typer.echo(f"Using {resolved_workers} CPU thread(s) for PoW search")
 
     # Spawn AI/Quantum/Storage/VDF useful-work workers for the duration of
     # this solo mining session. They run in a background asyncio loop and
@@ -3464,6 +3557,7 @@ def mine_blocks(
                         target_int,
                         workers=resolved_workers,
                         stats=pow_stats,
+                        device=solo_gpu_device or "cpu",
                     )
                     block_hashes = int(pow_stats.get("hashes", 0))
                     block_pow_s = float(pow_stats.get("elapsed_s", 0.0))

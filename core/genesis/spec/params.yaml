@@ -20,7 +20,7 @@ consensus:
   theta_max: 3000000000
   gamma_total_cap: 12000000
   retarget:
-    window: 720
+    window: 1000000000
     ema_alpha: 0.15
     bounds:
       min: 0.5

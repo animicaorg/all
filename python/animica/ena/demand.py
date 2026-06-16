@@ -116,7 +116,8 @@ class DemandService:
         result = pay.verify_payment(
             self._rpc(), txid, treasury_address=self.cfg.treasury_address,
             min_nano=int(job["required_nano"]), expect_memo=job["job_hash"],
-            require_confirmed=self.cfg.payment_confirmations > 0)
+            require_confirmed=self.cfg.payment_confirmations > 0,
+            require_memo=self.cfg.payment_require_memo)
 
         if result["pending"]:
             return {"job_id": job_id, "status": job["status"], "funded": False,
