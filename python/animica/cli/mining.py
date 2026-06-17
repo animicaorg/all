@@ -766,6 +766,24 @@ def _apply_llm_flag(llm: Optional[str]) -> None:
         os.environ["ANIMICA_AICF_MODEL"] = resolved
 
 
+def _unwrap_typer_default(value):
+    """Coerce a leftover Typer Option/Argument sentinel to its declared default.
+
+    ``mine_blocks`` is registered as a Typer command but is also invoked as a
+    plain Python function (by ``start`` and by the tests). When called that way,
+    any argument the caller omits keeps its ``typer.Option(...)`` /
+    ``typer.Argument(...)`` sentinel instead of the real default. Those sentinels
+    are truthy and have no string methods, so ``_apply_llm_flag(llm)`` blows up on
+    ``.strip()`` and ``if xmr:`` misfires. ``ParameterInfo.default`` holds the
+    value the CLI would have used, so unwrap to that.
+    """
+    from typer.models import ParameterInfo
+
+    if isinstance(value, ParameterInfo):
+        return value.default
+    return value
+
+
 def _require_miner_address(address_or_label: Optional[str]) -> str:
     if address_or_label and address_or_label.strip():
         return _resolve_payout_address(address_or_label.strip())
@@ -2768,6 +2786,37 @@ def mine_blocks(
     Note: For backward compatibility with older nodes, if the node doesn't support
     payout address selection, blocks will be mined to the node's default miner address.
     """
+    # `mine_blocks` doubles as a plain helper (called directly by `start` and by
+    # the tests). Any argument such a caller omits still holds its Typer
+    # Option/Argument sentinel rather than the real default, and those sentinels
+    # are truthy — so without this `_apply_llm_flag(llm)` raises
+    # "'OptionInfo' object has no attribute 'strip'" and `if xmr/xmr_only`
+    # below would wrongly divert into XMR dual-mining. Coerce leftovers back to
+    # their declared defaults.
+    address = _unwrap_typer_default(address)
+    count = _unwrap_typer_default(count)
+    address_opt = _unwrap_typer_default(address_opt)
+    pool_stratum = _unwrap_typer_default(pool_stratum)
+    pool_worker = _unwrap_typer_default(pool_worker)
+    pool_scan_window = _unwrap_typer_default(pool_scan_window)
+    pool_useful_work = _unwrap_typer_default(pool_useful_work)
+    aicf = _unwrap_typer_default(aicf)
+    aicf_endpoint = _unwrap_typer_default(aicf_endpoint)
+    llm = _unwrap_typer_default(llm)
+    threads = _unwrap_typer_default(threads)
+    xmr = _unwrap_typer_default(xmr)
+    xmr_only = _unwrap_typer_default(xmr_only)
+    xmrig_gpu = _unwrap_typer_default(xmrig_gpu)
+    allow_remote_rpc = _unwrap_typer_default(allow_remote_rpc)
+    device = _unwrap_typer_default(device)
+    gpu = _unwrap_typer_default(gpu)
+    rpc_url = _unwrap_typer_default(rpc_url)
+    use_proxy = _unwrap_typer_default(use_proxy)
+    verbose = _unwrap_typer_default(verbose)
+    no_timeout = _unwrap_typer_default(no_timeout)
+    include_mempool = _unwrap_typer_default(include_mempool)
+    template_ttl_s = _unwrap_typer_default(template_ttl_s)
+
     # Propagate the AICF model / tier choice early so any AICF worker that
     # starts under our process tree picks it up.
     _apply_llm_flag(llm)
