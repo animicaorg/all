@@ -233,11 +233,15 @@ class CurriculumService:
             out = adapter.generate(prompt, max_tokens=300, temperature=0.2)
             obj = json.loads(out[out.find("{"): out.rfind("}") + 1])
             p, r = str(obj.get("prompt", "")).strip(), str(obj.get("response", "")).strip()
-            if p and r:
-                return {"prompt": p, "response": r}
+            # Reject junk: empty, the literal "..." placeholders a weak model
+            # echoes from the instruction, too-short answers, or an echo of the
+            # context block. On any of these we fall back to the grounded row.
+            if (not p or not r or "..." in p or "..." in r
+                    or len(r) < 20 or r in ctx or "Using ONLY the context" in r):
+                return None
+            return {"prompt": p, "response": r}
         except Exception:  # noqa: BLE001
             return None
-        return None
 
     @staticmethod
     def _grounded_row(topic: str, hits: list[dict]) -> Optional[dict]:
@@ -247,7 +251,7 @@ class CurriculumService:
                        for h in hits).strip()
         if not ctx:
             return None
-        return {"prompt": f"What should I know about {topic} in Animica?",
+        return {"prompt": f"What should I know about {topic}?",
                 "response": ctx[:1200]}
 
     def _generate_retrieve(self, topics: list[str], pool: dict[str, Any],

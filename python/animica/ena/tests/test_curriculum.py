@@ -145,6 +145,36 @@ def test_retrieve_backend_grounds_in_corpus(tmp_path, monkeypatch):
     assert "concept in the animica knowledge curriculum" not in blob  # not synthetic
 
 
+def test_retrieve_rejects_placeholder_model_and_grounds(tmp_path, monkeypatch):
+    """A weak model that echoes the JSON example must NOT produce '...' rows —
+    the backend rejects junk self-instruct output and uses the grounded row."""
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    rows = [{"prompt": f"About gamma #{i}",
+             "response": f"gamma-fact-{i}: gamma is a real documented concept"}
+            for i in range(6)]
+    path = tmp_path / "corpus.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    p = ena.pool.create("tiny", str(path), name="echo", num_shards=2)
+    pool = ena.store.get_pool(p["pool_id"])
+    meta = dict(pool.get("metadata") or {})
+    meta["curriculum"] = {"enabled": True, "source": "retrieve",
+                          "topics_seed": ["gamma"], "rows_per_round": 3}
+    pool["metadata"] = meta
+    ena.store.upsert_pool(pool)
+    pool = ena.store.get_pool(p["pool_id"])
+
+    class _Echo:
+        def generate(self, prompt, **kw):
+            return 'Sure: {"prompt": "...", "response": "..."}'
+    monkeypatch.setattr(ena.curriculum, "_model_adapter", lambda pool: _Echo())
+
+    out = ena.curriculum.next_dataset(pool, 2, None)
+    assert out and out["rows"] >= 1
+    gen = list(ds.read_jsonl(out["path"]))
+    blob = " ".join(str(r.get("response", "")) for r in gen)
+    assert "..." not in blob and "gamma-fact" in blob.lower()
+
+
 def _gated_pool(ena, tmp_path):
     data = _write_dataset(tmp_path / "g.jsonl", n=12)
     p = ena.pool.create("tiny", data, name="gate", num_shards=2,
