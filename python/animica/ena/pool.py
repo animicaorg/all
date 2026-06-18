@@ -377,8 +377,9 @@ class PoolService:
             if not (src and Path(src).is_file()):
                 src = pool["dataset_path"]
             records = list(ds.read_jsonl(src))
-            # Size the round to the active miners so each gets a shard, bounded
-            # by [min_shards, max_shards] and never more shards than rows.
+            # Size the round to the active miners so each gets a shard (unlimited
+            # by default — see _target_shard_count), never exceeding the number of
+            # rows so every shard has at least one example.
             n = self._target_shard_count(pool)
             n = max(1, min(n, len(records) or 1))
             buckets: list[list[dict[str, Any]]] = [[] for _ in range(n)]
@@ -474,9 +475,18 @@ class PoolService:
     def _target_shard_count(self, pool: dict[str, Any]) -> int:
         meta = pool.get("metadata") or {}
         floor = int(meta.get("min_shards", pool.get("num_shards") or 4))
-        cap = int(meta.get("max_shards", 64))
         active = self._active_worker_count(pool)
-        return max(1, min(cap, max(floor, active)))
+        n = max(floor, active)
+        # max_shards is an OPTIONAL cap; UNLIMITED by default. A round gets one
+        # shard per active miner with no ceiling, so each shard carries a smaller
+        # slice of the data — fewer rows per shard means less memory, so machines
+        # that would OOM on a large shard can still train (and if one does OOM the
+        # shard is reclaimed/released to another worker). _ensure_shards still
+        # bounds this by the rows actually available (no empty shards).
+        cap = meta.get("max_shards")
+        if cap is not None:
+            n = min(int(cap), n)
+        return max(1, n)
 
     def submit_shard(self, pool_id: str, shard_id: str, *,
                      worker_id: Optional[str] = None,

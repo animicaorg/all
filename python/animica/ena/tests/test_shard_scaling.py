@@ -35,7 +35,22 @@ def test_round_scales_to_active_miners(tmp_path, monkeypatch):
     assert len(shards) == 8, f"expected 8 shards for 8 miners, got {len(shards)}"
 
 
-def test_shard_count_floors_and_caps(tmp_path, monkeypatch):
+def test_round_shards_unlimited_by_default(tmp_path, monkeypatch):
+    """No artificial ceiling: with many active miners (and enough rows) a round
+    materialises one shard per miner, well beyond the old 64 cap — so each shard
+    is a smaller slice and OOM-prone machines can still train."""
+    e = _ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=200)  # enough rows to shard
+    p = e.pool.create("tiny", data, name="unlimited", num_shards=4)
+    pid = p["pool_id"]
+    for w in [f"m{i}" for i in range(80)]:        # 80 miners > the old cap of 64
+        e.pool.heartbeat(pid, w)
+    e.pool.claim_shard(pid, "m0")
+    shards = e.store.list_shards(pid, round=1)
+    assert len(shards) == 80, f"expected 80 shards (no cap), got {len(shards)}"
+
+
+def test_shard_count_capped_only_when_max_shards_set(tmp_path, monkeypatch):
     e = _ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=60)
     p = e.pool.create("tiny", data, name="bounds", num_shards=4)
