@@ -43,6 +43,51 @@ log = logging.getLogger("animica.ena.curriculum")
 
 DEFAULT_ROWS_PER_ROUND = 16
 
+
+def _tokenset(s: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", str(s).lower()))
+
+
+def evaluate_detailed(generate, eval_rows: list[dict], topics: list[str], *,
+                      max_rows: int = 100) -> dict[str, Any]:
+    """Run ``generate(prompt) -> str`` over the eval rows, loose-match each
+    against its gold answer, and attribute every row to the seed topics it
+    overlaps. Returns ``{match_rate, topic_match_rate, failures, evaluated}``.
+
+    Pure w.r.t. the model — ``generate`` is injected, so this is GPU-free
+    testable. The trainer wires in a real checkpoint runner; tests pass a stub.
+    """
+    topic_tokens = {t: _tokenset(t) for t in (topics or [])}
+    per: dict[str, list[int]] = {t: [0, 0] for t in topic_tokens}  # [matched, total]
+    total = matched = 0
+    failures: list[dict] = []
+    for r in (eval_rows or [])[:max_rows]:
+        prompt = str(r.get("prompt") or r.get("text") or "")
+        if not prompt:
+            continue
+        total += 1
+        try:
+            out = generate(prompt) or ""
+        except Exception:  # noqa: BLE001
+            out = ""
+        gold = str(r.get("response") or r.get("chosen") or "")
+        ok = bool(gold and gold.strip().lower()[:40] in out.strip().lower())
+        if ok:
+            matched += 1
+        elif len(failures) < 50:
+            failures.append({"prompt": prompt[:300], "gold": gold[:300],
+                             "generated": out[:300]})
+        row_tokens = _tokenset(prompt + " " + gold)
+        for t, tt in topic_tokens.items():
+            if tt & row_tokens:
+                per[t][1] += 1
+                if ok:
+                    per[t][0] += 1
+    topic_rate = {t: round(m / n, 4) for t, (m, n) in per.items() if n}
+    return {"match_rate": round(matched / total, 4) if total else None,
+            "topic_match_rate": topic_rate, "failures": failures,
+            "evaluated": total}
+
 # Deterministic Q/A templates. Offline + byte-stable: same topics -> same rows.
 _TEMPLATES = [
     ("Explain {t}.",
@@ -338,3 +383,18 @@ class CurriculumService:
         except Exception as exc:  # noqa: BLE001
             log.warning("[curriculum] evaluate_candidate failed: %s", exc)
             return None
+
+    def evaluate_checkpoint_detailed(self, base_model: str, checkpoint_path: str,
+                                     eval_rows: list[dict],
+                                     topics: list[str]) -> dict[str, Any]:
+        """Trainer-side eval of a freshly-trained checkpoint: overall + per-topic
+        match rate over the shared eval rows. Runs the model (the trainer has a
+        GPU), so it is NOT env-gated. Best-effort: returns {} on any failure."""
+        try:
+            from .serving import PoolModelRunner
+            runner = PoolModelRunner(base_model or "", adapter_path=checkpoint_path)
+            return evaluate_detailed(
+                lambda p: runner.generate(p, max_tokens=128), eval_rows, topics)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[curriculum] evaluate_checkpoint_detailed failed: %s", exc)
+            return {}

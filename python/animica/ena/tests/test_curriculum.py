@@ -213,6 +213,105 @@ def test_autonomous_gate_fails_open_when_unevaluable(tmp_path, monkeypatch):
     assert pool["round"] == 2 and pool["served_checkpoint"], "should fail open"
 
 
+def _run_round_metrics(ena, pid, metrics):
+    """Submit every shard of the current round with the given metrics."""
+    while True:
+        s = ena.pool.claim_shard(pid, "t")
+        if s is None:
+            break
+        ena.pool.submit_shard(pid, s["shard_id"], worker_id="t",
+                              metrics=dict(metrics))
+        if ena.store.get_pool(pid)["round"] != s["round"]:
+            break
+
+
+def test_evaluate_detailed_scores_and_attributes_topics():
+    from animica.ena.curriculum import evaluate_detailed
+    rows = [{"prompt": "tell me about alpha", "response": "alpha is the first"},
+            {"prompt": "tell me about beta", "response": "beta is the second"}]
+
+    def gen(p):
+        return "alpha is the first thing" if "alpha" in p else "no idea"
+
+    rep = evaluate_detailed(gen, rows, ["alpha", "beta"])
+    assert rep["match_rate"] == 0.5
+    assert rep["topic_match_rate"]["alpha"] == 1.0
+    assert rep["topic_match_rate"]["beta"] == 0.0
+    assert len(rep["failures"]) == 1 and rep["failures"][0]["gold"].startswith("beta")
+
+
+def test_gate_uses_trainer_reported_score_to_promote(tmp_path, monkeypatch):
+    """A strong trainer-reported score promotes via the gate with NO coordinator
+    model load (evaluate_candidate is env-gated off)."""
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    pid = _gated_pool(ena, tmp_path)  # min_score 0.5
+    _run_round_metrics(ena, pid, {"eval_match_rate": 0.9})
+    pool = ena.store.get_pool(pid)
+    assert pool["round"] == 2 and pool["served_checkpoint"]
+
+
+def test_gate_rejects_low_trainer_reported_score(tmp_path, monkeypatch):
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    pid = _gated_pool(ena, tmp_path)  # min_score 0.5
+    _run_round_metrics(ena, pid, {"eval_match_rate": 0.1})
+    pool = ena.store.get_pool(pid)
+    assert pool["round"] == 2 and pool["served_checkpoint"] is None
+    assert (pool.get("metadata") or {}).get("rejected_rounds")
+
+
+def test_topic_discovery_targets_weakest_reported_topic(tmp_path, monkeypatch):
+    """Per-topic scores reported by trainers steer the NEXT round's curriculum to
+    the lowest-scoring topic first."""
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=12)
+    p = ena.pool.create("tiny", data, name="topics", num_shards=2)
+    pid = p["pool_id"]
+    _enable_curriculum(ena, pid, topics=["alpha", "beta", "gamma"], rows_per_round=6)
+    # alpha is weakest, beta strongest
+    _run_round_metrics(ena, pid, {"eval_match_rate": 0.5,
+                                  "eval_topic_match_rate":
+                                      {"alpha": 0.1, "beta": 0.9, "gamma": 0.5}})
+    pool = ena.store.get_pool(pid)
+    rd = (pool.get("metadata") or {}).get("round_datasets", {}).get("2")
+    assert rd and rd["topics"][0] == "alpha", rd and rd["topics"]
+
+
+def test_read_eval_data_returns_rows_and_topics(tmp_path, monkeypatch):
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=20)
+    p = ena.pool.create("tiny", data, name="ev", num_shards=2)
+    _enable_curriculum(ena, p["pool_id"], topics=["alpha", "beta"])
+    ed = ena.pool.read_eval_data(p["pool_id"])
+    assert ed["rows"] and isinstance(ed["rows"], list)
+    assert ed["topics"] == ["alpha", "beta"]
+
+
+def test_trainer_reports_eval_score_in_submit(tmp_path, monkeypatch):
+    """train_shard_once evaluates its checkpoint and folds the score into the
+    submit metrics (GPU-free here via stubbed training + eval)."""
+    from animica.ena import training
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=12)
+    p = ena.pool.create("tiny", data, name="tr", num_shards=2)
+    pid = p["pool_id"]
+
+    def _stub_run(cfg, store, *, manifest_path, backend=None):
+        out = tmp_path / "ckpt"
+        out.mkdir(exist_ok=True)
+        (out / "adapter_model.safetensors").write_bytes(b"x")
+        return {"run_id": "r1", "status": "completed", "output_dir": str(out),
+                "metrics": {"samples": 5}}
+    monkeypatch.setattr(training, "run", _stub_run)
+    monkeypatch.setattr(ena.curriculum, "evaluate_checkpoint_detailed",
+                        lambda bm, cp, rows, topics: {"match_rate": 0.7,
+                                                      "topic_match_rate": {"x": 0.7}})
+    res = ena.train_shard_once(pid, "trainer-A")
+    assert res and res["status"] == "submitted"
+    shard = ena.store.get_shard(res["shard_id"])
+    assert shard["metrics"]["eval_match_rate"] == 0.7
+    assert shard["metrics"]["eval_topic_match_rate"] == {"x": 0.7}
+
+
 def test_curriculum_failure_never_breaks_promotion(tmp_path, monkeypatch):
     ena = _make_ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=20)

@@ -114,6 +114,11 @@ def _make_handler(facade):
                     if not pid:
                         return self._send(400, {"error": "pool_id required"})
                     return self._send(200, facade.pool.read_promoted_checkpoint(pid))
+                if path == "/pool/eval-data":
+                    pid = q.get("pool_id")
+                    if not pid:
+                        return self._send(400, {"error": "pool_id required"})
+                    return self._send(200, facade.pool.read_eval_data(pid))
                 if path == "/pool/leaderboard":
                     pid = q.get("pool_id")
                     if not pid:

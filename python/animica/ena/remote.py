@@ -157,6 +157,9 @@ class RemotePool:
             "run_id": run_id, "checkpoint_path": checkpoint_path,
             "metrics": metrics or {}, "miner_address": miner_address})
 
+    def download_eval(self, pool_id: str) -> dict:
+        return self._call(f"/pool/eval-data?pool_id={quote(pool_id)}")
+
     # -- serving -----------------------------------------------------------
     def download_promoted(self, pool_id: str) -> dict:
         return self._call(f"/pool/checkpoint?pool_id={quote(pool_id)}")

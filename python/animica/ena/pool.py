@@ -523,9 +523,41 @@ class PoolService:
         except Exception:  # noqa: BLE001
             return None
 
+    @staticmethod
+    def _trainer_reported_score(submitted: list[dict]) -> Optional[float]:
+        """Mean of the GPU trainers' self-reported checkpoint scores
+        (metrics['eval_match_rate']), or None if none reported one."""
+        scores = []
+        for s in submitted:
+            m = s.get("metrics")
+            if isinstance(m, dict) and m.get("eval_match_rate") is not None:
+                try:
+                    scores.append(float(m["eval_match_rate"]))
+                except (TypeError, ValueError):
+                    continue
+        return round(sum(scores) / len(scores), 4) if scores else None
+
+    @staticmethod
+    def _trainer_reported_topics(submitted: list[dict]) -> dict[str, float]:
+        """Mean per-topic match rate across the trainers' reports
+        (metrics['eval_topic_match_rate']) — drives eval-driven topic discovery."""
+        acc: dict[str, list[float]] = {}
+        for s in submitted:
+            m = s.get("metrics")
+            tr = m.get("eval_topic_match_rate") if isinstance(m, dict) else None
+            if isinstance(tr, dict):
+                for t, v in tr.items():
+                    try:
+                        acc.setdefault(str(t), []).append(float(v))
+                    except (TypeError, ValueError):
+                        continue
+        return {t: round(sum(vs) / len(vs), 4) for t, vs in acc.items() if vs}
+
     def _reject_and_advance(self, pool: dict[str, Any], pool_id: str, rnd: int,
                             candidate: dict[str, Any], gate_info: dict[str, Any],
-                            eval_score: Optional[float]) -> dict[str, Any]:
+                            eval_score: Optional[float],
+                            topic_rates: Optional[dict[str, float]] = None
+                            ) -> dict[str, Any]:
         """A gated round whose candidate scored below threshold: keep the current
         served checkpoint (don't serve a regression), advance the round, record
         the rejection, and rotate curriculum so the next round targets the
@@ -542,8 +574,8 @@ class PoolService:
         pool["status"] = POOL_STATUS_TRAINING
         pool["updated_at"] = now_ts()
         self.store.upsert_pool(pool)
-        self._maybe_rotate_dataset(pool, pool["round"],
-                                   last_eval={"match_rate": eval_score})
+        self._maybe_rotate_dataset(pool, pool["round"], last_eval={
+            "match_rate": eval_score, "topic_match_rate": topic_rates or {}})
         return {"pool_id": pool_id, "round": rnd, "promoted": False,
                 "reason": "eval_below_threshold_advanced", "gate": gate_info,
                 "next_round": pool["round"]}
@@ -591,6 +623,16 @@ class PoolService:
         content = _remote.tar_path_b64(path) if (path.is_dir() or path.is_file()) else ""
         return {**served, "filename": path.name, "content_b64": content}
 
+    def read_eval_data(self, pool_id: str) -> dict[str, Any]:
+        """The shared held-out eval rows + the pool's topics, so GPU trainers can
+        score their checkpoint and report it on submit (lets the eval gate use a
+        real score with zero coordinator-side model load)."""
+        pool = self.get(pool_id)
+        rows = self._curriculum._eval_rows(pool) if self._curriculum else []
+        topics = ((pool.get("metadata") or {}).get("curriculum") or {}
+                  ).get("topics_seed") or []
+        return {"pool_id": pool_id, "rows": rows, "topics": topics}
+
     # -- aggregate + eval gate + promote ----------------------------------
     def aggregate(self, pool_id: str, *, eval_score: Optional[float] = None,
                   min_submitted: Optional[int] = None,
@@ -607,6 +649,12 @@ class PoolService:
             return {"pool_id": pool_id, "round": rnd, "promoted": False,
                     "reason": "insufficient_shards",
                     "submitted": len(submitted), "needed": need}
+
+        # GPU trainers self-report their checkpoint score (overall + per-topic)
+        # in submit metrics — the eval gate uses the overall mean (real score, no
+        # coordinator model load), and topic discovery uses the per-topic means.
+        trainer_score = self._trainer_reported_score(submitted)
+        trainer_topics = self._trainer_reported_topics(submitted)
 
         raw = {s["shard_id"]: _work_weight(s.get("training_receipt", {}),
                                            s.get("metrics", {})) for s in submitted}
@@ -625,8 +673,11 @@ class PoolService:
         gate_info: dict[str, Any] = {"gated": bool(gate)}
         if gate:
             threshold = float(gate.get("min_score", gate.get("threshold", 0.0)))
-            # Autonomous gate: when no score was supplied, score the candidate
-            # ourselves so eval-gated pools promote/reject on their own.
+            # Autonomous gate: when no score was supplied, prefer the GPU
+            # trainers' reported score; only fall back to (env-gated) coordinator
+            # eval if no trainer reported one.
+            if eval_score is None and auto:
+                eval_score = trainer_score
             if eval_score is None and auto and self._curriculum is not None:
                 eval_score = self._safe_eval_candidate(pool, candidate)
             gate_info.update(threshold=threshold,
@@ -646,7 +697,8 @@ class PoolService:
                     # Don't serve a regressed model, but advance the round so the
                     # curriculum retargets and the pool keeps learning.
                     return self._reject_and_advance(pool, pool_id, rnd, candidate,
-                                                    gate_info, eval_score)
+                                                    gate_info, eval_score,
+                                                    trainer_topics)
                 return {"pool_id": pool_id, "round": rnd, "promoted": False,
                         "reason": "eval_below_threshold", "candidate": candidate,
                         "gate": gate_info}
@@ -664,10 +716,12 @@ class PoolService:
                                   checkpoint_hash=candidate["checkpoint_hash"],
                                   round=candidate["round"])
         # Curriculum flywheel (best-effort, opt-in): rotate the just-started
-        # next round's dataset toward fresh data on the model's weak topics.
-        # Runs AFTER promotion is committed, so it can never undo a promotion.
-        self._maybe_rotate_dataset(pool, pool["round"],
-                                   last_eval={"match_rate": eval_score})
+        # next round's dataset toward fresh data on the model's weakest topics
+        # (per the trainers' per-topic scores). Runs AFTER promotion is
+        # committed, so it can never undo a promotion.
+        self._maybe_rotate_dataset(pool, pool["round"], last_eval={
+            "match_rate": eval_score if eval_score is not None else trainer_score,
+            "topic_match_rate": trainer_topics})
         return {"pool_id": pool_id, "round": rnd, "promoted": True,
                 "served_checkpoint": candidate, "next_round": pool["round"],
                 "gate": gate_info, "model_id": pool.get("model_id")}

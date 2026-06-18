@@ -241,11 +241,39 @@ class ENA:
         if run.get("status") != "completed":
             return {"shard_id": shard_id, "status": "train_failed",
                     "error": run.get("error")}
+        metrics = dict(run.get("metrics") or {})
+        try:
+            pool = self.pool.get(pool_id)
+            ev_rows = self.curriculum._eval_rows(pool)
+            topics = ((pool.get("metadata") or {}).get("curriculum") or {}
+                      ).get("topics_seed") or []
+            metrics.update(self._checkpoint_eval_metrics(
+                manifest.get("base_model"), run.get("output_dir"), ev_rows, topics))
+        except Exception:  # noqa: BLE001 - eval is best-effort
+            pass
         res = self.pool.submit_shard(
             pool_id, shard_id, worker_id=worker_id, run_id=run["run_id"],
-            checkpoint_path=run.get("output_dir"), metrics=run.get("metrics", {}),
+            checkpoint_path=run.get("output_dir"), metrics=metrics,
             miner_address=address)
         return {"shard_id": shard_id, "status": "submitted", **res}
+
+    def _checkpoint_eval_metrics(self, base_model, checkpoint_path,
+                                 eval_rows, topics) -> dict[str, Any]:
+        """Best-effort trainer-side checkpoint eval → metrics the coordinator's
+        gate + topic discovery consume. Empty dict on any failure / no GPU."""
+        from pathlib import Path as _P
+        out: dict[str, Any] = {}
+        try:
+            if not (checkpoint_path and _P(checkpoint_path).exists() and eval_rows):
+                return out
+            rep = self.curriculum.evaluate_checkpoint_detailed(
+                base_model, checkpoint_path, eval_rows, topics or [])
+            if rep.get("match_rate") is not None:
+                out["eval_match_rate"] = rep["match_rate"]
+                out["eval_topic_match_rate"] = rep.get("topic_match_rate") or {}
+        except Exception:  # noqa: BLE001
+            pass
+        return out
 
     def _train_shard_once_remote(self, pool_id: str, worker_id: str, *,
                                  address: Optional[str], backend: Optional[str],
@@ -290,6 +318,7 @@ class ENA:
         # Best-effort: upload the trained weights so the coordinator can merge a
         # real adapter. Training still earns (receipt) if the upload fails.
         coord_ckpt: Optional[str] = None
+        metrics = dict(run.get("metrics") or {})
         out = run.get("output_dir")
         if out and Path(out).exists():
             try:
@@ -298,10 +327,21 @@ class ENA:
             except Exception as exc:  # noqa: BLE001
                 log.warning("[trainer] checkpoint upload failed (%s); "
                             "submitting receipt only", exc)
+            # GPU trainer-side eval: score the checkpoint on the shared eval
+            # split so the gate + topic discovery get a real number with zero
+            # coordinator-side model load.
+            try:
+                ev = rc.download_eval(pool_id)
+                metrics.update(self._checkpoint_eval_metrics(
+                    manifest.get("base_model"), out, ev.get("rows") or [],
+                    ev.get("topics") or []))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[trainer] checkpoint eval failed (%s); "
+                            "submitting without a score", exc)
 
         res = rc.submit(pool_id, shard_id, worker_id=worker_id,
                         run_id=run["run_id"], checkpoint_path=coord_ckpt,
-                        metrics=run.get("metrics", {}), miner_address=address)
+                        metrics=metrics, miner_address=address)
         return {"shard_id": shard_id, "status": "submitted", **(res or {})}
 
     # -- coding agent -----------------------------------------------------
