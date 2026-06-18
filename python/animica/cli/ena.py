@@ -609,16 +609,37 @@ def pool_train_loop(pool_id: str = typer.Argument(..., help="pool id"),
                     address: Optional[str] = typer.Option(None, "--address",
                         help="ANM payout address for training rewards"),
                     backend: Optional[str] = typer.Option(None, "--backend"),
+                    endpoint: Optional[str] = typer.Option(None, "--endpoint",
+                        help="remote pool coordinator base URL (e.g. "
+                             "https://pool.animica.org/api/ena). Omit for a "
+                             "local coordinator.",
+                        envvar="ANIMICA_ENA_ENDPOINT"),
                     once: bool = typer.Option(False, "--once",
                         help="train a single shard then exit"),
                     poll: float = typer.Option(10.0, "--poll",
                         help="seconds to wait when no shard is available")):
-    """Claim → train → submit pool shards in a loop (GPU trainers)."""
+    """Claim → train → submit pool shards in a loop (GPU trainers).
+
+    With --endpoint the pool lives on a remote coordinator: shards are claimed +
+    downloaded over HTTP, trained locally, and the checkpoint uploaded back.
+    """
     import time as _time
+    from animica.ena.errors import ENAError
+    from animica.ena.remote import RemoteError
     e = _ena()
     while True:
-        res = _guard(e.train_shard_once, pool_id, worker_id, address=address,
-                     backend=backend)
+        # Transient errors (coordinator hiccup, network) must not kill the loop —
+        # the supervisor would just respawn it and flood logs. Back off instead.
+        try:
+            res = e.train_shard_once(pool_id, worker_id, address=address,
+                                     backend=backend, endpoint=endpoint)
+        except (ENAError, RemoteError) as exc:
+            if once:
+                console.print(f"[red]{exc}[/red]")
+                raise typer.Exit(1)
+            console.print(f"[yellow]train-loop: {exc}; retrying in {poll:.0f}s[/yellow]")
+            _time.sleep(max(1.0, poll))
+            continue
         if res is None:
             if once:
                 _emit({"status": "no_shard"}, title="train-loop")
@@ -638,12 +659,16 @@ def pool_serve(pool_id: str = typer.Argument(..., help="pool id"),
                host: str = typer.Option("127.0.0.1", "--host"),
                port: int = typer.Option(8799, "--port"),
                address: Optional[str] = typer.Option(None, "--address",
-                   help="ANM payout address for served-token rewards")):
+                   help="ANM payout address for served-token rewards"),
+               endpoint: Optional[str] = typer.Option(None, "--endpoint",
+                   help="remote pool coordinator base URL; the promoted "
+                        "checkpoint is fetched + cached locally to serve.",
+                   envvar="ANIMICA_ENA_ENDPOINT")):
     """Serve the pool's promoted checkpoint (OpenAI-compatible; serve-while-train)."""
     from animica.ena.errors import ENAError
     try:
         _ena().serve_model(pool_id, worker_id=worker_id, host=host, port=port,
-                           address=address)
+                           address=address, endpoint=endpoint)
     except ENAError as exc:
         console.print(f"[red]{exc.render()}[/red]")
         raise typer.Exit(1)

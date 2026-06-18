@@ -104,6 +104,16 @@ def _make_handler(facade):
                     if not pid:
                         return self._send(400, {"error": "pool_id required"})
                     return self._send(200, facade.pool.status(pid))
+                if path == "/pool/shard/data":
+                    sid = q.get("shard_id")
+                    if not sid:
+                        return self._send(400, {"error": "shard_id required"})
+                    return self._send(200, facade.pool.read_shard_data(sid))
+                if path == "/pool/checkpoint":
+                    pid = q.get("pool_id")
+                    if not pid:
+                        return self._send(400, {"error": "pool_id required"})
+                    return self._send(200, facade.pool.read_promoted_checkpoint(pid))
                 if path == "/pool/leaderboard":
                     pid = q.get("pool_id")
                     if not pid:
@@ -191,6 +201,15 @@ def _make_handler(facade):
                         checkpoint_path=body.get("checkpoint_path"),
                         metrics=body.get("metrics"),
                         miner_address=body.get("miner_address")))
+                if path == "/pool/checkpoint/upload":
+                    return self._send(200, facade.pool.store_checkpoint_upload(
+                        body["pool_id"], body["shard_id"], body["content_b64"]))
+                if path == "/pool/served":
+                    return self._send(200, facade.pool.record_served(
+                        body["pool_id"], body["worker_id"], int(body.get("tokens") or 0),
+                        address=body.get("address"), run_id=body.get("run_id"),
+                        latency_ms=body.get("latency_ms"),
+                        served_round=body.get("served_round")))
                 if path == "/pool/aggregate":
                     return self._send(200, facade.pool.aggregate(
                         body["pool_id"], eval_score=body.get("eval_score"),

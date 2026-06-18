@@ -459,6 +459,49 @@ class PoolService:
                 "receipt_hash": receipt.get("receipt_hash"),
                 "contribution_id": contrib["contribution_id"]}
 
+    # -- distributed training artifacts (off-coordinator workers) ---------
+    def read_shard_data(self, shard_id: str) -> dict[str, Any]:
+        """Return a claimed shard's training rows so a remote trainer (on its own
+        filesystem) can train it. Shard files live under the coordinator's pool
+        artifacts; this ships their bytes over the JSON transport."""
+        shard = self.store.get_shard(shard_id)
+        if not shard:
+            raise PoolError(f"shard not found: {shard_id}")
+        path = Path(shard.get("path") or "")
+        if not path.is_file():
+            raise PoolError(f"shard data unavailable: {shard_id}",
+                            hint="the coordinator has not materialised this shard")
+        from . import remote as _remote
+        return {
+            "shard_id": shard_id, "pool_id": shard["pool_id"],
+            "sha256": shard.get("sha256"), "row_count": shard.get("row_count"),
+            "filename": path.name,
+            "content_b64": _remote.b64_of_bytes(path.read_bytes()),
+        }
+
+    def store_checkpoint_upload(self, pool_id: str, shard_id: str,
+                                content_b64: str) -> dict[str, Any]:
+        """Accept a remote trainer's checkpoint (gzip-tar, base64), extract it
+        under the coordinator's pool artifacts, and return its local path so a
+        following ``submit_shard`` can hash + merge real weights."""
+        self.get(pool_id)  # validates the pool exists
+        shard = self.store.get_shard(shard_id)
+        if not shard or shard["pool_id"] != pool_id:
+            raise PoolError(f"shard not found: {shard_id}")
+        from . import remote as _remote
+        dest = self._pool_dir(pool_id) / "uploads" / shard_id
+        _remote.extract_tar_b64(content_b64, dest)
+        return {"checkpoint_path": str(dest)}
+
+    def read_promoted_checkpoint(self, pool_id: str) -> dict[str, Any]:
+        """Ship the pool's promoted checkpoint (gzip-tar, base64) so a remote
+        server can load + serve it."""
+        served = self.get_served_checkpoint(pool_id)
+        from . import remote as _remote
+        path = Path(served.get("path") or "")
+        content = _remote.tar_path_b64(path) if (path.is_dir() or path.is_file()) else ""
+        return {**served, "filename": path.name, "content_b64": content}
+
     # -- aggregate + eval gate + promote ----------------------------------
     def aggregate(self, pool_id: str, *, eval_score: Optional[float] = None,
                   min_submitted: Optional[int] = None) -> dict[str, Any]:

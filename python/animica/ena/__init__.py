@@ -184,22 +184,42 @@ class ENA:
 
     def serve_model(self, pool_id: str, *, worker_id: str,
                     host: str = "127.0.0.1", port: int = 8799,
-                    address: Optional[str] = None) -> None:
+                    address: Optional[str] = None,
+                    endpoint: Optional[str] = None) -> None:
         """Serve a pool's promoted checkpoint over an OpenAI-compatible API
-        (serve-while-train); credits served tokens to the pool's server ledger."""
+        (serve-while-train); credits served tokens to the pool's server ledger.
+
+        With ``endpoint`` set, the pool lives on a remote coordinator: the
+        promoted checkpoint is fetched + cached locally and served-token credits
+        are reported back over HTTP.
+        """
         from . import serving
+        if endpoint:
+            from .remote import RemotePool, RemotePoolFacade, _ServingENA
+            cache = self.cfg.artifacts_dir() / "served-cache"
+            facade = RemotePoolFacade(RemotePool(endpoint), cache)
+            serving.serve(_ServingENA(self, facade), pool_id, host=host, port=port,
+                          worker_id=worker_id, address=address)
+            return
         serving.serve(self, pool_id, host=host, port=port,
                       worker_id=worker_id, address=address)
 
     def train_shard_once(self, pool_id: str, worker_id: str, *,
                          address: Optional[str] = None,
-                         backend: Optional[str] = None) -> Optional[dict[str, Any]]:
+                         backend: Optional[str] = None,
+                         endpoint: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Claim one pool shard, train it, and submit the checkpoint.
 
         Returns None when no shard is available; otherwise a result dict. Training
         failures (e.g. no torch on a CPU box) are reported, not raised, so a
-        train-loop keeps running.
+        train-loop keeps running. With ``endpoint`` set, the pool lives on a
+        remote coordinator: the shard is claimed + its data downloaded over HTTP,
+        trained locally, then the checkpoint is uploaded and submitted back.
         """
+        if endpoint:
+            return self._train_shard_once_remote(
+                pool_id, worker_id, address=address, backend=backend,
+                endpoint=endpoint)
         import json as _json
         from . import training
         claimed = self.pool.claim_shard(pool_id, worker_id)
@@ -221,6 +241,63 @@ class ENA:
             checkpoint_path=run.get("output_dir"), metrics=run.get("metrics", {}),
             miner_address=address)
         return {"shard_id": shard_id, "status": "submitted", **res}
+
+    def _train_shard_once_remote(self, pool_id: str, worker_id: str, *,
+                                 address: Optional[str], backend: Optional[str],
+                                 endpoint: str) -> Optional[dict[str, Any]]:
+        import json as _json
+        import logging
+        from pathlib import Path
+        from . import training
+        from .remote import RemotePool, tar_path_b64, write_b64_file
+        log = logging.getLogger("animica.ena.trainer")
+
+        rc = RemotePool(endpoint)
+        claimed = rc.claim(pool_id, worker_id)
+        if not claimed:
+            return None
+        shard_id = claimed["shard_id"]
+        manifest = dict(claimed.get("manifest") or {})
+        pdir = self.cfg.artifacts_dir() / "pools" / pool_id
+        pdir.mkdir(parents=True, exist_ok=True)
+
+        # The claimed manifest points at the *coordinator's* shard file, which we
+        # can't read. Pull the rows over HTTP, write them locally, and re-point
+        # every dataset field in the manifest at the local copy.
+        data = rc.download_shard(shard_id)
+        local_data = pdir / (data.get("filename") or f"{shard_id}.jsonl")
+        write_b64_file(data["content_b64"], local_data)
+        manifest["train_dataset"] = str(local_data)
+        manifest["train_sha256"] = data.get("sha256") or manifest.get("train_sha256")
+        if isinstance(manifest.get("train"), dict):
+            manifest["train"] = {**manifest["train"], "path": str(local_data)}
+        out_dir = str(pdir / f"{shard_id}-output")
+        manifest["output_dir"] = out_dir
+        mpath = pdir / f"{shard_id}-manifest.json"
+        mpath.write_text(_json.dumps(manifest), encoding="utf-8")
+
+        run = training.run(self.cfg, self.store, manifest_path=str(mpath),
+                           backend=backend or manifest.get("backend"))
+        if run.get("status") != "completed":
+            return {"shard_id": shard_id, "status": "train_failed",
+                    "error": run.get("error")}
+
+        # Best-effort: upload the trained weights so the coordinator can merge a
+        # real adapter. Training still earns (receipt) if the upload fails.
+        coord_ckpt: Optional[str] = None
+        out = run.get("output_dir")
+        if out and Path(out).exists():
+            try:
+                up = rc.upload_checkpoint(pool_id, shard_id, tar_path_b64(out))
+                coord_ckpt = up.get("checkpoint_path")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[trainer] checkpoint upload failed (%s); "
+                            "submitting receipt only", exc)
+
+        res = rc.submit(pool_id, shard_id, worker_id=worker_id,
+                        run_id=run["run_id"], checkpoint_path=coord_ckpt,
+                        metrics=run.get("metrics", {}), miner_address=address)
+        return {"shard_id": shard_id, "status": "submitted", **(res or {})}
 
     # -- coding agent -----------------------------------------------------
     def code(self, task: str, *, workdir: str = ".", base_url: Optional[str] = None,

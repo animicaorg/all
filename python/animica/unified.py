@@ -332,6 +332,21 @@ def _cli_device_flag(caps: Capabilities) -> Optional[str]:
     return {"cuda": "cuda", "rocm": "rocm", "mps": "metal"}.get(kind)
 
 
+def _coordinator_endpoint(pool_host: str) -> str:
+    """ENA coordinator base URL for a pool host: ``pool.animica.org`` →
+    ``https://pool.animica.org/api/ena`` (the nginx route fronting the
+    coordinator). Pass-through if it already looks like a URL / targets /api/ena.
+    """
+    host = (pool_host or "").strip().rstrip("/")
+    if not host:
+        return ""
+    if "://" not in host:
+        host = "https://" + host
+    if "/api/ena" in host or host.endswith("/ena"):
+        return host
+    return host + "/api/ena"
+
+
 def _resolve_best_pool(pool_host: str, *, timeout: float = 6.0) -> Optional[str]:
     """Best-effort: pick the highest-paying open training pool from the pool's
     public coordinator API. Returns a pool_id or None (never raises).
@@ -344,12 +359,10 @@ def _resolve_best_pool(pool_host: str, *, timeout: float = 6.0) -> Optional[str]
     import json
     import urllib.request
 
-    host = (pool_host or "").strip().rstrip("/")
-    if not host:
+    base = _coordinator_endpoint(pool_host)
+    if not base:
         return None
-    if "://" not in host:
-        host = "https://" + host
-    url = host + "/api/ena/pool/list"
+    url = base + "/pool/list"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "animica-up"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
@@ -419,9 +432,17 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
     plan.append(Component("miner", miner_argv, enabled=True,
                           reason="SHA3 proof-of-work + AICF inference", env=miner_env))
 
+    # The ENA coordinator (pools, shards, useful-work queue) lives on the pool
+    # host, not this box. Point every ENA component at it over HTTP so workers
+    # claim/download/submit against the real global state instead of an empty
+    # local store (which is what produced "pool not found").
+    coord = _coordinator_endpoint(cfg.pool_host)
+
     # ENA useful-work (CPU jobs) — always
     plan.append(Component(
-        "useful-work", a + ["ena", "worker", "start", "--worker-id", wid],
+        "useful-work",
+        a + ["ena", "worker", "start", "--worker-id", wid]
+          + (["--endpoint", coord] if coord else []),
         enabled=True, reason="CPU useful-work (scrape/clean/embed/eval)",
         env=dict(base_env)))
 
@@ -429,7 +450,8 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
     plan.append(Component(
         "trainer",
         a + ["ena", "pool", "train-loop", (cfg.pool_id or "<pool>"),
-             "--worker-id", wid, "--address", cfg.address],
+             "--worker-id", wid, "--address", cfg.address]
+          + (["--endpoint", coord] if coord else []),
         enabled=gpu and bool(cfg.pool_id),
         reason=("trains pool shards" if gpu and cfg.pool_id else
                 ("GPU present but no training pool available "
@@ -441,7 +463,8 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
         "server",
         a + ["ena", "pool", "serve", (cfg.pool_id or "<pool>"),
              "--worker-id", wid, "--address", cfg.address,
-             "--port", str(cfg.serve_port)],
+             "--port", str(cfg.serve_port)]
+          + (["--endpoint", coord] if coord else []),
         enabled=gpu and bool(cfg.pool_id),
         reason=("serves the promoted checkpoint" if gpu and cfg.pool_id else
                 ("GPU present but no training pool available "
