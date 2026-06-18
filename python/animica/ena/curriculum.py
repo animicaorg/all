@@ -53,6 +53,70 @@ DEMOTE_THRESHOLD = 0.5
 # guard against catastrophic forgetting.
 DEFAULT_REPLAY_RATIO = 0.25
 
+# Tool-use curriculum (increment 6): teach the model to emit the agent_runtime
+# [TOOL_CALL] block for EXISTING tools. These reference real tool names + arg
+# schemas (agent_runtime.agentic registry). No dynamic tool *registration* and
+# no execution here — rows only teach the call format, eval only parses it.
+_DEFAULT_TOOLS = [
+    {"name": "read_file", "arguments": {"path": "src/config.py"},
+     "prompt": "Show me what's in src/config.py.",
+     "rationale": "I'll read the file to inspect it."},
+    {"name": "list_files", "arguments": {"path": "."},
+     "prompt": "What files are in this directory?",
+     "rationale": "Listing the directory."},
+    {"name": "grep", "arguments": {"pattern": "TODO", "path": "."},
+     "prompt": "Find every TODO in the project.",
+     "rationale": "Searching the codebase for TODO."},
+    {"name": "edit_file",
+     "arguments": {"path": "app.py", "old": "port = 8000", "new": "port = 9000"},
+     "prompt": "In app.py, change the port from 8000 to 9000.",
+     "rationale": "Editing app.py to change the port."},
+    {"name": "write_file",
+     "arguments": {"path": "README.md", "content": "# Hello\n"},
+     "prompt": "Create a README.md that says '# Hello'.",
+     "rationale": "Writing the new README.md."},
+    {"name": "bash", "arguments": {"command": "pytest -q"},
+     "prompt": "Run the test suite.",
+     "rationale": "Running the tests via the shell."},
+    {"name": "animica_rpc", "arguments": {"method": "chain.getHead"},
+     "prompt": "What's the current chain head?",
+     "rationale": "Querying the node RPC for the chain head."},
+    {"name": "balance", "arguments": {"address": "anim1example"},
+     "prompt": "What's the balance of anim1example?",
+     "rationale": "Looking up the address balance."},
+    {"name": "done", "arguments": {"message": "Task complete."},
+     "prompt": "You've finished the task — wrap up.",
+     "rationale": "Signalling completion."},
+]
+# Known tool names — a model output that calls one of these (valid block) counts
+# as tool-format mastery even if our example args differ.
+_KNOWN_TOOL_NAMES = {t["name"] for t in _DEFAULT_TOOLS} | {
+    "glob", "tree", "file_stat", "diff_files", "search_and_replace",
+    "append_file", "mkdir", "delete_file", "move_file", "apply_patch",
+    "python_eval", "fetch_url", "chain_head"}
+
+
+def _parse_tool_call(text: str) -> Optional[tuple[str, dict]]:
+    """Return (name, arguments) of the first [TOOL_CALL] block, or None. Prefers
+    the real agent_runtime parser; falls back to a regex so eval works even where
+    agent_runtime isn't importable."""
+    try:
+        from agent_runtime.agentic import parse_tool_call as _p  # type: ignore
+        pc = _p(text or "")
+        return (pc.name, pc.arguments) if pc else None
+    except Exception:  # noqa: BLE001
+        m = re.search(r"\[TOOL_CALL\].*?(\{.*?\}).*?\[/TOOL_CALL\]",
+                      text or "", re.DOTALL)
+        if not m:
+            return None
+        try:
+            obj = json.loads(m.group(1))
+            name = str(obj.get("name") or "").strip()
+            args = obj.get("arguments") or {}
+            return (name, args) if name and isinstance(args, dict) else None
+        except Exception:  # noqa: BLE001
+            return None
+
 
 def _tokenset(s: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", str(s).lower()))
@@ -81,18 +145,39 @@ def evaluate_detailed(generate, eval_rows: list[dict], topics: list[str], *,
         except Exception:  # noqa: BLE001
             out = ""
         gold = str(r.get("response") or r.get("chosen") or "")
-        ok = bool(gold and gold.strip().lower()[:40] in out.strip().lower())
+        want = _parse_tool_call(gold) if "[TOOL_CALL]" in gold else None
+        if want is not None:
+            # Tool-mastery: the output must emit a VALID tool call. Credit it if
+            # it names the expected tool (or any known tool) — we score format
+            # mastery, not exact arguments.
+            got = _parse_tool_call(out)
+            ok = bool(got and got[0] and (
+                got[0] == want[0] or got[0] in _KNOWN_TOOL_NAMES))
+        else:
+            ok = bool(gold and gold.strip().lower()[:40] in out.strip().lower())
         if ok:
             matched += 1
         elif len(failures) < 50:
             failures.append({"prompt": prompt[:300], "gold": gold[:300],
                              "generated": out[:300]})
-        row_tokens = _tokenset(prompt + " " + gold)
-        for t, tt in topic_tokens.items():
-            if tt & row_tokens:
-                per[t][1] += 1
+        # Attribution: a tool row counts ONLY toward its exact tool:<name> topic
+        # (the shared "tool" token would otherwise smear it across all tools);
+        # a knowledge row counts toward overlapping knowledge topics only.
+        if want is not None:
+            tt = f"tool:{want[0]}"
+            if tt in per:
+                per[tt][1] += 1
                 if ok:
-                    per[t][0] += 1
+                    per[tt][0] += 1
+        else:
+            row_tokens = _tokenset(prompt + " " + gold)
+            for t, toks in topic_tokens.items():
+                if t.startswith("tool:"):
+                    continue
+                if toks & row_tokens:
+                    per[t][1] += 1
+                    if ok:
+                        per[t][0] += 1
     topic_rate = {t: round(m / n, 4) for t, (m, n) in per.items() if n}
     return {"match_rate": round(matched / total, 4) if total else None,
             "topic_match_rate": topic_rate, "failures": failures,
@@ -144,13 +229,18 @@ class CurriculumService:
             source = str(cfg.get("source") or "synthetic")
             rows_per_round = int(cfg.get("rows_per_round") or DEFAULT_ROWS_PER_ROUND)
             replay_ratio = float(cfg.get("replay_ratio", DEFAULT_REPLAY_RATIO))
-            n_replay = max(0, min(rows_per_round - 1, int(rows_per_round * replay_ratio)))
-            n_fresh = max(1, rows_per_round - n_replay)
+            tool_ratio = float(cfg.get("tool_ratio", 0.0))
+            tool_specs = self._resolve_tools(cfg)
+            n_replay = max(0, int(rows_per_round * replay_ratio))
+            n_tool = max(0, int(rows_per_round * tool_ratio)) if tool_specs else 0
+            n_fresh = max(1, rows_per_round - n_replay - n_tool)
             fresh = self._generate_rows(topics, source=source,
                                         rows_per_round=n_fresh, pool=pool)
-            # Replay buffer: deterministic sample of prior material mixed in to
-            # prevent forgetting what the pool already learned.
-            rows = list(fresh) + self._replay_sample(pool, n_replay)
+            # Tool-use rows teach the [TOOL_CALL] format; replay buffer is a
+            # deterministic sample of prior material to prevent forgetting.
+            rows = (list(fresh)
+                    + self._generate_tool_rows(tool_specs, n_tool)
+                    + self._replay_sample(pool, n_replay))
             if not rows:
                 return None
             curated = self._curate(pool, next_round, rows)
@@ -321,6 +411,31 @@ class CurriculumService:
             i += 1
         return rows[:rows_per_round]
 
+    # -- tool-use curriculum (increment 6) --------------------------------
+    @staticmethod
+    def _resolve_tools(cfg: dict) -> list[dict]:
+        """Tool specs to teach: explicit ``curriculum['tools']`` if given, else
+        the built-in defaults when ``teach_tools`` is on, else none."""
+        if cfg.get("tools"):
+            return [t for t in cfg["tools"] if isinstance(t, dict) and t.get("name")]
+        return list(_DEFAULT_TOOLS) if cfg.get("teach_tools") else []
+
+    @staticmethod
+    def _tool_row(spec: dict) -> dict:
+        """An SFT row teaching the [TOOL_CALL] block for one tool. Deterministic."""
+        name = str(spec.get("name") or "")
+        args = spec.get("arguments") or {}
+        rationale = spec.get("rationale") or f"I'll use the {name} tool."
+        call = json.dumps({"name": name, "arguments": args})
+        response = f"{rationale}\n[TOOL_CALL]\n{call}\n[/TOOL_CALL]"
+        return {"prompt": spec.get("prompt") or f"Use the {name} tool.",
+                "response": response, "topic": f"tool:{name}"}
+
+    def _generate_tool_rows(self, tool_specs: list[dict], n: int) -> list[dict]:
+        if not tool_specs or n <= 0:
+            return []
+        return [self._tool_row(tool_specs[i % len(tool_specs)]) for i in range(n)]
+
     # -- curation (normalize -> dedupe -> validate) -----------------------
     def _curate(self, pool: dict[str, Any], next_round: int,
                 rows: list[dict]) -> Optional[tuple[Path, str]]:
@@ -441,6 +556,17 @@ class CurriculumService:
 
     # -- candidate evaluation (drives the eval gate) ----------------------
     def _eval_rows(self, pool: dict[str, Any]) -> list[dict]:
+        """The held-out eval rows: a split of the source corpus PLUS tool-use
+        eval rows (so tool-call emission is scored, feeding tool-mastery into the
+        same loop)."""
+        rows = list(self._corpus_eval_rows(pool))
+        tool_specs = self._resolve_tools(
+            (pool.get("metadata") or {}).get("curriculum") or {})
+        if tool_specs:
+            rows = rows + self._generate_tool_rows(tool_specs, min(len(tool_specs), 8))
+        return rows
+
+    def _corpus_eval_rows(self, pool: dict[str, Any]) -> list[dict]:
         """A held-out eval split of the pool's source corpus. For curriculum
         rounds (which train on generated data) this is genuinely held out;
         created once and recorded in metadata['eval_split']."""

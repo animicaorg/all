@@ -371,6 +371,62 @@ def test_replay_buffer_mixes_prior_rows(tmp_path, monkeypatch):
     assert "ORIGMARK" in blob  # replayed real prior rows are present
 
 
+def test_tool_rows_emit_valid_tool_calls(tmp_path, monkeypatch):
+    from animica.ena.curriculum import _parse_tool_call
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    specs = [{"name": "read_file", "arguments": {"path": "a.py"}},
+             {"name": "bash", "arguments": {"command": "ls"}}]
+    rows = ena.curriculum._generate_tool_rows(specs, 4)
+    assert len(rows) == 4
+    for r in rows:
+        pc = _parse_tool_call(r["response"])
+        assert pc and pc[0] in ("read_file", "bash")
+        assert r["topic"].startswith("tool:")
+
+
+def test_evaluate_detailed_scores_tool_mastery():
+    from animica.ena.curriculum import evaluate_detailed
+    rows = [
+        {"prompt": "read app.py",
+         "response": 'ok\n[TOOL_CALL]\n{"name":"read_file","arguments":{"path":"app.py"}}\n[/TOOL_CALL]'},
+        {"prompt": "list the files",
+         "response": 'ok\n[TOOL_CALL]\n{"name":"list_files","arguments":{}}\n[/TOOL_CALL]'},
+    ]
+
+    def gen(p):
+        # emits a valid tool call only for the read request
+        if "read" in p:
+            return 'sure\n[TOOL_CALL]\n{"name":"read_file","arguments":{"path":"app.py"}}\n[/TOOL_CALL]'
+        return "I cannot do that"
+
+    rep = evaluate_detailed(gen, rows, ["tool:read_file", "tool:list_files"])
+    assert rep["match_rate"] == 0.5
+    assert rep["topic_match_rate"]["tool:read_file"] == 1.0
+    assert rep["topic_match_rate"]["tool:list_files"] == 0.0
+
+
+def test_tool_curriculum_rows_and_eval(tmp_path, monkeypatch):
+    from animica.ena.curriculum import _parse_tool_call
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=12)
+    p = ena.pool.create("tiny", data, name="tools", num_shards=2)
+    pid = p["pool_id"]
+    pool = ena.store.get_pool(pid)
+    meta = dict(pool.get("metadata") or {})
+    meta["curriculum"] = {"enabled": True, "source": "synthetic",
+                          "topics_seed": ["alpha"], "rows_per_round": 8,
+                          "teach_tools": True, "tool_ratio": 0.5, "replay_ratio": 0.0}
+    pool["metadata"] = meta
+    ena.store.upsert_pool(pool)
+    pool = ena.store.get_pool(pid)
+    out = ena.curriculum.next_dataset(pool, 2, None)
+    gen = list(ds.read_jsonl(out["path"]))
+    assert any(_parse_tool_call(r.get("response", "")) for r in gen)  # tool rows present
+    # the held-out eval now scores tool-call emission too
+    ev = ena.pool.read_eval_data(pid)
+    assert any("[TOOL_CALL]" in str(r.get("response", "")) for r in ev["rows"])
+
+
 def test_curriculum_failure_never_breaks_promotion(tmp_path, monkeypatch):
     ena = _make_ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=20)
