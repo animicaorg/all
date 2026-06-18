@@ -603,6 +603,15 @@ class Store:
         rows = self._query("SELECT data FROM pool_shards WHERE shard_id=?", (shard_id,))
         return json.loads(rows[0]["data"]) if rows else None
 
+    def delete_shards(self, pool_id: str, round: int) -> int:
+        """Remove all shards for a round (used to re-shard a round). Returns the
+        number removed."""
+        with self._lock:
+            n = len(self.list_shards(pool_id, round=round))
+            self._exec("DELETE FROM pool_shards WHERE pool_id=? AND round=?",
+                       (pool_id, round))
+            return n
+
     def list_shards(self, pool_id: str, round: Optional[int] = None,
                     status: Optional[str] = None) -> list[dict[str, Any]]:
         clauses, params = ["pool_id=?"], [pool_id]

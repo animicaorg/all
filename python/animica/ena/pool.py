@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+import math
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -377,14 +378,24 @@ class PoolService:
             if not (src and Path(src).is_file()):
                 src = pool["dataset_path"]
             records = list(ds.read_jsonl(src))
-            # Size the round to the active miners so each gets a shard (unlimited
-            # by default — see _target_shard_count), never exceeding the number of
-            # rows so every shard has at least one example.
+            # Shard count = max of (a) one shard per active miner (unlimited — see
+            # _target_shard_count) and (b) enough shards to keep each one small
+            # (<= max_rows_per_shard rows) so a low-memory machine can train a
+            # shard without OOM — this makes a round split into many small shards
+            # even with a single miner. Never more shards than rows (no empty
+            # shard). Set metadata.max_rows_per_shard to enable (0/unset = off).
             n = self._target_shard_count(pool)
+            mrps = int((pool.get("metadata") or {}).get("max_rows_per_shard") or 0)
+            if mrps > 0 and records:
+                n = max(n, math.ceil(len(records) / mrps))
             n = max(1, min(n, len(records) or 1))
             buckets: list[list[dict[str, Any]]] = [[] for _ in range(n)]
-            for rec in records:
-                buckets[_shard_bucket(rec, n)].append(rec)
+            # Round-robin: deterministic (records are read in file order) AND even
+            # — every shard is within one row of the same size, so memory per shard
+            # is balanced and max_rows_per_shard is actually respected (uneven hash
+            # bucketing could otherwise leave a shard well over the cap).
+            for i, rec in enumerate(records):
+                buckets[i % n].append(rec)
             out_dir = self._pool_dir(pool_id) / f"round-{rnd}"
             shards = []
             for i, recs in enumerate(buckets):
@@ -487,6 +498,26 @@ class PoolService:
         if cap is not None:
             n = min(int(cap), n)
         return max(1, n)
+
+    def reshard_round(self, pool_id: str, *, force: bool = False) -> dict[str, Any]:
+        """Re-materialise the CURRENT round's shards with the current sizing
+        (active miners + max_rows_per_shard). Safe by default: refuses if any
+        shard is already submitted/verified (resharding would discard real work)
+        unless force=True. Lets a stuck or under-sharded in-flight round pick up
+        new sharding without waiting for it to finish."""
+        with self._lock:
+            pool = self.get(pool_id)
+            rnd = pool["round"]
+            shards = self.store.list_shards(pool_id, round=rnd)
+            submitted = sum(1 for s in shards
+                            if s["status"] in (SHARD_SUBMITTED, SHARD_VERIFIED))
+            if submitted and not force:
+                return {"resharded": False, "reason": "submitted shards present",
+                        "submitted": submitted, "shards": len(shards), "round": rnd}
+            self.store.delete_shards(pool_id, rnd)
+            new = self._ensure_shards(pool)
+            return {"resharded": True, "round": rnd,
+                    "old_shards": len(shards), "new_shards": len(new)}
 
     def submit_shard(self, pool_id: str, shard_id: str, *,
                      worker_id: Optional[str] = None,
