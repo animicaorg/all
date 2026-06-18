@@ -466,15 +466,24 @@ class PoolService:
     def _touch_worker(self, pool: dict[str, Any], worker_id: str) -> None:
         if not worker_id:
             return
-        meta = dict(pool.get("metadata") or {})
-        window = int(meta.get("active_window_secs", 1800))
-        now = now_ts()
-        active = dict(meta.get("active_workers") or {})
-        active[str(worker_id)] = now
-        active = {w: t for w, t in active.items() if now - int(t) <= window}
-        meta["active_workers"] = active
-        pool["metadata"] = meta
-        self.store.upsert_pool(pool)
+        # Atomic read-modify-write under the service lock against a FRESH copy.
+        # Writing only active_workers back on the WHOLE pool record would clobber
+        # a served_checkpoint/round that aggregate() promoted concurrently — and
+        # claims/heartbeats are frequent, so this raced (and un-promoted) on every
+        # completed round, leaving served_checkpoint stuck at null.
+        with self._lock:
+            fresh = self.get(pool["pool_id"])
+            meta = dict(fresh.get("metadata") or {})
+            window = int(meta.get("active_window_secs", 1800))
+            now = now_ts()
+            active = dict(meta.get("active_workers") or {})
+            active[str(worker_id)] = now
+            active = {w: t for w, t in active.items() if now - int(t) <= window}
+            meta["active_workers"] = active
+            fresh["metadata"] = meta
+            self.store.upsert_pool(fresh)
+            pool.clear()
+            pool.update(fresh)  # reflect fresh round/served back to the caller
 
     def _active_worker_count(self, pool: dict[str, Any]) -> int:
         meta = pool.get("metadata") or {}
@@ -734,6 +743,17 @@ class PoolService:
     def aggregate(self, pool_id: str, *, eval_score: Optional[float] = None,
                   min_submitted: Optional[int] = None,
                   auto: bool = False) -> dict[str, Any]:
+        # Serialize the whole promote transaction under the service lock (RLock,
+        # so the auto-promote path that already holds it nests fine) so a
+        # concurrent _touch_worker can't interleave and lose served_checkpoint.
+        with self._lock:
+            return self._aggregate_locked(
+                pool_id, eval_score=eval_score,
+                min_submitted=min_submitted, auto=auto)
+
+    def _aggregate_locked(self, pool_id: str, *, eval_score: Optional[float] = None,
+                          min_submitted: Optional[int] = None,
+                          auto: bool = False) -> dict[str, Any]:
         pool = self.get(pool_id)
         rnd = pool["round"]
         all_shards = self.store.list_shards(pool_id, round=rnd)

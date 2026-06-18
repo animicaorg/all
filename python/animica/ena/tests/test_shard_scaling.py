@@ -64,6 +64,28 @@ def test_shard_count_capped_only_when_max_shards_set(tmp_path, monkeypatch):
     assert len(e.store.list_shards(pid, round=1)) == 5  # capped
 
 
+def test_touch_worker_does_not_clobber_served_checkpoint(tmp_path, monkeypatch):
+    """The promote race: a heartbeat/claim carries a stale pool copy and must NOT
+    overwrite a served_checkpoint/round that aggregate() just promoted."""
+    e = _ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=12)
+    p = e.pool.create("tiny", data, name="served", num_shards=2)
+    pid = p["pool_id"]
+    # simulate aggregate() having promoted a checkpoint + advanced the round
+    fresh = e.store.get_pool(pid)
+    fresh["served_checkpoint"] = {"round": 1, "checkpoint_hash": "deadbeef", "path": "/x"}
+    fresh["round"] = 2
+    e.store.upsert_pool(fresh)
+    # a worker heartbeats holding a STALE pool dict (read before promotion)
+    e.pool._touch_worker({"pool_id": pid, "served_checkpoint": None, "round": 1},
+                         "worker-x")
+    after = e.store.get_pool(pid)
+    assert after["served_checkpoint"] is not None          # NOT clobbered
+    assert after["served_checkpoint"]["checkpoint_hash"] == "deadbeef"
+    assert after["round"] == 2                              # round preserved
+    assert "worker-x" in (after.get("metadata") or {}).get("active_workers", {})
+
+
 def test_status_reports_actual_shard_count(tmp_path, monkeypatch):
     """status().num_shards is the ACTUAL materialised count (what the UI shows as
     'shards (total)'), not the static creation value."""
