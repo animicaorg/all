@@ -169,20 +169,28 @@ def test_auto_aggregate_promotes_when_round_completes(coordinator, tmp_path, mon
     assert coord_ena.pool.get(pid)["round"] == 2  # round advanced
 
 
-def test_gated_pool_does_not_auto_promote(coordinator, tmp_path):
-    """A pool with an eval_gate must NOT auto-promote (it needs an external eval
-    score); it keeps its explicit aggregate(eval_score=...) flow."""
+def test_gated_pool_rejects_weak_candidate_but_advances(coordinator, tmp_path,
+                                                        monkeypatch):
+    """An eval-gated pool auto-evaluates its candidate on round completion: a
+    weak candidate is NOT served (gate protects the model) but the round still
+    advances so the curriculum can retarget and the flywheel keeps turning."""
     coord_ena, _ = coordinator
     dataset = _write_dataset(tmp_path / "d.jsonl", n=8)
     pool = coord_ena.pool.create(base_model="tiny", dataset=dataset, method="lora",
                                  name="gated", num_shards=1,
                                  eval_gate={"min_score": 0.5, "metric": "acc"})
     pid = pool["pool_id"]
+    # candidate scores below the 0.5 gate
+    monkeypatch.setattr(coord_ena.curriculum, "evaluate_candidate",
+                        lambda p, c: 0.1)
     claimed = coord_ena.pool.claim_shard(pid, "w")
     res = coord_ena.pool.submit_shard(pid, claimed["shard_id"], worker_id="w",
                                       metrics={"samples": 5})
-    assert not res.get("auto_aggregated")
-    assert coord_ena.store.get_pool(pid)["served_checkpoint"] is None
+    assert not res.get("auto_aggregated")  # gate blocked promotion
+    p2 = coord_ena.store.get_pool(pid)
+    assert p2["served_checkpoint"] is None  # regressed candidate not served
+    assert p2["round"] == 2                 # but the round advanced
+    assert (p2.get("metadata") or {}).get("rejected_rounds")
 
 
 def test_shard_data_route_returns_rows(coordinator, tmp_path):

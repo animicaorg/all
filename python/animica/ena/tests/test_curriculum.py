@@ -112,6 +112,77 @@ def test_pool_without_curriculum_is_unchanged(tmp_path, monkeypatch):
     assert _round_total_rows(ena, pid, 2) == 20
 
 
+def test_retrieve_backend_grounds_in_corpus(tmp_path, monkeypatch):
+    """The 'retrieve' backend generates rows whose ANSWERS are real corpus
+    content for the weak topic (grounded), not synthetic templates — and is
+    deterministic."""
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    rows = ([{"prompt": f"About alpha #{i}",
+              "response": f"alpha-fact-{i}: alpha is explained clearly here"}
+             for i in range(6)]
+            + [{"prompt": f"About beta #{i}",
+                "response": f"beta-fact-{i}: beta is explained clearly here"}
+               for i in range(6)])
+    path = tmp_path / "corpus.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    p = ena.pool.create("tiny", str(path), name="rag", num_shards=2)
+    pool = ena.store.get_pool(p["pool_id"])
+    meta = dict(pool.get("metadata") or {})
+    meta["curriculum"] = {"enabled": True, "source": "retrieve",
+                          "topics_seed": ["alpha", "beta"], "rows_per_round": 4}
+    pool["metadata"] = meta
+    ena.store.upsert_pool(pool)
+    pool = ena.store.get_pool(p["pool_id"])
+    # force the deterministic grounded path (no model adapter)
+    monkeypatch.setattr(ena.curriculum, "_model_adapter", lambda pool: None)
+
+    a = ena.curriculum.next_dataset(pool, 2, None)
+    b = ena.curriculum.next_dataset(pool, 2, None)
+    assert a and a["sha256"] == b["sha256"], "retrieve generation must be replayable"
+    gen = list(ds.read_jsonl(a["path"]))
+    blob = " ".join(str(r.get("response", "")) for r in gen).lower()
+    assert "fact" in blob, "answers should be grounded in real corpus content"
+    assert "concept in the animica knowledge curriculum" not in blob  # not synthetic
+
+
+def _gated_pool(ena, tmp_path):
+    data = _write_dataset(tmp_path / "g.jsonl", n=12)
+    p = ena.pool.create("tiny", data, name="gate", num_shards=2,
+                        eval_gate={"metric": "match_rate", "min_score": 0.5})
+    return p["pool_id"]
+
+
+def test_autonomous_gate_promotes_on_pass(tmp_path, monkeypatch):
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    pid = _gated_pool(ena, tmp_path)
+    monkeypatch.setattr(ena.curriculum, "evaluate_candidate", lambda pool, c: 0.9)
+    _run_round(ena, pid)
+    pool = ena.store.get_pool(pid)
+    assert pool["round"] == 2 and pool["served_checkpoint"], "gate should promote"
+
+
+def test_autonomous_gate_rejects_and_advances_on_fail(tmp_path, monkeypatch):
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    pid = _gated_pool(ena, tmp_path)
+    monkeypatch.setattr(ena.curriculum, "evaluate_candidate", lambda pool, c: 0.1)
+    _run_round(ena, pid)
+    pool = ena.store.get_pool(pid)
+    assert pool["round"] == 2, "round should advance even on a failed gate"
+    assert pool["served_checkpoint"] is None, "a regressed candidate must NOT serve"
+    assert (pool.get("metadata") or {}).get("rejected_rounds"), "rejection not recorded"
+
+
+def test_autonomous_gate_fails_open_when_unevaluable(tmp_path, monkeypatch):
+    """If the candidate can't be scored (e.g. no GPU on the coordinator), the
+    gate must not deadlock — promote and let the next round's eval judge."""
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    pid = _gated_pool(ena, tmp_path)
+    monkeypatch.setattr(ena.curriculum, "evaluate_candidate", lambda pool, c: None)
+    _run_round(ena, pid)
+    pool = ena.store.get_pool(pid)
+    assert pool["round"] == 2 and pool["served_checkpoint"], "should fail open"
+
+
 def test_curriculum_failure_never_breaks_promotion(tmp_path, monkeypatch):
     ena = _make_ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=20)

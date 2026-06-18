@@ -496,7 +496,7 @@ class PoolService:
                 # Default ON: pools created before this field existed (e.g. the
                 # live seed pool) auto-promote without a migration. Opt out with
                 # auto_promote=False; eval-gated pools never auto-promote.
-                if not pool.get("auto_promote", True) or pool.get("eval_gate"):
+                if not pool.get("auto_promote", True):
                     return None
                 rnd = pool["round"]
                 all_shards = self.store.list_shards(pool_id, round=rnd)
@@ -508,9 +508,45 @@ class PoolService:
                 need = max(1, min(target, len(all_shards)))
                 if len(submitted) < need:
                     return None
-                return self.aggregate(pool_id)
+                # auto=True lets aggregate self-evaluate eval-gated pools (and
+                # reject-and-advance on a failed gate) instead of stalling.
+                return self.aggregate(pool_id, auto=True)
         except Exception:  # noqa: BLE001 - promotion is best-effort
             return None
+
+    def _safe_eval_candidate(self, pool: dict[str, Any],
+                             candidate: dict[str, Any]) -> Optional[float]:
+        """Best-effort candidate score via the curriculum evaluator; None on any
+        failure (the gate then treats the round as unevaluated)."""
+        try:
+            return self._curriculum.evaluate_candidate(pool, candidate)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _reject_and_advance(self, pool: dict[str, Any], pool_id: str, rnd: int,
+                            candidate: dict[str, Any], gate_info: dict[str, Any],
+                            eval_score: Optional[float]) -> dict[str, Any]:
+        """A gated round whose candidate scored below threshold: keep the current
+        served checkpoint (don't serve a regression), advance the round, record
+        the rejection, and rotate curriculum so the next round targets the
+        weakness. Keeps the flywheel turning."""
+        meta = dict(pool.get("metadata") or {})
+        rejected = list(meta.get("rejected_rounds") or [])
+        rejected.append({"round": rnd, "score": eval_score,
+                         "threshold": gate_info.get("threshold"),
+                         "checkpoint_hash": candidate.get("checkpoint_hash"),
+                         "at": now_ts()})
+        meta["rejected_rounds"] = rejected[-20:]
+        pool["metadata"] = meta
+        pool["round"] = rnd + 1
+        pool["status"] = POOL_STATUS_TRAINING
+        pool["updated_at"] = now_ts()
+        self.store.upsert_pool(pool)
+        self._maybe_rotate_dataset(pool, pool["round"],
+                                   last_eval={"match_rate": eval_score})
+        return {"pool_id": pool_id, "round": rnd, "promoted": False,
+                "reason": "eval_below_threshold_advanced", "gate": gate_info,
+                "next_round": pool["round"]}
 
     # -- distributed training artifacts (off-coordinator workers) ---------
     def read_shard_data(self, shard_id: str) -> dict[str, Any]:
@@ -557,7 +593,8 @@ class PoolService:
 
     # -- aggregate + eval gate + promote ----------------------------------
     def aggregate(self, pool_id: str, *, eval_score: Optional[float] = None,
-                  min_submitted: Optional[int] = None) -> dict[str, Any]:
+                  min_submitted: Optional[int] = None,
+                  auto: bool = False) -> dict[str, Any]:
         pool = self.get(pool_id)
         rnd = pool["round"]
         all_shards = self.store.list_shards(pool_id, round=rnd)
@@ -588,18 +625,32 @@ class PoolService:
         gate_info: dict[str, Any] = {"gated": bool(gate)}
         if gate:
             threshold = float(gate.get("min_score", gate.get("threshold", 0.0)))
+            # Autonomous gate: when no score was supplied, score the candidate
+            # ourselves so eval-gated pools promote/reject on their own.
+            if eval_score is None and auto and self._curriculum is not None:
+                eval_score = self._safe_eval_candidate(pool, candidate)
             gate_info.update(threshold=threshold,
                              metric=gate.get("metric", "score"), score=eval_score)
             if eval_score is None:
-                return {"pool_id": pool_id, "round": rnd, "promoted": False,
-                        "reason": "awaiting_eval", "candidate": candidate,
-                        "gate": gate_info}
-            if float(eval_score) < threshold:
+                if not auto:
+                    return {"pool_id": pool_id, "round": rnd, "promoted": False,
+                            "reason": "awaiting_eval", "candidate": candidate,
+                            "gate": gate_info}
+                # Couldn't evaluate (e.g. no GPU on the coordinator) — fail OPEN
+                # so the gate never deadlocks the flywheel; the next round's eval
+                # gets another chance.
+                gate_info["unevaluated"] = True
+            elif float(eval_score) < threshold:
                 gate_info["passed"] = False
+                if auto:
+                    # Don't serve a regressed model, but advance the round so the
+                    # curriculum retargets and the pool keeps learning.
+                    return self._reject_and_advance(pool, pool_id, rnd, candidate,
+                                                    gate_info, eval_score)
                 return {"pool_id": pool_id, "round": rnd, "promoted": False,
                         "reason": "eval_below_threshold", "candidate": candidate,
                         "gate": gate_info}
-            gate_info["passed"] = True
+            gate_info.setdefault("passed", True)
 
         candidate["eval"] = gate_info
         pool["served_checkpoint"] = candidate

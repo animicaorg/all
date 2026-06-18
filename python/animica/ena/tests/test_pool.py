@@ -184,7 +184,9 @@ def test_submit_aggregate_promote_and_payout(funded_ena, tmp_path, monkeypatch):
 
 def test_eval_gate_blocks_then_promotes(ena, tmp_path):
     data = _write_dataset(tmp_path / "d.jsonl", n=12)
-    p = ena.pool.create("tiny", data, name="gated", num_shards=2,
+    # auto_promote=False → tests the explicit (manual) gated aggregate path; the
+    # autonomous self-evaluating gate is covered in test_curriculum.py.
+    p = ena.pool.create("tiny", data, name="gated", num_shards=2, auto_promote=False,
                         eval_gate={"metric": "match_rate", "min_score": 0.6})
     pid = p["pool_id"]
     for _ in range(2):
