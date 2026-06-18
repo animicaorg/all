@@ -119,6 +119,9 @@ def _make_handler(facade):
                     if not pid:
                         return self._send(400, {"error": "pool_id required"})
                     return self._send(200, facade.pool.read_eval_data(pid))
+                if path == "/pool/tools":
+                    return self._send(200, {"tools": facade.tools.list(
+                        status=q.get("status"))})
                 if path == "/pool/leaderboard":
                     pid = q.get("pool_id")
                     if not pid:
@@ -216,6 +219,24 @@ def _make_handler(facade):
                         address=body.get("address"), run_id=body.get("run_id"),
                         latency_ms=body.get("latency_ms"),
                         served_round=body.get("served_round")))
+                if path == "/pool/tools/propose":
+                    return self._send(200, facade.tools.propose(
+                        body["name"], body.get("description", ""),
+                        body.get("parameters") or {}, body["handler_code"],
+                        proposer=body.get("proposer")))
+                if path in ("/pool/tools/approve", "/pool/tools/reject"):
+                    try:
+                        if path.endswith("approve"):
+                            res = facade.tools.approve(
+                                body["name"], approver=body.get("approver", "admin"),
+                                admin_token=body.get("admin_token", ""))
+                        else:
+                            res = facade.tools.reject(
+                                body["name"], reason=body.get("reason", ""),
+                                admin_token=body.get("admin_token", ""))
+                        return self._send(200, res)
+                    except PermissionError as exc:
+                        return self._send(403, {"error": str(exc)})
                 if path == "/pool/aggregate":
                     return self._send(200, facade.pool.aggregate(
                         body["pool_id"], eval_score=body.get("eval_score"),

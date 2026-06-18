@@ -707,6 +707,63 @@ def pool_serve(pool_id: str = typer.Argument(..., help="pool id"),
 # memory / config / serve / scrape
 # ===========================================================================
 
+tools_app = typer.Typer(
+    help="Dynamic tool registry: propose → review → approve. Proposed tools are "
+         "NEVER active until an operator approves them with an admin token.",
+    no_args_is_help=True)
+app.add_typer(tools_app, name="tools")
+
+
+@tools_app.command("list")
+def tools_list(status: Optional[str] = typer.Option(None, "--status",
+                   help="proposed | approved | rejected")):
+    _emit({"tools": _ena().tools.list(status=status)}, title="tools")
+
+
+@tools_app.command("propose")
+def tools_propose(name: str = typer.Argument(..., help="tool name [a-z0-9_]"),
+                  handler_file: str = typer.Option(..., "--handler-file",
+                      help="Python file defining run(args: dict) -> str"),
+                  description: str = typer.Option("", "--description"),
+                  proposer: Optional[str] = typer.Option(None, "--proposer")):
+    """Propose a new tool. It enters the queue as 'proposed' — NOT active."""
+    from pathlib import Path as _P
+    code = _P(handler_file).read_text(encoding="utf-8")
+    rec = _guard(_ena().tools.propose, name, description, {}, code, proposer=proposer)
+    if (rec.get("risk") or {}).get("flagged"):
+        console.print(f"[yellow]⚠ AST scan flagged this handler: "
+                      f"{', '.join(rec['risk']['reasons'])}[/yellow]")
+    _emit(rec, title="proposed (pending review)")
+
+
+@tools_app.command("approve")
+def tools_approve(name: str = typer.Argument(...),
+                  token: str = typer.Option(..., "--token",
+                      envvar="ANIMICA_ENA_ADMIN_TOKEN",
+                      help="admin token (must match the coordinator's)"),
+                  approver: str = typer.Option("operator", "--approver")):
+    """Approve a proposal — makes the tool active. Requires the admin token."""
+    try:
+        _emit(_ena().tools.approve(name, approver=approver, admin_token=token),
+              title="approved")
+    except (PermissionError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+
+@tools_app.command("reject")
+def tools_reject(name: str = typer.Argument(...),
+                 reason: str = typer.Option("", "--reason"),
+                 token: str = typer.Option(..., "--token",
+                     envvar="ANIMICA_ENA_ADMIN_TOKEN")):
+    try:
+        _emit(_ena().tools.reject(name, reason=reason, admin_token=token),
+              title="rejected")
+    except (PermissionError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+
 mem_app = typer.Typer(help="Agent memory.", no_args_is_help=True)
 app.add_typer(mem_app, name="memory")
 

@@ -203,11 +203,12 @@ _TEMPLATES = [
 class CurriculumService:
     """Produces the next round's fresh dataset for self-adapting pools."""
 
-    def __init__(self, cfg, store, jobs=None, agent=None) -> None:
+    def __init__(self, cfg, store, jobs=None, agent=None, tools=None) -> None:
         self.cfg = cfg
         self.store = store
         self.jobs = jobs
         self.agent = agent
+        self.tools = tools  # DynamicToolRegistry — approved tools become teachable
 
     # -- public -----------------------------------------------------------
     def next_dataset(self, pool: dict[str, Any], next_round: int,
@@ -413,12 +414,32 @@ class CurriculumService:
 
     # -- tool-use curriculum (increment 6) --------------------------------
     @staticmethod
-    def _resolve_tools(cfg: dict) -> list[dict]:
-        """Tool specs to teach: explicit ``curriculum['tools']`` if given, else
-        the built-in defaults when ``teach_tools`` is on, else none."""
+    def _tool_teach_spec(t: dict) -> dict:
+        """Turn an approved dynamic tool (name + params schema) into a teaching
+        spec with placeholder example arguments."""
+        params = t.get("parameters") if isinstance(t.get("parameters"), dict) else {}
+        args = {k: "example" for k in params}
+        return {"name": t["name"], "arguments": args,
+                "prompt": (t.get("description") or f"Use the {t['name']} tool."),
+                "rationale": f"I'll use the {t['name']} tool."}
+
+    def _resolve_tools(self, cfg: dict) -> list[dict]:
+        """Tool specs to teach: explicit ``curriculum['tools']`` else the built-in
+        defaults when ``teach_tools`` is on; plus any human-approved dynamic
+        tools. Returns none unless tool teaching is enabled on the pool."""
+        if not (cfg.get("tools") or cfg.get("teach_tools")):
+            return []
         if cfg.get("tools"):
-            return [t for t in cfg["tools"] if isinstance(t, dict) and t.get("name")]
-        return list(_DEFAULT_TOOLS) if cfg.get("teach_tools") else []
+            specs = [t for t in cfg["tools"] if isinstance(t, dict) and t.get("name")]
+        else:
+            specs = list(_DEFAULT_TOOLS)
+        if self.tools is not None:
+            try:
+                specs = specs + [self._tool_teach_spec(t)
+                                 for t in self.tools.approved_tools()]
+            except Exception:  # noqa: BLE001
+                pass
+        return specs
 
     @staticmethod
     def _tool_row(spec: dict) -> dict:

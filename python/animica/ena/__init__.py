@@ -42,13 +42,19 @@ class ENA:
         from .walletconnect import WalletConnectService
         from .pool import PoolService
         from .curriculum import CurriculumService
+        from .tools import DynamicToolRegistry
         self.jobs = JobService(self.cfg, self.store)
         self.agent = Agent(self.cfg, self.store)
         self.demand = DemandService(self.cfg, self.store, self.jobs)
         self.walletconnect = WalletConnectService(self.cfg, self.store)
+        # Governed registry of dynamically-proposed tools (human-approved before
+        # they become active/teachable). See animica.ena.tools.
+        self.tools = DynamicToolRegistry(self.cfg)
         # Drives the self-adapting Curriculum Flywheel (opt-in per pool); the
-        # pool fires its best-effort rotation hook on each promotion.
-        self.curriculum = CurriculumService(self.cfg, self.store, self.jobs, self.agent)
+        # pool fires its best-effort rotation hook on each promotion. Approved
+        # dynamic tools become teachable through the registry.
+        self.curriculum = CurriculumService(self.cfg, self.store, self.jobs,
+                                            self.agent, tools=self.tools)
         self.pool = PoolService(self.cfg, self.store, self.jobs, self.demand,
                                 curriculum=self.curriculum)
 
