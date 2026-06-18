@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
+import os
 import secrets
 import socket
 import time
@@ -374,7 +376,7 @@ class StratumServer:
         default_share_target: float = 0.01,
         default_theta_micro: int = 800_000,
         keepalive_secs: float = 45.0,
-        send_timeout_secs: float = 1.0,
+        send_timeout_secs: float = 15.0,
         max_cached_jobs: int = 64,
         validator: Optional[ShareValidator] = None,
         submit_hook: Optional[
@@ -441,7 +443,12 @@ class StratumServer:
         self._default_share_target = float(default_share_target)
         self._default_theta_micro = int(default_theta_micro)
         self._keepalive_secs = float(keepalive_secs)
-        self._send_timeout_secs = max(float(send_timeout_secs), 0.0)
+        # A too-tight send timeout cancels socket writes mid-flight on slow/
+        # distant miners, corrupting the stream and churning "connection reset by
+        # peer". Default is generous; override via ANIMICA_STRATUM_SEND_TIMEOUT.
+        self._send_timeout_secs = max(
+            float(os.environ.get("ANIMICA_STRATUM_SEND_TIMEOUT", send_timeout_secs)),
+            0.0)
         self._validator = validator or ShareValidator()
         self._submit_hook = submit_hook
         self._on_worker_authorized = on_worker_authorized
@@ -1226,6 +1233,16 @@ class StratumServer:
                         await self._process_message(session, obj)
         except asyncio.CancelledError:  # pragma: no cover
             pass
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError) as e:
+            # A miner dropped its TCP connection (RST/EPIPE) — normal churn, not a
+            # server fault. Log quietly so it doesn't flood the warning stream.
+            log.debug(f"[Stratum] client {peer} dropped: {e}")
+        except OSError as e:  # pragma: no cover
+            if e.errno in (errno.ECONNRESET, errno.EPIPE, errno.ETIMEDOUT,
+                           errno.ECONNABORTED, errno.ENOTCONN):
+                log.debug(f"[Stratum] client {peer} dropped: {e}")
+            else:
+                log.warning(f"[Stratum] client {peer} error: {e}")
         except Exception as e:  # pragma: no cover
             log.warning(f"[Stratum] client {peer} error: {e}")
         finally:
