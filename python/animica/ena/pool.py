@@ -916,16 +916,25 @@ class PoolService:
     def status(self, pool_id: str) -> dict[str, Any]:
         pool = self.get(pool_id)
         rnd = pool["round"]
+        shards = self.store.list_shards(pool_id, round=rnd)
         shard_status: dict[str, int] = {}
-        for s in self.store.list_shards(pool_id, round=rnd):
+        for s in shards:
             shard_status[s["status"]] = shard_status.get(s["status"], 0) + 1
+        shards_total = len(shards)
         by_role: dict[str, int] = {}
         for c in self.store.list_contributions(pool_id):
             by_role[c["role"]] = by_role.get(c["role"], 0) + 1
         return {
             "pool_id": pool_id, "name": pool["name"], "status": pool["status"],
             "base_model": pool["base_model"], "method": pool["method"],
-            "round": rnd, "num_shards": pool["num_shards"],
+            "round": rnd,
+            # "total shards" = the ACTUAL materialised shard count for this round
+            # (dynamic: scales to active miners + max_rows_per_shard). Falls back
+            # to the computed target before the round materialises so the UI isn't
+            # 0; the static creation value is kept as configured_num_shards.
+            "num_shards": shards_total or self._target_shard_count(pool),
+            "configured_num_shards": pool["num_shards"],
+            "shards_total": shards_total,
             "shards": shard_status, "contributions": by_role,
             "shards_submitted": shard_status.get("submitted", 0) + shard_status.get("verified", 0),
             "funded": int(pool.get("budget_nano", 0)) > 0,

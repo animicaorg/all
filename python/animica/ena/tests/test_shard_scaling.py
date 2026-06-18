@@ -64,6 +64,22 @@ def test_shard_count_capped_only_when_max_shards_set(tmp_path, monkeypatch):
     assert len(e.store.list_shards(pid, round=1)) == 5  # capped
 
 
+def test_status_reports_actual_shard_count(tmp_path, monkeypatch):
+    """status().num_shards is the ACTUAL materialised count (what the UI shows as
+    'shards (total)'), not the static creation value."""
+    e = _ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=60)
+    p = e.pool.create("tiny", data, name="status", num_shards=4)
+    pid = p["pool_id"]
+    pool = e.store.get_pool(pid); pool["metadata"] = {"max_rows_per_shard": 8}
+    e.store.upsert_pool(pool)
+    e.pool.claim_shard(pid, "m")           # materialise -> 8 shards
+    st = e.pool.status(pid)
+    assert st["num_shards"] == 8           # actual count, not the configured 4
+    assert st["configured_num_shards"] == 4
+    assert st["shards_total"] == 8
+
+
 def test_size_driven_sharding_many_small_shards_one_miner(tmp_path, monkeypatch):
     """With max_rows_per_shard set, a round splits into many small shards even
     with a single miner — so a low-memory machine trains small shards (no OOM)."""
