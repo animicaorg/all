@@ -310,6 +310,32 @@ def export_snapshot(
     return manifest
 
 
+def _count_non_instant_canonical(block_db: BlockDB, max_height: int) -> int:
+    """Compute the canonical_height (META_CANONICAL_HEIGHT) for a chain whose head
+    is at ``max_height``: the count of non-instant canonical blocks in heights
+    ``[1, max_height]``.
+
+    Genesis (height 0) is the base and is *always* canonical_height 0 (see
+    ``block_import`` genesis handling), so it is NOT counted — block_import only
+    increments canonical_height for non-instant blocks at height >= 1. The halving
+    schedule (``consensus.rewards.compute_block_reward``) uses canonical_height
+    precisely to EXCLUDE instant blocks, so this is NOT the head height when the
+    chain contains instant blocks. For a chain with no instant blocks this equals
+    ``max_height`` exactly.
+    """
+    from core.chain.block_import import _is_instant_block  # local: avoid cycle
+
+    count = 0
+    for h in range(1, int(max_height) + 1):
+        bh = block_db.get_canonical_hash(h)
+        if bh is None:
+            continue
+        hdr = block_db.get_header_by_hash(bh)
+        if hdr is not None and not _is_instant_block(hdr):
+            count += 1
+    return count
+
+
 def import_snapshot(
     block_db: BlockDB,
     state_db: StateDB,
@@ -405,6 +431,19 @@ def import_snapshot(
     # Update block DB head to checkpoint
     checkpoint_hash_bytes = _unhex(manifest.checkpoint_hash)
     block_db.set_head(manifest.checkpoint_height, checkpoint_hash_bytes, allow_reorg=True)
+
+    # Reconcile canonical_height (META_CANONICAL_HEIGHT). Snapshots import ALL
+    # blocks including instant ones, and the manifest carries no canonical_height,
+    # so recompute it as the count of non-instant canonical blocks. Setting it to
+    # checkpoint_height would wrongly include instant blocks and shift the halving
+    # schedule. Without this, the head jumps to the checkpoint but the counter
+    # keeps its old (often inflated) value and the node thinks it is far behind.
+    canonical_height = _count_non_instant_canonical(block_db, manifest.checkpoint_height)
+    block_db.set_canonical_height(canonical_height)
+    _log.info(
+        f"Reconciled canonical_height={canonical_height} "
+        f"(checkpoint_height={manifest.checkpoint_height})"
+    )
 
     _log.info(
         f"Snapshot imported successfully: height {manifest.checkpoint_height}, "

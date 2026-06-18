@@ -15835,6 +15835,21 @@ class P2PService:
                 batch.delete(key)
             else:
                 kv.delete(key)
+        # Reconcile META_CANONICAL_HEIGHT to the rolled-down chain. Pruning the
+        # canonical index above `above_height` lowers the head, but the non-instant
+        # counter is stored separately and would otherwise stay inflated — making
+        # the node believe it is far behind, refuse to mine, and shift the halving
+        # schedule. This is the same bug the snapshot/startup fixes address, on the
+        # P2P reorg-down paths (verifier-limit reorg + reset-to-genesis). Recompute
+        # as the count of non-instant canonical blocks in [1, above_height]
+        # (genesis is always canonical_height 0).
+        try:
+            from core.db.snapshot import _count_non_instant_canonical
+            if hasattr(bdb, "set_canonical_height"):
+                new_ch = _count_non_instant_canonical(bdb, int(above_height))
+                bdb.set_canonical_height(new_ch, batch=batch)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("canonical_height reconcile after prune failed: %s", exc)
         return len(deletions)
 
     def _checkpoint_parent_meta(self, parent_hash: bytes) -> Optional[Tuple[int, int]]:

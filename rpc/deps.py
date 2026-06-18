@@ -1129,6 +1129,29 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
                 log.info(f"Snapshot bootstrap skipped: {error}")
         except Exception as e:
             log.warning(f"Snapshot bootstrap failed: {e}", exc_info=True)
+
+    # Reconcile the canonical_height invariant: it must never exceed head_height
+    # (canonical_height counts non-instant canonical blocks, so it is bounded by
+    # the total height). It is a running counter incremented per applied block and
+    # is not always rolled back on a deep reorg / torn write, which leaves it
+    # inflated — the node then believes it is far behind and refuses to mine.
+    # Backstop only: clamp to head_height when the invariant is already violated;
+    # never touch a healthy value (so a correct halving schedule is never perturbed).
+    try:
+        bdb = bundle.block_db
+        if hasattr(bdb, "get_canonical_height") and hasattr(bdb, "set_canonical_height"):
+            ch = bdb.get_canonical_height()
+            # Require head_height > 0 so a transient head-read miss (head_height
+            # falls back to 0) can never zero a legitimate canonical_height.
+            if ch is not None and head_height > 0 and ch > head_height:
+                log.warning(
+                    "canonical_height (%d) exceeds head_height (%d) at startup; clamping",
+                    ch, head_height,
+                )
+                bdb.set_canonical_height(head_height)
+    except Exception as e:
+        log.warning(f"canonical_height reconciliation skipped: {e}")
+
     # head_info is a dict with 'height', 'hash', 'header' keys
     if head_info and head_info.get("height") is not None:
         log.info(

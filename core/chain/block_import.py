@@ -243,15 +243,17 @@ def _is_instant_block(header: Header, payload: Optional[Dict[str, Any]] = None) 
     if not extra:
         return False
     
-    # Try to decode the extra field as CBOR
+    # Try to decode the extra field as CBOR. A silent failure here would miscount
+    # an instant block as a mining block and shift the halving schedule, so surface
+    # it: extra is non-empty at this point, so a decode error is a real anomaly.
     try:
-        import cbor2
+        import cbor2  # hard dependency; imported here keeps the hot path lean
         extra_dict = cbor2.loads(extra)
         if isinstance(extra_dict, dict):
             return bool(extra_dict.get("instant_block", False))
-    except Exception:
-        pass
-    
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not decode header.extra as CBOR for instant-block check: %s", exc)
+
     return False
 
 
@@ -1700,6 +1702,19 @@ class BlockImporter:
 
             if old_height is not None and best.height < old_height:
                 self._delete_canonical_range(best.height + 1, old_height)
+
+            # Defensive invariant: canonical_height (non-instant count) can never
+            # exceed the new head height. A deep reorg whose detached headers are
+            # missing (the `header is None: continue` skip above) would undercount
+            # the decrement loop and leave it inflated; clamp so the node never
+            # wrongly believes it is behind. Only fires on an already-broken value.
+            if canonical_height > best.height:
+                log.warning(
+                    "canonical_height (%d) exceeds new head (%d) after reorg; clamping",
+                    canonical_height, best.height,
+                )
+                canonical_height = best.height
+                self.block_db.set_canonical_height(canonical_height)
 
             if hasattr(self.block_db, "set_head"):
                 self.block_db.set_head(best.height, best.h, allow_reorg=True)
