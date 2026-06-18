@@ -143,6 +143,15 @@ class RemotePool:
     def download_shard(self, shard_id: str) -> dict:
         return self._call(f"/pool/shard/data?shard_id={quote(shard_id)}")
 
+    def release(self, pool_id: str, shard_id: str, worker_id: str) -> dict:
+        return self._call("/pool/release", "POST",
+                          {"pool_id": pool_id, "shard_id": shard_id,
+                           "worker_id": worker_id})
+
+    def heartbeat(self, pool_id: str, worker_id: str) -> dict:
+        return self._call("/pool/heartbeat", "POST",
+                          {"pool_id": pool_id, "worker_id": worker_id})
+
     def upload_checkpoint(self, pool_id: str, shard_id: str,
                           content_b64: str) -> dict:
         return self._call("/pool/checkpoint/upload", "POST",

@@ -368,8 +368,6 @@ class PoolService:
             existing = self.store.list_shards(pool_id, round=rnd)
             if existing:
                 return existing
-            n = int(pool["num_shards"])
-            buckets: list[list[dict[str, Any]]] = [[] for _ in range(n)]
             # Self-adapting pools train each round on the curriculum-generated
             # dataset recorded for that round; fall back to the pool's static
             # dataset when there's no (usable) per-round file. The hash-bucketing
@@ -378,7 +376,13 @@ class PoolService:
                    ).get(str(rnd), {}).get("path")
             if not (src and Path(src).is_file()):
                 src = pool["dataset_path"]
-            for rec in ds.read_jsonl(src):
+            records = list(ds.read_jsonl(src))
+            # Size the round to the active miners so each gets a shard, bounded
+            # by [min_shards, max_shards] and never more shards than rows.
+            n = self._target_shard_count(pool)
+            n = max(1, min(n, len(records) or 1))
+            buckets: list[list[dict[str, Any]]] = [[] for _ in range(n)]
+            for rec in records:
                 buckets[_shard_bucket(rec, n)].append(rec)
             out_dir = self._pool_dir(pool_id) / f"round-{rnd}"
             shards = []
@@ -416,12 +420,63 @@ class PoolService:
         pool = self.get(pool_id)
         if pool["status"] in (POOL_STATUS_CLOSED, POOL_STATUS_PAUSED):
             raise PoolError(f"pool is {pool['status']}")
+        # Record this worker as active (drives shard-count scaling) BEFORE
+        # materialising shards so the round is sized to who's training now.
+        self._touch_worker(pool, worker_id)
         self._ensure_shards(pool)
-        shard = self.store.claim_one_shard(pool_id, pool["round"], worker_id)
+        reclaim_secs = int((pool.get("metadata") or {}).get(
+            "shard_reclaim_secs", 1800))
+        shard = self.store.claim_one_shard(
+            pool_id, pool["round"], worker_id,
+            reclaim_before=now_ts() - reclaim_secs)
         if not shard:
             return None
         shard["manifest"] = self._shard_manifest(pool, shard)  # not persisted
         return shard
+
+    def heartbeat(self, pool_id: str, worker_id: str) -> dict[str, Any]:
+        """Register a worker as active without claiming — so the next round is
+        sized to everyone training, not just whoever happens to claim first."""
+        pool = self.get(pool_id)
+        self._touch_worker(pool, worker_id)
+        return {"pool_id": pool_id, "round": pool["round"],
+                "active_miners": self._active_worker_count(pool),
+                "target_shards": self._target_shard_count(pool)}
+
+    def release_shard(self, pool_id: str, shard_id: str,
+                      worker_id: Optional[str] = None) -> dict[str, Any]:
+        """Return a claimed-but-untrained shard to the pool (e.g. when a trainer
+        failed) so another worker can take it immediately, no reclaim wait."""
+        reopened = self.store.reopen_shard(shard_id, worker_id=worker_id)
+        return {"shard_id": shard_id, "reopened": bool(reopened)}
+
+    # -- active-worker tracking + shard sizing ----------------------------
+    def _touch_worker(self, pool: dict[str, Any], worker_id: str) -> None:
+        if not worker_id:
+            return
+        meta = dict(pool.get("metadata") or {})
+        window = int(meta.get("active_window_secs", 1800))
+        now = now_ts()
+        active = dict(meta.get("active_workers") or {})
+        active[str(worker_id)] = now
+        active = {w: t for w, t in active.items() if now - int(t) <= window}
+        meta["active_workers"] = active
+        pool["metadata"] = meta
+        self.store.upsert_pool(pool)
+
+    def _active_worker_count(self, pool: dict[str, Any]) -> int:
+        meta = pool.get("metadata") or {}
+        window = int(meta.get("active_window_secs", 1800))
+        now = now_ts()
+        return sum(1 for t in (meta.get("active_workers") or {}).values()
+                   if now - int(t) <= window)
+
+    def _target_shard_count(self, pool: dict[str, Any]) -> int:
+        meta = pool.get("metadata") or {}
+        floor = int(meta.get("min_shards", pool.get("num_shards") or 4))
+        cap = int(meta.get("max_shards", 64))
+        active = self._active_worker_count(pool)
+        return max(1, min(cap, max(floor, active)))
 
     def submit_shard(self, pool_id: str, shard_id: str, *,
                      worker_id: Optional[str] = None,
@@ -504,9 +559,10 @@ class PoolService:
                     return None
                 submitted = [s for s in all_shards
                              if s["status"] in (SHARD_SUBMITTED, SHARD_VERIFIED)]
-                target = int(pool.get("num_shards") or len(all_shards))
-                need = max(1, min(target, len(all_shards)))
-                if len(submitted) < need:
+                # The round is complete when EVERY materialised shard is in — the
+                # actual count (which may have scaled to the active miners), not
+                # the static num_shards.
+                if len(submitted) < len(all_shards):
                     return None
                 # auto=True lets aggregate self-evaluate eval-gated pools (and
                 # reject-and-advance on a failed gate) instead of stalling.

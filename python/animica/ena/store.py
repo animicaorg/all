@@ -615,28 +615,71 @@ class Store:
             f"ORDER BY ordinal ASC", tuple(params))
         return [json.loads(r["data"]) for r in rows]
 
-    def claim_one_shard(self, pool_id: str, round: int,
-                        worker_id: str) -> Optional[dict[str, Any]]:
-        """Atomically move the lowest-ordinal ``open`` shard for a round to ``claimed``."""
+    def claim_one_shard(self, pool_id: str, round: int, worker_id: str, *,
+                        reclaim_before: Optional[int] = None
+                        ) -> Optional[dict[str, Any]]:
+        """Atomically claim the lowest-ordinal AVAILABLE shard for a round.
+
+        Available = ``open`` OR (``claimed`` and last touched before
+        ``reclaim_before``) — so a shard claimed by a worker that died/failed
+        without submitting is reclaimed instead of deadlocking the pool. The
+        whole read-then-update runs under the store lock, so it is race-safe."""
+        from .models import now_ts
         with self._lock:
-            row = self._conn.execute(
-                "SELECT data FROM pool_shards WHERE pool_id=? AND round=? "
-                "AND status='open' ORDER BY ordinal ASC LIMIT 1",
-                (pool_id, round)).fetchone()
+            if reclaim_before is not None:
+                row = self._conn.execute(
+                    "SELECT data, status FROM pool_shards WHERE pool_id=? AND round=? "
+                    "AND (status='open' OR (status='claimed' AND updated_at < ?)) "
+                    "ORDER BY (status='open') DESC, ordinal ASC LIMIT 1",
+                    (pool_id, round, int(reclaim_before))).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT data, status FROM pool_shards WHERE pool_id=? AND round=? "
+                    "AND status='open' ORDER BY ordinal ASC LIMIT 1",
+                    (pool_id, round)).fetchone()
             if not row:
                 return None
             shard = json.loads(row["data"])
-            from .models import now_ts
+            prev_status = shard.get("status")
             shard["status"] = "claimed"
             shard["worker_id"] = worker_id
             shard["updated_at"] = now_ts()
-            self._conn.execute(
+            cur = self._conn.execute(
                 "UPDATE pool_shards SET status=?, worker_id=?, updated_at=?, data=? "
-                "WHERE shard_id=? AND status='open'",
+                "WHERE shard_id=? AND status=?",
                 (shard["status"], worker_id, shard["updated_at"],
-                 json.dumps(shard), shard["shard_id"]))
+                 json.dumps(shard), shard["shard_id"], prev_status))
             self._conn.commit()
+            if cur.rowcount == 0:
+                return None
             return shard
+
+    def reopen_shard(self, shard_id: str, *, worker_id: Optional[str] = None
+                     ) -> bool:
+        """Return a claimed (un-submitted) shard to the pool. If ``worker_id`` is
+        given, only reopen a shard currently held by that worker. Returns True if
+        a shard was reopened."""
+        from .models import now_ts
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM pool_shards WHERE shard_id=?",
+                (shard_id,)).fetchone()
+            if not row:
+                return False
+            shard = json.loads(row["data"])
+            if shard.get("status") != "claimed":
+                return False
+            if worker_id and shard.get("worker_id") not in (worker_id, None):
+                return False
+            shard["status"] = "open"
+            shard["worker_id"] = None
+            shard["updated_at"] = now_ts()
+            self._conn.execute(
+                "UPDATE pool_shards SET status='open', worker_id=NULL, "
+                "updated_at=?, data=? WHERE shard_id=? AND status='claimed'",
+                (shard["updated_at"], json.dumps(shard), shard_id))
+            self._conn.commit()
+            return True
 
     # -- pool contributions (reward ledger) -------------------------------
     def add_contribution(self, contrib: dict[str, Any]) -> None:

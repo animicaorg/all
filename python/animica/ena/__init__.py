@@ -233,6 +233,10 @@ class ENA:
                 endpoint=endpoint)
         import json as _json
         from . import training
+        try:  # register as active so rounds size to all active miners
+            self.pool.heartbeat(pool_id, worker_id)
+        except Exception:  # noqa: BLE001
+            pass
         claimed = self.pool.claim_shard(pool_id, worker_id)
         if not claimed:
             return None
@@ -245,6 +249,10 @@ class ENA:
         run = training.run(self.cfg, self.store, manifest_path=str(mpath),
                            backend=backend or manifest.get("backend"))
         if run.get("status") != "completed":
+            try:  # free the shard so another worker can take it right away
+                self.pool.release_shard(pool_id, shard_id, worker_id)
+            except Exception:  # noqa: BLE001
+                pass
             return {"shard_id": shard_id, "status": "train_failed",
                     "error": run.get("error")}
         metrics = dict(run.get("metrics") or {})
@@ -292,6 +300,10 @@ class ENA:
         log = logging.getLogger("animica.ena.trainer")
 
         rc = RemotePool(endpoint)
+        try:  # register as active so rounds size to all active miners
+            rc.heartbeat(pool_id, worker_id)
+        except Exception:  # noqa: BLE001
+            pass
         claimed = rc.claim(pool_id, worker_id)
         if not claimed:
             return None
@@ -318,6 +330,10 @@ class ENA:
         run = training.run(self.cfg, self.store, manifest_path=str(mpath),
                            backend=backend or manifest.get("backend"))
         if run.get("status") != "completed":
+            try:  # free the shard on the coordinator for the next worker
+                rc.release(pool_id, shard_id, worker_id)
+            except Exception:  # noqa: BLE001
+                pass
             return {"shard_id": shard_id, "status": "train_failed",
                     "error": run.get("error")}
 

@@ -237,6 +237,13 @@ def _make_handler(facade):
                         return self._send(200, res)
                     except PermissionError as exc:
                         return self._send(403, {"error": str(exc)})
+                if path == "/pool/heartbeat":
+                    return self._send(200, facade.pool.heartbeat(
+                        body["pool_id"], body["worker_id"]))
+                if path == "/pool/release":
+                    return self._send(200, facade.pool.release_shard(
+                        body["pool_id"], body["shard_id"],
+                        worker_id=body.get("worker_id")))
                 if path == "/pool/aggregate":
                     return self._send(200, facade.pool.aggregate(
                         body["pool_id"], eval_score=body.get("eval_score"),
