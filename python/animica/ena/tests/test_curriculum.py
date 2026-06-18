@@ -312,6 +312,65 @@ def test_trainer_reports_eval_score_in_submit(tmp_path, monkeypatch):
     assert shard["metrics"]["eval_topic_match_rate"] == {"x": 0.7}
 
 
+def test_topic_mastery_skips_after_k_rounds(tmp_path, monkeypatch):
+    """A topic scored >= mastery threshold for K rounds is marked mastered and
+    dropped from study; the weak topic keeps being studied."""
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=12)
+    p = ena.pool.create("tiny", data, name="mastery", num_shards=2)
+    pid = p["pool_id"]
+    _enable_curriculum(ena, pid, topics=["alpha", "beta", "gamma"], rows_per_round=6)
+    rates = {"eval_match_rate": 0.7,
+             "eval_topic_match_rate": {"alpha": 0.9, "beta": 0.9, "gamma": 0.2}}
+    _run_round_metrics(ena, pid, rates)   # round 1
+    _run_round_metrics(ena, pid, rates)   # round 2 → alpha/beta cross mastery (K=2)
+    pool = ena.store.get_pool(pid)
+    stats = (pool.get("metadata") or {}).get("topic_stats") or {}
+    assert stats["alpha"]["mastered"] and stats["beta"]["mastered"]
+    assert not stats["gamma"]["mastered"]
+    rd3 = (pool.get("metadata") or {}).get("round_datasets", {}).get("3")
+    assert rd3 and rd3["topics"] == ["gamma"]  # only the unmastered topic studied
+
+
+def test_objectives_recorded_in_memory_ledger(tmp_path, monkeypatch):
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=12)
+    p = ena.pool.create("tiny", data, name="obj", num_shards=2)
+    pid = p["pool_id"]
+    _enable_curriculum(ena, pid, topics=["alpha", "beta"], rows_per_round=4)
+    _run_round_metrics(ena, pid,
+                       {"eval_topic_match_rate": {"alpha": 0.1, "beta": 0.5}})
+    objs = ena.store.query_memory("curriculum objective", limit=50)
+    texts = " ".join(o["text"] for o in objs)
+    assert "alpha" in texts and "open" in texts  # self-tasked a weak topic
+    # re-running the same weak score updates (not duplicates) the objective
+    _run_round_metrics(ena, pid,
+                       {"eval_topic_match_rate": {"alpha": 0.1, "beta": 0.5}})
+    objs2 = ena.store.query_memory("curriculum objective", limit=50)
+    alpha_objs = [o for o in objs2 if "topic='alpha'" in o["text"]]
+    assert len(alpha_objs) == 1  # INSERT-OR-REPLACE de-duped by id
+
+
+def test_replay_buffer_mixes_prior_rows(tmp_path, monkeypatch):
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    rows = [{"prompt": f"orig {i}", "response": f"ORIGMARK-{i} documented content"}
+            for i in range(8)]
+    path = tmp_path / "c.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    p = ena.pool.create("tiny", str(path), name="replay", num_shards=2)
+    pool = ena.store.get_pool(p["pool_id"])
+    meta = dict(pool.get("metadata") or {})
+    meta["curriculum"] = {"enabled": True, "source": "synthetic",
+                          "topics_seed": ["x", "y"], "rows_per_round": 8,
+                          "replay_ratio": 0.5}
+    pool["metadata"] = meta
+    ena.store.upsert_pool(pool)
+    pool = ena.store.get_pool(p["pool_id"])
+    out = ena.curriculum.next_dataset(pool, 2, None)
+    blob = " ".join(str(r.get("response", "")) for r in ds.read_jsonl(out["path"]))
+    assert "ORIGMARK" in blob  # replayed real prior rows are present
+
+
 def test_curriculum_failure_never_breaks_promotion(tmp_path, monkeypatch):
     ena = _make_ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=20)

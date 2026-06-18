@@ -37,11 +37,21 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import datasets as ds
-from .models import now_ts
+from .models import now_ts, sha3_hex
 
 log = logging.getLogger("animica.ena.curriculum")
 
 DEFAULT_ROWS_PER_ROUND = 16
+# Mastery ledger: a topic is "mastered" after MASTERY_ROUNDS consecutive rounds
+# at/above MASTERY_THRESHOLD, and demoted back to study if it drops below
+# DEMOTE_THRESHOLD. Mastered topics are skipped so the pool doesn't re-grind
+# what it already knows (prevents topic thrash).
+MASTERY_THRESHOLD = 0.8
+MASTERY_ROUNDS = 2
+DEMOTE_THRESHOLD = 0.5
+# Fraction of each round's dataset drawn from prior material (replay buffer) to
+# guard against catastrophic forgetting.
+DEFAULT_REPLAY_RATIO = 0.25
 
 
 def _tokenset(s: str) -> set[str]:
@@ -125,13 +135,22 @@ class CurriculumService:
         """
         try:
             cfg = (pool.get("metadata") or {}).get("curriculum") or {}
+            # Ingest the just-finished round's per-topic scores into the mastery
+            # ledger + self-tasking objectives (round completed = next_round - 1).
+            self._ingest_eval(pool, last_eval, next_round - 1)
             topics = self._discover_topics(pool, last_eval)
             if not topics:
                 return None
             source = str(cfg.get("source") or "synthetic")
             rows_per_round = int(cfg.get("rows_per_round") or DEFAULT_ROWS_PER_ROUND)
-            rows = self._generate_rows(topics, source=source,
-                                       rows_per_round=rows_per_round, pool=pool)
+            replay_ratio = float(cfg.get("replay_ratio", DEFAULT_REPLAY_RATIO))
+            n_replay = max(0, min(rows_per_round - 1, int(rows_per_round * replay_ratio)))
+            n_fresh = max(1, rows_per_round - n_replay)
+            fresh = self._generate_rows(topics, source=source,
+                                        rows_per_round=n_fresh, pool=pool)
+            # Replay buffer: deterministic sample of prior material mixed in to
+            # prevent forgetting what the pool already learned.
+            rows = list(fresh) + self._replay_sample(pool, n_replay)
             if not rows:
                 return None
             curated = self._curate(pool, next_round, rows)
@@ -140,7 +159,7 @@ class CurriculumService:
             path, sha = curated
             return {
                 "path": str(path), "sha256": sha, "topics": topics,
-                "rows": ds.row_count(path),
+                "rows": ds.row_count(path), "replay": n_replay,
                 "prev_eval_score": (last_eval or {}).get("match_rate"),
                 "source": source, "created_at": now_ts(),
             }
@@ -164,20 +183,120 @@ class CurriculumService:
                 ordered.append(t)
         if not ordered:
             return []
-        # topics already covered by a prior round dataset are "seen"
-        studied: set[str] = set()
+        stats = meta.get("topic_stats") or {}
+        rates = (last_eval or {}).get("topic_match_rate") or {}
+
+        def rate_of(t: str) -> float:
+            if t in rates:
+                return float(rates[t])
+            st = stats.get(t)
+            return float(st.get("last_rate", 1.0)) if st else 1.0
+
+        # Skip mastered topics so the pool studies its actual weak spots — unless
+        # everything is mastered, in which case revisit all (never go idle).
+        unmastered = [t for t in ordered
+                      if not (stats.get(t) or {}).get("mastered")]
+        pool_topics = unmastered or ordered
+        # coverage-gap: how many prior rounds already studied each topic (fewer =
+        # under-covered → higher priority).
+        studied_count: dict[str, int] = {}
         for rd in (meta.get("round_datasets") or {}).values():
             for t in (rd or {}).get("topics") or []:
-                studied.add(str(t).lower())
-        # rank: lowest prior per-topic match_rate first (Increment 2 fills real
-        # rates), then not-yet-studied before studied, then stable seed order.
-        rates = (last_eval or {}).get("topic_match_rate") or {}
+                studied_count[t] = studied_count.get(t, 0) + 1
         index = {t: i for i, t in enumerate(ordered)}
-        return sorted(ordered, key=lambda t: (
-            float(rates.get(t, 1.0)),
-            1 if t.lower() in studied else 0,
-            index[t],
-        ))
+        # rank: weakest first, then least-studied (coverage gap), then seed order
+        return sorted(pool_topics, key=lambda t: (
+            round(rate_of(t), 4), studied_count.get(t, 0), index[t]))
+
+    # -- mastery ledger + self-tasking objectives + replay ----------------
+    def _ingest_eval(self, pool: dict[str, Any],
+                     last_eval: Optional[dict[str, Any]], rnd: int) -> None:
+        """Fold the just-finished round's per-topic scores into the mastery
+        ledger (``metadata['topic_stats']``) and the self-tasking objectives
+        ledger (the agent memory table). Idempotent per round. Never raises."""
+        rates = (last_eval or {}).get("topic_match_rate") or {}
+        if not rates:
+            return
+        try:
+            meta = dict(pool.get("metadata") or {})
+            stats = dict(meta.get("topic_stats") or {})
+            for topic, raw in rates.items():
+                try:
+                    rate = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                st = dict(stats.get(topic) or {})
+                if st.get("updated_round") == rnd:
+                    continue  # already ingested this round
+                st["last_rate"] = round(rate, 4)
+                st["best"] = round(max(float(st.get("best", 0.0)), rate), 4)
+                if rate >= MASTERY_THRESHOLD:
+                    st["rounds_above"] = int(st.get("rounds_above", 0)) + 1
+                    if st["rounds_above"] >= MASTERY_ROUNDS:
+                        st["mastered"] = True
+                else:
+                    st["rounds_above"] = 0
+                    if rate < DEMOTE_THRESHOLD:
+                        st["mastered"] = False
+                st.setdefault("mastered", False)
+                st["updated_round"] = rnd
+                stats[topic] = st
+                self._upsert_objective(pool, topic, st, rnd)
+            meta["topic_stats"] = stats
+            pool["metadata"] = meta
+        except Exception as exc:  # noqa: BLE001 - ledger update is best-effort
+            log.warning("[curriculum] ingest_eval failed: %s", exc)
+
+    def _upsert_objective(self, pool: dict[str, Any], topic: str,
+                          st: dict[str, Any], rnd: int) -> None:
+        """Record a per-topic learning objective in the agent memory ledger
+        (INSERT-OR-REPLACE by a stable id, so it de-dups + tracks status). Lets
+        the served model see what it has tasked itself to learn."""
+        try:
+            pid = pool["pool_id"]
+            oid = "obj-" + sha3_hex(f"{pid}|{topic}")[:16]
+            mastered = bool(st.get("mastered"))
+            rate = float(st.get("last_rate", 0.0))
+            status = "mastered" if mastered else "open"
+            text = (f"[curriculum objective] pool={pid} topic={topic!r} "
+                    f"status={status} score={rate} — "
+                    + ("mastered." if mastered
+                       else "study this; weak on held-out eval."))
+            self.store.add_memory({
+                "memory_id": oid, "text": text, "source": "curriculum.objective",
+                "created_at": now_ts(),
+                "metadata": {"pool_id": pid, "topic": topic, "kind": "knowledge",
+                             "status": status, "score": rate,
+                             "priority": round(1.0 - rate, 4),
+                             "updated_round": rnd},
+            })
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[curriculum] upsert_objective failed: %s", exc)
+
+    def _replay_sample(self, pool: dict[str, Any], n: int) -> list[dict]:
+        """A deterministic stride sample of prior material (past round datasets,
+        else the source corpus) — mixed into each round to prevent forgetting."""
+        if n <= 0:
+            return []
+        prior: list[dict] = []
+        for rd in ((pool.get("metadata") or {}).get("round_datasets") or {}).values():
+            p = (rd or {}).get("path")
+            try:
+                if p and Path(p).is_file():
+                    prior.extend(ds.read_jsonl(p))
+            except Exception:  # noqa: BLE001
+                continue
+        if not prior:
+            dp = pool.get("dataset_path")
+            try:
+                if dp and Path(dp).is_file():
+                    prior = list(ds.read_jsonl(dp))
+            except Exception:  # noqa: BLE001
+                prior = []
+        if not prior:
+            return []
+        step = max(1, len(prior) // n)
+        return [prior[i] for i in range(0, len(prior), step)][:n]
 
     # -- generation backends ----------------------------------------------
     def _generate_rows(self, topics: list[str], *, source: str,
