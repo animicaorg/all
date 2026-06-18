@@ -41,7 +41,14 @@ from .models import now_ts, sha3_hex
 
 log = logging.getLogger("animica.ena.curriculum")
 
-DEFAULT_ROWS_PER_ROUND = 16
+DEFAULT_ROWS_PER_ROUND = 32
+# Rows-per-round scales with the active miners so there is always enough data to
+# shard (one shard per miner needs >= one row per shard). Each round targets
+# DEFAULT_ROWS_PER_SHARD rows per active miner, floored at the configured
+# rows_per_round and capped at DEFAULT_MAX_ROWS_PER_ROUND so generation cost stays
+# bounded. Override per-pool with curriculum.rows_per_shard / max_rows_per_round.
+DEFAULT_ROWS_PER_SHARD = 8
+DEFAULT_MAX_ROWS_PER_ROUND = 512
 # Mastery ledger: a topic is "mastered" after MASTERY_ROUNDS consecutive rounds
 # at/above MASTERY_THRESHOLD, and demoted back to study if it drops below
 # DEMOTE_THRESHOLD. Mastered topics are skipped so the pool doesn't re-grind
@@ -228,7 +235,7 @@ class CurriculumService:
             if not topics:
                 return None
             source = str(cfg.get("source") or "synthetic")
-            rows_per_round = int(cfg.get("rows_per_round") or DEFAULT_ROWS_PER_ROUND)
+            rows_per_round = self._rows_per_round(cfg, pool)
             replay_ratio = float(cfg.get("replay_ratio", DEFAULT_REPLAY_RATIO))
             tool_ratio = float(cfg.get("tool_ratio", 0.0))
             tool_specs = self._resolve_tools(cfg)
@@ -258,6 +265,31 @@ class CurriculumService:
             log.warning("[curriculum] next_dataset failed for %s: %s",
                         pool.get("pool_id"), exc)
             return None
+
+    @staticmethod
+    def _active_miner_count(pool: dict[str, Any]) -> int:
+        """Active miners for this pool (recent heartbeats/claims), used to scale
+        rows-per-round. Mirrors PoolService active-worker accounting."""
+        meta = pool.get("metadata") or {}
+        window = int(meta.get("active_window_secs", 1800))
+        now = now_ts()
+        return sum(1 for t in (meta.get("active_workers") or {}).values()
+                   if now - int(t) <= window)
+
+    def _rows_per_round(self, cfg: dict[str, Any], pool: dict[str, Any]) -> int:
+        """Rows to generate for the next round, scaled to the active miners so
+        there is always enough data to give each one a (small) shard. Targets
+        ``rows_per_shard`` rows per active miner, floored at the configured
+        ``rows_per_round`` and capped at ``max_rows_per_round`` so per-round
+        generation cost stays bounded. With no active miners it is the floor, so
+        idle pools don't over-generate."""
+        base_rows = int(cfg.get("rows_per_round") or DEFAULT_ROWS_PER_ROUND)
+        rows_per_shard = max(1, int(cfg.get("rows_per_shard")
+                                    or DEFAULT_ROWS_PER_SHARD))
+        max_rows = max(base_rows, int(cfg.get("max_rows_per_round")
+                                      or DEFAULT_MAX_ROWS_PER_ROUND))
+        active = self._active_miner_count(pool)
+        return max(1, min(max_rows, max(base_rows, active * rows_per_shard)))
 
     # -- topic discovery (Increment 1: deterministic, seed-ranked) --------
     def _discover_topics(self, pool: dict[str, Any],

@@ -54,6 +54,57 @@ def _round_total_rows(ena, pid, rnd) -> int:
                for s in ena.store.list_shards(pid, round=rnd))
 
 
+def _set_active_workers(ena, pid, n):
+    from animica.ena.models import now_ts
+    pool = ena.store.get_pool(pid)
+    meta = dict(pool.get("metadata") or {})
+    meta["active_workers"] = {f"m{i}": now_ts() for i in range(n)}
+    pool["metadata"] = meta
+    ena.store.upsert_pool(pool)
+    return ena.store.get_pool(pid)
+
+
+def test_rows_per_round_scales_with_active_miners(tmp_path, monkeypatch):
+    """rows_per_round scales to active miners (target rows_per_shard each),
+    floored at the configured rows_per_round and capped at max_rows_per_round."""
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=20)
+    p = ena.pool.create("tiny", data, name="rscale", num_shards=2)
+    pid = p["pool_id"]
+    _enable_curriculum(ena, pid, topics=["a", "b"], rows_per_round=24)
+    pool = ena.store.get_pool(pid)
+    pool["metadata"]["curriculum"].update({"rows_per_shard": 8,
+                                           "max_rows_per_round": 512})
+    ena.store.upsert_pool(pool)
+    c = (ena.store.get_pool(pid).get("metadata") or {})["curriculum"]
+
+    # no active miners -> floor (configured rows_per_round)
+    assert ena.curriculum._rows_per_round(c, ena.store.get_pool(pid)) == 24
+    # 10 miners -> 10*8 = 80 (above floor, below cap)
+    pool = _set_active_workers(ena, pid, 10)
+    assert ena.curriculum._rows_per_round(c, pool) == 80
+    # 100 miners -> 800 clamped to the 512 cap
+    pool = _set_active_workers(ena, pid, 100)
+    assert ena.curriculum._rows_per_round(c, pool) == 512
+    # 1 miner -> 8 target, but floored at the configured 24
+    pool = _set_active_workers(ena, pid, 1)
+    assert ena.curriculum._rows_per_round(c, pool) == 24
+
+
+def test_rows_per_round_floor_when_no_curriculum_rows_set(tmp_path, monkeypatch):
+    """With no rows_per_round configured it uses DEFAULT_ROWS_PER_ROUND as floor."""
+    from animica.ena.curriculum import DEFAULT_ROWS_PER_ROUND
+    ena = _make_ena(tmp_path / "e", monkeypatch)
+    data = _write_dataset(tmp_path / "d.jsonl", n=20)
+    p = ena.pool.create("tiny", data, name="rfloor", num_shards=2)
+    pid = p["pool_id"]
+    pool = ena.store.get_pool(pid)
+    pool["metadata"] = {"curriculum": {"enabled": True}}
+    ena.store.upsert_pool(pool)
+    c = {"enabled": True}
+    assert ena.curriculum._rows_per_round(c, ena.store.get_pool(pid)) == DEFAULT_ROWS_PER_ROUND
+
+
 def test_next_dataset_is_deterministic(tmp_path, monkeypatch):
     ena = _make_ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=20)
