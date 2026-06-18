@@ -207,11 +207,15 @@ def merge_checkpoints(submitted: list[dict[str, Any]], out_dir: str | Path,
 class PoolService:
     """Coordinator for collaborative training pools (backed by the ENA store)."""
 
-    def __init__(self, cfg, store, jobs=None, demand=None) -> None:
+    def __init__(self, cfg, store, jobs=None, demand=None, curriculum=None) -> None:
         self.cfg = cfg
         self.store = store
         self.jobs = jobs
         self.demand = demand
+        # Optional CurriculumService — drives the self-adapting flywheel. When
+        # None, _maybe_rotate_dataset is a no-op and pools train their static
+        # dataset every round (unchanged behaviour).
+        self._curriculum = curriculum
         # Serializes compound state transitions (create / shard-gen / fund /
         # submit / aggregate / payout) so the threaded HTTP server can't race
         # check-then-act sequences. The store has its own row lock; this guards
@@ -366,7 +370,15 @@ class PoolService:
                 return existing
             n = int(pool["num_shards"])
             buckets: list[list[dict[str, Any]]] = [[] for _ in range(n)]
-            for rec in ds.read_jsonl(pool["dataset_path"]):
+            # Self-adapting pools train each round on the curriculum-generated
+            # dataset recorded for that round; fall back to the pool's static
+            # dataset when there's no (usable) per-round file. The hash-bucketing
+            # below is unchanged, so sharding stays deterministic either way.
+            src = ((pool.get("metadata") or {}).get("round_datasets") or {}
+                   ).get(str(rnd), {}).get("path")
+            if not (src and Path(src).is_file()):
+                src = pool["dataset_path"]
+            for rec in ds.read_jsonl(src):
                 buckets[_shard_bucket(rec, n)].append(rec)
             out_dir = self._pool_dir(pool_id) / f"round-{rnd}"
             shards = []
@@ -600,9 +612,47 @@ class PoolService:
             self._set_global_head(pool["model_id"], pool_id,
                                   checkpoint_hash=candidate["checkpoint_hash"],
                                   round=candidate["round"])
+        # Curriculum flywheel (best-effort, opt-in): rotate the just-started
+        # next round's dataset toward fresh data on the model's weak topics.
+        # Runs AFTER promotion is committed, so it can never undo a promotion.
+        self._maybe_rotate_dataset(pool, pool["round"],
+                                   last_eval={"match_rate": eval_score})
         return {"pool_id": pool_id, "round": rnd, "promoted": True,
                 "served_checkpoint": candidate, "next_round": pool["round"],
                 "gate": gate_info, "model_id": pool.get("model_id")}
+
+    def _maybe_rotate_dataset(self, pool: dict[str, Any], next_round: int,
+                              last_eval: Optional[dict[str, Any]] = None) -> None:
+        """Best-effort: record a curriculum-generated dataset for ``next_round``
+        in ``pool.metadata['round_datasets']``. Opt-in (curriculum enabled);
+        never raises; never re-enters aggregate (only writes a file + upserts the
+        pool dict). A failure records ``metadata['curriculum_last_error']`` and
+        leaves the round to fall back to the pool's static dataset."""
+        if not self._curriculum:
+            return
+        meta = pool.get("metadata") or {}
+        if not (meta.get("curriculum") or {}).get("enabled"):
+            return
+        try:
+            rd = self._curriculum.next_dataset(pool, next_round, last_eval)
+            meta = dict(pool.get("metadata") or {})
+            rounds = dict(meta.get("round_datasets") or {})
+            if rd:
+                rounds[str(next_round)] = rd
+                meta.pop("curriculum_last_error", None)
+            else:
+                rounds[str(next_round)] = {"fallback": "original"}
+            meta["round_datasets"] = rounds
+            pool["metadata"] = meta
+            self.store.upsert_pool(pool)
+        except Exception as exc:  # noqa: BLE001 - curriculum must not break aggregate
+            try:
+                meta = dict(pool.get("metadata") or {})
+                meta["curriculum_last_error"] = str(exc)
+                pool["metadata"] = meta
+                self.store.upsert_pool(pool)
+            except Exception:  # noqa: BLE001
+                pass
 
     # -- payout (proportional, role-split) --------------------------------
     def payout(self, pool_id: str, *, round: Optional[int] = None) -> dict[str, Any]:

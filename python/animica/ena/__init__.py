@@ -41,11 +41,16 @@ class ENA:
         from .demand import DemandService
         from .walletconnect import WalletConnectService
         from .pool import PoolService
+        from .curriculum import CurriculumService
         self.jobs = JobService(self.cfg, self.store)
         self.agent = Agent(self.cfg, self.store)
         self.demand = DemandService(self.cfg, self.store, self.jobs)
         self.walletconnect = WalletConnectService(self.cfg, self.store)
-        self.pool = PoolService(self.cfg, self.store, self.jobs, self.demand)
+        # Drives the self-adapting Curriculum Flywheel (opt-in per pool); the
+        # pool fires its best-effort rotation hook on each promotion.
+        self.curriculum = CurriculumService(self.cfg, self.store, self.jobs, self.agent)
+        self.pool = PoolService(self.cfg, self.store, self.jobs, self.demand,
+                                curriculum=self.curriculum)
 
     # -- retrieval --------------------------------------------------------
     def build_index(self, paths: list[str], *, name: str,
