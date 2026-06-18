@@ -19,10 +19,18 @@ happens elsewhere. Two backends:
 from __future__ import annotations
 
 import json
+import logging
+import os
 import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
+
+log = logging.getLogger("animica.ena.training")
+
+# Auto memory-safety: adapt the run to the LOCAL machine's memory so a worker
+# trains a shard instead of OOMing. Set ANIMICA_ENA_AUTOMEM=0 to disable.
+AUTOMEM_ENV = "ANIMICA_ENA_AUTOMEM"
 
 from . import datasets as ds
 from .errors import TrainingError
@@ -108,6 +116,109 @@ def _default_hparams(method: str = "sft") -> dict[str, Any]:
         "quant": "4bit" if method == "qlora" else None,
         "dpo_beta": 0.1,
     }
+
+
+# ---------------------------------------------------------------------------
+# memory-aware auto-configuration (runs on the worker, per-machine)
+# ---------------------------------------------------------------------------
+
+def _system_ram_gb(*, available: bool = False) -> float:
+    """Total (or currently-available) system RAM in GiB. Prefers psutil for the
+    'available' figure so a busy CPU/MPS host isn't given an over-eager batch
+    size; falls back to POSIX sysconf (×0.7 as a rough free-memory margin)."""
+    try:
+        import psutil  # type: ignore
+        vm = psutil.virtual_memory()
+        return (vm.available if available else vm.total) / 2 ** 30
+    except Exception:  # noqa: BLE001 - psutil optional
+        try:
+            total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2 ** 30
+            return total * 0.7 if available else total
+        except Exception:  # noqa: BLE001 - non-POSIX
+            return 0.0
+
+
+def _detect_memory_profile() -> dict[str, Any]:
+    """Best-effort device + free-memory + safe compute-dtype probe. Falls back to
+    CPU/float32. ``free_gb`` is real free VRAM on CUDA, else total system RAM
+    (an upper bound) — callers treat it as a budget hint, not a guarantee."""
+    prof = {"device": "cpu", "dtype": "float32", "free_gb": 0.0,
+            "total_gb": 0.0, "bf16": False}
+    try:
+        import torch  # type: ignore
+    except Exception:  # noqa: BLE001 - torch optional
+        return prof
+    try:
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            bf16 = bool(getattr(torch.cuda, "is_bf16_supported", lambda: False)())
+            prof.update(device="cuda", free_gb=free / 2 ** 30,
+                        total_gb=total / 2 ** 30, bf16=bf16,
+                        dtype="bfloat16" if bf16 else "float16")
+        elif getattr(getattr(torch, "backends", None), "mps", None) is not None \
+                and torch.backends.mps.is_available():
+            # bitsandbytes 4-bit is CUDA-only; MPS uses fp16 unquantized. free_gb
+            # is *available* RAM (not total) so a loaded host doesn't OOM.
+            prof.update(device="mps", free_gb=_system_ram_gb(available=True),
+                        total_gb=_system_ram_gb(), dtype="float16")
+        else:
+            prof.update(device="cpu", free_gb=_system_ram_gb(available=True),
+                        total_gb=_system_ram_gb(), dtype="float32")
+    except Exception:  # noqa: BLE001 - probe is best-effort
+        pass
+    return prof
+
+
+def _bitsandbytes_available() -> bool:
+    try:
+        import bitsandbytes  # type: ignore  # noqa: F401
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _auto_memory_hparams(hp: dict[str, Any],
+                         profile: dict[str, Any]) -> dict[str, Any]:
+    """Adapt hyperparameters to the local memory budget so a low-memory worker
+    can train a shard. CONSERVATIVE: only ever lowers peak memory vs the pool's
+    request (never raises batch_size above what was asked); preserves the
+    effective batch via gradient accumulation. Disabled with ANIMICA_ENA_AUTOMEM=0.
+    """
+    hp = dict(hp)
+    if str(os.environ.get(AUTOMEM_ENV, "1")).lower() in ("0", "false", "no", "off"):
+        return hp
+    dev = profile.get("device", "cpu")
+    free = float(profile.get("free_gb") or 0.0)
+
+    # base-model compute dtype (half precision halves the weight footprint)
+    hp.setdefault("torch_dtype", profile.get("dtype", "float32"))
+
+    lora_on = bool((hp.get("lora") or {}).get("enabled"))
+    # QLoRA 4-bit on memory-constrained CUDA (bitsandbytes is CUDA-only, needs LoRA)
+    if (dev == "cuda" and lora_on and hp.get("quant") in (None, "")
+            and free and free < 24 and _bitsandbytes_available()):
+        hp["quant"] = "4bit"
+
+    # gradient checkpointing trades compute for a large activation-memory cut;
+    # apply it generously (< 32GB) since it's the cheapest big OOM mitigation.
+    if free and free < 32:
+        hp.setdefault("gradient_checkpointing", True)
+
+    # batch size: cap to the memory budget, never above the requested batch;
+    # keep the effective batch with gradient accumulation.
+    req_bs = max(1, int(hp.get("batch_size", 4)))
+    if free:
+        cap = 1 if free < 8 else 2 if free < 16 else 4 if free < 24 else req_bs
+        bs = max(1, min(req_bs, cap))
+        if bs != req_bs:
+            hp["batch_size"] = bs
+            hp["grad_accum"] = max(int(hp.get("grad_accum", 1)),
+                                   -(-req_bs // bs))  # ceil(req/bs)
+
+    # cap sequence length on very low memory (activations scale with seq len)
+    if free and free < 8:
+        hp["max_seq_len"] = min(int(hp.get("max_seq_len", 1024)), 512)
+    return hp
 
 
 # ---------------------------------------------------------------------------
@@ -206,11 +317,16 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any]):
     AutoTokenizer = transformers.AutoTokenizer
     AutoModelForCausalLM = transformers.AutoModelForCausalLM
 
+    import torch  # type: ignore  # transformers pulled torch in already
+
     tok = AutoTokenizer.from_pretrained(base_model)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
 
-    model_kwargs: dict[str, Any] = {}
+    gc_on = bool(hp.get("gradient_checkpointing"))
+    torch_dtype = getattr(torch, str(hp.get("torch_dtype") or "float32"), None)
+
+    model_kwargs: dict[str, Any] = {"low_cpu_mem_usage": True}
     quant = hp.get("quant")
     if quant in ("4bit", "8bit"):
         try:
@@ -219,9 +335,20 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any]):
         except Exception as exc:  # pragma: no cover
             raise TrainingError("QLoRA quant needs bitsandbytes",
                                hint="pip install bitsandbytes (CUDA required)") from exc
+        # NF4 + double quant + half-precision compute = the standard QLoRA recipe
+        # (lowest memory). compute dtype must be a float dtype, not the 4-bit store.
+        compute_dtype = torch_dtype if (torch_dtype and torch_dtype.is_floating_point) \
+            else torch.float16
         model_kwargs["quantization_config"] = BitsAndBytesConfig(
-            load_in_4bit=(quant == "4bit"), load_in_8bit=(quant == "8bit"))
+            load_in_4bit=(quant == "4bit"), load_in_8bit=(quant == "8bit"),
+            bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=compute_dtype)
+    elif torch_dtype is not None and torch_dtype is not torch.float32:
+        # half-precision weights (skip for fp32/CPU where it would be slower/unsafe)
+        model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(base_model, **model_kwargs)
+    if gc_on:
+        model.config.use_cache = False  # incompatible with gradient checkpointing
 
     lora = hp.get("lora") or {}
     peft_enabled = False
@@ -232,7 +359,13 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any]):
             raise TrainingError("LoRA needs the peft package",
                                hint="pip install peft") from exc
         if quant in ("4bit", "8bit"):
-            model = prepare_model_for_kbit_training(model)
+            model = prepare_model_for_kbit_training(
+                model, use_gradient_checkpointing=gc_on)
+        elif gc_on:
+            # PEFT + gradient checkpointing on a non-quantized model needs the
+            # inputs to require grad, or backprop sees "no input requires grad".
+            model.gradient_checkpointing_enable()
+            model.enable_input_require_grads()
         peft_cfg = LoraConfig(
             r=int(lora.get("r", 16)), lora_alpha=int(lora.get("alpha", 32)),
             lora_dropout=float(lora.get("dropout", 0.05)), bias="none",
@@ -250,6 +383,14 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     if not train_path:
         raise TrainingError("manifest has no train split path")
 
+    profile = _detect_memory_profile()
+    hp = _auto_memory_hparams(hp, profile)
+    log.info("[train] sft on %s: device=%s free=%.1fGB dtype=%s quant=%s "
+             "batch=%s grad_accum=%s gc=%s", base_model, profile.get("device"),
+             profile.get("free_gb") or 0.0, hp.get("torch_dtype"), hp.get("quant"),
+             hp.get("batch_size"), hp.get("grad_accum"),
+             hp.get("gradient_checkpointing"))
+
     tok, model, peft_enabled = _load_tokenizer_and_model(base_model, hp)
 
     rows = list(ds.read_jsonl(train_path))
@@ -263,25 +404,44 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     texts = [_fmt(r) for r in rows if _fmt(r).strip()]
     if not texts:
         raise TrainingError("no usable training rows in train split")
-    enc = tok(texts, truncation=True, max_length=int(hp.get("max_seq_len", 1024)),
-              padding="max_length")
-    enc["labels"] = [list(ids) for ids in enc["input_ids"]]
-    dset = hf_datasets.Dataset.from_dict(enc)
+    # Tokenize WITHOUT padding; the collator pads to the longest row PER BATCH
+    # (dynamic padding) and masks pad tokens out of the loss. Padding every short
+    # row to max_seq_len wasted huge activation memory (a key OOM cause) and made
+    # the model train on pad tokens.
+    enc = tok(texts, truncation=True, max_length=int(hp.get("max_seq_len", 1024)))
+    dset = hf_datasets.Dataset.from_dict(
+        {"input_ids": enc["input_ids"], "attention_mask": enc["attention_mask"]})
+    collator = transformers.DataCollatorForLanguageModeling(tok, mlm=False)
 
+    bf16 = profile.get("dtype") == "bfloat16" and profile.get("device") == "cuda"
+    fp16 = profile.get("dtype") == "float16" and profile.get("device") == "cuda"
+    optim = "paged_adamw_8bit" if (profile.get("device") == "cuda"
+                                   and _bitsandbytes_available()) else "adamw_torch"
     args = transformers.TrainingArguments(
         output_dir=out_dir, num_train_epochs=float(hp.get("epochs", 1)),
         per_device_train_batch_size=int(hp.get("batch_size", 4)),
         gradient_accumulation_steps=int(hp.get("grad_accum", 1)),
         learning_rate=float(hp.get("learning_rate", 2e-5)),
+        gradient_checkpointing=bool(hp.get("gradient_checkpointing")),
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        bf16=bf16, fp16=fp16, optim=optim,
         logging_steps=10, save_strategy="epoch", report_to=[])
-    trainer = transformers.Trainer(model=model, args=args, train_dataset=dset)
+    trainer = transformers.Trainer(model=model, args=args, train_dataset=dset,
+                                   data_collator=collator)
     train_result = trainer.train()
     trainer.save_model(out_dir)
     tok.save_pretrained(out_dir)
     rec["metrics"] = {"method": method, "peft": peft_enabled,
                       "train_loss": float(getattr(train_result, "training_loss", 0.0)),
                       "samples": len(texts),
-                      "epochs": float(hp.get("epochs", 1))}
+                      "epochs": float(hp.get("epochs", 1)),
+                      # what the memory-aware auto-config actually ran with
+                      "device": profile.get("device"),
+                      "torch_dtype": hp.get("torch_dtype"),
+                      "quant": hp.get("quant"),
+                      "batch_size": hp.get("batch_size"),
+                      "grad_accum": hp.get("grad_accum"),
+                      "gradient_checkpointing": bool(hp.get("gradient_checkpointing"))}
     return rec
 
 
@@ -302,14 +462,24 @@ def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
             if r.get("prompt") and r.get("chosen") and r.get("rejected")]
     if not rows:
         raise TrainingError("DPO requires {prompt, chosen, rejected} preference rows")
+    profile = _detect_memory_profile()
+    hp = _auto_memory_hparams(hp, profile)
     tok, model, peft_enabled = _load_tokenizer_and_model(base_model, hp)
     pref = hf_datasets.Dataset.from_list(
         [{"prompt": str(r["prompt"]), "chosen": str(r["chosen"]),
           "rejected": str(r["rejected"])} for r in rows])
+    bf16 = profile.get("dtype") == "bfloat16" and profile.get("device") == "cuda"
+    fp16 = profile.get("dtype") == "float16" and profile.get("device") == "cuda"
+    optim = "paged_adamw_8bit" if (profile.get("device") == "cuda"
+                                   and _bitsandbytes_available()) else "adamw_torch"
     args = DPOConfig(
         output_dir=out_dir, num_train_epochs=float(hp.get("epochs", 1)),
         per_device_train_batch_size=int(hp.get("batch_size", 4)),
+        gradient_accumulation_steps=int(hp.get("grad_accum", 1)),
         learning_rate=float(hp.get("learning_rate", 5e-6)),
+        gradient_checkpointing=bool(hp.get("gradient_checkpointing")),
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        bf16=bf16, fp16=fp16, optim=optim,
         beta=float(hp.get("dpo_beta", 0.1)), logging_steps=10, report_to=[])
     trainer = DPOTrainer(model=model, args=args, train_dataset=pref,
                          processing_class=tok)
