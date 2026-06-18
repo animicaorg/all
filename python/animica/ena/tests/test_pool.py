@@ -121,7 +121,8 @@ def test_shard_claim_is_atomic_and_exhausts(ena, tmp_path):
 def test_submit_aggregate_promote_and_payout(funded_ena, tmp_path, monkeypatch):
     e = funded_ena
     data = _write_dataset(tmp_path / "d.jsonl", n=20)
-    p = e.pool.create("tiny", data, name="demo", num_shards=2)
+    # exercises the explicit aggregate→payout path → pin off auto-promote
+    p = e.pool.create("tiny", data, name="demo", num_shards=2, auto_promote=False)
     pid = p["pool_id"]
 
     # --- fund the pool from two different wallets (memo = pool_hash) ---
@@ -212,7 +213,8 @@ def test_funding_requires_treasury(ena, tmp_path):
 def test_train_shard_once_claims_trains_and_submits(ena, tmp_path, monkeypatch):
     from animica.ena import training
     data = _write_dataset(tmp_path / "d.jsonl", n=8)
-    p = ena.pool.create("tiny", data, name="tl", num_shards=2)
+    # asserts the round does not auto-advance (3rd claim → None) → pin off
+    p = ena.pool.create("tiny", data, name="tl", num_shards=2, auto_promote=False)
     pid = p["pool_id"]
     # stand in for a real training run (no torch needed)
     monkeypatch.setattr(training, "run",

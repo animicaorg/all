@@ -24,6 +24,11 @@ def ena(tmp_path, monkeypatch):
 
 
 def _promote(ena, pid):
+    # Promote explicitly; pin off auto-promote so the round doesn't advance
+    # under the drain loop (which would otherwise never terminate).
+    pool = ena.store.get_pool(pid)
+    pool["auto_promote"] = False
+    ena.store.upsert_pool(pool)
     while True:
         s = ena.pool.claim_shard(pid, "trainer")
         if s is None:

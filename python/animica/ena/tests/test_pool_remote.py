@@ -98,10 +98,7 @@ def test_remote_distributed_training_end_to_end(coordinator, tmp_path, monkeypat
         assert len(res["receipt_hash"]) == 64
         results.append(res)
     assert seen["rows"] > 0  # the stub actually saw downloaded rows
-    assert len({r["shard_id"] for r in results}) == 2  # two distinct shards
-
-    # No more shards this round → None (loop would idle, not crash).
-    assert worker.train_shard_once(pid, worker_id="w-remote", endpoint=base) is None
+    assert len({r["shard_id"] for r in results}) == 2  # two distinct round-1 shards
 
     # The COORDINATOR recorded the contributions + uploaded checkpoints.
     contribs = coord_ena.store.list_contributions(pid)
@@ -109,10 +106,11 @@ def test_remote_distributed_training_end_to_end(coordinator, tmp_path, monkeypat
     uploads = Path(coord_ena.cfg.artifacts_dir()) / "pools" / pid / "uploads"
     assert uploads.is_dir() and any(uploads.iterdir()), "checkpoints were not uploaded"
 
-    # Aggregate + promote on the coordinator, then the worker fetches the
-    # promoted checkpoint over HTTP and extracts it locally.
-    agg = coord_ena.pool.aggregate(pid)
-    assert agg["promoted"] is True
+    # The final submit completed the round → the coordinator AUTO-promoted a
+    # checkpoint (no manual aggregate call). The worker then fetches it.
+    assert results[-1].get("auto_aggregated") is True, results[-1]
+    served = coord_ena.pool.get_served_checkpoint(pid)  # raises if not promoted
+    assert served["checkpoint_hash"]
     rc = RemotePool(base)
     promoted = rc.download_promoted(pid)
     assert promoted["checkpoint_hash"] and promoted["content_b64"]
@@ -129,6 +127,62 @@ def test_remote_pool_not_found_raises(coordinator):
     with pytest.raises(RemoteError) as ei:
         rc.claim("enapool-does-not-exist", "w1")
     assert "not found" in str(ei.value).lower()
+
+
+def test_serve_before_first_promotion_signals_not_ready(coordinator, tmp_path, monkeypatch):
+    """A fresh pool has no promoted checkpoint; the remote serve path must raise a
+    'no promoted checkpoint' RemoteError (which the CLI serve-loop waits on),
+    NOT some opaque crash."""
+    coord_ena, base = coordinator
+    dataset = _write_dataset(tmp_path / "d.jsonl", n=8)
+    pool = coord_ena.pool.create(base_model="tiny", dataset=dataset,
+                                 method="lora", name="fresh", num_shards=1)
+    pid = pool["pool_id"]
+    worker = _make_ena(tmp_path / "srvworker", monkeypatch)
+    with pytest.raises(RemoteError) as ei:
+        worker.serve_model(pid, worker_id="srv", host="127.0.0.1", port=0,
+                           endpoint=base)
+    assert "no promoted checkpoint" in str(ei.value).lower()
+
+
+def test_auto_aggregate_promotes_when_round_completes(coordinator, tmp_path, monkeypatch):
+    """Submitting the last shard of a round auto-promotes a checkpoint with no
+    explicit aggregate() call (eval-gate-free pool)."""
+    coord_ena, _ = coordinator
+    dataset = _write_dataset(tmp_path / "d.jsonl", n=12)
+    pool = coord_ena.pool.create(base_model="tiny", dataset=dataset,
+                                 method="lora", name="auto", num_shards=2)
+    pid = pool["pool_id"]
+    # Two shards, submitted with no checkpoint (merge-plan fallback) — promotion
+    # should still fire on the final submit.
+    seen_promote = []
+    for _ in range(2):
+        claimed = coord_ena.pool.claim_shard(pid, "w-local")
+        assert claimed is not None
+        res = coord_ena.pool.submit_shard(
+            pid, claimed["shard_id"], worker_id="w-local",
+            metrics={"samples": 5}, miner_address="anim1w")
+        seen_promote.append(res.get("auto_aggregated"))
+    assert seen_promote == [None, True], seen_promote  # only the final submit promotes
+    served = coord_ena.pool.get_served_checkpoint(pid)
+    assert served["round"] == 1 and served["checkpoint_hash"]
+    assert coord_ena.pool.get(pid)["round"] == 2  # round advanced
+
+
+def test_gated_pool_does_not_auto_promote(coordinator, tmp_path):
+    """A pool with an eval_gate must NOT auto-promote (it needs an external eval
+    score); it keeps its explicit aggregate(eval_score=...) flow."""
+    coord_ena, _ = coordinator
+    dataset = _write_dataset(tmp_path / "d.jsonl", n=8)
+    pool = coord_ena.pool.create(base_model="tiny", dataset=dataset, method="lora",
+                                 name="gated", num_shards=1,
+                                 eval_gate={"min_score": 0.5, "metric": "acc"})
+    pid = pool["pool_id"]
+    claimed = coord_ena.pool.claim_shard(pid, "w")
+    res = coord_ena.pool.submit_shard(pid, claimed["shard_id"], worker_id="w",
+                                      metrics={"samples": 5})
+    assert not res.get("auto_aggregated")
+    assert coord_ena.store.get_pool(pid)["served_checkpoint"] is None
 
 
 def test_shard_data_route_returns_rows(coordinator, tmp_path):

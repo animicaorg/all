@@ -86,7 +86,7 @@ def test_pool_http_lifecycle(server, tmp_path, monkeypatch):
     # --- POST /pool/create ---
     status, p = _call(port, "POST", "/pool/create", {
         "base_model": "tiny", "dataset": data, "method": "lora",
-        "name": "http-demo", "num_shards": 2})
+        "name": "http-demo", "num_shards": 2, "auto_promote": False})
     assert status == 200
     pid = p["pool_id"]
     assert pid.startswith("enapool-")

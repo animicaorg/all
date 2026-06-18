@@ -280,6 +280,11 @@ class Pool(Schema):
         default_factory=lambda: {"funders": 2000, "trainers": 6000, "servers": 2000})
     # promotion gate; None ⇒ auto-promote each aggregated round.
     eval_gate: Optional[dict[str, Any]] = None
+    # when True (default), the coordinator aggregates + promotes a round
+    # automatically once all its shards are submitted (eval-gate-free pools
+    # only). Drives the `animica up` flywheel so servers get a checkpoint without
+    # a manual `pool aggregate` call. Set False to drive promotion explicitly.
+    auto_promote: bool = True
     # the currently promoted checkpoint that serving workers load.
     served_checkpoint: Optional[dict[str, Any]] = None
     budget_nano: int = 0          # confirmed funding not yet paid out

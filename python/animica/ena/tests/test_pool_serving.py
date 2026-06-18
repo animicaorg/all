@@ -69,6 +69,11 @@ def _fund(ena, monkeypatch, pid, pool_hash, nano, txid):
 
 def _promote(ena, pid):
     """Drive a pool to a promoted served_checkpoint (no eval gate)."""
+    # These tests promote explicitly; pin off auto-promote so the round doesn't
+    # advance out from under the loop + trailing aggregate() call.
+    pool = ena.store.get_pool(pid)
+    pool["auto_promote"] = False
+    ena.store.upsert_pool(pool)
     for _ in range(2):
         s = ena.pool.claim_shard(pid, "trainer")
         if s is None:

@@ -182,7 +182,8 @@ def _make_handler(facade):
                         reward_split=body.get("reward_split"),
                         eval_gate=body.get("eval_gate"),
                         requester=body.get("requester"),
-                        model_id=body.get("model_id")))
+                        model_id=body.get("model_id"),
+                        auto_promote=body.get("auto_promote", True)))
                 if path == "/pool/fund/quote":
                     return self._send(200, facade.pool.fund_quote(
                         body["pool_id"], body["reward_anm"],

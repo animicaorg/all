@@ -507,11 +507,16 @@ def pool_create(base_model: str = typer.Option(..., "--base-model"),
                 eval_metric: Optional[str] = typer.Option(None, "--eval-metric"),
                 eval_min_score: Optional[float] = typer.Option(None, "--eval-min-score"),
                 model_id: Optional[str] = typer.Option(None, "--model-id",
-                    help="canonical global model this pool contributes to")):
+                    help="canonical global model this pool contributes to"),
+                auto_promote: bool = typer.Option(True, "--auto-promote/--no-auto-promote",
+                    help="auto-aggregate + promote each round once its shards are "
+                         "in (default: on). --no-auto-promote drives promotion "
+                         "explicitly via `pool aggregate`.")):
     eval_gate = ({"metric": eval_metric, "min_score": eval_min_score}
                  if eval_min_score is not None else None)
     pool = _guard(_ena().pool.create, base_model, dataset, method=method, name=name,
-                  num_shards=num_shards, eval_gate=eval_gate, model_id=model_id)
+                  num_shards=num_shards, eval_gate=eval_gate, model_id=model_id,
+                  auto_promote=auto_promote)
     _emit(pool, title="pool created")
 
 
@@ -663,15 +668,39 @@ def pool_serve(pool_id: str = typer.Argument(..., help="pool id"),
                endpoint: Optional[str] = typer.Option(None, "--endpoint",
                    help="remote pool coordinator base URL; the promoted "
                         "checkpoint is fetched + cached locally to serve.",
-                   envvar="ANIMICA_ENA_ENDPOINT")):
-    """Serve the pool's promoted checkpoint (OpenAI-compatible; serve-while-train)."""
+                   envvar="ANIMICA_ENA_ENDPOINT"),
+               poll: float = typer.Option(20.0, "--poll",
+                   help="seconds to wait for the first promoted checkpoint "
+                        "before retrying (serve-while-train).")):
+    """Serve the pool's promoted checkpoint (OpenAI-compatible; serve-while-train).
+
+    A pool has no checkpoint to serve until its first round is aggregated, so
+    this waits for one to be promoted instead of erroring — and keeps the process
+    alive (no supervisor respawn flood) until serving can start.
+    """
+    import time as _time
     from animica.ena.errors import ENAError
-    try:
-        _ena().serve_model(pool_id, worker_id=worker_id, host=host, port=port,
-                           address=address, endpoint=endpoint)
-    except ENAError as exc:
-        console.print(f"[red]{exc.render()}[/red]")
-        raise typer.Exit(1)
+    from animica.ena.remote import RemoteError
+    e = _ena()
+    announced = False
+    while True:
+        try:
+            e.serve_model(pool_id, worker_id=worker_id, host=host, port=port,
+                          address=address, endpoint=endpoint)
+            return  # serve_model blocks; returns only on shutdown
+        except (ENAError, RemoteError) as exc:
+            msg = str(exc).lower()
+            if "no promoted checkpoint" in msg or "not ready" in msg:
+                if not announced:
+                    console.print(f"[yellow]serve: pool {pool_id} has no promoted "
+                                  f"checkpoint yet — waiting for the first round to "
+                                  f"aggregate…[/yellow]")
+                    announced = True
+                _time.sleep(max(1.0, poll))
+                continue
+            render = exc.render() if isinstance(exc, ENAError) else str(exc)
+            console.print(f"[red]{render}[/red]")
+            raise typer.Exit(1)
 
 
 # ===========================================================================

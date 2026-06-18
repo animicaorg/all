@@ -235,7 +235,8 @@ class PoolService:
                reward_split: Optional[dict[str, int]] = None,
                eval_gate: Optional[dict[str, Any]] = None,
                requester: Optional[str] = None,
-               model_id: Optional[str] = None) -> dict[str, Any]:
+               model_id: Optional[str] = None,
+               auto_promote: bool = True) -> dict[str, Any]:
         if method not in training.METHODS:
             raise PoolError(f"unknown method: {method}",
                             hint=f"one of: {', '.join(training.METHODS)}")
@@ -265,7 +266,7 @@ class PoolService:
             dataset_sha256=sha, dataset_rows=rows, num_shards=num_shards,
             round=1, hyperparameters=hp, reward_split=reward_split,
             eval_gate=eval_gate, treasury_address=self.cfg.treasury_address,
-            requester=requester, model_id=model_id,
+            requester=requester, model_id=model_id, auto_promote=bool(auto_promote),
         ).to_dict()
         if model_id:
             self.ensure_global_model(model_id, base_model)
@@ -454,10 +455,50 @@ class PoolService:
             ref=shard_id, receipt_hash=receipt.get("receipt_hash"),
         ).to_dict()
         self.store.add_contribution(contrib)
-        return {"shard_id": shard_id, "status": shard["status"],
-                "checkpoint_hash": ckpt_hash, "weight": weight,
-                "receipt_hash": receipt.get("receipt_hash"),
-                "contribution_id": contrib["contribution_id"]}
+        result = {"shard_id": shard_id, "status": shard["status"],
+                  "checkpoint_hash": ckpt_hash, "weight": weight,
+                  "receipt_hash": receipt.get("receipt_hash"),
+                  "contribution_id": contrib["contribution_id"]}
+        # Promote automatically once the round is complete: without this nothing
+        # ever calls aggregate(), so a pool trains forever with served_checkpoint
+        # null and servers have nothing to serve. Best-effort — a promotion
+        # failure must not fail the trainer's submit.
+        promo = self._maybe_auto_aggregate(pool_id)
+        if promo and promo.get("promoted"):
+            result["auto_aggregated"] = True
+            result["round_promoted"] = promo.get("round")
+        return result
+
+    def _maybe_auto_aggregate(self, pool_id: str) -> Optional[dict[str, Any]]:
+        """Aggregate + promote the current round once all its shards are in.
+
+        On by default (``pool.auto_promote``, missing ⇒ True) and eval-gate-free
+        only: gated pools need an external eval score, and pools created with
+        auto_promote=False keep their explicit `aggregate` call. Serialized on
+        the pool lock + re-checked under it so two near-simultaneous final
+        submits can't double-promote. Never raises.
+        """
+        try:
+            with self._lock:
+                pool = self.get(pool_id)
+                # Default ON: pools created before this field existed (e.g. the
+                # live seed pool) auto-promote without a migration. Opt out with
+                # auto_promote=False; eval-gated pools never auto-promote.
+                if not pool.get("auto_promote", True) or pool.get("eval_gate"):
+                    return None
+                rnd = pool["round"]
+                all_shards = self.store.list_shards(pool_id, round=rnd)
+                if not all_shards:
+                    return None
+                submitted = [s for s in all_shards
+                             if s["status"] in (SHARD_SUBMITTED, SHARD_VERIFIED)]
+                target = int(pool.get("num_shards") or len(all_shards))
+                need = max(1, min(target, len(all_shards)))
+                if len(submitted) < need:
+                    return None
+                return self.aggregate(pool_id)
+        except Exception:  # noqa: BLE001 - promotion is best-effort
+            return None
 
     # -- distributed training artifacts (off-coordinator workers) ---------
     def read_shard_data(self, shard_id: str) -> dict[str, Any]:
