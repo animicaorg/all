@@ -51,6 +51,9 @@ class Capabilities:
     gpu_name: str = ""
     vram_gb: float = 0.0
     cuda: bool = False
+    # Concrete accelerator family: "cuda" (NVIDIA), "rocm" (AMD), "mps" (Apple
+    # Silicon / Metal), or "" when CPU-only. Drives which --device the miner gets.
+    device_kind: str = ""
 
     @property
     def qualified_bittensor(self) -> bool:
@@ -60,48 +63,145 @@ class Capabilities:
     def to_dict(self) -> dict:
         return {"cpu_count": self.cpu_count, "gpu": self.gpu,
                 "gpu_name": self.gpu_name, "vram_gb": self.vram_gb,
-                "cuda": self.cuda, "qualified_bittensor": self.qualified_bittensor}
+                "cuda": self.cuda, "device_kind": self.device_kind,
+                "qualified_bittensor": self.qualified_bittensor}
 
 
-def _detect_gpu_via_torch() -> Optional[tuple[str, float, bool]]:
-    try:  # pragma: no cover - exercised only where torch+CUDA exist
+def _system_memory_gb() -> float:
+    """Total system RAM in GiB. Apple Silicon uses *unified* memory, so this is
+    the right proxy for usable 'VRAM' on Metal."""
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                                 capture_output=True, text=True, timeout=5)
+            v = (out.stdout or "").strip()
+            if v.isdigit():
+                return round(int(v) / (1024 ** 3), 1)
+    except Exception:
+        pass
+    try:  # POSIX (Linux + macOS)
+        return round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+                     / (1024 ** 3), 1)
+    except Exception:
+        return 0.0
+
+
+def _apple_gpu_name() -> str:
+    try:
+        out = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                             capture_output=True, text=True, timeout=5)
+        chip = (out.stdout or "").strip()
+        if chip:
+            return f"{chip} (Metal)"
+    except Exception:
+        pass
+    return "Apple GPU (Metal)"
+
+
+def _detect_gpu_via_torch() -> Optional[tuple[str, float, str]]:
+    """Detect a torch-visible accelerator across vendors.
+
+    Returns ``(name, vram_gb, device_kind)`` with device_kind in
+    {"cuda", "rocm", "mps"}, or None. torch is the primary path because the
+    accelerator deps ship with the package, so this resolves NVIDIA, AMD
+    (ROCm), and Apple Silicon (MPS) uniformly.
+    """
+    try:
         import torch  # type: ignore
-        if torch.cuda.is_available():
+    except Exception:
+        return None
+    # NVIDIA CUDA *and* AMD ROCm both surface through torch.cuda; ROCm wheels
+    # set torch.version.hip. Covers the overwhelming majority of discrete GPUs.
+    try:
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
             name = torch.cuda.get_device_name(0)
             vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-            return name, round(float(vram), 1), True
+            hip = getattr(getattr(torch, "version", None), "hip", None)
+            return name, round(float(vram), 1), ("rocm" if hip else "cuda")
     except Exception:
-        return None
-    return None
-
-
-def _detect_gpu_via_smi() -> Optional[tuple[str, float, bool]]:
-    exe = shutil.which("nvidia-smi")
-    if not exe:
-        return None
+        pass
+    # Apple Silicon / Metal Performance Shaders.
     try:
-        out = subprocess.run(
-            [exe, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10)
-        line = (out.stdout or "").strip().splitlines()[:1]
-        if out.returncode == 0 and line:
-            parts = [p.strip() for p in line[0].split(",")]
-            name = parts[0]
-            vram = float(parts[1]) / 1024.0 if len(parts) > 1 else 0.0
-            return name, round(vram, 1), False
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return _apple_gpu_name(), _system_memory_gb(), "mps"
     except Exception:
-        return None
+        pass
     return None
+
+
+def _detect_gpu_via_smi() -> Optional[tuple[str, float, str]]:
+    """Vendor-CLI fallback for when torch is absent or a CPU-only build.
+
+    Returns ``(name, vram_gb, device_kind)`` or None. Handles NVIDIA
+    (nvidia-smi) and AMD (rocm-smi).
+    """
+    exe = shutil.which("nvidia-smi")
+    if exe:
+        try:
+            out = subprocess.run(
+                [exe, "--query-gpu=name,memory.total",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10)
+            line = (out.stdout or "").strip().splitlines()[:1]
+            if out.returncode == 0 and line:
+                parts = [p.strip() for p in line[0].split(",")]
+                name = parts[0]
+                vram = (float(parts[1]) / 1024.0
+                        if len(parts) > 1 and parts[1] else 0.0)
+                return name, round(vram, 1), "cuda"
+        except Exception:
+            pass
+    exe = shutil.which("rocm-smi")
+    if exe:
+        try:
+            return _detect_rocm_smi(exe)
+        except Exception:
+            return ("AMD GPU (ROCm)", 0.0, "rocm")
+    return None
+
+
+def _detect_rocm_smi(exe: str) -> tuple[str, float, str]:
+    """Best-effort AMD detection. rocm-smi output varies by version, so we read
+    what we can and degrade to a generic name with 0 GB rather than failing."""
+    name, vram = "AMD GPU (ROCm)", 0.0
+    try:
+        out = subprocess.run([exe, "--showproductname"],
+                             capture_output=True, text=True, timeout=10)
+        for ln in (out.stdout or "").splitlines():
+            if ":" in ln and ("Card series" in ln or "Card model" in ln
+                              or "Device Name" in ln):
+                cand = ln.split(":", 1)[1].strip()
+                if cand:
+                    name = cand
+                    break
+    except Exception:
+        pass
+    try:
+        out = subprocess.run([exe, "--showmeminfo", "vram"],
+                             capture_output=True, text=True, timeout=10)
+        for ln in (out.stdout or "").splitlines():
+            low = ln.lower()
+            if "total" in low and ":" in ln:
+                digits = "".join(ch for ch in ln.split(":", 1)[1] if ch.isdigit())
+                if digits:
+                    vram = round(int(digits) / (1024 ** 3), 1)
+                    break
+    except Exception:
+        pass
+    return name, vram, "rocm"
 
 
 def detect_capabilities() -> Capabilities:
-    """Detect CPU/GPU/VRAM. Never raises; degrades to CPU-only."""
+    """Detect CPU/GPU/VRAM across NVIDIA/AMD/Apple. Never raises; degrades to
+    CPU-only."""
     cpu = os.cpu_count() or 1
     found = _detect_gpu_via_torch() or _detect_gpu_via_smi()
     if found:
-        name, vram, cuda = found
+        name, vram, kind = found
         return Capabilities(cpu_count=cpu, gpu=True, gpu_name=name,
-                            vram_gb=vram, cuda=cuda)
+                            vram_gb=vram, cuda=(kind == "cuda"),
+                            device_kind=kind)
     return Capabilities(cpu_count=cpu)
 
 
@@ -223,6 +323,64 @@ def animica_cmd() -> list[str]:
     return [sys.executable, "-m", "animica.cli.main"]
 
 
+def _cli_device_flag(caps: Capabilities) -> Optional[str]:
+    """Map the detected accelerator to the miner's ``--device`` taxonomy
+    (cuda / rocm / metal), or None for CPU-only. ``mps`` is exposed to the CLI
+    as ``metal``. Falls back to ``cuda`` for legacy Capabilities that set only
+    ``cuda=True`` without a device_kind."""
+    kind = caps.device_kind or ("cuda" if caps.cuda else "")
+    return {"cuda": "cuda", "rocm": "rocm", "mps": "metal"}.get(kind)
+
+
+def _resolve_best_pool(pool_host: str, *, timeout: float = 6.0) -> Optional[str]:
+    """Best-effort: pick the highest-paying open training pool from the pool's
+    public coordinator API. Returns a pool_id or None (never raises).
+
+    "Highest paying" = the largest confirmed, not-yet-paid funding pot
+    (``Pool.budget_nano``) among pools still accepting trainers (status open or
+    training). A 0-budget pool is chosen only when nothing funded is available,
+    so ``animica up`` still contributes to the one global model.
+    """
+    import json
+    import urllib.request
+
+    host = (pool_host or "").strip().rstrip("/")
+    if not host:
+        return None
+    if "://" not in host:
+        host = "https://" + host
+    url = host + "/api/ena/pool/list"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "animica-up"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+    pools = payload.get("pools") if isinstance(payload, dict) else None
+    if not isinstance(pools, list):
+        return None
+    active = {"open", "training"}
+    candidates: list[tuple[int, str]] = []
+    for p in pools:
+        if not isinstance(p, dict):
+            continue
+        if str(p.get("status") or "").lower() not in active:
+            continue
+        pid = p.get("pool_id")
+        if not pid:
+            continue
+        try:
+            budget = int(p.get("budget_nano") or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        candidates.append((budget, str(pid)))
+    if not candidates:
+        return None
+    # Highest budget first; deterministic tie-break by pool_id.
+    candidates.sort(key=lambda t: (-t[0], t[1]))
+    return candidates[0][1]
+
+
 def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
     """Deterministic component plan for these capabilities + config.
 
@@ -247,8 +405,13 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
     # and serves AICF inference jobs together; advertises UNIFIED_VERSION + tiers.
     miner_argv = a + ["miner", "start", "--pool", f"{cfg.pool_host}:{cfg.pool_port}",
                       "--address", cfg.address, "--aicf"]
-    if gpu:
-        miner_argv += ["--gpu"]
+    # Pass the *concrete* accelerator so the miner targets the right torch
+    # backend (cuda / rocm / metal). The old `--gpu` hard-coded CUDA, which
+    # left Apple Silicon (Metal/MPS) on the CPU. The miner falls back to CPU on
+    # its own if torch can't actually use the device.
+    device_flag = _cli_device_flag(caps)
+    if device_flag:
+        miner_argv += ["--device", device_flag]
     if cfg.threads:
         miner_argv += ["--threads", str(cfg.threads)]
     miner_env = dict(base_env)
@@ -269,7 +432,8 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
              "--worker-id", wid, "--address", cfg.address],
         enabled=gpu and bool(cfg.pool_id),
         reason=("trains pool shards" if gpu and cfg.pool_id else
-                ("GPU present but no --pool-id" if gpu else "no GPU")),
+                ("GPU present but no training pool available "
+                 "(could not auto-select one)" if gpu else "no GPU")),
         env=dict(base_env)))
 
     # GPU: serve the promoted checkpoint (OpenAI-compatible), ANM-credited
@@ -280,7 +444,8 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
              "--port", str(cfg.serve_port)],
         enabled=gpu and bool(cfg.pool_id),
         reason=("serves the promoted checkpoint" if gpu and cfg.pool_id else
-                ("GPU present but no --pool-id" if gpu else "no GPU")),
+                ("GPU present but no training pool available "
+                 "(could not auto-select one)" if gpu else "no GPU")),
         env=dict(base_env)))
 
     # Qualified GPU: Bittensor serving via the shipped `animica bittensor` flow,

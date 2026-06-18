@@ -36,8 +36,9 @@ def up(ctx: typer.Context,
        json_output: bool = typer.Option(False, "--json")) -> None:
     if ctx.invoked_subcommand is not None:
         return
-    from animica.unified import (Supervisor, UnifiedConfig, build_plan,
-                                 detect_capabilities, plan_summary, resolve_address)
+    from animica.unified import (Supervisor, UnifiedConfig, _resolve_best_pool,
+                                 build_plan, detect_capabilities, plan_summary,
+                                 resolve_address)
     # zero-config: resolve (or auto-create) the payout wallet. For --plan we never
     # create anything; we just show what a real run would use.
     try:
@@ -50,6 +51,15 @@ def up(ctx: typer.Context,
     if addr_source == "created":
         console.print(f"[green]created a new wallet[/green] → {addr}")
     caps = detect_capabilities()
+    # ENA training is on by default on a GPU box: when no pool was named, pick
+    # the highest-paying open training pool so `animica up` trains + serves the
+    # one global model out of the box. Best-effort — if the pool API can't be
+    # reached, training stays off with a clear reason in the plan.
+    if pool_id is None and caps.gpu:
+        pool_id = _resolve_best_pool(pool_host)
+        if pool_id:
+            console.print(f"[green]auto-selected training pool[/green] → "
+                          f"{pool_id} [dim](highest-paying)[/dim]")
     cfg = UnifiedConfig(address=addr, pool_host=pool_host, pool_port=pool_port,
                         pool_id=pool_id, worker_id=worker_id or "",
                         run_node=with_node, threads=threads,
@@ -65,7 +75,8 @@ def up(ctx: typer.Context,
                           f"(unified v{summary['version']})")
             console.print(f"address {addr} ({addr_source}) · pool {pool_host} · "
                           f"gpu={caps.gpu} ({caps.gpu_name or 'none'}, "
-                          f"{caps.vram_gb} GB) · qualified={caps.qualified_bittensor}")
+                          f"{caps.device_kind or 'cpu'}, {caps.vram_gb} GB) · "
+                          f"qualified={caps.qualified_bittensor}")
             for c in components:
                 mark = "[green]▶[/green]" if (c.enabled and c.available) else (
                     "[yellow]…[/yellow]" if c.enabled else "[dim]·[/dim]")
