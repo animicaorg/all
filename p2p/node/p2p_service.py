@@ -12502,6 +12502,14 @@ class P2PService:
                     return
 
     async def _sync_loop_forever(self) -> None:
+        # Rebind the sync lock to THIS running loop. The node can end up running
+        # the sync driver under a different event loop than the one that first
+        # acquired self._sync_lock (e.g. after a soft loop restart). A lock bound
+        # to a dead loop makes every `async with self._sync_lock` raise "Lock is
+        # bound to a different event loop", which freezes sync — the head stops
+        # advancing and the chain looks reset. Recreating it here (entered only
+        # at startup and after a crash-restart, not per tick) keeps it correct.
+        self._sync_lock = asyncio.Lock()
         try:
             while self._running:
                 if not self._sync_enabled:
