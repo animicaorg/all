@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, TypeVar
 
 from .errors import StoreError
 
@@ -186,6 +187,21 @@ CREATE TABLE IF NOT EXISTS models (
 """
 
 
+_T = TypeVar("_T")
+
+# How long any statement waits for a contended lock before SQLite raises
+# "database is locked". `animica up` runs the trainer, useful-work worker and
+# server as *separate processes*, each with its own connection to this file, so
+# cross-process write contention is normal and must be waited out, not failed.
+_BUSY_TIMEOUT_MS = 30_000
+
+
+def _is_locked_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return isinstance(exc, sqlite3.OperationalError) and (
+        "locked" in msg or "busy" in msg)
+
+
 class Store:
     """Thread-safe (serialized) SQLite wrapper for ENA state."""
 
@@ -194,30 +210,71 @@ class Store:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         try:
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            # `timeout=` installs SQLite's busy handler so a write blocked by a
+            # lock another process holds waits instead of erroring immediately.
+            self._conn = sqlite3.connect(
+                str(self.db_path), check_same_thread=False,
+                timeout=_BUSY_TIMEOUT_MS / 1000.0)
         except sqlite3.Error as exc:  # pragma: no cover
             raise StoreError(f"cannot open ENA db at {self.db_path}: {exc}") from exc
         self._conn.row_factory = sqlite3.Row
+        # WAL = concurrent readers + a single writer. busy_timeout = how long a
+        # contended statement waits before "database is locked". synchronous=
+        # NORMAL is durable under WAL and cuts fsync contention across the
+        # concurrent workers `animica up` launches.
         self._conn.execute("PRAGMA journal_mode=WAL;")
+        self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS};")
+        self._conn.execute("PRAGMA synchronous=NORMAL;")
         self._conn.execute("PRAGMA foreign_keys=ON;")
         with self._lock:
-            self._conn.executescript(_SCHEMA)
-            self._conn.commit()
+            self._with_retry(self._init_schema)
+
+    def _init_schema(self) -> None:
+        self._conn.executescript(_SCHEMA)
+        self._conn.commit()
 
     # -- low-level --------------------------------------------------------
     def close(self) -> None:
         with self._lock:
             self._conn.close()
 
+    def _with_retry(self, fn: Callable[[], _T], *, attempts: int = 6) -> _T:
+        """Run a DB operation, retrying briefly on a locked/busy database.
+
+        busy_timeout already waits out ordinary write contention; this also
+        covers the WAL ``SQLITE_BUSY_SNAPSHOT`` case (a write after another
+        connection advanced the snapshot), which surfaces as "database is
+        locked" and is *not* retried by SQLite's busy handler.
+        """
+        delay = 0.1
+        for i in range(attempts):
+            try:
+                return fn()
+            except sqlite3.OperationalError as exc:
+                if not _is_locked_error(exc) or i == attempts - 1:
+                    raise
+                # Clear any half-open implicit transaction before retrying so the
+                # next attempt starts from a clean snapshot.
+                try:
+                    self._conn.rollback()
+                except sqlite3.Error:
+                    pass
+                time.sleep(delay)
+                delay = min(delay * 2.0, 2.0)
+        raise AssertionError("unreachable")  # pragma: no cover
+
     def _exec(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
-        with self._lock:
+        def _run() -> sqlite3.Cursor:
             cur = self._conn.execute(sql, tuple(params))
             self._conn.commit()
             return cur
+        with self._lock:
+            return self._with_retry(_run)
 
     def _query(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         with self._lock:
-            return list(self._conn.execute(sql, tuple(params)).fetchall())
+            return self._with_retry(
+                lambda: list(self._conn.execute(sql, tuple(params)).fetchall()))
 
     # -- jobs -------------------------------------------------------------
     def upsert_job(self, job: dict[str, Any]) -> None:
