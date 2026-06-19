@@ -140,7 +140,20 @@ class PoolModelRunner:
             return _stub_reply(prompt, self.base_model)
         try:  # pragma: no cover - heavy path
             import torch  # type: ignore
-            inputs = self._tok(prompt, return_tensors="pt").to(self._device)
+            tok = self._tok
+            # Match the TRAINING format so the fine-tuned behaviour is actually
+            # elicited: instruct bases were trained on the chat template, raw bases
+            # on "{prompt}\n{response}". Querying an instruct model with the bare
+            # prompt (the old behaviour) leaves it out of "assistant" mode and it
+            # won't emit the learned answer — which pinned pool eval at ~0.
+            if getattr(tok, "chat_template", None):
+                text_in = tok.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    add_generation_prompt=True, tokenize=False)
+                inputs = tok(text_in, return_tensors="pt",
+                             add_special_tokens=False).to(self._device)
+            else:
+                inputs = tok(prompt + "\n", return_tensors="pt").to(self._device)
             with torch.no_grad():
                 out = self._model.generate(
                     **inputs, max_new_tokens=int(max_tokens),
