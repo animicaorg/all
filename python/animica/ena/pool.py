@@ -371,57 +371,101 @@ class PoolService:
                 "from_addr": result["from_addr"]}
 
     # -- sharding + claim (trainer fan-out) -------------------------------
-    def _ensure_shards(self, pool: dict[str, Any]) -> list[dict[str, Any]]:
+    def _load_round_records(self, pool: dict[str, Any]):
+        """(records, out_dir) for the current round — the curriculum-generated
+        per-round dataset if present, else the pool's static dataset."""
         pool_id, rnd = pool["pool_id"], pool["round"]
-        existing = self.store.list_shards(pool_id, round=rnd)
-        if existing:
-            return existing
-        # serialize generation so concurrent claim_shard calls don't both
-        # regenerate the whole dataset (double-check after taking the lock).
-        with self._lock:
-            existing = self.store.list_shards(pool_id, round=rnd)
-            if existing:
-                return existing
-            # Self-adapting pools train each round on the curriculum-generated
-            # dataset recorded for that round; fall back to the pool's static
-            # dataset when there's no (usable) per-round file. The hash-bucketing
-            # below is unchanged, so sharding stays deterministic either way.
-            src = ((pool.get("metadata") or {}).get("round_datasets") or {}
-                   ).get(str(rnd), {}).get("path")
-            if not (src and Path(src).is_file()):
-                src = pool["dataset_path"]
-            records = list(ds.read_jsonl(src))
-            # Shard count = max of (a) one shard per active miner (unlimited — see
-            # _target_shard_count) and (b) enough shards to keep each one small
-            # (<= max_rows_per_shard rows) so a low-memory machine can train a
-            # shard without OOM — this makes a round split into many small shards
-            # even with a single miner. Never more shards than rows (no empty
-            # shard). Set metadata.max_rows_per_shard to enable (0/unset = off).
-            n = self._target_shard_count(pool)
+        src = ((pool.get("metadata") or {}).get("round_datasets") or {}
+               ).get(str(rnd), {}).get("path")
+        if not (src and Path(src).is_file()):
+            src = pool["dataset_path"]
+        return list(ds.read_jsonl(src)), self._pool_dir(pool_id) / f"round-{rnd}"
+
+    def _planned_shard_count(self, pool: dict[str, Any], records, mode: str) -> int:
+        # one shard per active trainer (_target_shard_count); in split mode also
+        # bounded so each shard stays small (max_rows_per_shard) and never empty.
+        n = self._target_shard_count(pool)
+        if mode == "split":
             mrps = int((pool.get("metadata") or {}).get("max_rows_per_shard") or 0)
             if mrps > 0 and records:
                 n = max(n, math.ceil(len(records) / mrps))
-            n = max(1, min(n, len(records) or 1))
-            buckets: list[list[dict[str, Any]]] = [[] for _ in range(n)]
-            # Round-robin: deterministic (records are read in file order) AND even
-            # — every shard is within one row of the same size, so memory per shard
-            # is balanced and max_rows_per_shard is actually respected (uneven hash
-            # bucketing could otherwise leave a shard well over the cap).
-            for i, rec in enumerate(records):
-                buckets[i % n].append(rec)
-            out_dir = self._pool_dir(pool_id) / f"round-{rnd}"
-            shards = []
-            for i, recs in enumerate(buckets):
-                path = out_dir / f"shard-{i}.jsonl"
-                ds.write_jsonl(path, recs)
-                shard = PoolShard(
-                    shard_id=f"{pool_id}-r{rnd}-s{i}", pool_id=pool_id, round=rnd,
-                    ordinal=i, total=n, path=str(path), row_count=len(recs),
-                    sha256=ds.sha256_file(path), status=SHARD_OPEN,
-                ).to_dict()
-                self.store.upsert_shard(shard)
-                shards.append(shard)
+            n = min(n, len(records) or 1)
+        return max(1, n)
+
+    @staticmethod
+    def _shard_records(records, ordinal: int, total: int, mode: str):
+        # replicate: every shard trains the FULL set (work-weighted model-soup
+        # merge) — lets shards be added mid-round WITHOUT re-partitioning the
+        # in-progress ones. split: deterministic stride == the old round-robin
+        # (record i -> shard i % total), so split-mode sharding is unchanged.
+        if mode == "replicate":
+            return list(records)
+        t = max(1, total)
+        return [r for i, r in enumerate(records) if i % t == ordinal % t]
+
+    def _create_shard(self, pool: dict[str, Any], ordinal: int, total: int,
+                      records, out_dir, mode: str) -> dict[str, Any]:
+        pool_id, rnd = pool["pool_id"], pool["round"]
+        recs = self._shard_records(records, ordinal, total, mode)
+        path = out_dir / f"shard-{ordinal}.jsonl"
+        ds.write_jsonl(path, recs)
+        shard = PoolShard(
+            shard_id=f"{pool_id}-r{rnd}-s{ordinal}", pool_id=pool_id, round=rnd,
+            ordinal=ordinal, total=total, path=str(path), row_count=len(recs),
+            sha256=ds.sha256_file(path), status=SHARD_OPEN,
+        ).to_dict()
+        self.store.upsert_shard(shard)
+        return shard
+
+    def _ensure_shards(self, pool: dict[str, Any]) -> list[dict[str, Any]]:
+        """Materialise (and GROW) the round's shards. Grows to one shard per active
+        trainer, so a trainer that started heartbeating mid-round gets a shard this
+        round instead of waiting for the next one."""
+        pool_id, rnd = pool["pool_id"], pool["round"]
+        existing = self.store.list_shards(pool_id, round=rnd)
+        mode = (pool.get("metadata") or {}).get("shard_mode", "split")
+        # split mode: a round's disjoint partition is created ONCE and never grows
+        # mid-round (preserves deterministic exhaustion/reclaim). replicate mode:
+        # grow to one full-dataset shard per active trainer (mid-round resharding).
+        if existing and (mode != "replicate"
+                         or len(existing) >= self._target_shard_count(pool)):
+            return existing
+        with self._lock:  # serialize generation/growth against concurrent claims
+            existing = self.store.list_shards(pool_id, round=rnd)
+            records, out_dir = self._load_round_records(pool)
+            target = self._planned_shard_count(pool, records, mode)
+            if existing and (mode != "replicate" or len(existing) >= target):
+                return existing
+            shards = list(existing)
+            for ordinal in range(len(existing), target):
+                shards.append(self._create_shard(
+                    pool, ordinal, target, records, out_dir, mode))
             return shards
+
+    def _worker_has_shard(self, pool_id: str, rnd: int, worker_id: str) -> bool:
+        return any(
+            s.get("worker_id") == worker_id
+            and s["status"] in (SHARD_CLAIMED, SHARD_SUBMITTED, SHARD_VERIFIED)
+            for s in self.store.list_shards(pool_id, round=rnd))
+
+    def _grow_one_shard(self, pool: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """Dynamic mid-round resharding: add ONE shard for an active trainer that
+        found nothing open, instead of making it wait for the next round. Bounded
+        by metadata.max_shards (else a 64 ceiling; split mode also by row count)."""
+        with self._lock:
+            pool_id, rnd = pool["pool_id"], pool["round"]
+            existing = self.store.list_shards(pool_id, round=rnd)
+            meta = pool.get("metadata") or {}
+            mode = meta.get("shard_mode", "split")
+            records, out_dir = self._load_round_records(pool)
+            cap = meta.get("max_shards")
+            ceiling = int(cap) if cap else 64
+            if mode == "split":
+                ceiling = min(ceiling, len(records) or 1)
+            if len(existing) >= ceiling:
+                return None
+            return self._create_shard(
+                pool, len(existing), len(existing) + 1, records, out_dir, mode)
 
     def _training_head_path(self, pool: dict[str, Any]) -> Optional[str]:
         """Adapter dir to WARM-START this round from. The training head is the
@@ -464,9 +508,18 @@ class PoolService:
         self._ensure_shards(pool)
         reclaim_secs = int((pool.get("metadata") or {}).get(
             "shard_reclaim_secs", 1800))
-        shard = self.store.claim_one_shard(
-            pool_id, pool["round"], worker_id,
-            reclaim_before=now_ts() - reclaim_secs)
+        rb = now_ts() - reclaim_secs
+        shard = self.store.claim_one_shard(pool_id, pool["round"], worker_id,
+                                           reclaim_before=rb)
+        mode = (pool.get("metadata") or {}).get("shard_mode", "split")
+        if (not shard and mode == "replicate"
+                and not self._worker_has_shard(pool_id, pool["round"], worker_id)):
+            # Dynamic mid-round resharding (replicate mode): an active trainer with
+            # no shard this round and nothing open gets a fresh full-dataset shard
+            # now, instead of waiting for the next round.
+            if self._grow_one_shard(pool) is not None:
+                shard = self.store.claim_one_shard(pool_id, pool["round"], worker_id,
+                                                   reclaim_before=rb)
         if not shard:
             return None
         shard["manifest"] = self._shard_manifest(pool, shard)  # not persisted

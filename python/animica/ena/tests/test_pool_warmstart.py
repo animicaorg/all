@@ -93,6 +93,47 @@ def test_tar_adapter_b64_uploads_only_adapter(tmp_path):
     assert [f.name for f in got2] == ["model.safetensors"]
 
 
+def test_dynamic_midround_resharding_replicate(ena, tmp_path):
+    # replicate mode: each trainer that joins mid-round gets a fresh FULL-dataset
+    # shard (no waiting for the next round); a trainer that already holds one
+    # doesn't spawn extras. split mode (default) keeps its fixed partition.
+    data = _write_dataset(tmp_path / "d.jsonl", n=12)
+    p = ena.pool.create("tiny", data, name="rs", num_shards=1)
+    pid = p["pool_id"]
+    pp = ena.store.get_pool(pid)
+    md = dict(pp.get("metadata") or {})
+    md["shard_mode"] = "replicate"
+    md["min_shards"] = 1
+    pp["metadata"] = md
+    ena.store.upsert_pool(pp)
+    rnd = pp["round"]
+    for w in ("A", "B", "C"):
+        assert ena.pool.claim_shard(pid, worker_id=w), f"{w} should get a shard"
+    shards = ena.store.list_shards(pid, round=rnd)
+    assert len(shards) == 3                      # one per trainer, grown on demand
+    assert all(s["row_count"] == 12 for s in shards)   # replicate => full dataset
+    # a worker that already holds a shard does NOT spawn another
+    assert ena.pool.claim_shard(pid, worker_id="A") is None
+    assert len(ena.store.list_shards(pid, round=rnd)) == 3
+
+
+def test_split_mode_exhausts_no_dynamic_growth(ena, tmp_path):
+    # split mode (default) must NOT grow mid-round: a fixed partition that exhausts.
+    data = _write_dataset(tmp_path / "d.jsonl", n=6)
+    p = ena.pool.create("tiny", data, name="sp", num_shards=2)
+    pid = p["pool_id"]
+    pp = ena.store.get_pool(pid)
+    md = dict(pp.get("metadata") or {})
+    md["min_shards"] = 2
+    md["max_shards"] = 2
+    pp["metadata"] = md
+    ena.store.upsert_pool(pp)
+    claims = [bool(ena.pool.claim_shard(pid, worker_id=f"w{i}")) for i in range(4)]
+    assert claims[:2] == [True, True]            # 2 shards claimed
+    assert claims[2:] == [False, False]          # then exhausted (no dynamic growth)
+    assert len(ena.store.list_shards(pid, round=pp["round"])) == 2
+
+
 def test_head_advances_on_reject_then_promote(ena, tmp_path, monkeypatch):
     monkeypatch.setattr(poolmod, "merge_checkpoints", _fake_merge_factory())
     data = _write_dataset(tmp_path / "d.jsonl")
