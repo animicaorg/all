@@ -296,7 +296,7 @@ class ENA:
         import logging
         from pathlib import Path
         from . import training
-        from .remote import RemotePool, tar_path_b64, write_b64_file
+        from .remote import RemotePool, tar_adapter_b64, write_b64_file
         log = logging.getLogger("animica.ena.trainer")
 
         rc = RemotePool(endpoint)
@@ -344,7 +344,7 @@ class ENA:
         out = run.get("output_dir")
         if out and Path(out).exists():
             try:
-                up = rc.upload_checkpoint(pool_id, shard_id, tar_path_b64(out))
+                up = rc.upload_checkpoint(pool_id, shard_id, tar_adapter_b64(out))
                 coord_ckpt = up.get("checkpoint_path")
             except Exception as exc:  # noqa: BLE001
                 log.warning("[trainer] checkpoint upload failed (%s); "

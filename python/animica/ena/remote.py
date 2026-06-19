@@ -59,6 +59,31 @@ def tar_path_b64(path: str | Path) -> str:
     return b64_of_bytes(buf.getvalue())
 
 
+# Files the coordinator needs to merge + serve a LoRA adapter. Uploading only
+# these — vs the whole output dir, which also holds the multi-MB tokenizer and
+# per-epoch checkpoint subdirs — keeps the upload small and reliable (a big tar
+# was silently failing the upload, leaving the coordinator with no weights to
+# merge → no warm-start head, nothing servable).
+_ADAPTER_FILES = ("adapter_config.json", "adapter_model.safetensors",
+                  "adapter_model.bin", "chat_template.jinja")
+
+
+def tar_adapter_b64(path: str | Path) -> str:
+    """gzip-tar JUST the LoRA adapter files from a training output dir (base64).
+    Falls back to the whole tree when no adapter is present (e.g. a full
+    fine-tune), so non-LoRA runs still upload a usable checkpoint."""
+    p = Path(path)
+    if p.is_dir() and (p / "adapter_config.json").is_file():
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for name in _ADAPTER_FILES:
+                f = p / name
+                if f.is_file():
+                    tf.add(str(f), arcname=name)
+        return b64_of_bytes(buf.getvalue())
+    return tar_path_b64(path)
+
+
 def _safe_extractall(tf: tarfile.TarFile, dest: Path) -> None:
     dest = dest.resolve()
     for m in tf.getmembers():

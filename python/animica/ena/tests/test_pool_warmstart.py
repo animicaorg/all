@@ -68,6 +68,31 @@ def test_training_head_path_resolution(ena, tmp_path):
     assert ena.pool._training_head_path(p) is None
 
 
+def test_tar_adapter_b64_uploads_only_adapter(tmp_path):
+    # A bloated training output dir (tokenizer + per-epoch checkpoint subdir) must
+    # upload ONLY the adapter files — a too-big tar was failing the checkpoint
+    # upload, leaving the coordinator nothing to merge.
+    from animica.ena.remote import tar_adapter_b64, extract_tar_b64
+    d = tmp_path / "out"
+    d.mkdir()
+    (d / "adapter_config.json").write_text('{"r": 16}')
+    (d / "adapter_model.safetensors").write_bytes(b"W" * 1000)
+    (d / "tokenizer.json").write_bytes(b"T" * 5000)       # must be excluded
+    (d / "chat_template.jinja").write_text("{{x}}")
+    ck = d / "checkpoint-6"
+    ck.mkdir()
+    (ck / "optimizer.pt").write_bytes(b"O" * 5000)        # must be excluded
+    got = sorted((extract_tar_b64(tar_adapter_b64(str(d)), tmp_path / "x")).iterdir())
+    assert [f.name for f in got] == ["adapter_config.json", "adapter_model.safetensors",
+                                     "chat_template.jinja"]
+    # no-adapter dir (full fine-tune) falls back to shipping the whole tree
+    d2 = tmp_path / "full"
+    d2.mkdir()
+    (d2 / "model.safetensors").write_bytes(b"x" * 100)
+    got2 = sorted((extract_tar_b64(tar_adapter_b64(str(d2)), tmp_path / "y")).iterdir())
+    assert [f.name for f in got2] == ["model.safetensors"]
+
+
 def test_head_advances_on_reject_then_promote(ena, tmp_path, monkeypatch):
     monkeypatch.setattr(poolmod, "merge_checkpoints", _fake_merge_factory())
     data = _write_dataset(tmp_path / "d.jsonl")

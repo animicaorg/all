@@ -484,7 +484,11 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
         gradient_checkpointing=bool(hp.get("gradient_checkpointing")),
         gradient_checkpointing_kwargs={"use_reentrant": False},
         bf16=bf16, fp16=fp16, optim=optim,
-        logging_steps=10, save_strategy="epoch", report_to=[])
+        # save_strategy="no": the final adapter is written by trainer.save_model
+        # below; per-epoch checkpoint subdirs only bloat the output dir (and the
+        # checkpoint upload). We never resume from them — warm-start uses the
+        # coordinator's merged adapter.
+        logging_steps=10, save_strategy="no", report_to=[])
     trainer = transformers.Trainer(model=model, args=args, train_dataset=dset,
                                    data_collator=collator)
     train_result = trainer.train()
