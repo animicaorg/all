@@ -129,6 +129,51 @@ def _tokenset(s: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", str(s).lower()))
 
 
+# Function words / short tokens carry no topical signal; scoring on them would let
+# a generic or empty answer "pass". Loose-match on the gold answer's *content*
+# tokens only.
+_EVAL_STOPWORDS = frozenset(
+    "a an the and or but if then else of to in on at for with without from by as is "
+    "are was were be been being it its this that these those you your we our they their "
+    "i me my he she his her him do does did done can could should would may might will "
+    "shall must not no yes so such than too very into out up down over under again more "
+    "most some any all each every here there what which who whom how why when where "
+    "have has had having get gets got use used using via per".split()
+)
+
+
+def _content_tokens(s: str) -> set[str]:
+    return {t for t in _tokenset(s) if len(t) >= 3 and t not in _EVAL_STOPWORDS}
+
+
+def loose_hit(gold: str, out: str, *, min_recall: float = 0.5) -> bool:
+    """Loose semantic match for a *paraphrasing* LLM.
+
+    A generation counts as a hit when it either reproduces the verbatim opening of
+    the gold answer OR recalls at least ``min_recall`` of the gold answer's
+    distinctive content tokens.
+
+    The original gate used ONLY the "first-40-chars verbatim substring" test, which
+    is unsatisfiable for a model that paraphrases (it essentially never reproduces
+    40 exact characters), so ``match_rate`` was pinned at 0.0 forever and the pool's
+    eval gate could never promote a checkpoint. This is strictly more lenient — the
+    old verbatim path is kept as a fast-path hit.
+    """
+    gold = (gold or "").strip()
+    out = (out or "").strip()
+    if not gold:
+        return False
+    if gold.lower()[:40] in out.lower():
+        return True
+    gt = _content_tokens(gold)
+    if not gt:
+        # No contentful tokens in gold (e.g. a tiny answer) — fall back to a short
+        # verbatim-prefix check rather than crediting an empty overlap.
+        return gold.lower()[:24] in out.lower()
+    overlap = len(gt & _tokenset(out)) / len(gt)
+    return overlap >= min_recall
+
+
 def evaluate_detailed(generate, eval_rows: list[dict], topics: list[str], *,
                       max_rows: int = 100) -> dict[str, Any]:
     """Run ``generate(prompt) -> str`` over the eval rows, loose-match each
@@ -161,7 +206,7 @@ def evaluate_detailed(generate, eval_rows: list[dict], topics: list[str], *,
             ok = bool(got and got[0] and (
                 got[0] == want[0] or got[0] in _KNOWN_TOOL_NAMES))
         else:
-            ok = bool(gold and gold.strip().lower()[:40] in out.strip().lower())
+            ok = loose_hit(gold, out)
         if ok:
             matched += 1
         elif len(failures) < 50:
@@ -675,7 +720,7 @@ class CurriculumService:
                 except Exception:  # noqa: BLE001
                     out = ""
                 gold = str(r.get("response") or r.get("chosen") or "")
-                if gold and gold.strip().lower()[:40] in out.strip().lower():
+                if loose_hit(gold, out):
                     matched += 1
             return round(matched / total, 4) if total else None
         except Exception as exc:  # noqa: BLE001

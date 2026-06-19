@@ -157,10 +157,13 @@ def _detect_memory_profile() -> dict[str, Any]:
                         dtype="bfloat16" if bf16 else "float16")
         elif getattr(getattr(torch, "backends", None), "mps", None) is not None \
                 and torch.backends.mps.is_available():
-            # bitsandbytes 4-bit is CUDA-only; MPS uses fp16 unquantized. free_gb
+            # bitsandbytes 4-bit is CUDA-only; MPS runs unquantized. Use bfloat16,
+            # NOT float16: fp16 on Apple Metal overflows (narrow exponent range),
+            # which spikes/diverges the loss (observed train_loss ~33). bf16 has the
+            # same range as fp32 at half the memory, so it is stable on MPS. free_gb
             # is *available* RAM (not total) so a loaded host doesn't OOM.
             prof.update(device="mps", free_gb=_system_ram_gb(available=True),
-                        total_gb=_system_ram_gb(), dtype="float16")
+                        total_gb=_system_ram_gb(), dtype="bfloat16")
         else:
             prof.update(device="cpu", free_gb=_system_ram_gb(available=True),
                         total_gb=_system_ram_gb(), dtype="float32")
@@ -520,6 +523,7 @@ def evaluate(cfg, store, *, manifest_path: str,
         raise TrainingError("manifest has no eval/test/train split to evaluate")
 
     from .providers import build_model_adapter
+    from .curriculum import loose_hit
     pcfg = cfg.model_provider(model_provider)
     if model:
         pcfg.model = model
@@ -539,7 +543,7 @@ def evaluate(cfg, store, *, manifest_path: str,
         if out.strip():
             nonempty += 1
         gold = str(r.get("response") or r.get("chosen") or "")
-        if gold and gold.strip().lower()[:40] in out.strip().lower():
+        if loose_hit(gold, out):
             matched += 1
     report = {
         "eval_id": "ev-" + new_uuid()[:16], "run_id": run_id,
