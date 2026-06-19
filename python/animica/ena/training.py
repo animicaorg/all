@@ -313,9 +313,15 @@ def _run_python_transformers(rec: dict[str, Any], manifest: dict[str, Any],
     return _run_sft(rec, manifest, out_dir, hp, method)
 
 
-def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any]):
+def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any],
+                              init_adapter: Optional[str] = None):
     """Load tokenizer + causal LM, applying QLoRA 4-bit quant / LoRA adapters
-    when requested. Returns (tokenizer, model, peft_enabled)."""
+    when requested. Returns (tokenizer, model, peft_enabled).
+
+    When ``init_adapter`` points at an existing adapter dir, the LoRA is
+    WARM-STARTED from it (continue training the prior round's merged adapter)
+    instead of initialising a fresh adapter — this is what makes a pool's rounds
+    compound rather than each restart from the pristine base weights."""
     transformers, _ = _require_transformers()
     AutoTokenizer = transformers.AutoTokenizer
     AutoModelForCausalLM = transformers.AutoModelForCausalLM
@@ -369,13 +375,63 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any]):
             # inputs to require grad, or backprop sees "no input requires grad".
             model.gradient_checkpointing_enable()
             model.enable_input_require_grads()
-        peft_cfg = LoraConfig(
-            r=int(lora.get("r", 16)), lora_alpha=int(lora.get("alpha", 32)),
-            lora_dropout=float(lora.get("dropout", 0.05)), bias="none",
-            task_type="CAUSAL_LM", target_modules=lora.get("target_modules"))
-        model = get_peft_model(model, peft_cfg)
+        adir = None
+        if init_adapter:
+            ap = Path(init_adapter)
+            if ap.is_dir() and (ap / "adapter_config.json").is_file():
+                adir = ap
+        if adir is not None:
+            # Warm-start: continue training the prior round's merged adapter so
+            # the pool's rounds COMPOUND. r/alpha/target_modules come from the
+            # adapter's own config (consistent with how the round-0 LoRA was made).
+            from peft import PeftModel  # type: ignore
+            model = PeftModel.from_pretrained(model, str(adir), is_trainable=True)
+        else:
+            peft_cfg = LoraConfig(
+                r=int(lora.get("r", 16)), lora_alpha=int(lora.get("alpha", 32)),
+                lora_dropout=float(lora.get("dropout", 0.05)), bias="none",
+                task_type="CAUSAL_LM", target_modules=lora.get("target_modules"))
+            model = get_peft_model(model, peft_cfg)
         peft_enabled = True
     return tok, model, peft_enabled
+
+
+def encode_sft_row(tok, r: dict[str, Any], max_len: int, has_chat: bool):
+    """Tokenize one SFT row into {input_ids, attention_mask, labels} with the
+    PROMPT masked to -100 so loss is taken on the RESPONSE only (completion-style
+    SFT). Uses the model's chat template for instruct bases, else "{prompt}\\n{resp}".
+    Returns None for rows with no response or whose response truncated away."""
+    prompt = str(r.get("prompt") or "")
+    resp = str(r.get("response") or r.get("chosen") or r.get("text") or "")
+    if not resp.strip():
+        return None
+    if has_chat and prompt:
+        try:
+            # Render to STRING then tokenize (cross-version safe — tokenize=True can
+            # return an Encoding, not a list, on some transformers builds). The
+            # template already embeds the special tokens, so add_special_tokens=False.
+            p_text = tok.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                add_generation_prompt=True, tokenize=False)
+            f_text = tok.apply_chat_template(
+                [{"role": "user", "content": prompt},
+                 {"role": "assistant", "content": resp}], tokenize=False)
+            p_ids = tok(p_text, add_special_tokens=False)["input_ids"]
+            f_ids = tok(f_text, add_special_tokens=False)["input_ids"]
+        except Exception:  # noqa: BLE001 - bad/absent template → raw fallback
+            pre = f"{prompt}\n"
+            p_ids = tok(pre)["input_ids"]
+            f_ids = tok(pre + resp + (tok.eos_token or ""))["input_ids"]
+    else:
+        pre = f"{prompt}\n" if prompt else ""
+        p_ids = tok(pre)["input_ids"]
+        f_ids = tok(pre + resp + (tok.eos_token or ""))["input_ids"]
+    f_ids = f_ids[:max_len]
+    n_p = min(len(p_ids), len(f_ids))
+    labels = [-100] * n_p + f_ids[n_p:]
+    if all(t == -100 for t in labels):  # response truncated away → no signal
+        return None
+    return {"input_ids": f_ids, "attention_mask": [1] * len(f_ids), "labels": labels}
 
 
 def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
@@ -394,27 +450,27 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
              hp.get("batch_size"), hp.get("grad_accum"),
              hp.get("gradient_checkpointing"))
 
-    tok, model, peft_enabled = _load_tokenizer_and_model(base_model, hp)
+    tok, model, peft_enabled = _load_tokenizer_and_model(
+        base_model, hp, init_adapter=manifest.get("init_adapter"))
 
     rows = list(ds.read_jsonl(train_path))
-
-    def _fmt(r: dict[str, Any]) -> str:
-        if "prompt" in r and "response" in r:
-            return f"{r['prompt']}\n{r['response']}"
-        # distillation datasets carry the teacher output under 'response'/'text'
-        return str(r.get("text", ""))
-
-    texts = [_fmt(r) for r in rows if _fmt(r).strip()]
-    if not texts:
+    max_len = int(hp.get("max_seq_len", 1024))
+    # Build (input_ids, labels) with the PROMPT masked to -100 so the loss is taken
+    # on the RESPONSE only (completion-style SFT). Use the model's chat template for
+    # instruct bases (Qwen-Instruct etc.) so prompts are wrapped exactly as the
+    # model expects; fall back to "{prompt}\n{response}" for raw bases. The old path
+    # (DataCollatorForLanguageModeling over "{prompt}\n{response}") trained on the
+    # prompt tokens too, which diluted the signal and gave weak instruction-following.
+    has_chat = bool(getattr(tok, "chat_template", None))
+    encoded = [e for e in (encode_sft_row(tok, r, max_len, has_chat)
+                           for r in rows) if e is not None]
+    if not encoded:
         raise TrainingError("no usable training rows in train split")
-    # Tokenize WITHOUT padding; the collator pads to the longest row PER BATCH
-    # (dynamic padding) and masks pad tokens out of the loss. Padding every short
-    # row to max_seq_len wasted huge activation memory (a key OOM cause) and made
-    # the model train on pad tokens.
-    enc = tok(texts, truncation=True, max_length=int(hp.get("max_seq_len", 1024)))
-    dset = hf_datasets.Dataset.from_dict(
-        {"input_ids": enc["input_ids"], "attention_mask": enc["attention_mask"]})
-    collator = transformers.DataCollatorForLanguageModeling(tok, mlm=False)
+    warm_started = bool(manifest.get("init_adapter"))
+    dset = hf_datasets.Dataset.from_list(encoded)
+    # Pads input_ids/attention_mask and pads labels with -100 (kept out of loss).
+    collator = transformers.DataCollatorForSeq2Seq(
+        tok, padding=True, label_pad_token_id=-100)
 
     bf16 = profile.get("dtype") == "bfloat16" and profile.get("device") == "cuda"
     fp16 = profile.get("dtype") == "float16" and profile.get("device") == "cuda"
@@ -436,7 +492,10 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     tok.save_pretrained(out_dir)
     rec["metrics"] = {"method": method, "peft": peft_enabled,
                       "train_loss": float(getattr(train_result, "training_loss", 0.0)),
-                      "samples": len(texts),
+                      "samples": len(encoded),
+                      "warm_started": warm_started,
+                      "response_masked": True,
+                      "chat_template": has_chat,
                       "epochs": float(hp.get("epochs", 1)),
                       # what the memory-aware auto-config actually ran with
                       "device": profile.get("device"),

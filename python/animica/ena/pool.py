@@ -171,6 +171,19 @@ def _try_merge_adapters(submitted: list[dict[str, Any]], out: Path,
         return None
     merged_path = out / "adapter_model.safetensors"
     save_file(acc, str(merged_path))
+    # PEFT needs adapter_config.json ALONGSIDE the weights to load the merged
+    # adapter — for both round-to-round warm-start (_training_head_path) and for
+    # serving it (serving.PoolModelRunner._adapter_dir). Copy it from a source
+    # shard whose checkpoint is a real adapter dir (all shards share the same
+    # r/alpha/target_modules/base_model). Without this the merged dir is unusable
+    # and warm-start/serving silently fall back to the bare base model.
+    import shutil
+    for s in submitted:
+        cp = s.get("checkpoint_path")
+        src_cfg = (Path(cp) / "adapter_config.json") if (cp and Path(cp).is_dir()) else None
+        if src_cfg and src_cfg.is_file():
+            shutil.copyfile(src_cfg, out / "adapter_config.json")
+            break
     h = hashlib.sha3_256()
     with merged_path.open("rb") as fh:
         for block in iter(lambda: fh.read(1 << 20), b""):
@@ -410,6 +423,18 @@ class PoolService:
                 shards.append(shard)
             return shards
 
+    def _training_head_path(self, pool: dict[str, Any]) -> Optional[str]:
+        """Adapter dir to WARM-START this round from. The training head is the
+        latest merged adapter and advances every round (pass OR fail), so learning
+        compounds even before the served gate is first crossed. Falls back to the
+        served checkpoint, then to None (round 0 trains from the base model)."""
+        for key in ("training_head", "served_checkpoint"):
+            cp = pool.get(key) or {}
+            p = cp.get("path")
+            if p and Path(p).is_dir() and (Path(p) / "adapter_config.json").is_file():
+                return p
+        return None
+
     def _shard_manifest(self, pool: dict[str, Any],
                         shard: dict[str, Any]) -> dict[str, Any]:
         out_dir = str(self._pool_dir(pool["pool_id"]) / f"round-{shard['round']}" /
@@ -418,6 +443,7 @@ class PoolService:
             "run_name": f"{pool['name']}-r{shard['round']}-s{shard['ordinal']}",
             "backend": "python_transformers", "base_model": pool["base_model"],
             "output_dir": out_dir,
+            "init_adapter": self._training_head_path(pool),
             "train": {"split": "train", "path": shard["path"],
                       "row_count": shard["row_count"], "sha256": shard["sha256"]},
             "hyperparameters": pool["hyperparameters"],
@@ -785,6 +811,14 @@ class PoolService:
             "shards": [s["shard_id"] for s in submitted], "weights": weights,
             "created_at": now_ts(),
         }
+        # Advance the TRAINING HEAD every round (independently of the served gate)
+        # so the next round warm-starts from it and learning compounds. Only a real
+        # merged adapter dir qualifies (not the fallback merge-plan json). Persists
+        # via the upsert_pool on both the promote and reject-and-advance paths.
+        if merged.get("merged"):
+            pool["training_head"] = {
+                "round": rnd, "path": merged["path"],
+                "checkpoint_hash": merged["hash"], "created_at": now_ts()}
 
         gate = pool.get("eval_gate")
         gate_info: dict[str, Any] = {"gated": bool(gate)}
