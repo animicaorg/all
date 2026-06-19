@@ -911,7 +911,11 @@ class PoolService:
                 pass
 
     # -- payout (proportional, role-split) --------------------------------
-    def payout(self, pool_id: str, *, round: Optional[int] = None) -> dict[str, Any]:
+    def payout(self, pool_id: str, *, round: Optional[int] = None,
+               cap_nano: Optional[int] = None,
+               roles: Optional[list[str]] = None) -> dict[str, Any]:
+        # cap_nano: pay AT MOST this many nano per role this call (slow-drip);
+        # roles: restrict payout to these role keys (e.g. ["trainers"]).
         # serialize the whole read-unpaid → allocate → mark-paid sequence so two
         # concurrent payouts can't pay the same contributions twice.
         with self._lock:
@@ -938,9 +942,14 @@ class PoolService:
             paid_ids: list[str] = []
             total_paid = 0
             for role in ROLES:
+                if roles is not None and role not in roles:
+                    continue
                 singular = _ROLE_SINGULAR[role]
                 members = [c for c in contribs if c["role"] == singular]
-                if not members or role_budget.get(role, 0) <= 0:
+                rb = role_budget.get(role, 0)
+                if cap_nano is not None:
+                    rb = min(rb, int(cap_nano))
+                if not members or rb <= 0:
                     continue
                 by_addr: dict[str, float] = {}
                 ids_by_addr: dict[str, list[str]] = {}
@@ -948,7 +957,7 @@ class PoolService:
                     key = c.get("address") or c.get("worker_id") or c["contribution_id"]
                     by_addr[key] = by_addr.get(key, 0.0) + float(c.get("weight", 0))
                     ids_by_addr.setdefault(key, []).append(c["contribution_id"])
-                alloc = _split_proportional(role_budget[role], list(by_addr.items()))
+                alloc = _split_proportional(rb, list(by_addr.items()))
                 for addr, nano in alloc.items():
                     if nano <= 0:
                         continue

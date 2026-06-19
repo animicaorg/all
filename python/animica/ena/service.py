@@ -250,7 +250,8 @@ def _make_handler(facade):
                         min_submitted=body.get("min_submitted")))
                 if path == "/pool/payout":
                     return self._send(200, facade.pool.payout(
-                        body["pool_id"], round=body.get("round")))
+                        body["pool_id"], round=body.get("round"),
+                        cap_nano=body.get("cap_nano"), roles=body.get("roles")))
                 return self._send(404, {"error": "not found", "path": path})
             except KeyError as exc:
                 return self._send(400, {"error": f"missing field: {exc}"})
