@@ -157,13 +157,13 @@ def _detect_memory_profile() -> dict[str, Any]:
                         dtype="bfloat16" if bf16 else "float16")
         elif getattr(getattr(torch, "backends", None), "mps", None) is not None \
                 and torch.backends.mps.is_available():
-            # bitsandbytes 4-bit is CUDA-only; MPS runs unquantized. Use bfloat16,
-            # NOT float16: fp16 on Apple Metal overflows (narrow exponent range),
-            # which spikes/diverges the loss (observed train_loss ~33). bf16 has the
-            # same range as fp32 at half the memory, so it is stable on MPS. free_gb
-            # is *available* RAM (not total) so a loaded host doesn't OOM.
+            # bitsandbytes 4-bit is CUDA-only; MPS runs unquantized. Use FLOAT32:
+            # fp16 overflows on Apple Metal (loss ~33) and bf16 diverged to ALL-NaN
+            # adapters in practice (MPS bf16 kernels). fp32 is the stable choice on
+            # MPS — 2x memory but it actually trains finite weights. free_gb is
+            # *available* RAM (not total) so a loaded host doesn't OOM.
             prof.update(device="mps", free_gb=_system_ram_gb(available=True),
-                        total_gb=_system_ram_gb(), dtype="bfloat16")
+                        total_gb=_system_ram_gb(), dtype="float32")
         else:
             prof.update(device="cpu", free_gb=_system_ram_gb(available=True),
                         total_gb=_system_ram_gb(), dtype="float32")
@@ -492,6 +492,19 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     trainer = transformers.Trainer(model=model, args=args, train_dataset=dset,
                                    data_collator=collator)
     train_result = trainer.train()
+    # NaN GUARD: never submit a diverged adapter. If the loss or any trained
+    # (LoRA) weight is non-finite, FAIL the run so the coordinator gets nothing
+    # rather than NaN poison that would collapse the served checkpoint.
+    import torch as _torch
+    _loss = float(getattr(train_result, "training_loss", 0.0) or 0.0)
+    _loss_bad = _loss != _loss or _loss in (float("inf"), float("-inf"))
+    _weights_bad = any(p.requires_grad and not bool(_torch.isfinite(p).all())
+                       for p in model.parameters())
+    if _loss_bad or _weights_bad:
+        raise TrainingError(
+            f"training diverged to non-finite values (loss_bad={_loss_bad}, "
+            f"weights_bad={_weights_bad}) — adapter NOT submitted",
+            hint="reduce learning_rate; this run hit fp16/bf16 instability")
     trainer.save_model(out_dir)
     tok.save_pretrained(out_dir)
     rec["metrics"] = {"method": method, "peft": peft_enabled,

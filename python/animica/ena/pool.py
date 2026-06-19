@@ -161,13 +161,28 @@ def _try_merge_adapters(submitted: list[dict[str, Any]], out: Path,
             return None
         files[s["shard_id"]] = f
     acc: dict[str, Any] = {}
+    wsum = 0.0
+    used = 0
     for sid, f in files.items():
         w = float(weights.get(sid, 0.0))
         tensors = load_file(str(f))
+        # Skip adapters with NaN/inf weights (diverged training) so a poisoned
+        # shard can't turn the served checkpoint into NaN garbage.
+        if any(not torch.isfinite(v).all() for v in tensors.values()):
+            continue
+        used += 1
+        wsum += w
         for k, v in tensors.items():
             fv = v.float() * w
             acc[k] = fv if k not in acc else acc[k] + fv
-    if not acc:
+    if not acc or used == 0:
+        return None  # nothing finite to merge → caller treats round as unmergeable
+    # Renormalize if some shards were dropped, so the merge isn't scaled down.
+    if wsum > 0 and abs(wsum - 1.0) > 1e-6:
+        for k in acc:
+            acc[k] = acc[k] / wsum
+    # Final guard: never emit a non-finite merged adapter.
+    if any(not torch.isfinite(t).all() for t in acc.values()):
         return None
     merged_path = out / "adapter_model.safetensors"
     save_file(acc, str(merged_path))
@@ -441,6 +456,16 @@ class PoolService:
                 shards.append(self._create_shard(
                     pool, ordinal, target, records, out_dir, mode))
             return shards
+
+    @staticmethod
+    def _shards_have_adapters(submitted: list[dict[str, Any]]) -> bool:
+        """True if any submitted shard uploaded a real LoRA adapter file — i.e. a
+        finite merge was expected (vs a command-backend pool with no weights)."""
+        for s in submitted:
+            cp = s.get("checkpoint_path")
+            if cp and (Path(cp) / "adapter_model.safetensors").is_file():
+                return True
+        return False
 
     def _worker_has_shard(self, pool_id: str, rnd: int, worker_id: str) -> bool:
         return any(
@@ -872,6 +897,22 @@ class PoolService:
             pool["training_head"] = {
                 "round": rnd, "path": merged["path"],
                 "checkpoint_hash": merged["hash"], "created_at": now_ts()}
+
+        # HARD GUARD: if real adapter weights were uploaded but the merge couldn't
+        # produce a FINITE adapter (every shard diverged to NaN/inf), there is
+        # nothing safe to serve — never promote NaN garbage even though the gate
+        # "passed" on a stale/self-reported score. (Command-backend pools have no
+        # adapter files and legitimately use the merge-plan fallback, so only guard
+        # when adapters were actually present.)
+        if not merged.get("merged") and self._shards_have_adapters(submitted):
+            info = {"gated": bool(pool.get("eval_gate")),
+                    "reason": "no_finite_merged_adapter"}
+            if auto:
+                return self._reject_and_advance(pool, pool_id, rnd, candidate, info,
+                                                eval_score, trainer_topics)
+            return {"pool_id": pool_id, "round": rnd, "promoted": False,
+                    "reason": "no_finite_merged_adapter", "candidate": candidate,
+                    "gate": info}
 
         gate = pool.get("eval_gate")
         gate_info: dict[str, Any] = {"gated": bool(gate)}

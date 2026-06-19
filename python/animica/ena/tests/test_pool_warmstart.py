@@ -134,6 +134,52 @@ def test_split_mode_exhausts_no_dynamic_growth(ena, tmp_path):
     assert len(ena.store.list_shards(pid, round=pp["round"])) == 2
 
 
+def test_nan_adapter_is_never_served(ena, tmp_path):
+    # A diverged (all-NaN) uploaded adapter must NOT be promoted/served, even if
+    # the (stale/self-reported) eval score would pass the gate.
+    import torch
+    from safetensors.torch import save_file
+    data = _write_dataset(tmp_path / "d.jsonl")
+    p = ena.pool.create("tiny", data, name="nan", num_shards=1, auto_promote=False,
+                        eval_gate={"metric": "match_rate", "min_score": 0.0})
+    pid = p["pool_id"]
+    s = ena.pool.claim_shard(pid, worker_id="t")
+    ck = tmp_path / "nan_ckpt"
+    ck.mkdir()
+    save_file({"lora_A.weight": torch.full((8, 8), float("nan"))},
+              str(ck / "adapter_model.safetensors"))
+    (ck / "adapter_config.json").write_text('{"r": 16}')
+    ena.pool.submit_shard(pid, s["shard_id"], worker_id="t", run_id="r1",
+                          checkpoint_path=str(ck),
+                          metrics={"samples": 5, "eval_match_rate": 0.99})
+    res = ena.pool.aggregate(pid, eval_score=0.99)   # high score, but NaN weights
+    assert res["promoted"] is False
+    assert res["reason"] == "no_finite_merged_adapter"
+    assert ena.pool.get(pid).get("served_checkpoint") is None   # garbage never served
+
+
+def test_finite_adapter_still_serves(ena, tmp_path):
+    # control: a finite adapter promotes normally (the guard is not over-broad).
+    import torch
+    from safetensors.torch import save_file
+    data = _write_dataset(tmp_path / "d.jsonl")
+    p = ena.pool.create("tiny", data, name="ok", num_shards=1, auto_promote=False,
+                        eval_gate={"metric": "match_rate", "min_score": 0.0})
+    pid = p["pool_id"]
+    s = ena.pool.claim_shard(pid, worker_id="t")
+    ck = tmp_path / "ok_ckpt"
+    ck.mkdir()
+    save_file({"lora_A.weight": torch.ones(8, 8)},
+              str(ck / "adapter_model.safetensors"))
+    (ck / "adapter_config.json").write_text('{"r": 16}')
+    ena.pool.submit_shard(pid, s["shard_id"], worker_id="t", run_id="r1",
+                          checkpoint_path=str(ck),
+                          metrics={"samples": 5, "eval_match_rate": 0.5})
+    res = ena.pool.aggregate(pid, eval_score=0.5)
+    assert res["promoted"] is True
+    assert ena.pool.get(pid)["served_checkpoint"]["round"] == 1
+
+
 def test_head_advances_on_reject_then_promote(ena, tmp_path, monkeypatch):
     monkeypatch.setattr(poolmod, "merge_checkpoints", _fake_merge_factory())
     data = _write_dataset(tmp_path / "d.jsonl")
