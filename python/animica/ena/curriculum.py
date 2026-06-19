@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -174,6 +175,31 @@ def loose_hit(gold: str, out: str, *, min_recall: float = 0.5) -> bool:
     return overlap >= min_recall
 
 
+_SEMANTIC_MODEL = "__unset__"
+
+
+def _semantic_model():
+    """Lazily load a sentence-transformers model for semantic eval (cached).
+    Returns None when sentence-transformers isn't installed (base install / no
+    [gpu] extra) so the caller falls back to the lexical metric."""
+    global _SEMANTIC_MODEL
+    if _SEMANTIC_MODEL == "__unset__":
+        name = os.environ.get("ANIMICA_ENA_EVAL_EMBED_MODEL",
+                              "sentence-transformers/all-MiniLM-L6-v2")
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+            _SEMANTIC_MODEL = SentenceTransformer(name)
+        except Exception:  # noqa: BLE001 - no embeddings available → lexical only
+            _SEMANTIC_MODEL = None
+    return _SEMANTIC_MODEL
+
+
+def semantic_similarity(model, a: str, b: str) -> float:
+    """Cosine similarity of two strings' embeddings (normalized → dot product)."""
+    embs = model.encode([a or "", b or ""], normalize_embeddings=True)
+    return float(sum(x * y for x, y in zip(embs[0], embs[1])))
+
+
 def evaluate_detailed(generate, eval_rows: list[dict], topics: list[str], *,
                       max_rows: int = 100) -> dict[str, Any]:
     """Run ``generate(prompt) -> str`` over the eval rows, loose-match each
@@ -187,6 +213,10 @@ def evaluate_detailed(generate, eval_rows: list[dict], topics: list[str], *,
     per: dict[str, list[int]] = {t: [0, 0] for t in topic_tokens}  # [matched, total]
     total = matched = 0
     failures: list[dict] = []
+    # Semantic scorer (credits CORRECT answers phrased in different words — a
+    # lexical token-overlap can't). Loaded once; None → lexical-only fallback.
+    sem = _semantic_model()
+    sem_threshold = float(os.environ.get("ANIMICA_ENA_EVAL_SEMANTIC_THRESHOLD", "0.55"))
     for r in (eval_rows or [])[:max_rows]:
         prompt = str(r.get("prompt") or r.get("text") or "")
         if not prompt:
@@ -206,7 +236,14 @@ def evaluate_detailed(generate, eval_rows: list[dict], topics: list[str], *,
             ok = bool(got and got[0] and (
                 got[0] == want[0] or got[0] in _KNOWN_TOOL_NAMES))
         else:
+            # Lexical first (fast, exact); else semantic similarity for correct
+            # paraphrases. Both guard against an empty/degenerate generation.
             ok = loose_hit(gold, out)
+            if not ok and sem is not None and out.strip():
+                try:
+                    ok = semantic_similarity(sem, gold, out) >= sem_threshold
+                except Exception:  # noqa: BLE001 - bad embed → keep lexical verdict
+                    pass
         if ok:
             matched += 1
         elif len(failures) < 50:
