@@ -1,0 +1,13 @@
+{
+  "name": "{{slug}}",
+  "version": "0.1.0",
+  "private": true,
+  "description": "{{name}} — an Express.js HTTP API.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

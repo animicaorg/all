@@ -1,0 +1,10 @@
+# Animica Studio Qt — runtime dependencies.
+# NOTE: git operations use subprocess; GitPython is intentionally NOT a dependency.
+PySide6>=6.6
+httpx>=0.27
+pygments>=2.17
+markdown>=3.5
+
+# Optional: async SQLite. The default Database uses stdlib sqlite3 and does not
+# require this. Uncomment to enable aiosqlite-backed helpers.
+# aiosqlite>=0.20

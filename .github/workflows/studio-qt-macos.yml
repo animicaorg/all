@@ -1,0 +1,79 @@
+name: Studio Qt — macOS build
+
+# Builds the Animica Studio Qt desktop agentic IDE on a native macOS runner.
+# PyInstaller cannot cross-compile, so the macOS artifact MUST be produced here
+# (a Linux box can only build the Linux .deb / source zip).
+#
+# Produces, as a workflow artifact:
+#   animica-studio-qt-macos.zip          (the bundled app)
+#   animica-studio-qt-macos.sha256       (its SHA-256, matching the download page)
+#
+# Trigger manually (Actions → Run workflow) or by pushing a `studio-qt-v*` tag.
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "studio-qt-v*"
+    paths:
+      - "animica-studio-qt/**"
+      - ".github/workflows/studio-qt-macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: Build (macOS, universal-ish)
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: animica-studio-qt
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: animica-studio-qt/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run tests (headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          pip install pytest
+          python -m pytest -q
+
+      - name: Build app bundle (PyInstaller)
+        run: pyinstaller --noconfirm --clean AnimicaStudioQt.spec
+
+      - name: Package + checksum
+        run: |
+          cd dist
+          # Zip the bundled onedir app. ditto preserves macOS metadata/symlinks.
+          ditto -c -k --sequesterRsrc --keepParent AnimicaStudioQt ../animica-studio-qt-macos.zip
+          cd ..
+          shasum -a 256 animica-studio-qt-macos.zip | tee animica-studio-qt-macos.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: animica-studio-qt-macos
+          path: |
+            animica-studio-qt/animica-studio-qt-macos.zip
+            animica-studio-qt/animica-studio-qt-macos.sha256
+          if-no-files-found: error
+
+      # To publish to the live site, download the artifact and copy
+      # animica-studio-qt-macos.zip + .sha256 into /var/www/animica.org/studio/
+      # (atomically, both together), or wire an SSH deploy step using a
+      # repo/environment secret. Codesigning + notarization can be added with
+      # an Apple Developer ID (see installers/ci/github/wallet-macos.yml).

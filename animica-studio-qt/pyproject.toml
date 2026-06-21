@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "animica-studio-qt"
+version = "0.1.0"
+description = "Animica Studio Qt — a polished PySide6 desktop agentic coding IDE powered by Animica inference."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Animica", email = "dev@animica.org" }]
+keywords = ["animica", "ide", "agent", "ai", "coding", "pyside6", "llm"]
+dependencies = [
+    "PySide6>=6.6",
+    "httpx>=0.27",
+    "pygments>=2.17",
+    "markdown>=3.5",
+]
+
+[project.optional-dependencies]
+async-db = ["aiosqlite>=0.20"]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://animica.org"
+Pool = "https://pool.animica.org"
+Chat = "https://chat.animica.org"
+Train = "https://train.animica.org"
+
+[project.gui-scripts]
+animica-studio = "animica_studio.app:main"
+
+[tool.setuptools]
+packages = [
+    "animica_studio",
+    "animica_studio.ui",
+    "animica_studio.agent",
+    "animica_studio.services",
+]
+
+[tool.setuptools.package-data]
+animica_studio = ["assets/*.qss"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

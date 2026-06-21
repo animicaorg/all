@@ -1,0 +1,84 @@
+name: Studio Qt — Windows build
+
+# Builds the Animica Studio Qt desktop agentic IDE on a native Windows runner
+# and wraps it in an Inno Setup installer. PyInstaller cannot cross-compile, so
+# the Windows artifact MUST be produced here (not on a Linux host; building under
+# Wine is unreliable for PySide6 and is not used for releases).
+#
+# Produces, as a workflow artifact:
+#   animica-studio-qt-windows-x64-setup.exe   (the installer)
+#   animica-studio-qt-windows.sha256          (its SHA-256, matching the page)
+#
+# Trigger manually (Actions → Run workflow) or by pushing a `studio-qt-v*` tag.
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "studio-qt-v*"
+    paths:
+      - "animica-studio-qt/**"
+      - ".github/workflows/studio-qt-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build (Windows x64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: animica-studio-qt
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: animica-studio-qt/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pytest
+
+      - name: Run tests (headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+
+      - name: Build app (PyInstaller)
+        run: pyinstaller --noconfirm --clean AnimicaStudioQt.spec
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $exe = "animica-studio-qt-windows-x64-setup.exe"
+          (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower() + "  " + $exe |
+            Out-File -Encoding ascii -NoNewline animica-studio-qt-windows.sha256
+          Get-Content animica-studio-qt-windows.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: animica-studio-qt-windows
+          path: |
+            animica-studio-qt/animica-studio-qt-windows-x64-setup.exe
+            animica-studio-qt/animica-studio-qt-windows.sha256
+          if-no-files-found: error
+
+      # To publish: download the artifact and copy the .exe + .sha256 into
+      # /var/www/animica.org/studio/ (both together). Authenticode signing can be
+      # added with a code-signing cert (see installers/ci/github/wallet-windows.yml).

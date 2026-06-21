@@ -1,0 +1,27 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #050811;
+  color: #e6f1ff;
+}
+
+.app {
+  max-width: 640px;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+  text-align: center;
+}
+
+button {
+  background: #16d9c3;
+  color: #04060f;
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem 1.2rem;
+  font-size: 1rem;
+  cursor: pointer;
+}

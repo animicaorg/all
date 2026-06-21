@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{name}} — Miner Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>{{name}}</h1>
+      <p class="sub">Live Animica pool mining status</p>
+    </header>
+
+    <main class="grid">
+      <section class="stat"><h2>Network hashrate</h2><div id="hashrate">—</div></section>
+      <section class="stat"><h2>Active miners</h2><div id="miners">—</div></section>
+      <section class="stat"><h2>Pool height</h2><div id="height">—</div></section>
+      <section class="stat"><h2>Last block</h2><div id="block">—</div></section>
+    </main>
+
+    <p id="status" class="status">Loading…</p>
+    <footer>Powered by <a href="https://pool.animica.org">pool.animica.org</a></footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
