@@ -7,14 +7,14 @@
     "source": "github",
     "subfolder": "animica-mcp"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "websiteUrl": "https://animica.org/developers",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "animica-mcp",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "transport": { "type": "stdio" },
       "environmentVariables": [
         {

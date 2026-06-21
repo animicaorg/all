@@ -1,6 +1,7 @@
 {
   "name": "animica-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "mcpName": "io.github.animicaorg/animica",
   "description": "Animica MCP server — lets AI agents (Claude, Cursor, Windsurf, custom) discover and use Animica's OpenAI-compatible AI inference, code generation, embeddings, and agent tools.",
   "type": "module",
   "license": "MIT",
