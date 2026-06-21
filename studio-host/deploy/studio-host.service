@@ -1,0 +1,17 @@
+[Unit]
+Description=Animica Studio host — per-user session broker (noVNC + auth)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/animica/studio-host
+# go-live.sh rewrites ExecStart with the detected absolute node path.
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+# Secrets (SMTP_*, NOWPAYMENTS_*, ANM_*) + PORT load from studio-host/.env
+
+[Install]
+WantedBy=multi-user.target

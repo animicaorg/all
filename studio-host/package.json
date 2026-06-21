@@ -1,0 +1,21 @@
+{
+  "name": "animica-studio-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Session broker that hosts the Animica Studio Qt desktop app per-user, each in an isolated Docker container, streamed to the browser via noVNC. Auth: wallet / email+password / email magic-link / anonymous.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie": "^0.6.0",
+    "express": "^4.21.0",
+    "http-proxy": "^1.18.1",
+    "nanoid": "^5.0.7",
+    "nodemailer": "^6.9.15"
+  },
+  "engines": { "node": ">=20" }
+}

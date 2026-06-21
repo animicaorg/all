@@ -1,0 +1,27 @@
+# Smithery (https://smithery.ai) — one-click MCP install for agents/IDEs.
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      animicaApiKey:
+        type: string
+        title: Animica API Key
+        description: "Optional. Without it, a free trial key is auto-provisioned on first use. Get one at https://pool.animica.org"
+      model:
+        type: string
+        default: anm-fast-8b
+        description: Default chat model
+    required: []
+  commandFunction: |
+    (config) => ({
+      command: 'node',
+      args: ['dist/server.js'],
+      env: {
+        ...(config.animicaApiKey ? { ANIMICA_API_KEY: config.animicaApiKey } : {}),
+        ...(config.model ? { ANIMICA_MODEL: config.model } : {})
+      }
+    })
+  exampleConfig:
+    animicaApiKey: anm_live_xxxxxxxxxxxxxxxx
+    model: anm-fast-8b

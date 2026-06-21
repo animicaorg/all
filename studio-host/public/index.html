@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d12" />
+<meta name="description" content="Animica Studio — the agentic coding IDE, hosted in your browser. Sign in to launch your private Studio session." />
+<title>Animica Studio — Sign in</title>
+<link rel="icon" href="https://animica.org/favicon.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{ --bg:#0b0d12; --card:#141925; --card2:#171d2b; --border:#232c3e; --text:#e7edf6;
+    --muted:#9aa6bb; --muted2:#6f7c92; --accent:#7c8cff; --accent2:#22d3ee; --err:#fb7185; --ok:#34d399; }
+  *{box-sizing:border-box} html{-webkit-text-size-adjust:100%}
+  body{margin:0;min-height:100dvh;display:grid;place-items:center;padding:20px;color:var(--text);
+    font-family:"Space Grotesk",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:radial-gradient(1000px 500px at 80% -10%,rgba(124,140,255,.18),transparent 60%),
+      radial-gradient(760px 380px at -6% 10%,rgba(34,211,238,.10),transparent 55%),var(--bg)}
+  a{color:var(--accent2);text-decoration:none}
+  .card{width:100%;max-width:420px;border:1px solid var(--border);border-radius:18px;
+    background:linear-gradient(180deg,var(--card),var(--card2));padding:clamp(22px,5vw,32px);
+    box-shadow:0 24px 70px rgba(0,0,0,.45)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;margin-bottom:6px}
+  .brand .dot{width:24px;height:24px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 22px rgba(124,140,255,.6)}
+  h1{font-size:clamp(22px,5vw,27px);margin:14px 0 4px;letter-spacing:-.3px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 20px}
+  label{display:block;font-size:12.5px;color:var(--muted);margin:14px 0 6px;font-weight:600}
+  input{width:100%;padding:13px 14px;border-radius:11px;border:1px solid var(--border);background:#0e1320;
+    color:var(--text);font-size:15px;font-family:inherit;outline:none}
+  input:focus{border-color:var(--accent)}
+  .btn{width:100%;margin-top:16px;padding:13px;border-radius:11px;border:1px solid transparent;cursor:pointer;
+    font-weight:600;font-size:15px;font-family:inherit;transition:transform .1s,box-shadow .15s,opacity .15s}
+  .btn:active{transform:translateY(1px)}
+  .btn-primary{background:linear-gradient(120deg,var(--accent),#5b6cf0);color:#0a0c12;box-shadow:0 8px 26px rgba(124,140,255,.34)}
+  .btn-ghost{background:transparent;border-color:var(--border);color:var(--text)}
+  .btn-ghost:hover{border-color:var(--accent)}
+  .btn[disabled]{opacity:.45;cursor:not-allowed}
+  .row{display:flex;gap:10px} .row .btn{flex:1}
+  .sep{display:flex;align-items:center;gap:12px;color:var(--muted2);font-size:12px;margin:18px 0}
+  .sep::before,.sep::after{content:"";height:1px;background:var(--border);flex:1}
+  .toggle{margin-top:16px;text-align:center;font-size:13.5px;color:var(--muted)}
+  .toggle a{cursor:pointer}
+  .msg{margin-top:14px;font-size:13.5px;padding:10px 12px;border-radius:10px;display:none}
+  .msg.err{display:block;background:rgba(251,113,133,.1);border:1px solid rgba(251,113,133,.3);color:#fda4af}
+  .msg.ok{display:block;background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);color:#6ee7b7}
+  .foot{margin-top:20px;text-align:center;font-size:12px;color:var(--muted2)}
+  .pill{display:inline-block;font-size:11px;color:var(--accent2);border:1px solid var(--border);border-radius:999px;padding:2px 9px;margin-left:8px}
+  .hide{display:none}
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><span class="dot"></span> Animica Studio</div>
+    <h1 id="title">Sign in to your Studio</h1>
+    <p class="sub">Launch the agentic coding IDE in your browser — your own private, sandboxed session.</p>
+
+    <form id="form" autocomplete="on">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" required />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="8+ characters" required />
+      <div id="twofa-row" class="hide">
+        <label for="code">Authenticator code</label>
+        <input id="code" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6-digit code" />
+      </div>
+      <button class="btn btn-primary" id="submit" type="submit">Log in</button>
+    </form>
+
+    <div class="toggle">
+      <span id="toggle-text">New here?</span> <a id="toggle">Create an account</a>
+    </div>
+
+    <div id="alt">
+      <div class="sep">or</div>
+      <button class="btn btn-ghost" id="magic-btn">Email me a sign-in link</button>
+    </div>
+
+    <div class="msg" id="msg"></div>
+    <div class="foot">Sandboxed &amp; isolated per session · <a href="https://animica.org/studio/">desktop downloads</a></div>
+  </main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const msg = (text, kind='err') => { const m=$('msg'); m.textContent=text; m.className='msg '+kind; };
+  let mode = 'login';
+
+  async function post(url, body){
+    const r = await fetch(url, { method:'POST', headers:{'content-type':'application/json'}, body: body?JSON.stringify(body):undefined });
+    let data={}; try{ data=await r.json(); }catch{}
+    if(!r.ok) throw new Error(data.error || 'Something went wrong.');
+    return data;
+  }
+  function busy(b){ $('submit').disabled=b; $('submit').textContent = b ? 'Please wait…' : (mode==='login'?'Log in':'Create account'); }
+
+  // Adapt to available methods.
+  fetch('/api/me').then(r=>r.json()).then(me=>{
+    if(me.authed){ location.href='/app/vnc.html?autoconnect=true&resize=remote&reconnect=true&path=app/websockify'; return; }
+    if(!me.methods.magic) $('magic-btn').classList.add('hide');
+  }).catch(()=>{});
+
+  $('toggle').onclick = () => {
+    mode = mode==='login' ? 'signup' : 'login';
+    $('title').textContent = mode==='login' ? 'Sign in to your Studio' : 'Create your Studio account';
+    $('submit').textContent = mode==='login' ? 'Log in' : 'Create account';
+    $('password').autocomplete = mode==='login' ? 'current-password' : 'new-password';
+    $('toggle-text').textContent = mode==='login' ? 'New here?' : 'Already have an account?';
+    $('toggle').textContent = mode==='login' ? 'Create an account' : 'Log in instead';
+    msg('', 'ok'); $('msg').className='msg';
+  };
+
+  $('form').onsubmit = async (e) => {
+    e.preventDefault(); busy(true);
+    const url = mode==='login' ? '/api/login' : '/api/signup';
+    const body = { email: $('email').value.trim(), password: $('password').value };
+    const codeEl = $('code'); if(codeEl && codeEl.value.trim()) body.code = codeEl.value.trim();
+    try{
+      const r = await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+      const data = await r.json().catch(()=>({}));
+      if(r.ok){ location.href = data.redirect; return; }
+      if(data.twofa){ $('twofa-row').classList.remove('hide'); $('code').focus(); msg(data.error,'ok'); busy(false); return; }
+      throw new Error(data.error || 'Something went wrong.');
+    }catch(err){ msg(err.message); busy(false); }
+  };
+
+  $('magic-btn').onclick = async () => {
+    const email = $('email').value.trim();
+    if(!email){ msg('Enter your email first, then tap the link button.'); return; }
+    try{ await post('/api/magic/request', { email }); msg('Check your inbox for a sign-in link.','ok'); }
+    catch(err){ msg(err.message); }
+  };
+</script>
+</body>
+</html>

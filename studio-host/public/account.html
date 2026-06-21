@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d12" />
+<title>Animica Studio — Account</title>
+<link rel="icon" href="https://animica.org/favicon.ico" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{--bg:#0b0d12;--card:#141925;--card2:#171d2b;--border:#232c3e;--text:#e7edf6;--muted:#9aa6bb;--muted2:#6f7c92;--accent:#7c8cff;--accent2:#22d3ee;--ok:#34d399}
+  *{box-sizing:border-box} body{margin:0;min-height:100dvh;color:var(--text);padding:20px;
+    font-family:"Space Grotesk",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:radial-gradient(1000px 500px at 80% -10%,rgba(124,140,255,.16),transparent 60%),var(--bg)}
+  .wrap{max-width:560px;margin:0 auto}
+  a{color:var(--accent2);text-decoration:none}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:22px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700}
+  .brand .dot{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+  .top .links{display:flex;gap:10px}
+  .card{border:1px solid var(--border);border-radius:16px;background:linear-gradient(180deg,var(--card),var(--card2));padding:22px;margin-bottom:16px}
+  h2{margin:0 0 4px;font-size:18px} .desc{margin:0 0 16px;color:var(--muted);font-size:14px}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 18px;border-radius:10px;border:1px solid transparent;cursor:pointer;font-weight:600;font-size:14px;font-family:inherit;transition:transform .1s}
+  .btn:active{transform:translateY(1px)}
+  .btn-primary{background:linear-gradient(120deg,var(--accent),#5b6cf0);color:#0a0c12}
+  .btn-ghost{background:transparent;border-color:var(--border);color:var(--text)} .btn-ghost:hover{border-color:var(--accent)}
+  .btn[disabled]{opacity:.5;cursor:not-allowed}
+  input{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--border);background:#0e1320;color:var(--text);font-size:15px;font-family:inherit;margin-top:10px}
+  .badge{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;border:1px solid var(--border)}
+  .badge.pro{color:#0a0c12;background:linear-gradient(120deg,var(--accent),var(--accent2))}
+  .badge.on{color:var(--ok);border-color:rgba(52,211,153,.4)}
+  .secret{font-family:"IBM Plex Mono",monospace;background:#0e1320;border:1px dashed var(--border);border-radius:8px;padding:10px;margin-top:12px;word-break:break-all;font-size:13px}
+  .msg{margin-top:12px;font-size:13.5px;color:var(--muted)} .hide{display:none}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <span class="brand"><span class="dot"></span> Animica Studio</span>
+    <div class="links">
+      <a class="btn btn-primary" href="/app/vnc.html?autoconnect=true&resize=remote&reconnect=true&path=app/websockify">Open Studio</a>
+      <button class="btn btn-ghost" id="logout">Log out</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Subscription <span id="plan-badge" class="badge">…</span></h2>
+    <p class="desc" id="plan-desc">Loading…</p>
+    <button class="btn btn-primary hide" id="upgrade">Upgrade — pay with crypto</button>
+    <div class="msg" id="bill-msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Two-factor authentication <span id="tfa-badge" class="badge">…</span></h2>
+    <p class="desc">Protect your account with an authenticator app (Google Authenticator, Authy, 1Password…).</p>
+
+    <div id="tfa-off">
+      <button class="btn btn-ghost" id="tfa-setup">Set up authenticator</button>
+      <div id="tfa-setup-box" class="hide">
+        <div class="desc" style="margin-top:14px">Add this secret to your authenticator app (or open the link on your phone), then enter a code to confirm.</div>
+        <div class="secret" id="tfa-secret"></div>
+        <a id="tfa-link" class="msg" href="#">➕ Add to authenticator app</a>
+        <input id="tfa-code" inputmode="numeric" maxlength="6" placeholder="6-digit code" />
+        <div class="row"><button class="btn btn-primary" id="tfa-enable">Enable 2FA</button></div>
+      </div>
+    </div>
+
+    <div id="tfa-on" class="hide">
+      <p class="desc">Two-factor is <b>on</b>. You'll need a code at every login.</p>
+      <input id="tfa-pw" type="password" placeholder="Your password" />
+      <div class="row"><button class="btn btn-ghost" id="tfa-disable">Turn off 2FA</button></div>
+    </div>
+    <div class="msg" id="tfa-msg"></div>
+  </div>
+</div>
+
+<script>
+  const $=(id)=>document.getElementById(id);
+  const post=async(u,b)=>{const r=await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:b?JSON.stringify(b):undefined});let d={};try{d=await r.json()}catch{}; if(!r.ok)throw new Error(d.error||'Error'); return d;};
+
+  async function refresh(){
+    const me=await fetch('/api/me').then(r=>r.json());
+    if(!me.authed){ location.href='/'; return; }
+    // subscription
+    const pro = me.plan==='pro';
+    $('plan-badge').textContent = pro?'PRO':'FREE'; $('plan-badge').className='badge'+(pro?' pro':'');
+    $('plan-desc').textContent = pro
+      ? ('Pro — persistent workspace & longer sessions' + (me.planUntil?` · renews/expires ${new Date(me.planUntil).toLocaleDateString()}`:''))
+      : `Free plan. Upgrade for a persistent workspace and longer sessions — $${me.billing.priceUsd}/mo, paid in crypto.`;
+    if(!pro && me.billing.nowpayments) $('upgrade').classList.remove('hide'); else $('upgrade').classList.add('hide');
+    // 2FA
+    $('tfa-badge').textContent = me.twofa?'ON':'OFF'; $('tfa-badge').className='badge'+(me.twofa?' on':'');
+    $('tfa-off').classList.toggle('hide', me.twofa); $('tfa-on').classList.toggle('hide', !me.twofa);
+  }
+
+  $('logout').onclick=async()=>{ await post('/api/logout'); location.href='/'; };
+  $('upgrade').onclick=async()=>{ $('bill-msg').textContent='Opening checkout…'; try{ const d=await post('/api/billing/nowpayments/create'); location.href=d.url; }catch(e){ $('bill-msg').textContent=e.message; } };
+
+  $('tfa-setup').onclick=async()=>{ try{ const d=await post('/api/2fa/setup'); $('tfa-secret').textContent=d.secret; $('tfa-link').href=d.otpauth; $('tfa-setup-box').classList.remove('hide'); }catch(e){ $('tfa-msg').textContent=e.message; } };
+  $('tfa-enable')&&($('tfa-enable').onclick=async()=>{ try{ await post('/api/2fa/enable',{code:$('tfa-code').value.trim()}); $('tfa-msg').textContent='Two-factor enabled.'; refresh(); }catch(e){ $('tfa-msg').textContent=e.message; } });
+  $('tfa-disable')&&($('tfa-disable').onclick=async()=>{ try{ await post('/api/2fa/disable',{password:$('tfa-pw').value}); $('tfa-msg').textContent='Two-factor disabled.'; refresh(); }catch(e){ $('tfa-msg').textContent=e.message; } });
+
+  refresh().catch(()=>{ location.href='/'; });
+</script>
+</body>
+</html>

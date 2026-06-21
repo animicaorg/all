@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.animicaorg/animica",
+  "description": "Animica — cheap OpenAI-compatible AI inference, code generation, embeddings, and agent runs for bots and agents. Also lets compute owners earn ANM by powering the network.",
+  "repository": {
+    "url": "https://github.com/animicaorg/all",
+    "source": "github",
+    "subfolder": "animica-mcp"
+  },
+  "version": "0.1.0",
+  "websiteUrl": "https://animica.org/developers",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "animica-mcp",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "ANIMICA_API_KEY",
+          "description": "Animica API key (anm_live_...). Optional — without it the server auto-provisions a free trial key on first use. Get one at https://pool.animica.org",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.animica.org/mcp"
+    }
+  ]
+}

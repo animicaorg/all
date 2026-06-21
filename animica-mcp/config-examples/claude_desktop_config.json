@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "animica": {
+      "command": "npx",
+      "args": ["-y", "animica-mcp"],
+      "env": {
+        "ANIMICA_API_KEY": "anm_live_your_key_here"
+      }
+    }
+  }
+}
