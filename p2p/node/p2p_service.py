@@ -5182,6 +5182,21 @@ class P2PService:
     ) -> None:
         if not self._peers:
             return
+        # At the tip => not a stall. When no sync target is set (no peer is
+        # strictly ahead of our head — see _select_sync_target_tip's
+        # heaviest-chain guard), "head not advancing" just means we're waiting
+        # for the next block, not that sync is stuck. Escalating watchdog
+        # recovery here spins forever on a node that is correctly at the tip of
+        # the heaviest chain it can see (e.g. after its DB was restored above
+        # the network's diverged fork) and churns sync state every cycle, which
+        # blocks normal block production. Treat it as progress and stand down.
+        if getattr(self, "_sync_target_tip", None) is None:
+            self._sync_watchdog_last_height = head_height
+            self._sync_watchdog_last_hash = head_hash
+            self._sync_watchdog_last_progress_at = now
+            self._sync_watchdog_last_action_at = 0.0
+            self._sync_watchdog_attempts = 0
+            return
         if head_height > self._sync_watchdog_last_height or (
             head_hash and head_hash != self._sync_watchdog_last_hash
         ):
@@ -5975,6 +5990,20 @@ class P2PService:
             if cand_score > best_score:
                 best = candidate
                 continue
+        # Heaviest-chain guard: a sync target must be strictly AHEAD of our own
+        # head. A peer on a shorter/lighter fork — e.g. after this node's chain
+        # was restored to a height ABOVE the network's diverged fork — must never
+        # become a sync target. Otherwise the sync driver loops forever on
+        # "Sync target hash mismatch" trying to reorg backward to a lighter
+        # chain, freezing the head (the exact "chain reset" stall). Such a peer
+        # should reorg up to us; the bulk sync driver only ever pulls us forward.
+        if best is not None:
+            try:
+                local_height, _ = self._local_head()
+                if local_height is not None and int(best.height) <= int(local_height):
+                    return None
+            except Exception:
+                pass
         return best
 
     def _update_sync_target_tip(self, now: float) -> Optional[_SyncTargetTip]:
@@ -12599,6 +12628,22 @@ class P2PService:
                     self._sync_last_queue_depth = current_queue_depth
                 best_peer, best_peer_height, best_peer_hash = self._best_peer_head()
                 target_tip = self._update_sync_target_tip(now)
+                # At-tip => SYNCED. When no target is ahead of us (the
+                # heaviest-chain guard in _select_sync_target_tip cleared it)
+                # and there's no pending block work, we are at the tip of the
+                # best chain we can see. Declare SYNCED so the miner/template
+                # path runs and block production resumes — otherwise a node
+                # whose only peers are behind/foreign (e.g. after its DB was
+                # restored above the network's diverged fork) stays pinned in
+                # HEADERS forever and never produces a block.
+                if (
+                    target_tip is None
+                    and best_block_height > 0
+                    and not self._sync_block_queue
+                    and not self._sync_inflight_blocks
+                    and self._sync_phase not in ("SYNCED", "IDLE")
+                ):
+                    self._sync_phase = "SYNCED"
                 log.debug(
                     "Sync loop tick",
                     extra={

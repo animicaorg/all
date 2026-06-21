@@ -463,6 +463,18 @@ def main() -> None:
         cfg.port,
         extra={"host": cfg.host, "port": cfg.port, "ping": "node.ping"},
     )
+
+    # Optional node auto-updater (off unless ANIMICA_AUTOUPDATE is set). Keeps a
+    # node on the latest published release so fixes (e.g. the chain-reset
+    # self-heal) propagate as operators' nodes pick them up. Guarded so it is
+    # harmless when the module isn't present in an older installed package.
+    try:
+        from animica.autoupdate import start as _start_autoupdate
+
+        _start_autoupdate()
+    except Exception as exc:  # never block node boot on the updater
+        log.debug("autoupdate not started: %s", exc)
+
     uvicorn.run(
         app,
         host=cfg.host,

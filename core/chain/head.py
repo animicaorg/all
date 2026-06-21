@@ -401,7 +401,7 @@ def finalize_genesis_if_needed(
         genesis_sha256 = identity.genesis_file_hash
     except Exception:
         genesis_sha256 = None
-    return finalize_genesis(
+    head = finalize_genesis(
         block_db,
         params,
         header,
@@ -409,3 +409,28 @@ def finalize_genesis_if_needed(
         genesis_path=str(genesis_path) if genesis_path else None,
         created_at=int(time.time()),
     )
+    # Self-heal canonical_height -> head height (idempotent, runs once at boot).
+    # canonical_height is a running counter; on a head rollback, or after
+    # restoring/importing a chain DB, it can drift ABOVE or BELOW the real head.
+    # When it does, the node believes it is MINER_TOO_FAR_BEHIND and refuses to
+    # mine / chases phantom blocks — the recurring "chain reset" symptom. The
+    # manual /root/fix_canonical.py only handled the inflated (above) case;
+    # reconciling here on every boot makes nodes auto-recover after updating.
+    try:
+        head_h = int(head[0])
+        get_c = getattr(block_db, "get_canonical_height", None)
+        set_c = getattr(block_db, "set_canonical_height", None)
+        if callable(get_c) and callable(set_c):
+            canon = get_c()
+            if canon is None or int(canon) != head_h:
+                set_c(head_h)
+                kv = getattr(block_db, "kv", None)
+                commit = getattr(kv, "commit", None)
+                if callable(commit):
+                    try:
+                        commit()
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return head
