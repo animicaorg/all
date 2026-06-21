@@ -14,11 +14,12 @@ import { ProvidersModule } from "./providers/providers.module";
 import { PayoutsModule } from "./payouts/payouts.module";
 import { RevenueModule } from "./revenue/revenue.module";
 import { BittensorModule } from "./bittensor/bittensor.module";
+import { TrialModule } from "./trial/trial.module";
 import { HealthController } from "./health.controller";
 import { AuthGuard } from "./common/auth.guard";
 
 @Module({
-  imports: [PrismaModule, AuthModule, ApiKeysModule, AdminModule, CreditsModule, InferenceModule, PaymentsModule, MiningModule, WorkersModule, RentalsModule, ProvidersModule, PayoutsModule, RevenueModule, BittensorModule],
+  imports: [PrismaModule, AuthModule, ApiKeysModule, AdminModule, CreditsModule, InferenceModule, PaymentsModule, MiningModule, WorkersModule, RentalsModule, ProvidersModule, PayoutsModule, RevenueModule, BittensorModule, TrialModule],
   controllers: [HealthController],
   providers: [
     // Global auth guard: every route requires a session unless @Public().
