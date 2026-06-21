@@ -6,6 +6,10 @@
   "license": "MIT",
   "bin": { "animica-mcp": "dist/server.js" },
   "main": "dist/server.js",
+  "files": ["dist", "config-examples", "README.md"],
+  "keywords": ["mcp", "model-context-protocol", "ai", "llm", "openai", "inference", "embeddings", "agents", "code-generation", "crypto", "mining", "animica"],
+  "repository": { "type": "git", "url": "https://github.com/animicaorg/all.git", "directory": "animica-mcp" },
+  "homepage": "https://animica.org/developers",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
