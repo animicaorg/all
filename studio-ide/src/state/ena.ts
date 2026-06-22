@@ -43,7 +43,8 @@ interface EnaState {
   // ANM budget (pay-with-wallet, capped).
   balanceAnm: number; // prepaid budget held by broker for this user
   treasury: string;
-  perCallAnm: number;
+  perCallAnm: number; // min balance to start a run / min deposit
+  anmPerKtok: number; // actual per-1k-token rate (usage-billed)
   defaultCap: number;
   cap: number; // user-set cap, persisted to localStorage
   depositing: boolean; // a wallet deposit is in flight
@@ -94,6 +95,7 @@ export const useEnaStore = create<EnaState>((set, get) => ({
   balanceAnm: 0,
   treasury: "",
   perCallAnm: 0,
+  anmPerKtok: 0,
   defaultCap: 5,
   cap: loadCap(5),
   depositing: false,
@@ -138,6 +140,7 @@ export const useEnaStore = create<EnaState>((set, get) => ({
         balanceAnm: w.balanceAnm,
         treasury: w.treasury,
         perCallAnm: w.perCallAnm,
+        anmPerKtok: w.anmPerKtok,
         defaultCap,
         // If the user never set a cap, adopt the broker default.
         cap: get().cap || loadCap(defaultCap),

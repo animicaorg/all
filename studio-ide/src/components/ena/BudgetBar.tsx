@@ -29,7 +29,7 @@ export function BudgetBar({
   runCap: number | null;
   onUseOwnKey: () => void;
 }) {
-  const { balanceAnm, cap, setCap, perCallAnm, depositing, error, manualOpen, setManualOpen, ensureBudget } =
+  const { balanceAnm, cap, setCap, anmPerKtok, depositing, error, manualOpen, setManualOpen, ensureBudget } =
     useEnaStore();
   const walletConnecting = useWalletStore((s) => s.connecting);
   const walletKind = useWalletStore((s) => s.kind);
@@ -123,10 +123,11 @@ export function BudgetBar({
         </button>
       </div>
 
-      {perCallAnm > 0 && (
+      {anmPerKtok > 0 && (
         <p className="text-[11px] leading-snug text-muted">
-          ~{fmt(perCallAnm, 6)} ANM per model call. One wallet signature funds your
-          budget only when it runs short; the agent stops at your cap.
+          Billed by usage — ~{fmt(anmPerKtok, 6)} ANM / 1k tokens (the actual cost of
+          each call). One wallet signature funds your budget when it runs short; the
+          agent stops at your cap.
         </p>
       )}
       {error && <p className="text-xs text-danger">{error}</p>}

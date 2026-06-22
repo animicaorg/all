@@ -187,11 +187,12 @@ export interface WalletInfo {
   connected: boolean; // user has their own pool key connected (own-key mode)
   balanceAnm: number; // prepaid ENA budget held by the broker for this user
   treasury: string; // ANM deposit recipient
-  perCallAnm: number; // metered charge per model call
+  perCallAnm: number; // minimum balance to start a run / minimum deposit
+  anmPerKtok: number; // actual per-1k-token rate (usage-billed)
   defaultCap: number; // suggested default cap
 }
 
-// Broker-side budget status: balance, treasury address, per-call price.
+// Broker-side budget status: balance, treasury address, rate, min.
 export async function getWallet(): Promise<WalletInfo> {
   const r: any = await api.get("/api/ide/ena/wallet");
   return {
@@ -199,6 +200,7 @@ export async function getWallet(): Promise<WalletInfo> {
     balanceAnm: Number(r.balanceAnm ?? 0),
     treasury: String(r.treasury ?? ""),
     perCallAnm: Number(r.perCallAnm ?? 0),
+    anmPerKtok: Number(r.anmPerKtok ?? 0),
     defaultCap: Number(r.defaultCap ?? 0),
   };
 }

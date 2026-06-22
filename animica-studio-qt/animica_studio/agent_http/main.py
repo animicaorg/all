@@ -90,10 +90,11 @@ class EnaChatRequest(BaseModel):
     ena_base: Optional[str] = None
     ena_model: Optional[str] = None
     # ANM budget metering (broker-driven). When ``budget_anm`` is set the loop
-    # meters ``per_call_anm`` per model call and stops cleanly before exceeding
-    # the cap. When ``budget_anm`` is None metering is disabled (legacy behavior).
+    # charges the ACTUAL cost of each model call (estimated tokens ×
+    # ``anm_per_ktok``, ANM per 1k tokens) and stops cleanly once spend reaches
+    # the cap. When ``budget_anm`` is None metering is disabled (legacy).
     budget_anm: Optional[float] = None
-    per_call_anm: Optional[float] = None
+    anm_per_ktok: Optional[float] = None
 
 
 class EnaApproveRequest(BaseModel):
@@ -277,7 +278,7 @@ def ena_chat(req: EnaChatRequest):
         settings=settings,
         emit=emit,
         budget_anm=req.budget_anm,
-        per_call_anm=req.per_call_anm,
+        anm_per_ktok=req.anm_per_ktok,
     )
 
     def worker() -> None:

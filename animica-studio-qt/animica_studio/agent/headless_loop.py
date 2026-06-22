@@ -208,7 +208,7 @@ class HeadlessAgentLoop:
         emit: EventSink,
         client: Optional[AnimicaClient] = None,
         budget_anm: Optional[float] = None,
-        per_call_anm: Optional[float] = None,
+        anm_per_ktok: Optional[float] = None,
     ) -> None:
         self._fs = fs
         self._ps = _ProjectServiceAdapter(fs)
@@ -216,13 +216,16 @@ class HeadlessAgentLoop:
         self._emit = emit
         self._client = client or AnimicaClient(settings)
 
-        # ANM budget metering. When ``budget_anm`` is set we charge
-        # ``per_call_anm`` per model call and stop cleanly before exceeding the
-        # cap. ``budget_anm is None`` disables metering (legacy behavior).
+        # ANM budget metering. When ``budget_anm`` is set we charge the ACTUAL
+        # cost of each model call — estimated input+output tokens (≈chars/4, the
+        # same heuristic the pool uses) times ``anm_per_ktok`` (ANM per 1k
+        # tokens) — and stop cleanly once spend reaches the cap. Spend is capped
+        # at ``budget_anm`` so a run can never overspend the reserved budget.
+        # ``budget_anm is None`` disables metering (legacy behavior).
         self._budget_anm: Optional[float] = (
             float(budget_anm) if budget_anm is not None else None
         )
-        self._per_call_anm: float = float(per_call_anm) if per_call_anm else 0.0
+        self._anm_per_ktok: float = float(anm_per_ktok) if anm_per_ktok else 0.0
         self._spent_anm: float = 0.0
         self._calls: int = 0
 
@@ -327,19 +330,18 @@ class HeadlessAgentLoop:
             if self._cancelled:
                 self._emit("status", {"phase": "cancelled"})
                 return
-            # Budget gate: charge per model call. If the next call would push
-            # spend past the cap, stop the run cleanly before calling the model.
-            if self._budget_anm is not None:
-                if (self._spent_anm + self._per_call_anm) > self._budget_anm + 1e-12:
-                    self._emit(
-                        "budget",
-                        {
-                            "spent_anm": self._spent_anm,
-                            "cap": self._budget_anm,
-                            "reason": "cap_reached",
-                        },
-                    )
-                    break
+            # Budget gate: cost is charged per call below from actual token
+            # usage, so stop cleanly once the running spend has reached the cap.
+            if self._budget_anm is not None and self._spent_anm >= self._budget_anm - 1e-12:
+                self._emit(
+                    "budget",
+                    {
+                        "spent_anm": self._spent_anm,
+                        "cap": self._budget_anm,
+                        "reason": "cap_reached",
+                    },
+                )
+                break
             self._emit(
                 "status",
                 {
@@ -352,8 +354,18 @@ class HeadlessAgentLoop:
             # Account for the model call that just completed (metered regardless
             # of success — a request was issued to the engine).
             self._calls += 1
-            if self._budget_anm is not None:
-                self._spent_anm += self._per_call_anm
+            if self._budget_anm is not None and self._anm_per_ktok > 0:
+                # Charge the actual cost of this call: estimated input + output
+                # tokens (≈chars/4) × the per-1k-token rate, capped at the budget.
+                in_text = "".join(
+                    str(m.get("content") or "") for m in messages if isinstance(m, dict)
+                )
+                out_text = result.text or ""
+                for _tc in (result.tool_calls or []):
+                    out_text += str(_tc.get("arguments") or "")
+                toks = max(1, (len(in_text) + 3) // 4) + max(1, (len(out_text) + 3) // 4)
+                cost = (toks / 1000.0) * self._anm_per_ktok
+                self._spent_anm = min(self._budget_anm, self._spent_anm + cost)
             if self._cancelled:
                 return
 

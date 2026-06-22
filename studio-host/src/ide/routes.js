@@ -63,14 +63,18 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
 
   // ---- Metered ANM budget config ----------------------------------------- #
   // The user sets an ANM cap; a single wallet deposit tops up a prepaid budget;
-  // the agent meters PER_CALL_ANM per model call and the broker debits it
-  // off-chain. The inference ENGINE runs on the studio's funded pool key — the
-  // deposited ANM is the user's metered charge to the treasury (revenue).
+  // the agent meters the ACTUAL cost of each model call (tokens × ANM_PER_KTOK)
+  // and the broker debits it off-chain. The inference ENGINE runs on the studio's
+  // funded pool key — the deposited ANM is the user's metered charge (revenue).
   const TREASURY = process.env.STUDIO_ENA_TREASURY
     || process.env.ANIMICA_AICF_TREASURY_ADDRESS
     || 'anim1zqpf6a5hvup7kggxdutt3tgswz4aa9rwlpsz8ywf73m4l5cmzhfk7pcnh6kgt';
-  const PER_CALL_ANM = Math.max(0, Number(process.env.STUDIO_ENA_PER_CALL_ANM || '0.01')) || 0.01;
-  const DEFAULT_CAP_ANM = Math.max(PER_CALL_ANM, Number(process.env.STUDIO_ENA_DEFAULT_CAP_ANM || '5')) || 5;
+  // Per-1k-token rate (what each call actually costs) and the minimum balance to
+  // start a run / minimum deposit. STUDIO_ENA_MIN_ANM is kept as the MIN
+  // fallback for backward compatibility.
+  const ANM_PER_KTOK = Math.max(0, Number(process.env.STUDIO_ENA_ANM_PER_KTOK || '0.5')) || 0.5;
+  const MIN_ANM = Math.max(0, Number(process.env.STUDIO_ENA_MIN_ANM || process.env.STUDIO_ENA_PER_CALL_ANM || '1')) || 1;
+  const DEFAULT_CAP_ANM = Math.max(MIN_ANM, Number(process.env.STUDIO_ENA_DEFAULT_CAP_ANM || '5')) || 5;
   // The funded pool key the engine uses under the hood for budget runs. Falls
   // back to the free-tier key so budget runs work wherever free runs do.
   const ENGINE_KEY = process.env.STUDIO_ENA_ENGINE_KEY || process.env.STUDIO_ENA_FREE_KEY || '';
@@ -288,14 +292,15 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
       connected: !!getEnaKey(s),       // has their own (unmetered) key?
       balanceAnm: store.getEnaBalanceAnm(tokenKey(s)),
       treasury: TREASURY,
-      perCallAnm: PER_CALL_ANM,
+      perCallAnm: MIN_ANM,             // min balance to start / min deposit
+      anmPerKtok: ANM_PER_KTOK,        // actual per-1k-token rate (usage-billed)
       defaultCap: DEFAULT_CAP_ANM,
     });
   });
 
   // Confirm a wallet deposit and credit the prepaid budget. The amount is read
   // from the chain (never trusted from the client); replays, unconfirmed txs and
-  // wrong-recipient txs are rejected. minAmount = one model call (PER_CALL_ANM)
+  // wrong-recipient txs are rejected. minAmount = one model call (MIN_ANM)
   // so a deposit must at least buy a single call to be useful.
   router.post('/ena/deposit', async (req, res) => {
     const s = req.ideSession;
@@ -309,7 +314,7 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     }
     let v;
     try {
-      v = await verifyDeposit({ txid, expectedTo: TREASURY, minAmountAnm: PER_CALL_ANM });
+      v = await verifyDeposit({ txid, expectedTo: TREASURY, minAmountAnm: MIN_ANM });
     } catch (e) {
       // bad_treasury / config error — not the user's fault.
       return res.status(500).json({ error: 'Treasury misconfigured; deposit verification unavailable.' });
@@ -320,7 +325,7 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
       }
       const map = {
         wrong_recipient: 'That payment did not go to the studio treasury.',
-        underpaid: `Deposit too small — send at least ${PER_CALL_ANM} ANM.`,
+        underpaid: `Deposit too small — send at least ${MIN_ANM} ANM.`,
         tx_not_found: 'Transaction not found on-chain.',
       };
       const msg = map[v.reason] || `Deposit rejected (${v.reason || 'invalid'}).`;
@@ -376,10 +381,10 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
       } else {
         // (3) ANM budget. cap = clamp(requested cap, per-call, balance).
         const balanceAnm = store.getEnaBalanceAnm(tokenKey(s));
-        if (balanceAnm >= PER_CALL_ANM && ENGINE_KEY) {
+        if (balanceAnm >= MIN_ANM && ENGINE_KEY) {
           const requested = Number((req.body || {}).cap);
           const wantCap = Number.isFinite(requested) && requested > 0 ? requested : DEFAULT_CAP_ANM;
-          const cap = clamp(wantCap, PER_CALL_ANM, balanceAnm);
+          const cap = clamp(wantCap, MIN_ANM, balanceAnm);
           // RESERVE the full cap up-front so concurrent runs can't overspend a
           // shared balance; we refund the unspent remainder once we see the
           // sidecar's `done.spent_anm` on the streamed-back events. (See
@@ -388,14 +393,15 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
           budgetRun = { reserved: cap, cap };
           payload.ena_key = ENGINE_KEY;
           payload.budget_anm = cap;
-          payload.per_call_anm = PER_CALL_ANM;
+          payload.anm_per_ktok = ANM_PER_KTOK;
         } else {
           // (4) no budget — direct the user to deposit ANM (or use their own key).
           return sseError({
             message: 'Set an ENA budget (deposit ANM) to chat.',
             needDeposit: true,
             treasury: TREASURY,
-            perCallAnm: PER_CALL_ANM,
+            perCallAnm: MIN_ANM,
+            anmPerKtok: ANM_PER_KTOK,
             defaultCap: DEFAULT_CAP_ANM,
           });
         }
@@ -405,7 +411,7 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     if (usedFree) { try { store.incrEnaFreeUsed(tokenKey(s)); } catch {} }
 
     // For a budget run, TEE the stream to capture the sidecar's `done.spent_anm`
-    // (falling back to calls*PER_CALL_ANM, then to the full reservation) and
+    // (falling back to calls*MIN_ANM, then to the full reservation) and
     // refund (cap - spent) exactly once when the run ends.
     let opts;
     let settled = false;
@@ -423,7 +429,7 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
           let spent;
           if (data && typeof data === 'object') {
             if (Number.isFinite(Number(data.spent_anm))) spent = Number(data.spent_anm);
-            else if (Number.isFinite(Number(data.calls))) spent = Number(data.calls) * PER_CALL_ANM;
+            else if (Number.isFinite(Number(data.calls))) spent = Number(data.calls) * MIN_ANM;
           }
           settle(spent);
         },
