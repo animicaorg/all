@@ -76,8 +76,28 @@ class GlobalContext:
 _ctx = GlobalContext()
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        try:
+            from importlib.metadata import version as _pkg_version
+
+            ver = _pkg_version("animica")
+        except Exception:
+            ver = "unknown"
+        typer.echo(f"animica {ver}")
+        raise typer.Exit()
+
+
 @app.callback()
 def main_callback(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-V",
+        help="Show the animica version and exit",
+        callback=_version_callback,
+        is_eager=True,
+    ),
     network: Optional[str] = typer.Option(
         None,
         "--network",

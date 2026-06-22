@@ -14555,6 +14555,13 @@ class P2PService:
                 continue
             if self._enforce_outbound_only_policy_for_peer(peer):
                 continue
+            # Only count peers on OUR chain. A dead fork (old chain, same genesis
+            # block but diverged early) runs AHEAD on its own branch and otherwise
+            # poisons net_best — making this node believe it is behind and chase an
+            # unreachable tip (genesis_mismatch at sync), wedging it short and (with
+            # the mining gate) halting mining even though it is AT the canonical tip.
+            if not self._peer_is_anchored(peer):
+                continue
             info = self._sync_peer_heads.get(peer.remote)
 
             # Check if peer is responsive (not stale and not in cooldown)
@@ -14568,21 +14575,13 @@ class P2PService:
                 
                 # Add peer's direct height
                 heights.append(peer_height)
-
-                # Only accept network_best_height from responsive peers
-                # This prevents stalled high-height nodes from blocking reorg to active chains
-                try:
-                    # Add peer's view of network best height (peers-of-peers)
-                    network_height = (peer.hello or {}).get("network_best_height")
-                    if network_height is not None:
-                        network_height = int(network_height)
-                        if network_height > 0:
-                            heights.append(network_height)
-                except Exception:
-                    continue
+                # NOTE: peers-of-peers network_best_height views are intentionally
+                # NOT counted — they propagate a dead fork's height even through
+                # anchored peers, re-poisoning net_best. Direct heights from
+                # anchored (same-chain) peers are authoritative for our tip.
         
         if not heights:
-            return self._sticky_net_best(None)
+            return None
 
         # Apply verifier seed constraint if enabled and verifier seeds are present
         if self._enable_verifier_seeds and verifier_heights:
@@ -14613,36 +14612,13 @@ class P2PService:
                 
                 # Keep a minimal +1 forward target so miners can advance even if peers
                 # have not yet echoed the next block.
-                return self._sticky_net_best(max(constrained_max, max_verifier_height + 1))
+                return max(constrained_max, max_verifier_height + 1)
             else:
                 # If all heights are filtered out, fall back to verifier max + 1.
-                return self._sticky_net_best(max_verifier_height + 1)
+                return max_verifier_height + 1
 
         # No verifier constraint, return max height
-        return self._sticky_net_best(max(heights))
-
-    def _sticky_net_best(self, value: Optional[int]) -> Optional[int]:
-        """Stabilise the network-best target against transient peer flapping.
-
-        The near-tip wedge: a high peer (e.g. a verifier seed at the real tip)
-        momentarily fails the responsiveness check, so this computation collapses
-        to a lagging peer's height — the node then believes it is AT the tip and
-        stops syncing ~N blocks short. We hold the most recent (higher) target
-        for a short TTL so a single flap can't drop the sync target onto a
-        laggard. Higher values update immediately; only downward drops are damped.
-        """
-        ttl_s = 180.0
-        now = time.time()
-        prev = getattr(self, "_net_best_sticky_h", None)
-        prev_t = getattr(self, "_net_best_sticky_t", 0.0)
-        recent = prev is not None and (now - prev_t) < ttl_s
-        if value is None:
-            return prev if recent else None
-        if recent and int(value) < int(prev):
-            return prev
-        self._net_best_sticky_h = int(value)
-        self._net_best_sticky_t = now
-        return int(value)
+        return max(heights)
 
     def _is_sync_target_ahead(self, local_height: int) -> bool:
         local_height_int = int(local_height or 0)
