@@ -5190,7 +5190,15 @@ class P2PService:
         # the heaviest chain it can see (e.g. after its DB was restored above
         # the network's diverged fork) and churns sync state every cycle, which
         # blocks normal block production. Treat it as progress and stand down.
-        if getattr(self, "_sync_target_tip", None) is None:
+        # Only stand down if no CONNECTED peer is actually ahead. target_tip can
+        # be None because the sole ahead peer was penalized out of the candidate
+        # set (consensus_mismatch/headers_timeout backoff); in that case we are
+        # NOT at the tip and must keep escalating recovery to re-engage it.
+        # _max_peer_head_height still counts ahead-but-filtered peers.
+        if (
+            getattr(self, "_sync_target_tip", None) is None
+            and self._max_peer_head_height(now=now) <= head_height
+        ):
             self._sync_watchdog_last_height = head_height
             self._sync_watchdog_last_hash = head_hash
             self._sync_watchdog_last_progress_at = now
@@ -5858,6 +5866,29 @@ class P2PService:
                 best_peer = peer
                 best_hash = head_hash
         return best_peer, best_height, best_hash
+
+    def _max_peer_head_height(self, *, now: Optional[float] = None) -> int:
+        """Highest fresh head height reported by ANY connected (hello-done) peer,
+        IGNORING sync-eligibility.
+
+        Unlike _best_peer_head (which skips peers that are penalized / in sync
+        backoff / cooldown), this still counts a peer that is currently ahead but
+        temporarily filtered out. The at-tip => SYNCED transition and the sync
+        watchdog stand-down both key off "no sync target", which becomes None
+        both when no peer is ahead (genuinely at tip) AND when the only ahead
+        peer was just penalized out of the candidate set (we are far behind).
+        This lets those call sites tell the two apart so a behind node does not
+        falsely declare itself synced.
+        """
+        now = time.time() if now is None else now
+        best = 0
+        for peer in self._peers.values():
+            if not peer.hello_done.is_set():
+                continue
+            height, _head_hash = self._fresh_peer_head(peer, now=now)
+            if height > best:
+                best = height
+        return best
 
     def _fresh_peer_head(
         self, peer: _PeerState, *, now: Optional[float] = None
@@ -12636,9 +12667,18 @@ class P2PService:
                 # whose only peers are behind/foreign (e.g. after its DB was
                 # restored above the network's diverged fork) stays pinned in
                 # HEADERS forever and never produces a block.
+                # Guard: only declare SYNCED when no CONNECTED peer is strictly
+                # ahead of us. target_tip goes None both when we are genuinely at
+                # the tip AND when the only ahead peer was penalized out of the
+                # sync-candidate set (consensus_mismatch/headers_timeout backoff).
+                # Without this check a node far behind a known-but-filtered peer
+                # latches SYNCED and stops syncing — the 1.9.13 "stuck behind"
+                # regression. _max_peer_head_height counts ahead-but-filtered
+                # peers, so it stays > our head until we actually catch up.
                 if (
                     target_tip is None
                     and best_block_height > 0
+                    and self._max_peer_head_height(now=now) <= best_block_height
                     and not self._sync_block_queue
                     and not self._sync_inflight_blocks
                     and self._sync_phase not in ("SYNCED", "IDLE")

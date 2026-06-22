@@ -36,10 +36,13 @@ Public API
 """
 
 from dataclasses import asdict
+import logging
 import time
 from typing import Any, Optional, Tuple
 
 from core.db.block_db import PFX_HIX, _from_u64be
+
+log = logging.getLogger(__name__)
 from core.encoding.canonical import header_signing_bytes
 from core.errors import GenesisError, GenesisMismatchError
 from core.types.header import Header
@@ -433,4 +436,111 @@ def finalize_genesis_if_needed(
                         pass
     except Exception:
         pass
+    # Self-heal a corrupt by-height index (idempotent, runs at boot).
+    try:
+        _reconcile_height_index(block_db)
+    except Exception:
+        pass
     return head
+
+
+def _reconcile_height_index(block_db) -> None:
+    """Rebuild a holey canonical by-height index (k_hix: height -> hash).
+
+    The block DATA can be fully intact (every block retrievable by-hash, head
+    chains cleanly to genesis) while the secondary height index has holes — a
+    restored/rolled-back DB, or a crash mid-batch, leaves k_hix(height) entries
+    missing or pointing at orphans. Because peers sync BY HEIGHT, a node serving
+    such an index returns NULL at each hole and cannot serve a contiguous chain,
+    so every peer pins at the last servable height below a hole (the recurring
+    "nodes stuck behind" outage). canonical_height reconciliation above does not
+    touch this index.
+
+    This walks the canonical chain head -> genesis via header.parentHash (the
+    authoritative ordering) and re-writes every k_hix(height)=hash. It only acts
+    when the index is short (cheap entry count < head+1), is LOSSLESS (block data
+    untouched), and ABORTS without writing if any block is missing by-hash (that
+    needs a snapshot restore, not an index rebuild).
+    """
+    from core.db.block_db import k_hix
+
+    head = block_db.get_head()
+    if head is None:
+        return
+    head_height, head_hash = int(head[0]), bytes(head[1])
+    if head_height <= 0:
+        return
+
+    kv = getattr(block_db, "kv", None)
+    if kv is None or not hasattr(kv, "batch"):
+        return
+
+    # Cheap, correct corruption probe: sample heights spread across the chain.
+    # For each, the canonical index must resolve to a stored block whose header
+    # height matches. Any miss/mismatch => the index is holey. (A plain entry
+    # count is unreliable: orphan entries left at rolled-back heights can inflate
+    # it above the real canonical coverage and mask the holes.)
+    n = head_height + 1
+    step = max(1, n // 64)
+    probe = list(range(0, n, step))
+    if probe[-1] != head_height:
+        probe.append(head_height)
+    corrupt = False
+    for h in probe:
+        hh = block_db.get_canonical_hash(h)
+        if hh is None:
+            corrupt = True
+            break
+        hdr = block_db.get_header_by_hash(bytes(hh))
+        if hdr is None or int(hdr.height) != h:
+            corrupt = True
+            break
+    if not corrupt:
+        return  # index resolves correctly at every probe; nothing to do
+
+    # Walk the canonical chain by parentHash, verifying every block exists.
+    chain: dict[int, bytes] = {}
+    cur = head_hash
+    steps = 0
+    while True:
+        steps += 1
+        if steps > head_height + 100:
+            log.error("height-index self-heal: walk overran (cycle?); aborting")
+            return
+        hdr = block_db.get_header_by_hash(cur)
+        if hdr is None:
+            log.error(
+                "height-index self-heal: block missing by-hash at ~height %d "
+                "(%s); chain data incomplete, needs snapshot restore — aborting",
+                head_height - len(chain), cur.hex(),
+            )
+            return
+        h = int(hdr.height)
+        chain[h] = cur
+        if h == 0:
+            break
+        parent = bytes(hdr.parentHash)
+        if parent == b"\x00" * len(parent):
+            log.error("height-index self-heal: zero parent above genesis; aborting")
+            return
+        cur = parent
+
+    if 0 not in chain:
+        log.error("height-index self-heal: walk did not reach genesis; aborting")
+        return
+
+    log.warning(
+        "height-index self-heal: corrupt by-height index detected; rebuilding "
+        "%d-block index (head=%d)", len(chain), head_height,
+    )
+    # Use put()+commit() rather than kv.batch(): boot may already hold an open
+    # implicit transaction on the shared connection (finalize_genesis writes
+    # genesis meta), and a batch's BEGIN IMMEDIATE would raise "transaction
+    # within a transaction". put() runs in the existing transaction; one commit
+    # flushes the whole rebuild atomically. Mirrors the canonical-height heal.
+    for height, block_hash in chain.items():
+        kv.put(k_hix(height), block_hash)
+    commit = getattr(kv, "commit", None)
+    if callable(commit):
+        commit()
+    log.warning("height-index self-heal: rebuilt %d entries", len(chain))
