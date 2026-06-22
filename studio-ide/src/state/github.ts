@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { ApiError } from "@/services/api";
 import { githubApi, type Repo } from "@/services/githubApi";
 import { useFilesStore } from "@/state/files";
+import { useChatStore } from "@/state/chat";
+import { useScmStore } from "@/state/scm";
 
 interface GithubState {
   connected: boolean;
@@ -67,6 +69,8 @@ export const useGithubStore = create<GithubState>((set, get) => ({
       /* ignore */
     }
     useFilesStore.getState().reset();
+    useChatStore.getState().reset();
+    useScmStore.getState().reset();
     set({
       connected: false,
       login: null,
@@ -95,7 +99,9 @@ export const useGithubStore = create<GithubState>((set, get) => ({
       // Reset and load the file tree for the freshly cloned repo.
       const files = useFilesStore.getState();
       files.reset();
+      useChatStore.getState().reset();
       await files.loadTree();
+      void useScmStore.getState().refresh();
     } catch (e: any) {
       set({ opening: false, error: e?.message ?? "Failed to open repository." });
       throw e;
@@ -104,6 +110,8 @@ export const useGithubStore = create<GithubState>((set, get) => ({
 
   closeRepo: () => {
     useFilesStore.getState().reset();
+    useChatStore.getState().reset();
+    useScmStore.getState().reset();
     set({ currentRepo: null, currentBranch: null });
   },
 

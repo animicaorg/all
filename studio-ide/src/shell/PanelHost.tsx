@@ -4,18 +4,16 @@ import { ConnectGitHub } from "@/auth/ConnectGitHub";
 import { RepoPicker } from "@/auth/RepoPicker";
 import { FilesPanel } from "@/panels/FilesPanel";
 import { EditorPanel } from "@/panels/EditorPanel";
+import { EnaPanel } from "@/panels/EnaPanel";
+import { ScmPanel } from "@/panels/ScmPanel";
 
 const SOON: Record<string, { title: string; body: string }> = {
-  ena: {
-    title: "ENA",
-    body: "Ask the ENA agent to read and modify your code — you approve every change.",
-  },
   terminal: { title: "Terminal", body: "A full shell in your private sandbox container." },
   preview: { title: "Run & Preview", body: "Run your project and preview it live." },
 };
 
 export function PanelHost() {
-  const { activePanel } = useUiStore();
+  const { activePanel, scmOpen } = useUiStore();
   const { connected, currentRepo, loading } = useGithubStore();
 
   if (loading) {
@@ -29,14 +27,23 @@ export function PanelHost() {
   if (!connected) return <ConnectGitHub />;
   if (!currentRepo) return <RepoPicker />;
 
-  switch (activePanel) {
-    case "files":
-      return <FilesPanel />;
-    case "editor":
-      return <EditorPanel />;
-    default:
-      return <ComingSoon id={activePanel} />;
-  }
+  return (
+    <>
+      {(() => {
+        switch (activePanel) {
+          case "files":
+            return <FilesPanel />;
+          case "editor":
+            return <EditorPanel />;
+          case "ena":
+            return <EnaPanel />;
+          default:
+            return <ComingSoon id={activePanel} />;
+        }
+      })()}
+      {scmOpen && <ScmPanel />}
+    </>
+  );
 }
 
 function ComingSoon({ id }: { id: string }) {

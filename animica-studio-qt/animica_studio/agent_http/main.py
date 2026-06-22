@@ -18,12 +18,15 @@ The services imported here are deliberately the *headless* modules
 """
 from __future__ import annotations
 
+import json
 import os
+import queue
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 # Import the leaf service modules directly (NOT the package __init__) to avoid
@@ -33,6 +36,7 @@ from animica_studio.services.fs_project_service import (
     FsProjectService,
     SandboxError,
 )
+from animica_studio.services import git_service as git_ops
 from animica_studio.services.git_service import GitService
 
 # --------------------------------------------------------------------------- #
@@ -70,6 +74,32 @@ class CloneRequest(BaseModel):
 class WriteRequest(BaseModel):
     path: str
     content: str
+
+
+class EnaChatRequest(BaseModel):
+    message: str
+    history: Optional[list[dict[str, Any]]] = None
+    # Per-user inference auth (the broker injects the calling user's own pool key
+    # so usage bills to them). Falls back to the ANIMICA_ENA_* env when absent.
+    ena_key: Optional[str] = None
+    ena_base: Optional[str] = None
+    ena_model: Optional[str] = None
+
+
+class EnaApproveRequest(BaseModel):
+    id: str
+    accept: bool
+
+
+class CommitRequest(BaseModel):
+    message: str
+    paths: Optional[list[str]] = None
+
+
+class PushRequest(BaseModel):
+    token: Optional[str] = None
+    remote: Optional[str] = None
+    branch: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -172,3 +202,150 @@ def fs_write(req: WriteRequest):
     except OSError as exc:
         return _err(str(exc), 500)
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# ENA agent loop (SSE) + diff approval
+# --------------------------------------------------------------------------- #
+# Registry mapping a diff id -> the live HeadlessAgentLoop awaiting approval, so
+# POST /ena/approve can route the decision to the correct in-flight turn.
+_LOOP_LOCK = threading.Lock()
+_LOOPS_BY_DIFF: dict[str, Any] = {}
+
+
+def _sse_event(event_type: str, data: dict) -> str:
+    """Frame one SSE event: ``event: <type>\\ndata: <json>\\n\\n``."""
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/ena/chat")
+def ena_chat(req: EnaChatRequest):
+    """Run one ENA agent turn, streaming events as ``text/event-stream``."""
+    from animica_studio.agent.headless_loop import HeadlessAgentLoop, settings_from_env
+
+    message = (req.message or "").strip()
+    settings = settings_from_env(dict(os.environ))
+    # Per-request override (per-user key/base/model injected by the broker).
+    import dataclasses as _dc
+    _ov = {}
+    if req.ena_key:
+        _ov["api_key"] = req.ena_key
+    if req.ena_base:
+        _ov["base_url"] = req.ena_base.rstrip("/")
+    if req.ena_model:
+        _ov["model"] = req.ena_model
+    if _ov:
+        try:
+            settings = _dc.replace(settings, **_ov)
+        except Exception:
+            for k, v in _ov.items():
+                setattr(settings, k, v)
+
+    # A thread-safe queue bridges the worker thread to the SSE generator. A
+    # sentinel (None) signals completion.
+    events: "queue.Queue[Optional[str]]" = queue.Queue()
+    registered_ids: list[str] = []
+
+    def emit(event_type: str, data: dict) -> None:
+        if event_type == "diff":
+            diff_id = data.get("id")
+            if diff_id:
+                with _LOOP_LOCK:
+                    _LOOPS_BY_DIFF[diff_id] = loop
+                registered_ids.append(diff_id)
+        events.put(_sse_event(event_type, data))
+
+    # Build the loop (FsProjectService rooted at REPO_DIR). If the repo isn't
+    # cloned yet the loop still works (empty project context).
+    fs = FsProjectService(REPO_DIR)
+    loop = HeadlessAgentLoop(fs=fs, settings=settings, emit=emit)
+
+    def worker() -> None:
+        try:
+            loop.run(message, req.history or [])
+        finally:
+            # Clean up any diff ids this turn registered.
+            with _LOOP_LOCK:
+                for did in registered_ids:
+                    _LOOPS_BY_DIFF.pop(did, None)
+            events.put(None)  # sentinel: end of stream
+
+    t = threading.Thread(target=worker, name="ena-turn", daemon=True)
+    t.start()
+
+    def generate():
+        while True:
+            try:
+                item = events.get(timeout=300.0)
+            except queue.Empty:
+                # Heartbeat / give up after a long idle.
+                break
+            if item is None:
+                break
+            yield item
+
+    headers = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(
+        generate(), media_type="text/event-stream", headers=headers
+    )
+
+
+@app.post("/ena/approve")
+def ena_approve(req: EnaApproveRequest):
+    diff_id = (req.id or "").strip()
+    with _LOOP_LOCK:
+        loop = _LOOPS_BY_DIFF.get(diff_id)
+    if loop is None:
+        return _err("unknown approval id", 404)
+    ok = loop.approve(diff_id, bool(req.accept))
+    if not ok:
+        return _err("unknown approval id", 404)
+    return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# Git diff / commit / push (sidecar half of the SCM contract)
+# --------------------------------------------------------------------------- #
+@app.get("/git/diff")
+def git_diff(path: Optional[str] = Query(default=None)):
+    if not _has_repo():
+        return _err("no repository", 404)
+    try:
+        out = git_ops.diff(REPO_DIR, path=(path or None))
+    except Exception as exc:  # pragma: no cover - defensive
+        return _err(str(exc), 500)
+    return {"diff": out}
+
+
+@app.post("/git/commit")
+def git_commit(req: CommitRequest):
+    if not _has_repo():
+        return _err("no repository", 404)
+    message = (req.message or "").strip()
+    if not message:
+        return _err("commit message is required", 400)
+    result = git_ops.commit(REPO_DIR, message, paths=req.paths or None)
+    if "error" in result:
+        return JSONResponse(status_code=200, content=result)
+    return result
+
+
+@app.post("/git/push")
+def git_push(req: PushRequest):
+    if not _has_repo():
+        return _err("no repository", 404)
+    result = git_ops.push(
+        REPO_DIR,
+        token=req.token or None,
+        remote=(req.remote or "origin"),
+        branch=(req.branch or None),
+    )
+    if "error" in result:
+        # 502 on failure per contract; token already scrubbed by push().
+        return JSONResponse(status_code=502, content=result)
+    return result

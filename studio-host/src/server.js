@@ -73,6 +73,9 @@ app.disable('x-powered-by');
 // for HMAC signature verification.
 app.use((req, res, next) => {
   if (req.path === '/api/billing/nowpayments/ipn') return next();
+  // The ENA chat route carries the prompt + history + (potentially) large file
+  // context, so it gets a roomier JSON limit than the default 256kb.
+  if (req.path === '/api/ide/ena') return express.json({ limit: '4mb' })(req, res, next);
   express.json({ limit: '256kb' })(req, res, next);
 });
 

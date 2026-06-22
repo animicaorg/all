@@ -355,4 +355,158 @@ class GitService:
         return {"branch": branch, "ahead": ahead, "behind": behind, "files": files}
 
 
-__all__ = ["GitService"]
+# --------------------------------------------------------------------------- #
+# Sidecar contract helpers (Increment 2-3): diff / commit / push by dest path.
+# --------------------------------------------------------------------------- #
+# These module-level functions match the agent-sidecar contract exactly:
+#   diff(dest, path=None) -> str
+#   commit(dest, message, paths=None) -> dict{commit}
+#   push(dest, token=None, remote='origin', branch=None) -> dict
+# They reuse the safe subprocess runner above; tokens are injected at call time
+# only and scrubbed from any error text — never persisted or logged.
+
+# Default commit identity used when the repo has none configured.
+_DEFAULT_GIT_NAME = "Animica Studio"
+_DEFAULT_GIT_EMAIL = "studio@animica.org"
+
+
+def _scrub_token(text: str, token: Optional[str]) -> str:
+    """Remove a token (and any ``x-access-token:...@`` netloc) from ``text``."""
+    out = text or ""
+    if token:
+        out = out.replace(token, "***")
+    out = re.sub(r"x-access-token:[^@\s]*@", "x-access-token:***@", out)
+    out = re.sub(r"//[^/@\s:]+:[^/@\s]+@", "//***:***@", out)
+    return out
+
+
+def diff(dest: str | Path, path: Optional[str] = None) -> str:
+    """Return the git diff for the repo at ``dest`` (whole-repo, or one path).
+
+    Returns ``""`` when the tree is clean. Combines worktree (unstaged) and
+    staged changes so a freshly-staged-but-uncommitted change is still visible.
+    """
+    svc = GitService(dest)
+    if not svc.is_repo():
+        return ""
+
+    # Surface untracked files in the diff too (a brand-new file the agent wrote
+    # should be reviewable before commit). We mark them intent-to-add (`add -N`)
+    # so `git diff` renders their content, then undo the intent so nothing is
+    # actually staged — the working tree is left exactly as we found it.
+    intent_added: list[str] = []
+    code_u, untracked_out, _ = svc._run(
+        ["ls-files", "--others", "--exclude-standard"]
+        + (["--", path] if path else [])
+    )
+    if code_u == 0 and untracked_out.strip():
+        intent_added = [p for p in untracked_out.splitlines() if p.strip()]
+        if intent_added:
+            svc._run(["add", "-N", "--", *intent_added])
+
+    try:
+        args = ["diff", "HEAD"]
+        if path:
+            args.extend(["--", path])
+        code, out, err = svc._run(args)
+        if code != 0:
+            # No commits yet (HEAD missing): fall back to plain diff + staged.
+            plain = ["diff"]
+            if path:
+                plain.extend(["--", path])
+            _, out, _ = svc._run(plain)
+            staged = ["diff", "--cached"]
+            if path:
+                staged.extend(["--", path])
+            _, staged_out, _ = svc._run(staged)
+            out = (out or "") + (staged_out or "")
+    finally:
+        # Undo intent-to-add so we never leave files half-staged.
+        for p in intent_added:
+            svc._run(["reset", "--quiet", "--", p])
+    return out or ""
+
+
+def _ensure_identity(svc: "GitService") -> None:
+    """Configure a default local commit identity if the repo has none."""
+    code, name, _ = svc._run(["config", "user.name"])
+    if code != 0 or not name.strip():
+        svc._run(["config", "user.name", _DEFAULT_GIT_NAME])
+    code, email, _ = svc._run(["config", "user.email"])
+    if code != 0 or not email.strip():
+        svc._run(["config", "user.email", _DEFAULT_GIT_EMAIL])
+
+
+def commit(
+    dest: str | Path, message: str, paths: Optional[list[str]] = None
+) -> dict:
+    """Stage ``paths`` (or everything) and commit at ``dest``.
+
+    Returns ``{"ok": True, "commit": "<short-sha>"}`` on success, or
+    ``{"error": "..."}`` when there is nothing to commit / the commit fails.
+    """
+    svc = GitService(dest)
+    if not svc.is_repo():
+        return {"error": "Not a git repository."}
+    if not (message or "").strip():
+        return {"error": "Commit message is required."}
+    _ensure_identity(svc)
+    if paths:
+        ok, msg = svc.add(list(paths))
+    else:
+        ok, msg = svc.add(None)
+    if not ok:
+        return {"error": msg}
+    code, out, err = svc._run(["commit", "-m", message])
+    if code != 0:
+        combined = (out + ("\n" + err if err else "")).strip()
+        return {"error": combined or "nothing to commit"}
+    rc, sha, _ = svc._run(["rev-parse", "--short", "HEAD"])
+    commit_sha = sha.strip() if rc == 0 else ""
+    return {"ok": True, "commit": commit_sha}
+
+
+def push(
+    dest: str | Path,
+    token: Optional[str] = None,
+    remote: str = "origin",
+    branch: Optional[str] = None,
+) -> dict:
+    """Push the repo at ``dest`` to ``remote``.
+
+    When ``token`` is given it is injected into the https remote URL ONLY for the
+    duration of the push (via ``-c http.extraheader`` is avoided in favor of a
+    one-shot URL on the command line so nothing lands in ``.git/config``). The
+    token is never persisted or logged; any error text is scrubbed.
+
+    Returns ``{"ok": True, "branch": "<branch>"}`` on success or
+    ``{"error": "...", "scrubbed": True}`` on failure.
+    """
+    svc = GitService(dest)
+    if not svc.is_repo():
+        return {"error": "Not a git repository.", "scrubbed": True}
+    target_branch = branch or svc.current_branch()
+    if not target_branch:
+        return {"error": "Could not determine the current branch.", "scrubbed": True}
+
+    # Resolve the remote's configured (token-less) URL.
+    rc, remote_url, _ = svc._run(["remote", "get-url", remote])
+    remote_url = remote_url.strip()
+    if rc != 0 or not remote_url:
+        return {"error": f"Remote {remote!r} is not configured.", "scrubbed": True}
+
+    if token:
+        push_url = _inject_token(_normalize_https_url(remote_url), token)
+        # Push to the explicit URL so the token never touches .git/config.
+        args = ["push", push_url, f"HEAD:{target_branch}"]
+    else:
+        args = ["push", remote, f"HEAD:{target_branch}"]
+
+    code, out, err = svc._run(args, timeout=_CLONE_TIMEOUT)
+    if code != 0:
+        combined = (err or out or "git push failed").strip()
+        return {"error": _scrub_token(combined, token), "scrubbed": True}
+    return {"ok": True, "branch": target_branch}
+
+
+__all__ = ["GitService", "diff", "commit", "push"]

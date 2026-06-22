@@ -1,11 +1,23 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuthStore } from "@/state/auth";
 import { useGithubStore } from "@/state/github";
+import { useScmStore } from "@/state/scm";
+import { useUiStore } from "@/state/ui";
 
 export function AppHeader() {
   const { me, logout } = useAuthStore();
   const { connected, currentRepo, currentBranch, closeRepo } = useGithubStore();
+  const { changedFiles, ahead, refresh } = useScmStore();
+  const openScm = useUiStore((s) => s.openScm);
   const [menu, setMenu] = useState(false);
+
+  // Refresh the changed-file badge whenever a repo is open.
+  useEffect(() => {
+    if (currentRepo) void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRepo]);
+
+  const changedCount = changedFiles.length;
 
   const repoName = currentRepo ? currentRepo.split("/").pop() : null;
 
@@ -49,6 +61,26 @@ export function AppHeader() {
       </button>
 
       <div className="ml-auto flex items-center gap-2">
+        {currentRepo && (
+          <button
+            className="relative grid h-9 w-9 place-items-center rounded-full border border-border bg-elevated text-muted hover:text-fg"
+            onClick={openScm}
+            aria-label="Source Control"
+            title="Source Control — commit & push"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="6" cy="6" r="2.5" />
+              <circle cx="6" cy="18" r="2.5" />
+              <circle cx="18" cy="8" r="2.5" />
+              <path d="M6 8.5v7M18 10.5c0 3-3 3.5-6 3.5" />
+            </svg>
+            {(changedCount > 0 || ahead > 0) && (
+              <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] font-bold text-accent-fg">
+                {changedCount || ahead}
+              </span>
+            )}
+          </button>
+        )}
         <div className="relative">
           <button
             className="grid h-9 w-9 place-items-center rounded-full border border-border bg-elevated text-xs font-medium text-muted"

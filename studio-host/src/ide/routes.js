@@ -10,6 +10,7 @@
  * public repos.
  */
 import express from 'express';
+import { randomBytes } from 'node:crypto';
 
 /**
  * @param {object} deps
@@ -39,6 +40,25 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
   function getToken(s) {
     const blob = store.getGithubToken(tokenKey(s));
     return blob ? secrets.decrypt(blob) : null;
+  }
+
+  // Per-user ENA inference key (each user supplies their own pool key).
+  const ENA_BASE = (process.env.STUDIO_ENA_BASE || 'https://pool.animica.org/v1').replace(/\/+$/, '');
+  function getEnaKey(s) {
+    const blob = store.getEnaKey(tokenKey(s));
+    return blob ? secrets.decrypt(blob) : null;
+  }
+  async function validateEnaKey(key) {
+    // /v1/models is public, so validate against an auth-required endpoint. A tiny
+    // embedding is the cheapest authenticated call (401/403 => the key is bad).
+    try {
+      const r = await fetch(`${ENA_BASE}/embeddings`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'anm-embed', input: 'ping' }),
+      });
+      return r.ok;
+    } catch { return false; }
   }
 
   // Relay an error thrown by agentProxy/github (carries {status, body}).
@@ -81,6 +101,41 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     const s = req.ideSession;
     store.clearGithubToken(tokenKey(s));
     res.json({ ok: true });
+  });
+
+  // ---- GitHub OAuth App flow (optional; PAT still works) ------------------- #
+  const PUBLIC_BASE = (process.env.STUDIO_PUBLIC_BASE || 'https://studio.animica.org').replace(/\/+$/, '');
+  const OAUTH_REDIRECT = `${PUBLIC_BASE}/api/ide/github/callback`;
+  const oauthStates = new Map(); // state -> { identity, exp }
+  const OAUTH_STATE_TTL = 10 * 60 * 1000;
+
+  router.get('/github/oauth/available', (_req, res) => res.json({ available: github.oauthConfigured() }));
+
+  router.get('/github/oauth/start', (req, res) => {
+    const s = req.ideSession;
+    if (isAnon(s)) return res.status(403).send('Sign in to connect GitHub.');
+    if (!github.oauthConfigured()) return res.status(501).send('GitHub OAuth is not configured.');
+    const state = randomBytes(16).toString('hex');
+    oauthStates.set(state, { identity: tokenKey(s), exp: Date.now() + OAUTH_STATE_TTL });
+    res.redirect(github.authorizeUrl(OAUTH_REDIRECT, state));
+  });
+
+  router.get('/github/callback', async (req, res) => {
+    const code = req.query.code;
+    const state = String(req.query.state || '');
+    const entry = oauthStates.get(state);
+    oauthStates.delete(state);
+    const s = req.ideSession;
+    if (!code || !entry || entry.exp < Date.now() || !s || tokenKey(s) !== entry.identity) {
+      return res.redirect('/?github=error');
+    }
+    try {
+      const token = await github.exchangeOAuthCode(String(code), OAUTH_REDIRECT);
+      store.setGithubToken(tokenKey(s), secrets.encrypt(token));
+      res.redirect('/?github=connected');
+    } catch {
+      res.redirect('/?github=error');
+    }
   });
 
   // ---- repos -------------------------------------------------------------- #
@@ -172,6 +227,100 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     try {
       const out = await agentProxy.forwardJson(req.ideSession, 'PUT', '/fs/write', { path, content });
       res.json(out);
+    } catch (e) { relay(res, e); }
+  });
+
+  // ---- ENA agent: streaming chat + diff approval -------------------------- #
+  // The chat stream is proxied straight through to the sidecar with NO buffering
+  // (streamProxy sets SSE headers + pipes upstream chunks to res as they arrive).
+  // Errors from the sidecar (e.g. missing API key) come back as in-band SSE
+  // `error` events, not HTTP error codes, so the client always sees them.
+  // ---- ENA inference key (per-user; usage bills to the user's pool account) - #
+  router.post('/ena/key', async (req, res) => {
+    const key = (req.body || {}).key;
+    if (!key || typeof key !== 'string') return res.status(400).json({ error: 'An ENA API key is required.' });
+    if (!(await validateEnaKey(key))) return res.status(401).json({ error: 'That ENA key was rejected by the inference broker.' });
+    store.setEnaKey(tokenKey(req.ideSession), secrets.encrypt(key));
+    res.json({ connected: true });
+  });
+  router.get('/ena/key', (req, res) => {
+    res.json({ connected: !!getEnaKey(req.ideSession) });
+  });
+  router.post('/ena/key/disconnect', (req, res) => {
+    store.clearEnaKey(tokenKey(req.ideSession));
+    res.json({ ok: true });
+  });
+
+  router.post('/ena', async (req, res) => {
+    const { message, history } = req.body || {};
+    if (typeof message !== 'string' || !message) {
+      return res.status(400).json({ error: 'message (string) is required.' });
+    }
+    const payload = { message };
+    if (Array.isArray(history)) payload.history = history;
+    const enaKey = getEnaKey(req.ideSession);
+    if (enaKey) payload.ena_key = enaKey;
+    try {
+      await agentProxy.streamProxy(req.ideSession, 'POST', '/ena/chat', payload, req, res);
+    } catch (e) {
+      // streamProxy only throws before headers are sent (e.g. no agent port);
+      // once it has written SSE headers it handles errors in-band.
+      if (!res.headersSent) relay(res, e);
+      else { try { res.end(); } catch {} }
+    }
+  });
+
+  // Approve / reject a pending diff proposal — unblocks the waiting tool in the
+  // sidecar's agent loop (404 if the proposal id is unknown/expired).
+  router.post('/ena/approve', async (req, res) => {
+    const { id, accept } = req.body || {};
+    if (typeof id !== 'string' || !id) return res.status(400).json({ error: 'id is required.' });
+    if (typeof accept !== 'boolean') return res.status(400).json({ error: 'accept (boolean) is required.' });
+    try {
+      const out = await agentProxy.forwardJson(req.ideSession, 'POST', '/ena/approve', { id, accept });
+      res.json(out);
+    } catch (e) { relay(res, e); }
+  });
+
+  // ---- source control: diff / commit / push ------------------------------ #
+  router.get('/git/diff', async (req, res) => {
+    const path = req.query.path;
+    let sidePath = '/git/diff';
+    if (typeof path === 'string' && path) sidePath += `?path=${encodeURIComponent(path)}`;
+    try {
+      const out = await agentProxy.forwardJson(req.ideSession, 'GET', sidePath);
+      res.json(out);
+    } catch (e) { relay(res, e); }
+  });
+
+  router.post('/git/commit', async (req, res) => {
+    const { message, paths } = req.body || {};
+    if (typeof message !== 'string' || !message) {
+      return res.status(400).json({ error: 'A commit message is required.' });
+    }
+    const payload = { message };
+    if (Array.isArray(paths)) payload.paths = paths;
+    try {
+      const out = await agentProxy.forwardJson(req.ideSession, 'POST', '/git/commit', payload);
+      res.json(out);
+    } catch (e) { relay(res, e); }
+  });
+
+  // Push to origin. The broker decrypts the session's GitHub PAT here and hands
+  // it to the sidecar for THIS call only (the sidecar injects it into the https
+  // remote URL at push time and never persists it). The token is never echoed
+  // back to the client or logged.
+  router.post('/git/push', async (req, res) => {
+    const s = req.ideSession;
+    if (isAnon(s)) return res.status(403).json({ error: 'Sign in and connect GitHub to push.' });
+    const token = getToken(s);
+    if (!token) return res.status(403).json({ error: 'GitHub is not connected.' });
+    const { branch } = req.body || {};
+    const payload = { token };
+    if (typeof branch === 'string' && branch) payload.branch = branch;
+    try {
+      const out = await agentProxy.forwardJson(req.ideSession, 'POST', '/git/push', payload);
+      res.json(out); // sidecar returns {ok, branch} — no token in the response
     } catch (e) { relay(res, e); }
   });
 

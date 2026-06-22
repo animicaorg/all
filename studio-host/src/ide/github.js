@@ -60,4 +60,43 @@ export async function getRepo(token, fullName) {
   };
 }
 
+// ---- OAuth App flow (optional; PAT still works without it) ----------------- #
+const OAUTH_AUTHORIZE = 'https://github.com/login/oauth/authorize';
+const OAUTH_TOKEN = 'https://github.com/login/oauth/access_token';
+
+export function oauthConfigured() {
+  return !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
+}
+
+export function authorizeUrl(redirectUri, state, scope = 'repo') {
+  const p = new URLSearchParams({
+    client_id: process.env.GITHUB_CLIENT_ID || '',
+    redirect_uri: redirectUri,
+    scope,
+    state,
+    allow_signup: 'true',
+  });
+  return `${OAUTH_AUTHORIZE}?${p.toString()}`;
+}
+
+/** Exchange an OAuth `code` for a user access token. Host hardcoded to github.com. */
+export async function exchangeOAuthCode(code, redirectUri) {
+  const res = await fetch(OAUTH_TOKEN, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'animica-studio' },
+    body: JSON.stringify({
+      client_id: process.env.GITHUB_CLIENT_ID,
+      client_secret: process.env.GITHUB_CLIENT_SECRET,
+      code,
+      redirect_uri: redirectUri,
+    }),
+  });
+  let body = null;
+  try { body = await res.json(); } catch { /* non-JSON */ }
+  if (!res.ok || !body || !body.access_token) {
+    throw Object.assign(new Error('github oauth exchange failed'), { status: 502 });
+  }
+  return body.access_token;
+}
+
 export const config = { API };

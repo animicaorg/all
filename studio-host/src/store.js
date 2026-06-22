@@ -81,6 +81,29 @@ export function clearGithubToken(emailOrId) {
   anonGithub.delete(String(emailOrId));
 }
 
+// ---- ENA inference key (encrypted blob) ----------------------------------- #
+// Per-user pool API key for ENA chat (each user supplies their own; usage bills
+// to them). Same storage shape as the GitHub PAT.
+const anonEna = new Map(); // identity -> encBlob
+
+export function setEnaKey(emailOrId, encBlob) {
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) { u.enaKeyEnc = encBlob; persist(); return; }
+  anonEna.set(String(emailOrId), encBlob);
+}
+
+export function getEnaKey(emailOrId) {
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) return u.enaKeyEnc || null;
+  return anonEna.get(String(emailOrId)) || null;
+}
+
+export function clearEnaKey(emailOrId) {
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) { delete u.enaKeyEnc; persist(); return; }
+  anonEna.delete(String(emailOrId));
+}
+
 // ---- Optional TOTP 2FA ----------------------------------------------------- #
 export function setTotpPending(email, secret) {
   const u = findUserByEmail(email); if (!u) return null;
