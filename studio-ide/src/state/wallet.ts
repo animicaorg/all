@@ -117,19 +117,26 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     set({ available: true, connecting: true, error: null });
     try {
       let accounts: string[] = [];
+      // The Animica wallet background handles exactly these (see
+      // apps/wallet-extension background: animica_requestAccounts triggers the
+      // connect-approval popup; eth_/provider_ are aliases). Calling an unknown
+      // method (e.g. wallet_requestAccounts) can hang with no response and never
+      // reach the real connect method, so we ONLY use the supported ones.
+      let lastErr: unknown = null;
       const candidates = [
-        "wallet_requestAccounts",
         "animica_requestAccounts",
         "eth_requestAccounts",
+        "provider_requestAccounts",
       ];
       for (const m of candidates) {
         try {
           accounts = (await p.request<string[]>({ method: m })) || [];
           if (accounts.length) break;
-        } catch {
-          /* try next */
+        } catch (e) {
+          lastErr = e;
         }
       }
+      if (!accounts.length && lastErr) throw lastErr;
       const addr = accounts?.[0];
       if (!addr) throw new Error("No account returned by wallet.");
       set({ connected: true, address: addr, connecting: false, error: null });
