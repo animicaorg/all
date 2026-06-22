@@ -70,6 +70,19 @@ interface EnaState {
 
 const NO_FREE: FreeStatus = { enabled: false, limit: 0, used: 0, remaining: 0 };
 
+// Poll the broker's deposit verifier until the tx is confirmed on-chain (it
+// replies {pending:true} until then), then return the new balance. Throws on a
+// hard rejection (wrong recipient / underpaid). Returns null on timeout.
+async function pollDepositConfirmed(txid: string): Promise<{ balanceAnm: number } | null> {
+  const deadline = Date.now() + 4 * 60 * 1000;
+  for (;;) {
+    const r = await enaApi.deposit(txid); // throws (ApiError) on 4xx hard reject
+    if (!r.pending) return { balanceAnm: r.balanceAnm };
+    if (Date.now() > deadline) return null;
+    await new Promise((res) => setTimeout(res, 4000));
+  }
+}
+
 export const useEnaStore = create<EnaState>((set, get) => ({
   connected: false,
   free: NO_FREE,
@@ -200,10 +213,16 @@ export const useEnaStore = create<EnaState>((set, get) => ({
         return true;
       }
 
+      // One wallet confirmation popup; the tx id comes back automatically.
       const txid = await useWalletStore.getState().sendAnm(treasury, amount);
-      const r = await enaApi.deposit(txid);
-      set({ balanceAnm: r.balanceAnm, depositing: false });
-      return r.balanceAnm >= cap - 1e-12 || r.balanceAnm >= (get().perCallAnm || 0) - 1e-12;
+      // Wait for the first on-chain confirmation, then credit — no paste.
+      const done = await pollDepositConfirmed(txid);
+      if (!done) {
+        set({ depositing: false, error: "Sent — waiting for on-chain confirmation. It'll credit shortly; tap Fund to check." });
+        return false;
+      }
+      set({ balanceAnm: done.balanceAnm, depositing: false });
+      return done.balanceAnm >= cap - 1e-12 || done.balanceAnm >= (get().perCallAnm || 0) - 1e-12;
     } catch (e: any) {
       set({
         depositing: false,
@@ -219,13 +238,12 @@ export const useEnaStore = create<EnaState>((set, get) => ({
     if (!t) return false;
     set({ depositing: true, error: null });
     try {
-      const r = await enaApi.deposit(t);
-      if (r.pending) {
-        // Tx not confirmed yet — keep the dialog open so they can retry.
-        set({ depositing: false, error: r.message || "Deposit not confirmed yet — try again shortly." });
+      const done = await pollDepositConfirmed(t);
+      if (!done) {
+        set({ depositing: false, error: "Waiting for on-chain confirmation — tap Confirm again shortly." });
         return false;
       }
-      set({ balanceAnm: r.balanceAnm, depositing: false, manualOpen: false });
+      set({ balanceAnm: done.balanceAnm, depositing: false, manualOpen: false });
       return true;
     } catch (e: any) {
       set({ depositing: false, error: e?.message || "Could not verify that deposit." });
