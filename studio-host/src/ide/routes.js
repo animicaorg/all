@@ -78,6 +78,9 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
   // The funded pool key the engine uses under the hood for budget runs. Falls
   // back to the free-tier key so budget runs work wherever free runs do.
   const ENGINE_KEY = process.env.STUDIO_ENA_ENGINE_KEY || process.env.STUDIO_ENA_FREE_KEY || '';
+  // The inference engine is ready when the ANM bridge proxy is configured (its
+  // secret) or a legacy pool engine key exists.
+  const ENGINE_READY = !!(process.env.STUDIO_ENA_ENGINE_SECRET || ENGINE_KEY);
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   async function validateEnaKey(key) {
     // /v1/models is public, so validate against an auth-required endpoint. A tiny
@@ -370,18 +373,21 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     let usedFree = false;
     let budgetRun = null; // { reserved, cap } when this is a metered ANM run
 
+    // Inference runs on the ANM-native AICF bridge (engine config is injected
+    // into the container env — ANIMICA_ENA_BASE + the secret as ANIMICA_ENA_KEY),
+    // so we DON'T set payload.ena_key here. These branches only decide access +
+    // metering: own key → unmetered; free tier → daily quota; else → ANM budget.
     const ownKey = getEnaKey(s);
     if (ownKey) {
-      payload.ena_key = ownKey; // unmetered — no budget_anm passed
+      // connected (signed-in) — unmetered; no budget_anm passed
     } else {
       const f = freeStatus(s);
       if (f.enabled && f.remaining > 0) {
-        payload.ena_key = FREE_KEY;
         usedFree = true;
       } else {
         // (3) ANM budget. cap = clamp(requested cap, per-call, balance).
         const balanceAnm = store.getEnaBalanceAnm(tokenKey(s));
-        if (balanceAnm >= MIN_ANM && ENGINE_KEY) {
+        if (balanceAnm >= MIN_ANM && ENGINE_READY) {
           const requested = Number((req.body || {}).cap);
           const wantCap = Number.isFinite(requested) && requested > 0 ? requested : DEFAULT_CAP_ANM;
           const cap = clamp(wantCap, MIN_ANM, balanceAnm);
@@ -391,7 +397,6 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
           // contract_notes: reserve-up-front + refund-unspent + stream TEE.)
           store.debitEnaBalanceAnm(tokenKey(s), cap);
           budgetRun = { reserved: cap, cap };
-          payload.ena_key = ENGINE_KEY;
           payload.budget_anm = cap;
           payload.anm_per_ktok = ANM_PER_KTOK;
         } else {

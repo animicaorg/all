@@ -27,6 +27,7 @@ import * as billing from './billing.js';
 import * as totp from './totp.js';
 import { createIdeRouter } from './ide/routes.js';
 import { createWalletConnectRouter, createWalletSignRouter } from './ide/walletConnect.js';
+import { createEnaEngineRouter } from './ide/enaEngine.js';
 import * as ideSecrets from './ide/secrets.js';
 import * as ideGithub from './ide/github.js';
 import * as ideAgentProxy from './ide/agentProxy.js';
@@ -294,6 +295,10 @@ app.get('/app/package.json', (_req, res) => {
 });
 
 // --- web IDE backend (gated; GitHub PAT + container agent proxy) ----------- #
+// ENA inference engine → AICF bridge (ANM-native, no credits). Secret-gated,
+// mounted before the session-gated ide router (the sidecar has no session).
+app.use('/api/ide/ena-engine', createEnaEngineRouter());
+
 // Public web-wallet connect handshake — mounted BEFORE the gated ide router so
 // /callback (POSTed by the wallet.animica.org sidecar, no session) isn't 401'd.
 app.use('/api/ide/wallet/connect', createWalletConnectRouter());

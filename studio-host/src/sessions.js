@@ -121,12 +121,13 @@ export async function ensureSession(key, opts = {}) {
     // no-new-privileges, hand it the agent port, and give it a WRITABLE named
     // volume for the cloned repo (the agent owns /home/studio/workspace).
     args.push('--cap-drop', 'ALL', '-e', `AGENT_PORT=${AGENT_PORT}`);
-    // ENA inference config for the sidecar's agent loop (key-agnostic: if the key
-    // is empty the sidecar streams a clean "not configured" SSE error instead of
-    // crashing). Defaults point at the live pool broker.
-    args.push('-e', 'ANIMICA_ENA_BASE=' + (process.env.STUDIO_ENA_BASE || 'https://pool.animica.org/v1'));
-    args.push('-e', 'ANIMICA_ENA_KEY=' + (process.env.STUDIO_ENA_KEY || ''));
-    args.push('-e', 'ANIMICA_ENA_MODEL=' + (process.env.STUDIO_ENA_MODEL || 'anm-code-7b'));
+    // ENA inference config for the sidecar's agent loop. Default engine is the
+    // ANM-native AICF bridge via the broker's secret-gated /ena-engine proxy
+    // (no USD credits). The secret (ANIMICA_ENA_KEY) is what the proxy checks.
+    // Falls back to the pool broker if the engine base isn't configured.
+    args.push('-e', 'ANIMICA_ENA_BASE=' + (process.env.STUDIO_ENA_ENGINE_BASE || process.env.STUDIO_ENA_BASE || 'https://pool.animica.org/v1'));
+    args.push('-e', 'ANIMICA_ENA_KEY=' + (process.env.STUDIO_ENA_ENGINE_SECRET || process.env.STUDIO_ENA_KEY || ''));
+    args.push('-e', 'ANIMICA_ENA_MODEL=' + (process.env.STUDIO_ENA_ENGINE_MODEL || process.env.STUDIO_ENA_MODEL || 'anm-code-7b'));
     args.push('-v', `anm-ide-vol-${id}:/home/studio/workspace`);
     // Publish a SECOND host port for the in-container dev server (run/preview).
     args.push('-p', `127.0.0.1::${DEV_PORT}`);
