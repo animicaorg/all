@@ -173,19 +173,23 @@ async function checkCustody(address) {
   } catch { return { via: "none" }; }
 }
 async function sendPayment(from) {
-  const memo = { kind: "ena.budget.deposit" };
+  // Mirror wallet.js validation exactly (no memo — deposits don't need one).
+  if (!/^anim1[0-9a-z]{20,}$/.test(toAddr)) throw new Error("Bad destination address.");
+  if (from === toAddr) throw new Error("Cannot send to the same address.");
   const { via } = await checkCustody(from);
+  statusEl.className = "small status-busy";
+  statusEl.textContent = `Submitting via ${via}…`;
   if (via === "imported") {
     const res = await fetch("/wallet-sign-and-send", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ wallet: findEntry(from), to: toAddr, amount_nano: nano.toString(), memo }),
+      body: JSON.stringify({ wallet: findEntry(from), to: toAddr, amount_nano: nano.toString() }),
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || `signer returned ${res.status}`);
     return json.txHash || json.txid || "submitted";
   }
   if (via === "node") {
-    const res = await rpc("wallet.send", { from, to: toAddr, amount: nano.toString(), memo });
+    const res = await rpc("wallet.send", { from, to: toAddr, amount: nano.toString() });
     return res.txHash || res.tx_hash || res.hash || res.txid || "submitted";
   }
   throw new Error("This wallet has no signing key here. Generate one on this site or import a wallets.json.");
@@ -215,7 +219,9 @@ async function approve() {
   } catch (e) {
     approveBtn.disabled = false; denyBtn.disabled = false;
     statusEl.className = "small status-err";
-    statusEl.textContent = "Could not send: " + (e.message || e);
+    const name = e && e.name && e.name !== "Error" ? e.name + ": " : "";
+    statusEl.textContent = "Could not send: " + name + ((e && e.message) || String(e));
+    try { console.error("[sign] send failed", e); } catch {}
   }
 }
 async function deny() {
