@@ -1,0 +1,16 @@
+# Build-context excludes for the anm-studio-ide image (Dockerfile copies only
+# the animica_studio package). Keep the context lean and free of caches/builds.
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.mypy_cache
+.pytest_cache
+build
+dist
+*.egg-info
+.venv
+venv
+.git
+tests
+packaging
+assets

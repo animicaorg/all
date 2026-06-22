@@ -19,11 +19,16 @@ import * as cookie from 'cookie';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 
+import * as sessions from './sessions.js';
 import { ensureSession, touch, destroy, startReaper, stats, config } from './sessions.js';
 import * as store from './store.js';
 import { mailerReady, sendMagicLink } from './mailer.js';
 import * as billing from './billing.js';
 import * as totp from './totp.js';
+import { createIdeRouter } from './ide/routes.js';
+import * as ideSecrets from './ide/secrets.js';
+import * as ideGithub from './ide/github.js';
+import * as ideAgentProxy from './ide/agentProxy.js';
 
 // --- tiny .env loader (no dep) --------------------------------------------- #
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -282,6 +287,18 @@ app.use('/static', express.static(PUBLIC_DIR));
 app.get('/app/package.json', (_req, res) => {
   res.type('application/json').send(JSON.stringify({ name: 'noVNC', version: '1.4.0' }));
 });
+
+// --- web IDE backend (gated; GitHub PAT + container agent proxy) ----------- #
+// Mounted before the SPA static/catch-all so /api/ide/* is handled here. The
+// router does its own session gating (401 JSON when unauthenticated).
+app.use('/api/ide', createIdeRouter({
+  currentSession,
+  store,
+  secrets: ideSecrets,
+  github: ideGithub,
+  agentProxy: ideAgentProxy,
+  sessions,
+}));
 
 // --- gated reverse-proxy to the user's container (HTTP) -------------------- #
 app.use('/app', async (req, res) => {

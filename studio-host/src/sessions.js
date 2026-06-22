@@ -16,8 +16,11 @@ import { promisify } from 'node:util';
 const exec = promisify(execFile);
 
 const IMAGE = process.env.STUDIO_IMAGE || 'anm-studio-web';
+const IDE_IMAGE = process.env.STUDIO_IDE_IMAGE || 'anm-studio-ide';
 const NAME_PREFIX = 'anm-studio-u-';
+const IDE_NAME_PREFIX = 'anm-studio-ide-';
 const CONTAINER_PORT = '6080';
+const AGENT_PORT = '8090';
 
 // Tunables (overridable via env).
 const MAX_SESSIONS = parseInt(process.env.STUDIO_MAX_SESSIONS || '12', 10);
@@ -41,11 +44,11 @@ function sanitizeKey(key) {
   return String(key).toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 48) || 'anon';
 }
 
-async function dockerPort(name) {
+async function dockerPort(name, containerPort = CONTAINER_PORT) {
   // `docker port <name> 6080/tcp` -> "127.0.0.1:49153"
-  const { stdout } = await exec('docker', ['port', name, `${CONTAINER_PORT}/tcp`]);
+  const { stdout } = await exec('docker', ['port', name, `${containerPort}/tcp`]);
   const m = stdout.trim().match(/:(\d+)\s*$/);
-  if (!m) throw new Error(`could not read published port for ${name}`);
+  if (!m) throw new Error(`could not read published port for ${name}:${containerPort}`);
   return parseInt(m[1], 10);
 }
 
@@ -60,15 +63,25 @@ async function isRunning(name) {
 
 /**
  * Ensure a running session for `key`. Returns { port, name, tier, created }.
+ *
+ * Two kinds of container can run per identity, tracked under distinct registry
+ * keys so they never collide:
+ *  - 'web' (default): the noVNC desktop Studio. Published port -> {port}.
+ *  - 'ide':           the headless web-IDE container with the FastAPI agent
+ *                     sidecar. Published agent port -> {agentPort}.
+ *
  * @param {string} key   stable identity (wallet addr / user id / anon id)
- * @param {object} opts  { tier: 'standard'|'anon', persistent?: bool }
+ * @param {object} opts  { kind?: 'web'|'ide', tier?: 'standard'|'anon', persistent?: bool }
  */
 export async function ensureSession(key, opts = {}) {
   const id = sanitizeKey(key);
   const tier = PROFILES[opts.tier] ? opts.tier : 'standard';
-  const name = NAME_PREFIX + id;
+  const ide = opts.kind === 'ide';
+  const name = (ide ? IDE_NAME_PREFIX : NAME_PREFIX) + id;
+  // Registry key separates the two kinds for the same identity.
+  const regKey = ide ? `ide:${id}` : id;
 
-  const existing = sessions.get(id);
+  const existing = sessions.get(regKey);
   if (existing && (await isRunning(name))) {
     existing.lastSeen = Date.now();
     return { ...existing, created: false };
@@ -88,32 +101,52 @@ export async function ensureSession(key, opts = {}) {
   await exec('docker', ['rm', '-f', name]).catch(() => {});
 
   const p = PROFILES[tier];
+  const containerPort = ide ? AGENT_PORT : CONTAINER_PORT;
   const args = [
     'run', '-d', '--name', name,
     '--restart', 'no',
-    '-p', `127.0.0.1::${CONTAINER_PORT}`,
+    '-p', `127.0.0.1::${containerPort}`,
     '--memory', p.memory, '--memory-swap', p.memory,
     '--cpus', p.cpus, '--pids-limit', p.pids,
     '--security-opt', 'no-new-privileges',
     '--label', 'anm-studio=1',
     '--label', `anm-tier=${tier}`,
+    '--label', `anm-kind=${ide ? 'ide' : 'web'}`,
   ];
-  if (p.readonlyish) {
-    args.push('--read-only', '--tmpfs', '/tmp:exec,size=512m', '--tmpfs', '/home/studio:exec,size=512m');
+  if (ide) {
+    // Headless sidecar: drop all Linux caps (it only needs git+fs), keep
+    // no-new-privileges, hand it the agent port, and give it a WRITABLE named
+    // volume for the cloned repo (the agent owns /home/studio/workspace).
+    args.push('--cap-drop', 'ALL', '-e', `AGENT_PORT=${AGENT_PORT}`);
+    args.push('-v', `anm-ide-vol-${id}:/home/studio/workspace`);
+    args.push(IDE_IMAGE);
+  } else {
+    if (p.readonlyish) {
+      // Keep the rootfs read-only (security) but the writable tmpfs overlays MUST
+      // be owned by the in-container `studio` user (uid/gid 10001) — otherwise the
+      // home tmpfs is root-owned and the Studio app can't create its config dir
+      // (/home/studio/.local/share/...) and crashes on launch.
+      args.push(
+        '--read-only',
+        '--tmpfs', '/tmp:exec,size=512m,uid=10001,gid=10001,mode=1777',
+        '--tmpfs', '/home/studio:exec,size=512m,uid=10001,gid=10001,mode=0775',
+      );
+    }
+    if (opts.persistent && tier !== 'anon') {
+      args.push('-v', `anm-studio-vol-${id}:/home/studio/workspace`);
+    }
+    args.push(IMAGE);
   }
-  if (opts.persistent && tier !== 'anon') {
-    args.push('-v', `anm-studio-vol-${id}:/home/studio/workspace`);
-  }
-  args.push(IMAGE);
 
   await exec('docker', args);
-  const port = await dockerPort(name);
+  const port = await dockerPort(name, containerPort);
   const rec = {
-    name, port, tier,
+    name, tier, kind: ide ? 'ide' : 'web',
     lastSeen: Date.now(),
     ttl: tier === 'anon' ? ANON_TTL_MS : IDLE_MS,
   };
-  sessions.set(id, rec);
+  if (ide) rec.agentPort = port; else rec.port = port;
+  sessions.set(regKey, rec);
   return { ...rec, created: true };
 }
 
@@ -160,4 +193,4 @@ export function startReaper(intervalMs = 60_000) {
   if (timer.unref) timer.unref();
 }
 
-export const config = { IMAGE, MAX_SESSIONS, IDLE_MS, ANON_TTL_MS, PROFILES };
+export const config = { IMAGE, IDE_IMAGE, MAX_SESSIONS, IDLE_MS, ANON_TTL_MS, PROFILES };

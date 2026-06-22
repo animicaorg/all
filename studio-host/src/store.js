@@ -57,6 +57,30 @@ export function setUserPlan(email, plan, until = null) {
   return u;
 }
 
+// ---- GitHub PAT (encrypted blob) ------------------------------------------ #
+// Authenticated users get the blob persisted on their user record. Anonymous
+// identities (no email/user row) get an in-memory map keyed by identity, so an
+// anon session's connection lasts only as long as the broker process.
+const anonGithub = new Map(); // identity -> encBlob
+
+export function setGithubToken(emailOrId, encBlob) {
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) { u.githubTokenEnc = encBlob; persist(); return; }
+  anonGithub.set(String(emailOrId), encBlob);
+}
+
+export function getGithubToken(emailOrId) {
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) return u.githubTokenEnc || null;
+  return anonGithub.get(String(emailOrId)) || null;
+}
+
+export function clearGithubToken(emailOrId) {
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) { delete u.githubTokenEnc; persist(); return; }
+  anonGithub.delete(String(emailOrId));
+}
+
 // ---- Optional TOTP 2FA ----------------------------------------------------- #
 export function setTotpPending(email, secret) {
   const u = findUserByEmail(email); if (!u) return null;
