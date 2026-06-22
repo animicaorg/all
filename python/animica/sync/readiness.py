@@ -181,4 +181,21 @@ def assess_tx_submission_readiness(
     ):
         return True, info
 
+    # Authoritative-edge allowance: if our head is at or above the highest
+    # height ANY peer reports (network_best), we hold the leading edge of the
+    # chain we can see. Queued/look-ahead blocks here are our own production,
+    # not "behind the network" — so allow submission. Without this, a
+    # block-producing verifier seed that runs ahead of lagging peers gets stuck
+    # in a permanent "still syncing" state and can never accept transactions.
+    # Nodes genuinely behind (head < network_best) are unaffected; a peer
+    # claiming an inflated height keeps us deferring (head < that height).
+    if (
+        head_height is not None
+        and network_best_height is not None
+        and network_best_height > 0
+        and head_height >= network_best_height
+        and (best_header_height is None or head_height >= best_header_height)
+    ):
+        return True, info
+
     return False, info
