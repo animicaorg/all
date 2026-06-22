@@ -181,7 +181,11 @@ export const useEnaStore = create<EnaState>((set, get) => ({
   ensureBudget: async (cap: number) => {
     const s = get();
     if (s.connected) return true; // own-key mode — no budget needed
-    if (s.balanceAnm >= cap - 1e-12) return true; // already covered
+    // `cap` is how much ANM to LOAD per top-up. Use the existing prepaid fund as
+    // long as it still has enough to run — only deposit when it's (nearly) empty.
+    // This is what makes a single top-up last across many chats.
+    const minBal = s.perCallAnm > 0 ? s.perCallAnm : 1;
+    if (s.balanceAnm >= minBal - 1e-12) return true;
 
     const wallet = useWalletStore.getState();
     set({ depositing: true, error: null });
@@ -201,19 +205,20 @@ export const useEnaStore = create<EnaState>((set, get) => ({
       if (!treasury) throw new Error("No treasury address configured.");
 
       const wkind = useWalletStore.getState().kind;
+      // Load the chosen amount in a single deposit (one signature).
+      const amount = Math.ceil(Math.max(minBal, cap) * 1e9) / 1e9;
 
       // Web wallet → one-click sign-and-send via its /sign/ approval popup,
       // then wait for the first on-chain confirmation and credit. No paste.
       if (wkind === "web") {
-        const shortfall = Math.max(get().perCallAnm || 0, Number((cap - get().balanceAnm).toFixed(9)));
-        const txid = await useWalletStore.getState().signSendWeb(shortfall);
+        const txid = await useWalletStore.getState().signSendWeb(amount);
         const done = await pollDepositConfirmed(txid);
         if (!done) {
           set({ depositing: false, error: "Sent — waiting for on-chain confirmation. Tap Fund to check." });
           return false;
         }
         set({ balanceAnm: done.balanceAnm, depositing: false });
-        return done.balanceAnm >= cap - 1e-12 || done.balanceAnm >= (get().perCallAnm || 0) - 1e-12;
+        return done.balanceAnm >= minBal - 1e-12;
       }
 
       // No signer at all → manual funding (send to treasury + confirm).
@@ -222,16 +227,7 @@ export const useEnaStore = create<EnaState>((set, get) => ({
         return false;
       }
 
-      // Injected wallet: deposit only the shortfall — one wallet signature.
-      const shortfall = Math.max(0, cap - s.balanceAnm);
-      // Round up to whole nano-ANM to avoid sub-unit rounding leaving us short.
-      const amount = Math.ceil(shortfall * 1e9) / 1e9;
-      if (amount <= 0) {
-        set({ depositing: false });
-        return true;
-      }
-
-      // One wallet confirmation popup; the tx id comes back automatically.
+      // Injected wallet: one wallet confirmation popup; tx id comes back.
       const txid = await useWalletStore.getState().sendAnm(treasury, amount);
       // Wait for the first on-chain confirmation, then credit — no paste.
       const done = await pollDepositConfirmed(txid);
@@ -240,7 +236,7 @@ export const useEnaStore = create<EnaState>((set, get) => ({
         return false;
       }
       set({ balanceAnm: done.balanceAnm, depositing: false });
-      return done.balanceAnm >= cap - 1e-12 || done.balanceAnm >= (get().perCallAnm || 0) - 1e-12;
+      return done.balanceAnm >= minBal - 1e-12;
     } catch (e: any) {
       set({
         depositing: false,
