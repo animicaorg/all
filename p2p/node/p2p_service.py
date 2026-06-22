@@ -14555,12 +14555,17 @@ class P2PService:
                 continue
             if self._enforce_outbound_only_policy_for_peer(peer):
                 continue
-            # Only count peers on OUR chain. A dead fork (old chain, same genesis
-            # block but diverged early) runs AHEAD on its own branch and otherwise
-            # poisons net_best — making this node believe it is behind and chase an
-            # unreachable tip (genesis_mismatch at sync), wedging it short and (with
-            # the mining gate) halting mining even though it is AT the canonical tip.
-            if not self._peer_is_anchored(peer):
+            # Only count peers PROVEN to serve valid headers on OUR chain. A
+            # different-genesis / dead-fork peer runs ahead on its own branch and
+            # even passes the (optimistic) anchored check, but it never serves us a
+            # valid header (genesis_mismatch at sync), so successful_headers_served
+            # stays 0. Excluding such peers stops the phantom (e.g. 25718) from
+            # poisoning net_best — which otherwise makes the node believe it is
+            # behind, wedge, and (via the mining gate) halt mining while it is
+            # actually AT the canonical tip. If no proven peer is ahead, net_best
+            # is None and the node treats itself as at-tip (mining allowed).
+            bc = getattr(peer, "broadcast", None)
+            if bc is None or int(getattr(bc, "successful_headers_served", 0)) <= 0:
                 continue
             info = self._sync_peer_heads.get(peer.remote)
 
