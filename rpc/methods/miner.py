@@ -1464,7 +1464,28 @@ def _mining_gate(
             },
         )
         return False, f"too_far_behind:{header_lag}_blocks"
-    
+
+    # Network-tip lag: best_header_height can read "at tip" while the node is
+    # actually wedged N blocks short of the real network tip (the near-tip sync
+    # wedge), so ALSO gate on network_best_height (the peers' height). Without
+    # this, a behind seed hands out stale templates that orphan when it catches
+    # up — wasting miners' hashpower mining against an unsynced node. A small
+    # tolerance absorbs propagation jitter / being the block producer; the
+    # allow_unsynced override still works for intentional offline/test mining.
+    network_best = int(sync_status.get("network_best_height") or 0)
+    net_lag = network_best - exec_head
+    net_lag_limit = int(os.getenv("ANIMICA_MINING_MAX_NETWORK_LAG", "16"))
+    if network_best > 0 and net_lag >= net_lag_limit and not allow_unsynced:
+        log.info(
+            "MINER_BEHIND_NETWORK",
+            extra={
+                "exec_head": exec_head,
+                "network_best": network_best,
+                "net_lag": net_lag,
+            },
+        )
+        return False, f"behind_network:{net_lag}_blocks"
+
     # Check execution lag: if exec_head is too far behind best known headers,
     # we may be in "headers-only" mode (headers synced but blocks not executed yet)
     max_lag = int(os.getenv("ANIMICA_MINING_MAX_LAG", "10"))  # Increased default from 2 to 10

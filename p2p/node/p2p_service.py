@@ -14582,8 +14582,8 @@ class P2PService:
                     continue
         
         if not heights:
-            return None
-        
+            return self._sticky_net_best(None)
+
         # Apply verifier seed constraint if enabled and verifier seeds are present
         if self._enable_verifier_seeds and verifier_heights:
             max_verifier_height = max(verifier_heights)
@@ -14613,13 +14613,36 @@ class P2PService:
                 
                 # Keep a minimal +1 forward target so miners can advance even if peers
                 # have not yet echoed the next block.
-                return max(constrained_max, max_verifier_height + 1)
+                return self._sticky_net_best(max(constrained_max, max_verifier_height + 1))
             else:
                 # If all heights are filtered out, fall back to verifier max + 1.
-                return max_verifier_height + 1
-        
+                return self._sticky_net_best(max_verifier_height + 1)
+
         # No verifier constraint, return max height
-        return max(heights)
+        return self._sticky_net_best(max(heights))
+
+    def _sticky_net_best(self, value: Optional[int]) -> Optional[int]:
+        """Stabilise the network-best target against transient peer flapping.
+
+        The near-tip wedge: a high peer (e.g. a verifier seed at the real tip)
+        momentarily fails the responsiveness check, so this computation collapses
+        to a lagging peer's height — the node then believes it is AT the tip and
+        stops syncing ~N blocks short. We hold the most recent (higher) target
+        for a short TTL so a single flap can't drop the sync target onto a
+        laggard. Higher values update immediately; only downward drops are damped.
+        """
+        ttl_s = 180.0
+        now = time.time()
+        prev = getattr(self, "_net_best_sticky_h", None)
+        prev_t = getattr(self, "_net_best_sticky_t", 0.0)
+        recent = prev is not None and (now - prev_t) < ttl_s
+        if value is None:
+            return prev if recent else None
+        if recent and int(value) < int(prev):
+            return prev
+        self._net_best_sticky_h = int(value)
+        self._net_best_sticky_t = now
+        return int(value)
 
     def _is_sync_target_ahead(self, local_height: int) -> bool:
         local_height_int = int(local_height or 0)
