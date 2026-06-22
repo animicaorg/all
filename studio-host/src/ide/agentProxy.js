@@ -97,8 +97,16 @@ export async function forwardJson(session, method, path, body) {
  * @param {object|null} body  JSON body for write methods
  * @param {import('express').Request} req
  * @param {import('express').Response} res
+ * @param {object} [opts]
+ * @param {(type:string, data:any)=>void} [opts.onEvent]  TEE callback invoked
+ *        for every parsed SSE event (type + JSON-parsed data) as it streams
+ *        through. Used by the metered /ena route to capture the sidecar's
+ *        `done` event {calls, spent_anm} for budget reconciliation. The pipe to
+ *        the client is unaffected (raw bytes still flow straight through); this
+ *        is a non-blocking observer and any throw is swallowed.
  */
-export async function streamProxy(session, method, path, body, req, res) {
+export async function streamProxy(session, method, path, body, req, res, opts = {}) {
+  const onEvent = typeof opts.onEvent === 'function' ? opts.onEvent : null;
   const { base } = await getAgentBase(session);
   const ac = new AbortController();
   // Abort the upstream as soon as the browser hangs up so the worker thread in
@@ -168,6 +176,40 @@ export async function streamProxy(session, method, path, body, req, res) {
 
   // Pipe the upstream web ReadableStream straight to res as chunks arrive.
   const nodeStream = Readable.fromWeb(upstream.body);
+
+  // Optional SSE TEE: parse complete event frames out of the byte stream WITHOUT
+  // perturbing the bytes forwarded to the client. Frames are separated by a
+  // blank line ("\n\n"); within a frame we read the `event:`/`data:` lines.
+  let sseBuf = '';
+  const teeOf = onEvent
+    ? (chunk) => {
+        try {
+          sseBuf += chunk.toString('utf8');
+          let sep;
+          // RegExp split on a blank line (LF or CRLF) frame boundary.
+          while ((sep = sseBuf.search(/\r?\n\r?\n/)) !== -1) {
+            const frame = sseBuf.slice(0, sep);
+            sseBuf = sseBuf.slice(sep + (sseBuf[sep] === '\r' ? 4 : 2));
+            let evType = 'message';
+            const dataLines = [];
+            for (const rawLine of frame.split(/\r?\n/)) {
+              if (rawLine.startsWith('event:')) evType = rawLine.slice(6).trim();
+              else if (rawLine.startsWith('data:')) dataLines.push(rawLine.slice(5).replace(/^ /, ''));
+            }
+            if (dataLines.length) {
+              const dataStr = dataLines.join('\n');
+              let parsed;
+              try { parsed = JSON.parse(dataStr); } catch { parsed = dataStr; }
+              try { onEvent(evType, parsed); } catch {}
+            }
+          }
+          // Guard against an unbounded buffer if upstream never emits a boundary.
+          if (sseBuf.length > 1 << 20) sseBuf = sseBuf.slice(-4096);
+        } catch {}
+      }
+    : null;
+  if (teeOf) nodeStream.on('data', teeOf);
+
   nodeStream.on('error', () => {
     sendEvent('error', { message: 'IDE backend stream error.' });
     try { res.end(); } catch {}

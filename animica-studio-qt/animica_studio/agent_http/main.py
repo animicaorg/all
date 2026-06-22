@@ -89,6 +89,11 @@ class EnaChatRequest(BaseModel):
     ena_key: Optional[str] = None
     ena_base: Optional[str] = None
     ena_model: Optional[str] = None
+    # ANM budget metering (broker-driven). When ``budget_anm`` is set the loop
+    # meters ``per_call_anm`` per model call and stops cleanly before exceeding
+    # the cap. When ``budget_anm`` is None metering is disabled (legacy behavior).
+    budget_anm: Optional[float] = None
+    per_call_anm: Optional[float] = None
 
 
 class EnaApproveRequest(BaseModel):
@@ -267,7 +272,13 @@ def ena_chat(req: EnaChatRequest):
     # Build the loop (FsProjectService rooted at REPO_DIR). If the repo isn't
     # cloned yet the loop still works (empty project context).
     fs = FsProjectService(REPO_DIR)
-    loop = HeadlessAgentLoop(fs=fs, settings=settings, emit=emit)
+    loop = HeadlessAgentLoop(
+        fs=fs,
+        settings=settings,
+        emit=emit,
+        budget_anm=req.budget_anm,
+        per_call_anm=req.per_call_anm,
+    )
 
     def worker() -> None:
         try:

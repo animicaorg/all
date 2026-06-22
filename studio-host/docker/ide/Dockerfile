@@ -17,7 +17,7 @@ FROM python:3.12-slim
 # preview port health probes. Node.js 20 + npm: dev servers (npm run dev/start).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        git ca-certificates bash curl gnupg \
+        git ca-certificates bash curl gnupg libpq5 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get purge -y --auto-remove gnupg \
@@ -29,6 +29,11 @@ RUN pip install --no-cache-dir \
     "uvicorn>=0.29" \
     "pydantic>=2.5" \
     "httpx>=0.27"
+
+# NOTE: the animica CLI is installed into a per-user venv below (not system
+# Python), so the terminal opens in an isolated venv the user can pip-install
+# into freely without touching the sidecar's runtime. libpq5 (above) covers
+# psycopg's runtime lib.
 
 # --- non-root user (uid/gid 10001) --------------------------------------- #
 RUN groupadd --gid 10001 studio \
@@ -43,10 +48,19 @@ ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
     AGENT_PORT=8090 \
     DEV_PORT=8099 \
-    REPO_DIR=/home/studio/workspace/repo
+    REPO_DIR=/home/studio/workspace/repo \
+    ANIMICA_RPC_URL=https://rpc.animica.org/rpc \
+    ANIMICA_ENA_BASE=https://pool.animica.org/v1
 
-# Workspace owned by the unprivileged user.
+# Workspace + a Python venv preloaded with the animica CLI suite. The
+# interactive terminal (bash -l) auto-activates it via .bash_profile→.bashrc,
+# so users land in `(venv)` with `animica …` ready and pip installs isolated.
 RUN mkdir -p /home/studio/workspace/repo \
+    && python3 -m venv /home/studio/venv \
+    && /home/studio/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /home/studio/venv/bin/pip install --no-cache-dir "animica==0.3.13" \
+    && printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' > /home/studio/.bash_profile \
+    && printf '\n# Animica CLI suite — auto-activate the preloaded venv\n. /home/studio/venv/bin/activate\n' >> /home/studio/.bashrc \
     && chown -R studio:studio /home/studio /app
 
 WORKDIR /home/studio/workspace

@@ -127,6 +127,82 @@ export function incrEnaFreeUsed(emailOrId) {
   rec.used += 1; return rec.used;
 }
 
+// ---- ENA ANM budget ledger (per user, prepaid balance) --------------------- #
+// A prepaid ANM balance the user tops up via a single wallet deposit; the agent
+// loop meters a small ANM amount per model call and debits it OFF-CHAIN. Authed
+// users persist on their user record; anon identities use an in-memory Map
+// (mirrors the free-tier pattern — anon balances die with the process).
+//
+// All amounts are ANM decimals carried as JS Numbers. ANM has 9 decimals, so we
+// round every stored value to 1e-9 to keep float drift from accumulating.
+const anonEnaBalance = new Map(); // identity -> Number (ANM)
+const ANM_QUANT = 1e9;
+function _roundAnm(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 0;
+  return Math.round(x * ANM_QUANT) / ANM_QUANT;
+}
+
+export function getEnaBalanceAnm(emailOrId) {
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) return _roundAnm(u.enaBalanceAnm || 0);
+  return _roundAnm(anonEnaBalance.get(String(emailOrId)) || 0);
+}
+
+export function creditEnaBalanceAnm(emailOrId, amt) {
+  const add = _roundAnm(amt);
+  if (add <= 0) return getEnaBalanceAnm(emailOrId);
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) {
+    u.enaBalanceAnm = _roundAnm((u.enaBalanceAnm || 0) + add);
+    persist();
+    return u.enaBalanceAnm;
+  }
+  const next = _roundAnm((anonEnaBalance.get(String(emailOrId)) || 0) + add);
+  anonEnaBalance.set(String(emailOrId), next);
+  return next;
+}
+
+// Debit up to the available balance; never goes below 0. Returns the new balance.
+export function debitEnaBalanceAnm(emailOrId, amt) {
+  const sub = _roundAnm(amt);
+  if (sub <= 0) return getEnaBalanceAnm(emailOrId);
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) {
+    u.enaBalanceAnm = _roundAnm(Math.max(0, (u.enaBalanceAnm || 0) - sub));
+    persist();
+    return u.enaBalanceAnm;
+  }
+  const next = _roundAnm(Math.max(0, (anonEnaBalance.get(String(emailOrId)) || 0) - sub));
+  anonEnaBalance.set(String(emailOrId), next);
+  return next;
+}
+
+// ---- Consumed deposit txids (anti-replay) ---------------------------------- #
+// A persisted set of on-chain txids already credited to a budget, so the same
+// deposit can't be claimed twice. Persisted globally (a txid is unique chain-wide
+// and may only ever fund one budget regardless of which user submits it).
+function _depositSet() {
+  if (!Array.isArray(db.usedDeposits)) db.usedDeposits = [];
+  return db.usedDeposits;
+}
+
+export function isDepositUsed(txid) {
+  const t = String(txid || '').toLowerCase().replace(/^0x/, '');
+  if (!t) return true; // empty txid: treat as "used" so it can never credit
+  return _depositSet().includes(t);
+}
+
+export function markDepositUsed(txid) {
+  const t = String(txid || '').toLowerCase().replace(/^0x/, '');
+  if (!t) return false;
+  const set = _depositSet();
+  if (set.includes(t)) return false;
+  set.push(t);
+  persist();
+  return true;
+}
+
 // ---- Optional TOTP 2FA ----------------------------------------------------- #
 export function setTotpPending(email, secret) {
   const u = findUserByEmail(email); if (!u) return null;

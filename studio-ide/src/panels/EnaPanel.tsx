@@ -5,10 +5,14 @@ import { ChatMessage } from "@/components/ena/ChatMessage";
 import { ChatComposer } from "@/components/ena/ChatComposer";
 import { DiffProposalCard } from "@/components/ena/DiffProposalCard";
 import { ConnectEna } from "@/components/ena/ConnectEna";
+import { BudgetBar } from "@/components/ena/BudgetBar";
 
 export function EnaPanel() {
   const { messages, sending, proposals, tools, statusPhase, send, stop, resolveProposal } =
     useChatStore();
+  const budgetReached = useChatStore((s) => s.budgetReached);
+  const spentAnm = useChatStore((s) => s.spentAnm);
+  const runCap = useChatStore((s) => s.runCap);
   const { connected, free, checked, status, canChat } = useEnaStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -28,13 +32,24 @@ export function EnaPanel() {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, proposals, statusPhase, tools.length]);
 
-  // Gate the chat on either a connected key or remaining free messages. The
-  // free-tier banner can also force the connect view (with a Back option).
-  if (checked && (!canChat() || showConnect)) {
-    return <ConnectEna onBack={canChat() ? () => setShowConnect(false) : undefined} />;
+  const { treasury, perCallAnm } = useEnaStore();
+  // Budget mode = no own key and no free messages left, but ANM budgets are
+  // available (a treasury is configured). In this mode the user can chat by
+  // setting a cap; the wallet deposit happens on send only if short.
+  const onFreeTier = !connected && free.enabled && free.remaining > 0;
+  const budgetAvailable = !connected && !onFreeTier && !!treasury && perCallAnm > 0;
+
+  // Gate the chat on a connected key, remaining free messages, or an
+  // available ANM budget path. Force the connect view when explicitly
+  // requested, or when there is no way to chat at all.
+  if (checked && showConnect) {
+    return <ConnectEna onBack={canChat() || budgetAvailable ? () => setShowConnect(false) : undefined} />;
+  }
+  if (checked && !canChat() && !budgetAvailable) {
+    return <ConnectEna onBack={undefined} />;
   }
 
-  const onFreeTier = !connected && free.enabled;
+  const budgetMode = budgetAvailable;
 
   const empty = messages.length === 0;
   const activeTools = tools.filter((t) => t.status === "start");
@@ -65,6 +80,32 @@ export function EnaPanel() {
           </span>
           <button className="text-accent hover:underline" onClick={() => setShowConnect(true)}>
             Use my own key
+          </button>
+        </div>
+      )}
+
+      {budgetMode && (
+        <BudgetBar
+          sending={sending}
+          spentAnm={spentAnm}
+          runCap={runCap}
+          onUseOwnKey={() => setShowConnect(true)}
+        />
+      )}
+
+      {budgetReached && !sending && (
+        <div className="flex flex-none items-center justify-between gap-2 border-b border-warn/30 bg-warn/10 px-3 py-1.5 text-xs">
+          <span className="text-warn">
+            Budget reached — raise the cap to continue.
+          </span>
+          <button
+            className="text-accent hover:underline"
+            onClick={() => {
+              const ena = useEnaStore.getState();
+              ena.setCap(Math.max(ena.cap * 2, ena.cap + (ena.perCallAnm || 0) * 10));
+            }}
+          >
+            Raise cap
           </button>
         </div>
       )}

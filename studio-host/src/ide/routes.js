@@ -11,6 +11,7 @@
  */
 import express from 'express';
 import { randomBytes } from 'node:crypto';
+import { verifyDeposit } from './ena_pay.js';
 
 /**
  * @param {object} deps
@@ -59,6 +60,21 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     const blob = store.getEnaKey(tokenKey(s));
     return blob ? secrets.decrypt(blob) : null;
   }
+
+  // ---- Metered ANM budget config ----------------------------------------- #
+  // The user sets an ANM cap; a single wallet deposit tops up a prepaid budget;
+  // the agent meters PER_CALL_ANM per model call and the broker debits it
+  // off-chain. The inference ENGINE runs on the studio's funded pool key — the
+  // deposited ANM is the user's metered charge to the treasury (revenue).
+  const TREASURY = process.env.STUDIO_ENA_TREASURY
+    || process.env.ANIMICA_AICF_TREASURY_ADDRESS
+    || 'anim1zqpf6a5hvup7kggxdutt3tgswz4aa9rwlpsz8ywf73m4l5cmzhfk7pcnh6kgt';
+  const PER_CALL_ANM = Math.max(0, Number(process.env.STUDIO_ENA_PER_CALL_ANM || '0.01')) || 0.01;
+  const DEFAULT_CAP_ANM = Math.max(PER_CALL_ANM, Number(process.env.STUDIO_ENA_DEFAULT_CAP_ANM || '5')) || 5;
+  // The funded pool key the engine uses under the hood for budget runs. Falls
+  // back to the free-tier key so budget runs work wherever free runs do.
+  const ENGINE_KEY = process.env.STUDIO_ENA_ENGINE_KEY || process.env.STUDIO_ENA_FREE_KEY || '';
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   async function validateEnaKey(key) {
     // /v1/models is public, so validate against an auth-required endpoint. A tiny
     // embedding is the cheapest authenticated call (401/403 => the key is bad).
@@ -263,6 +279,63 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     res.json({ ok: true });
   });
 
+  // ---- ENA ANM budget: wallet status + deposit (single-signature top-up) --- #
+  // The ONLY user action is setting a cap; raising it past the prepaid balance
+  // triggers exactly one wallet deposit, verified here on-chain before crediting.
+  router.get('/ena/wallet', (req, res) => {
+    const s = req.ideSession;
+    res.json({
+      connected: !!getEnaKey(s),       // has their own (unmetered) key?
+      balanceAnm: store.getEnaBalanceAnm(tokenKey(s)),
+      treasury: TREASURY,
+      perCallAnm: PER_CALL_ANM,
+      defaultCap: DEFAULT_CAP_ANM,
+    });
+  });
+
+  // Confirm a wallet deposit and credit the prepaid budget. The amount is read
+  // from the chain (never trusted from the client); replays, unconfirmed txs and
+  // wrong-recipient txs are rejected. minAmount = one model call (PER_CALL_ANM)
+  // so a deposit must at least buy a single call to be useful.
+  router.post('/ena/deposit', async (req, res) => {
+    const s = req.ideSession;
+    const txid = (req.body || {}).txid;
+    if (!txid || typeof txid !== 'string') {
+      return res.status(400).json({ error: 'txid (string) is required.' });
+    }
+    // Anti-replay check up front (a txid may only ever credit one budget).
+    if (store.isDepositUsed(txid)) {
+      return res.status(409).json({ error: 'That deposit was already credited.', code: 'replay' });
+    }
+    let v;
+    try {
+      v = await verifyDeposit({ txid, expectedTo: TREASURY, minAmountAnm: PER_CALL_ANM });
+    } catch (e) {
+      // bad_treasury / config error — not the user's fault.
+      return res.status(500).json({ error: 'Treasury misconfigured; deposit verification unavailable.' });
+    }
+    if (!v.ok) {
+      if (v.pending) {
+        return res.status(202).json({ error: 'Deposit not confirmed yet — try again shortly.', reason: v.reason, pending: true });
+      }
+      const map = {
+        wrong_recipient: 'That payment did not go to the studio treasury.',
+        underpaid: `Deposit too small — send at least ${PER_CALL_ANM} ANM.`,
+        tx_not_found: 'Transaction not found on-chain.',
+      };
+      const msg = map[v.reason] || `Deposit rejected (${v.reason || 'invalid'}).`;
+      return res.status(402).json({ error: msg, reason: v.reason });
+    }
+    // Verified + confirmed. Claim the txid atomically (markDepositUsed returns
+    // false if another concurrent request already claimed it) before crediting,
+    // so a double-submit can't double-credit.
+    if (!store.markDepositUsed(txid)) {
+      return res.status(409).json({ error: 'That deposit was already credited.', code: 'replay' });
+    }
+    const balanceAnm = store.creditEnaBalanceAnm(tokenKey(s), v.amountAnm);
+    res.json({ balanceAnm, creditedAnm: v.amountAnm, treasury: TREASURY });
+  });
+
   router.post('/ena', async (req, res) => {
     const { message, history } = req.body || {};
     if (typeof message !== 'string' || !message) {
@@ -272,37 +345,103 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     const payload = { message };
     if (Array.isArray(history)) payload.history = history;
 
-    // Key selection: the user's own key (no quota) → the free tier (authed, under
-    // the daily limit) → otherwise a clean SSE error directing them to buy a key.
-    let key = getEnaKey(s);
-    let usedFree = false;
-    if (!key) {
-      const f = freeStatus(s);
-      if (f.enabled && f.remaining > 0) { key = FREE_KEY; usedFree = true; }
-    }
-    if (!key) {
-      const f = freeStatus(s);
-      const msg = isAnon(s)
-        ? 'Sign in to get free ENA messages, then add your own key to keep going.'
-        : f.enabled
-          ? `You've used your ${f.limit} free ENA messages for today. Get your own key to keep going.`
-          : 'Connect your ENA key to chat.';
+    // Helper to open an SSE response and emit a single clean error + done.
+    const sseError = (data) => {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
         'X-Accel-Buffering': 'no',
       });
-      res.write(`event: error\ndata: ${JSON.stringify({ message: msg, needKey: true, buyUrl: BUY_URL })}\n\n`);
+      res.write(`event: error\ndata: ${JSON.stringify(data)}\n\n`);
       res.write('event: done\ndata: {}\n\n');
       return res.end();
+    };
+
+    // Budget/key selection, in priority order:
+    //   (1) the user's own key       → run UNMETERED (today's behavior)
+    //   (2) free tier remaining      → run on the engine key, free-metered (today)
+    //   (3) prepaid ANM budget       → run on the engine key, ANM-metered (cap)
+    //   (4) otherwise                → SSE error asking them to deposit ANM
+    let usedFree = false;
+    let budgetRun = null; // { reserved, cap } when this is a metered ANM run
+
+    const ownKey = getEnaKey(s);
+    if (ownKey) {
+      payload.ena_key = ownKey; // unmetered — no budget_anm passed
+    } else {
+      const f = freeStatus(s);
+      if (f.enabled && f.remaining > 0) {
+        payload.ena_key = FREE_KEY;
+        usedFree = true;
+      } else {
+        // (3) ANM budget. cap = clamp(requested cap, per-call, balance).
+        const balanceAnm = store.getEnaBalanceAnm(tokenKey(s));
+        if (balanceAnm >= PER_CALL_ANM && ENGINE_KEY) {
+          const requested = Number((req.body || {}).cap);
+          const wantCap = Number.isFinite(requested) && requested > 0 ? requested : DEFAULT_CAP_ANM;
+          const cap = clamp(wantCap, PER_CALL_ANM, balanceAnm);
+          // RESERVE the full cap up-front so concurrent runs can't overspend a
+          // shared balance; we refund the unspent remainder once we see the
+          // sidecar's `done.spent_anm` on the streamed-back events. (See
+          // contract_notes: reserve-up-front + refund-unspent + stream TEE.)
+          store.debitEnaBalanceAnm(tokenKey(s), cap);
+          budgetRun = { reserved: cap, cap };
+          payload.ena_key = ENGINE_KEY;
+          payload.budget_anm = cap;
+          payload.per_call_anm = PER_CALL_ANM;
+        } else {
+          // (4) no budget — direct the user to deposit ANM (or use their own key).
+          return sseError({
+            message: 'Set an ENA budget (deposit ANM) to chat.',
+            needDeposit: true,
+            treasury: TREASURY,
+            perCallAnm: PER_CALL_ANM,
+            defaultCap: DEFAULT_CAP_ANM,
+          });
+        }
+      }
     }
-    payload.ena_key = key;
+
     if (usedFree) { try { store.incrEnaFreeUsed(tokenKey(s)); } catch {} }
+
+    // For a budget run, TEE the stream to capture the sidecar's `done.spent_anm`
+    // (falling back to calls*PER_CALL_ANM, then to the full reservation) and
+    // refund (cap - spent) exactly once when the run ends.
+    let opts;
+    let settled = false;
+    const settle = (spentAnm) => {
+      if (!budgetRun || settled) return;
+      settled = true;
+      const spent = clamp(Number(spentAnm) || 0, 0, budgetRun.reserved);
+      const refund = budgetRun.reserved - spent;
+      if (refund > 0) { try { store.creditEnaBalanceAnm(tokenKey(s), refund); } catch {} }
+    };
+    if (budgetRun) {
+      opts = {
+        onEvent: (type, data) => {
+          if (type !== 'done') return;
+          let spent;
+          if (data && typeof data === 'object') {
+            if (Number.isFinite(Number(data.spent_anm))) spent = Number(data.spent_anm);
+            else if (Number.isFinite(Number(data.calls))) spent = Number(data.calls) * PER_CALL_ANM;
+          }
+          settle(spent);
+        },
+      };
+      // If the stream ends WITHOUT a parseable done (sidecar crash, client
+      // disconnect, abort), refund the full reservation rather than silently
+      // pocketing it.
+      res.on('close', () => settle(0));
+      res.on('finish', () => settle(0));
+    }
+
     try {
-      await agentProxy.streamProxy(s, 'POST', '/ena/chat', payload, req, res);
+      await agentProxy.streamProxy(s, 'POST', '/ena/chat', payload, req, res, opts);
     } catch (e) {
       // streamProxy only throws before headers are sent (e.g. no agent port);
-      // once it has written SSE headers it handles errors in-band.
+      // once it has written SSE headers it handles errors in-band. On a pre-header
+      // failure of a budget run, refund the full reservation.
+      settle(0); // refund the full reservation (nothing was spent)
       if (!res.headersSent) relay(res, e);
       else { try { res.end(); } catch {} }
     }

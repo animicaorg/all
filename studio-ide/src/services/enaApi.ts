@@ -6,7 +6,8 @@
 //   tool   {name, status, summary?}
 //   diff   {id, files:[{path, old_text, new_text}]}
 //   status {phase, message?}
-//   done   {summary?}
+//   budget {spent_anm, cap, reason}   (cap reached → run stopped cleanly)
+//   done   {summary?, calls?, spent_anm?}
 //   error  {message}
 import { api } from "@/services/api";
 
@@ -21,7 +22,8 @@ export interface EnaCallbacks {
   onTool?: (t: { name: string; status: "start" | "done"; summary?: string }) => void;
   onDiff?: (d: { id: string; files: DiffFile[] }) => void;
   onStatus?: (s: { phase: string; message?: string }) => void;
-  onDone?: (d: { summary?: string }) => void;
+  onBudget?: (b: { spent_anm: number; cap: number; reason?: string }) => void;
+  onDone?: (d: { summary?: string; calls?: number; spent_anm?: number }) => void;
   onError?: (message: string) => void;
 }
 
@@ -34,22 +36,31 @@ export interface StreamHandle {
   abort: () => void;
 }
 
+export interface StreamOpts {
+  // ANM spend cap for this run. The broker uses it (in budget mode) to fund
+  // the metered budget and stop the agent when spend reaches the cap.
+  cap?: number;
+}
+
 // Stream a chat turn. Returns a handle so the caller can stop the stream.
 export function streamChat(
   message: string,
   history: ChatHistoryItem[],
   cb: EnaCallbacks,
+  opts: StreamOpts = {},
 ): StreamHandle {
   const controller = new AbortController();
 
   (async () => {
     let res: Response;
     try {
+      const body: Record<string, unknown> = { message, history };
+      if (typeof opts.cap === "number" && opts.cap > 0) body.cap = opts.cap;
       res = await fetch("/api/ide/ena", {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json", accept: "text/event-stream" },
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
     } catch (e: any) {
@@ -137,6 +148,13 @@ function dispatchFrame(frame: string, cb: EnaCallbacks) {
     case "status":
       cb.onStatus?.(data);
       break;
+    case "budget":
+      cb.onBudget?.({
+        spent_anm: Number(data?.spent_anm ?? 0),
+        cap: Number(data?.cap ?? 0),
+        reason: data?.reason,
+      });
+      break;
     case "done":
       cb.onDone?.(data ?? {});
       break;
@@ -164,4 +182,40 @@ export async function disconnectKey(): Promise<{ ok: boolean }> {
   return api.post("/api/ide/ena/key/disconnect", {});
 }
 
-export const enaApi = { streamChat, approve, keyStatus, connectKey, disconnectKey };
+// ANM budget wallet (the "pay with your wallet, capped" flow).
+export interface WalletInfo {
+  connected: boolean; // user has their own pool key connected (own-key mode)
+  balanceAnm: number; // prepaid ENA budget held by the broker for this user
+  treasury: string; // ANM deposit recipient
+  perCallAnm: number; // metered charge per model call
+  defaultCap: number; // suggested default cap
+}
+
+// Broker-side budget status: balance, treasury address, per-call price.
+export async function getWallet(): Promise<WalletInfo> {
+  const r: any = await api.get("/api/ide/ena/wallet");
+  return {
+    connected: !!r.connected,
+    balanceAnm: Number(r.balanceAnm ?? 0),
+    treasury: String(r.treasury ?? ""),
+    perCallAnm: Number(r.perCallAnm ?? 0),
+    defaultCap: Number(r.defaultCap ?? 0),
+  };
+}
+
+// Confirm an on-chain ANM deposit (the broker reads the amount from the
+// chain — we only hand it the tx hash). Returns the new budget balance.
+export async function deposit(txid: string): Promise<{ balanceAnm: number }> {
+  const r: any = await api.post("/api/ide/ena/deposit", { txid });
+  return { balanceAnm: Number(r.balanceAnm ?? 0) };
+}
+
+export const enaApi = {
+  streamChat,
+  approve,
+  keyStatus,
+  connectKey,
+  disconnectKey,
+  getWallet,
+  deposit,
+};

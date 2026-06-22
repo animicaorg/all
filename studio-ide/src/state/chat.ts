@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { streamChat, approve, type DiffFile, type StreamHandle } from "@/services/enaApi";
 import { useFilesStore } from "@/state/files";
 import { useScmStore } from "@/state/scm";
+import { useEnaStore } from "@/state/ena";
 
 export interface ChatMessage {
   id: string;
@@ -30,6 +31,11 @@ interface ChatState {
   tools: ToolEvent[];
   statusPhase: string | null;
 
+  // Budget metering (pay-with-wallet, capped runs).
+  budgetReached: boolean; // last run stopped because spend hit the cap
+  spentAnm: number; // ANM spent during the current/last run
+  runCap: number | null; // cap applied to the current/last budget run
+
   send: (message: string) => void;
   stop: () => void;
   appendToken: (delta: string) => void;
@@ -48,10 +54,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   proposals: [],
   tools: [],
   statusPhase: null,
+  budgetReached: false,
+  spentAnm: 0,
+  runCap: null,
 
   send: (message: string) => {
     const text = message.trim();
     if (!text || get().sending) return;
+
+    const ena = useEnaStore.getState();
+    const budgetMode = ena.needsBudget() || (!ena.connected && !(ena.free.enabled && ena.free.remaining > 0));
+    const cap = ena.cap;
 
     const userMsg: ChatMessage = { id: uid(), role: "user", content: text };
     const asstId = uid();
@@ -65,6 +78,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sending: true,
       tools: [],
       statusPhase: null,
+      budgetReached: false,
+      spentAnm: 0,
+      runCap: budgetMode ? cap : null,
     }));
 
     const finishAssistant = (patch: Partial<ChatMessage>) =>
@@ -74,7 +90,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         statusPhase: null,
       }));
 
-    activeStream = streamChat(text, history, {
+    const startStream = () => {
+      activeStream = streamChat(text, history, {
       onToken: (delta) => get().appendToken(delta),
       onTool: (t) =>
         set((st) => {
@@ -92,7 +109,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }),
       onDiff: (d) => get().addProposal(d.id, d.files),
       onStatus: (s) => set({ statusPhase: s.message || s.phase || null }),
+      onBudget: (b) =>
+        set({
+          budgetReached: b.reason === "cap_reached" || b.spent_anm >= b.cap - 1e-12,
+          spentAnm: b.spent_anm,
+        }),
       onDone: (d) => {
+        if (typeof d?.spent_anm === "number") set({ spentAnm: d.spent_anm });
+        // Refresh the broker-held budget (it debited the actual spend).
+        if (budgetMode) void useEnaStore.getState().refreshBudget();
         // If the agent produced no streamed text but returned a summary, show it.
         const cur = get().messages.find((m) => m.id === asstId);
         finishAssistant(d?.summary && !cur?.content ? { content: d.summary } : {});
@@ -116,7 +141,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
             statusPhase: null,
           };
         }),
-    });
+      }, { cap: budgetMode ? cap : undefined });
+    };
+
+    if (budgetMode) {
+      // Fund the budget first — this triggers the single wallet deposit ONLY
+      // if the prepaid balance is short of the cap. On failure, surface the
+      // error in the assistant bubble and do not start the stream.
+      void (async () => {
+        const ok = await useEnaStore.getState().ensureBudget(cap);
+        if (!ok) {
+          const reason = useEnaStore.getState().error || "Set an ENA budget (deposit ANM) to chat.";
+          finishAssistant({ error: true, content: reason });
+          return;
+        }
+        startStream();
+      })();
+    } else {
+      startStream();
+    }
   },
 
   stop: () => {
@@ -186,6 +229,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   reset: () => {
     activeStream?.abort();
     activeStream = null;
-    set({ messages: [], sending: false, proposals: [], tools: [], statusPhase: null });
+    set({
+      messages: [],
+      sending: false,
+      proposals: [],
+      tools: [],
+      statusPhase: null,
+      budgetReached: false,
+      spentAnm: 0,
+      runCap: null,
+    });
   },
 }));

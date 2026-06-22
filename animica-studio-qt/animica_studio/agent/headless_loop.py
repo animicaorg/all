@@ -207,12 +207,24 @@ class HeadlessAgentLoop:
         settings: Settings,
         emit: EventSink,
         client: Optional[AnimicaClient] = None,
+        budget_anm: Optional[float] = None,
+        per_call_anm: Optional[float] = None,
     ) -> None:
         self._fs = fs
         self._ps = _ProjectServiceAdapter(fs)
         self._settings = settings
         self._emit = emit
         self._client = client or AnimicaClient(settings)
+
+        # ANM budget metering. When ``budget_anm`` is set we charge
+        # ``per_call_anm`` per model call and stop cleanly before exceeding the
+        # cap. ``budget_anm is None`` disables metering (legacy behavior).
+        self._budget_anm: Optional[float] = (
+            float(budget_anm) if budget_anm is not None else None
+        )
+        self._per_call_anm: float = float(per_call_anm) if per_call_anm else 0.0
+        self._spent_anm: float = 0.0
+        self._calls: int = 0
 
         # Approval synchronization: each pending diff blocks on its own Event,
         # keyed by the diff id, until approve(id, accept) sets the result.
@@ -257,7 +269,7 @@ class HeadlessAgentLoop:
         if self._done_emitted:
             return
         self._done_emitted = True
-        payload: dict[str, Any] = {}
+        payload: dict[str, Any] = {"calls": self._calls, "spent_anm": self._spent_anm}
         if self._summary:
             payload["summary"] = self._summary
         self._emit("done", payload)
@@ -315,6 +327,19 @@ class HeadlessAgentLoop:
             if self._cancelled:
                 self._emit("status", {"phase": "cancelled"})
                 return
+            # Budget gate: charge per model call. If the next call would push
+            # spend past the cap, stop the run cleanly before calling the model.
+            if self._budget_anm is not None:
+                if (self._spent_anm + self._per_call_anm) > self._budget_anm + 1e-12:
+                    self._emit(
+                        "budget",
+                        {
+                            "spent_anm": self._spent_anm,
+                            "cap": self._budget_anm,
+                            "reason": "cap_reached",
+                        },
+                    )
+                    break
             self._emit(
                 "status",
                 {
@@ -324,6 +349,11 @@ class HeadlessAgentLoop:
                 },
             )
             result = self._stream_model(messages, tool_schemas)
+            # Account for the model call that just completed (metered regardless
+            # of success — a request was issued to the engine).
+            self._calls += 1
+            if self._budget_anm is not None:
+                self._spent_anm += self._per_call_anm
             if self._cancelled:
                 return
 
