@@ -21,6 +21,9 @@ const NAME_PREFIX = 'anm-studio-u-';
 const IDE_NAME_PREFIX = 'anm-studio-ide-';
 const CONTAINER_PORT = '6080';
 const AGENT_PORT = '8090';
+// Single dev server per IDE container (run/preview). Matches the image's
+// DEV_PORT/EXPOSE; published as a SECOND host port for the dev-server proxy.
+const DEV_PORT = '8099';
 
 // Tunables (overridable via env).
 const MAX_SESSIONS = parseInt(process.env.STUDIO_MAX_SESSIONS || '12', 10);
@@ -125,6 +128,9 @@ export async function ensureSession(key, opts = {}) {
     args.push('-e', 'ANIMICA_ENA_KEY=' + (process.env.STUDIO_ENA_KEY || ''));
     args.push('-e', 'ANIMICA_ENA_MODEL=' + (process.env.STUDIO_ENA_MODEL || 'anm-code-7b'));
     args.push('-v', `anm-ide-vol-${id}:/home/studio/workspace`);
+    // Publish a SECOND host port for the in-container dev server (run/preview).
+    args.push('-p', `127.0.0.1::${DEV_PORT}`);
+    args.push('-e', `DEV_PORT=${DEV_PORT}`);
     args.push(IDE_IMAGE);
   } else {
     if (p.readonlyish) {
@@ -151,7 +157,13 @@ export async function ensureSession(key, opts = {}) {
     lastSeen: Date.now(),
     ttl: tier === 'anon' ? ANON_TTL_MS : IDLE_MS,
   };
-  if (ide) rec.agentPort = port; else rec.port = port;
+  if (ide) {
+    rec.agentPort = port;
+    // Resolve the published host port for the dev server (run/preview proxy).
+    try { rec.devPort = await dockerPort(name, DEV_PORT); } catch { rec.devPort = null; }
+  } else {
+    rec.port = port;
+  }
   sessions.set(regKey, rec);
   return { ...rec, created: true };
 }
@@ -199,4 +211,4 @@ export function startReaper(intervalMs = 60_000) {
   if (timer.unref) timer.unref();
 }
 
-export const config = { IMAGE, IDE_IMAGE, MAX_SESSIONS, IDLE_MS, ANON_TTL_MS, PROFILES };
+export const config = { IMAGE, IDE_IMAGE, MAX_SESSIONS, IDLE_MS, ANON_TTL_MS, DEV_PORT, PROFILES };

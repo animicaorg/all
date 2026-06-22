@@ -19,9 +19,10 @@ import { randomBytes } from 'node:crypto';
  * @param {object} deps.secrets      secrets.js (encrypt/decrypt)
  * @param {object} deps.github       github.js (getUser/listRepos/getRepo)
  * @param {object} deps.agentProxy   agentProxy.js (forwardJson)
+ * @param {object} [deps.proxy]      http-proxy instance (dev-server preview proxy)
  * @returns {import('express').Router}
  */
-export function createIdeRouter({ currentSession, store, secrets, github, agentProxy }) {
+export function createIdeRouter({ currentSession, store, secrets, github, agentProxy, proxy }) {
   const router = express.Router();
 
   // ---- session gate ------------------------------------------------------- #
@@ -322,6 +323,49 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
       const out = await agentProxy.forwardJson(req.ideSession, 'POST', '/git/push', payload);
       res.json(out); // sidecar returns {ok, branch} — no token in the response
     } catch (e) { relay(res, e); }
+  });
+
+  // ---- run / preview (single in-container dev server) --------------------- #
+  // start/stop/status are JSON RPCs to the sidecar; the actual dev-server HTTP
+  // traffic is reverse-proxied below to the container's published DEV port.
+  router.post('/preview/start', async (req, res) => {
+    const cmd = (req.body || {}).cmd;
+    const payload = {};
+    if (typeof cmd === 'string' && cmd) payload.cmd = cmd;
+    try {
+      const out = await agentProxy.forwardJson(req.ideSession, 'POST', '/preview/start', payload);
+      res.json(out);
+    } catch (e) { relay(res, e); }
+  });
+
+  router.post('/preview/stop', async (req, res) => {
+    try {
+      const out = await agentProxy.forwardJson(req.ideSession, 'POST', '/preview/stop', {});
+      res.json(out);
+    } catch (e) { relay(res, e); }
+  });
+
+  router.get('/preview/status', async (req, res) => {
+    try {
+      const out = await agentProxy.forwardJson(req.ideSession, 'GET', '/preview/status');
+      res.json(out);
+    } catch (e) { relay(res, e); }
+  });
+
+  // Reverse-proxy the dev server itself. The browser loads the preview in an
+  // iframe at /api/ide/preview/app/ ; we proxy everything under that prefix to
+  // the container's published DEV port. WebSocket/HMR upgrades for this same
+  // prefix are handled in server.js's upgrade handler.
+  router.use('/preview/app', async (req, res) => {
+    if (!proxy) return res.status(501).json({ error: 'Preview proxy not configured.' });
+    let base;
+    try {
+      ({ base } = await agentProxy.getDevBase(req.ideSession));
+    } catch (e) { return relay(res, e); }
+    // The mount strips '/preview/app', so req.url is the path INTO the dev server
+    // (e.g. '/' or '/assets/x.js'). An empty path means the iframe root.
+    if (!req.url || req.url === '') req.url = '/';
+    proxy.web(req, res, { target: base });
   });
 
   return router;

@@ -23,6 +23,21 @@ export async function getAgentBase(session) {
 }
 
 /**
+ * Ensure the caller's IDE container is running and return the base URL of its
+ * in-container DEV SERVER (run/preview), i.e. the second published host port.
+ * Used by the preview HTTP/ws proxy.
+ * @param {object} session  broker session ({identity, tier, plan, ...})
+ * @returns {Promise<{base:string, name:string, devPort:number}>}
+ */
+export async function getDevBase(session) {
+  const persistent = session.tier !== 'anon';
+  const rec = await ensureSession(session.identity, { kind: 'ide', tier: session.tier, persistent });
+  const port = rec.devPort;
+  if (!port) throw Object.assign(new Error('ide container has no dev port'), { status: 502, body: { error: 'Preview port unavailable.' } });
+  return { base: `http://127.0.0.1:${port}`, name: rec.name, devPort: port };
+}
+
+/**
  * Forward a JSON request to the session's sidecar and return parsed JSON.
  * Throws Error with {status, body} on a non-2xx response so routes can relay it.
  * @param {object} session

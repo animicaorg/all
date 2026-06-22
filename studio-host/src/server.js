@@ -29,6 +29,7 @@ import { createIdeRouter } from './ide/routes.js';
 import * as ideSecrets from './ide/secrets.js';
 import * as ideGithub from './ide/github.js';
 import * as ideAgentProxy from './ide/agentProxy.js';
+import { attachTerminal, terminalAvailable } from './ide/terminal.js';
 
 // --- tiny .env loader (no dep) --------------------------------------------- #
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -301,6 +302,7 @@ app.use('/api/ide', createIdeRouter({
   github: ideGithub,
   agentProxy: ideAgentProxy,
   sessions,
+  proxy, // dev-server preview reverse-proxy (HTTP)
 }));
 
 // --- gated reverse-proxy to the user's container (HTTP) -------------------- #
@@ -331,7 +333,33 @@ if (SPA_READY) {
 // --- server + websocket upgrade gating ------------------------------------- #
 const server = http.createServer(app);
 server.on('upgrade', async (req, socket, head) => {
-  if (!req.url.startsWith('/app')) return socket.destroy();
+  // Path-only (strip query) for prefix routing.
+  const path = (req.url || '').split('?')[0];
+
+  // --- web IDE terminal: node-pty PTY over ws (authed, non-anon only) ------- #
+  // terminal.js does its own gating + handshake and tolerates node-pty being
+  // absent (closes the socket so the UI shows "terminal unavailable").
+  if (path === '/api/ide/term' || path.startsWith('/api/ide/term?')) {
+    return attachTerminal(req, socket, head, { currentSession, sessions });
+  }
+
+  // --- web IDE preview: dev-server ws/HMR proxy (authed only) --------------- #
+  // Bridges the iframe's HMR websocket to the container's published DEV port.
+  if (path === '/api/ide/preview/app' || path.startsWith('/api/ide/preview/app/')) {
+    const s = currentSession(req);
+    if (!s) return socket.destroy();
+    let devPort;
+    try {
+      const dev = await ideAgentProxy.getDevBase(s);
+      devPort = dev.devPort; touch(s.identity);
+    } catch { return socket.destroy(); }
+    // Strip the proxy prefix so the dev server sees its own path space.
+    req.url = req.url.replace(/^\/api\/ide\/preview\/app/, '') || '/';
+    return proxy.ws(req, socket, head, { target: `http://127.0.0.1:${devPort}` });
+  }
+
+  // --- noVNC desktop stream (existing) ------------------------------------- #
+  if (!path.startsWith('/app')) return socket.destroy();
   const s = currentSession(req);
   if (!s) return socket.destroy();
   let port;
@@ -345,5 +373,5 @@ server.on('upgrade', async (req, socket, head) => {
 
 startReaper();
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[studio-host] listening on 127.0.0.1:${PORT} | anon=${ANON_ENABLED} magic=${mailerReady()} | image=${config.IMAGE} maxSessions=${config.MAX_SESSIONS}`);
+  console.log(`[studio-host] listening on 127.0.0.1:${PORT} | anon=${ANON_ENABLED} magic=${mailerReady()} | image=${config.IMAGE} maxSessions=${config.MAX_SESSIONS} | terminal=${terminalAvailable() ? 'on' : 'unavailable'}`);
 });

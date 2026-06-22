@@ -21,7 +21,11 @@ from __future__ import annotations
 import json
 import os
 import queue
+import signal
+import socket
+import subprocess
 import threading
+from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
@@ -43,6 +47,7 @@ from animica_studio.services.git_service import GitService
 # Configuration
 # --------------------------------------------------------------------------- #
 REPO_DIR = Path(os.environ.get("REPO_DIR", "/home/studio/workspace/repo"))
+DEV_PORT = int(os.environ.get("DEV_PORT", "8099"))
 
 
 def _ensure_repo_dir() -> None:
@@ -100,6 +105,10 @@ class PushRequest(BaseModel):
     token: Optional[str] = None
     remote: Optional[str] = None
     branch: Optional[str] = None
+
+
+class PreviewStartRequest(BaseModel):
+    cmd: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -349,3 +358,175 @@ def git_push(req: PushRequest):
         # 502 on failure per contract; token already scrubbed by push().
         return JSONResponse(status_code=502, content=result)
     return result
+
+
+# --------------------------------------------------------------------------- #
+# Run / preview — a single tracked dev server per container.
+# --------------------------------------------------------------------------- #
+# Only one dev server runs at a time. The child is started in its own session
+# (start_new_session=True) so we can signal the whole process group on stop —
+# `npm run dev` typically forks the real server as a grandchild.
+_PREVIEW_LOCK = threading.Lock()
+_PREVIEW: dict[str, Any] = {
+    "proc": None,          # subprocess.Popen | None
+    "cmd": None,           # str | None — the command line we ran
+    "log": deque(maxlen=200),  # last ~200 log lines (stdout+stderr merged)
+    "reader": None,        # threading.Thread draining the pipe
+}
+
+
+def _detect_run_cmd() -> Optional[str]:
+    """Best-effort detection of the dev-server command in REPO_DIR.
+
+    package.json scripts.dev -> 'npm run dev'; scripts.start -> 'npm start';
+    else if a root index.html exists -> static 'python3 -m http.server'.
+    Returns None when nothing is detectable.
+    """
+    pkg = REPO_DIR / "package.json"
+    if pkg.is_file():
+        try:
+            data = json.loads(pkg.read_text(encoding="utf-8"))
+            scripts = data.get("scripts") or {}
+        except (OSError, ValueError, AttributeError):
+            scripts = {}
+        if isinstance(scripts, dict):
+            if scripts.get("dev"):
+                return "npm run dev"
+            if scripts.get("start"):
+                return "npm start"
+    if (REPO_DIR / "index.html").is_file():
+        return f"python3 -m http.server {DEV_PORT} --bind 0.0.0.0"
+    return None
+
+
+def _port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.5) -> bool:
+    """True if something is accepting TCP connections on host:port."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _preview_alive_locked() -> bool:
+    proc = _PREVIEW["proc"]
+    return proc is not None and proc.poll() is None
+
+
+def _kill_preview_locked() -> None:
+    """Terminate the current child + its process group (caller holds lock)."""
+    proc = _PREVIEW["proc"]
+    if proc is not None and proc.poll() is None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+    _PREVIEW["proc"] = None
+    _PREVIEW["cmd"] = None
+    _PREVIEW["reader"] = None
+
+
+def _drain(proc: "subprocess.Popen[str]", log: "deque[str]") -> None:
+    """Read merged stdout/stderr line-by-line into the bounded log buffer."""
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            log.append(line.rstrip("\n"))
+    except (OSError, ValueError):
+        pass
+
+
+@app.post("/preview/start")
+def preview_start(req: PreviewStartRequest):
+    cmd = (req.cmd or "").strip() or _detect_run_cmd()
+    if not cmd:
+        return _err("no run command detected", 404)
+
+    with _PREVIEW_LOCK:
+        # Kill any prior dev server first (single server per container).
+        _kill_preview_locked()
+        log: "deque[str]" = deque(maxlen=200)
+
+        env = dict(os.environ)
+        env["PORT"] = str(DEV_PORT)
+        env["HOST"] = "0.0.0.0"
+        # Hint Vite/CRA/etc. to bind all interfaces on our fixed port.
+        env.setdefault("BROWSER", "none")
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                shell=True,
+                cwd=str(REPO_DIR),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            return _err(f"failed to start: {exc}", 500)
+
+        reader = threading.Thread(
+            target=_drain, args=(proc, log), name="preview-log", daemon=True
+        )
+        reader.start()
+
+        _PREVIEW["proc"] = proc
+        _PREVIEW["cmd"] = cmd
+        _PREVIEW["log"] = log
+        _PREVIEW["reader"] = reader
+
+        # If the command died instantly, surface the failure with logs.
+        if proc.poll() is not None:
+            tail = list(log)
+            _kill_preview_locked()
+            return JSONResponse(
+                status_code=500,
+                content={"error": "run command exited immediately", "logTail": tail},
+            )
+
+        pid = proc.pid
+
+    return {
+        "ok": True,
+        "url": f"http://0.0.0.0:{DEV_PORT}",
+        "pid": pid,
+        "cmd": cmd,
+    }
+
+
+@app.post("/preview/stop")
+def preview_stop():
+    with _PREVIEW_LOCK:
+        _kill_preview_locked()
+    return {"ok": True}
+
+
+@app.get("/preview/status")
+def preview_status():
+    with _PREVIEW_LOCK:
+        running = _preview_alive_locked()
+        cmd = _PREVIEW["cmd"]
+        tail = list(_PREVIEW["log"])
+    return {
+        "running": running,
+        "cmd": cmd if running else None,
+        "port": DEV_PORT,
+        "listening": _port_open(DEV_PORT),
+        "logTail": tail[-50:],
+    }
