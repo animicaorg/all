@@ -68,6 +68,7 @@ def _lazy_core() -> dict[str, Any]:
     from core.chain.block_import import import_block as core_import_block
     from core.chain.head import finalize_genesis_if_needed
     from core.chain.head import get_head as core_get_head
+    from core.chain.head import validate_head_against_checkpoint
     from core.db.block_db import BlockDB
     from core.db.rocksdb import RocksDBKV  # guarded import internally
     from core.db.sqlite import SQLiteKV
@@ -85,6 +86,7 @@ def _lazy_core() -> dict[str, Any]:
         ChainParams=ChainParams,
         core_get_head=core_get_head,
         finalize_genesis_if_needed=finalize_genesis_if_needed,
+        validate_head_against_checkpoint=validate_head_against_checkpoint,
         core_import_block=core_import_block,
     )
 
@@ -514,6 +516,28 @@ class P2PDeps:
         try:
             if not _skip_genesis:
                 c["finalize_genesis_if_needed"](block_db, state_db, genesis_path)
+                # Fork self-heal: if our head is on a non-canonical branch at/above a
+                # pinned final checkpoint, roll it back below the checkpoint so normal
+                # sync re-fetches the canonical chain. Strict no-op for canonical
+                # nodes (matching hash) and for nodes still below the checkpoint.
+                # Fully guarded — can only ever skip itself, never abort boot.
+                try:
+                    _cid = _read_chain_id(block_db, state_db)
+                    from p2p.checkpoints.builtin import get_builtin_checkpoints
+
+                    _cps = [
+                        cp for cp in get_builtin_checkpoints(int(_cid or 0))
+                        if int(cp.height) > 0
+                    ]
+                    if _cps:
+                        _cp = max(_cps, key=lambda x: int(x.height))
+                        _hx = str(_cp.hash)
+                        _hx = _hx[2:] if _hx.startswith("0x") else _hx
+                        c["validate_head_against_checkpoint"](
+                            block_db, int(_cp.height), bytes.fromhex(_hx)
+                        )
+                except Exception:
+                    pass
         except Exception as exc:
             from core.errors import GenesisError, GenesisMismatchError
 

@@ -174,6 +174,78 @@ def write_head(block_db, height: int, h: bytes) -> None:
     raise GenesisError("block_db missing head setter")
 
 
+def validate_head_against_checkpoint(
+    block_db, checkpoint_height: int, checkpoint_hash: bytes
+) -> bool:
+    """Self-heal a node whose head is on a non-canonical fork.
+
+    If the local block at ``checkpoint_height`` does not match the pinned
+    canonical ``checkpoint_hash``, the node followed a dead/phantom fork at or
+    above a final checkpoint: roll the head back to just below the checkpoint so
+    normal P2P sync re-fetches the true canonical chain from honest peers.
+
+    Brick-safe by construction — returns immediately (NO-OP) when:
+      * there is no head, or the head is BELOW the checkpoint (still syncing), or
+      * the by-height index has no entry at the checkpoint height (hole), or
+      * the local hash MATCHES the pinned hash (the canonical case — healthy
+        nodes are never modified).
+    Only a genuine hash mismatch at/above the checkpoint triggers a rollback.
+    Never raises: a self-heal failure must never block node boot. Returns True
+    only if it actually rolled the head back.
+    """
+    try:
+        head = read_head(block_db)
+        if head is None:
+            return False
+        if int(head[0]) < int(checkpoint_height):
+            return False  # not reached yet — normal during sync, must not interfere
+        get_canon = getattr(block_db, "get_canonical_hash", None)
+        if not callable(get_canon):
+            return False
+        local = get_canon(int(checkpoint_height))
+        if local is None:
+            return False  # index hole — leave to _reconcile_height_index
+        if bytes(local) == bytes(checkpoint_hash):
+            return False  # CANONICAL — no-op (cannot brick healthy nodes)
+        import logging
+
+        log = logging.getLogger("core.chain.head")
+        target = int(checkpoint_height) - 1
+        target_hash = get_canon(target)
+        if target_hash is None:
+            log.critical(
+                "CHECKPOINT VIOLATION at %d (local=%s != pinned=%s) but no block at "
+                "%d to roll back to — deferring to snapshot.import / operator",
+                int(checkpoint_height), bytes(local).hex(),
+                bytes(checkpoint_hash).hex(), target,
+            )
+            return False
+        log.critical(
+            "CHECKPOINT VIOLATION: head is on a non-canonical fork (block at %d = %s "
+            "!= pinned canonical %s) — rolling head back to %d to resync canonical",
+            int(checkpoint_height), bytes(local).hex(),
+            bytes(checkpoint_hash).hex(), target,
+        )
+        write_head(block_db, target, bytes(target_hash))
+        set_canon_h = getattr(block_db, "set_canonical_height", None)
+        if callable(set_canon_h):
+            set_canon_h(target)
+        kv = getattr(block_db, "kv", None)
+        if kv is not None and hasattr(kv, "commit"):
+            kv.commit()
+        return True
+    except Exception:
+        try:
+            import logging
+
+            logging.getLogger("core.chain.head").exception(
+                "validate_head_against_checkpoint failed (non-fatal)"
+            )
+        except Exception:
+            pass
+        return False
+
+
 def get_head(block_db) -> Tuple[int, bytes]:
     """
     Compatibility alias for read_head(block_db).

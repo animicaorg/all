@@ -20,6 +20,13 @@ if TYPE_CHECKING:
 # Raw checkpoint data (height, hash) as tuples to avoid circular import
 _MAINNET_CHECKPOINTS_RAW = [
     (0, "0xd91fc1c90835f739ed8032e6c245da6ad88cd8608de9afb41078ca9aaf4b38ad"),
+    # Cross-verified canonical block (byte-identical on the mainnet seed RPC and
+    # the public rpc.animica.org RPC), ~110 blocks below the live tip and well
+    # beyond the reorg depth, so it is final/irreversible. Anchors the boot-time
+    # fork self-heal: a node whose block at 25450 differs from this hash is on a
+    # dead/phantom fork and rolls its head back below the checkpoint to resync the
+    # canonical chain. Canonical nodes match this hash and are never touched.
+    (25450, "0x0000001e9984199e2103a9a066ac43d92742e01e61198c0764e176d532f37d1f"),
 ]
 
 _TESTNET_CHECKPOINTS_RAW: List[tuple[int, str]] = []
