@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useWalletStore } from "@/state/wallet";
+import { WalletModal } from "@/components/wallet/WalletModal";
 
 function short(a?: string): string {
   return a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "";
@@ -24,8 +25,8 @@ function WalletIcon() {
 //  - connected     → a chip with the address + on-chain ANM balance (tap to refresh)
 // `compact` hides the label on small screens (header use).
 export function WalletButton({ compact = false }: { compact?: boolean }) {
-  const { available, connected, connecting, address, balanceAnm, connect, refreshBalance, detect } =
-    useWalletStore();
+  const { connected, connecting, address, balanceAnm, refreshBalance, detect } = useWalletStore();
+  const [modal, setModal] = useState(false);
 
   useEffect(() => {
     detect();
@@ -47,16 +48,19 @@ export function WalletButton({ compact = false }: { compact?: boolean }) {
   }
 
   return (
-    <button
-      className="btn-ghost btn-sm whitespace-nowrap"
-      disabled={connecting}
-      onClick={() => void connect()}
-      title={available ? "Connect your Animica wallet" : "Animica wallet not detected — install the extension or open in the wallet app"}
-    >
-      <WalletIcon />
-      <span className={compact ? "hidden sm:inline" : ""}>
-        {connecting ? "Connecting…" : "Connect wallet"}
-      </span>
-    </button>
+    <>
+      <button
+        className="btn-ghost btn-sm whitespace-nowrap"
+        disabled={connecting}
+        onClick={() => setModal(true)}
+        title="Connect your Animica wallet"
+      >
+        <WalletIcon />
+        <span className={compact ? "hidden sm:inline" : ""}>
+          {connecting ? "Connecting…" : "Connect wallet"}
+        </span>
+      </button>
+      {modal && <WalletModal onClose={() => setModal(false)} />}
+    </>
   );
 }
