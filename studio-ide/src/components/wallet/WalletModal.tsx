@@ -43,15 +43,24 @@ export function WalletModal({ onClose }: { onClose: () => void }) {
     onClick?: () => void;
     href?: string;
     badge?: { text: string; ok: boolean };
+    recommended?: boolean;
+    muted?: boolean;
   }) => {
     const inner = (
       <>
-        <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-accent/15 text-accent">
+        <span
+          className={`grid h-10 w-10 flex-none place-items-center rounded-xl ${
+            muted ? "bg-border/40 text-muted" : "bg-accent/15 text-accent"
+          }`}
+        >
           <Icon d={icon} />
         </span>
         <span className="min-w-0 flex-1 text-left">
           <span className="flex items-center gap-2">
             <span className="font-medium">{title}</span>
+            {recommended && (
+              <span className="chip !px-1.5 !py-0 text-[10px] text-ok">Recommended</span>
+            )}
             {badge && (
               <span className={`chip !px-1.5 !py-0 text-[10px] ${badge.ok ? "text-ok" : "text-muted"}`}>
                 {badge.text}
@@ -65,8 +74,11 @@ export function WalletModal({ onClose }: { onClose: () => void }) {
         </svg>
       </>
     );
-    const cls =
-      "flex w-full items-center gap-3 rounded-xl border border-border bg-elevated p-3 text-sm hover:border-accent/60 disabled:opacity-50";
+    const cls = `flex w-full items-center gap-3 rounded-xl border p-3 text-sm disabled:opacity-50 ${
+      recommended
+        ? "border-accent/50 bg-accent/5 hover:border-accent"
+        : "border-border bg-elevated hover:border-accent/60"
+    } ${muted ? "opacity-80" : ""}`;
     return href ? (
       <a className={cls} href={href} target="_blank" rel="noreferrer">
         {inner}
@@ -98,27 +110,37 @@ export function WalletModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+          Can sign &amp; fund ENA in one tap
+        </p>
         <div className="space-y-2">
           <Option
             icon="M9 3v18m-4-4h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2Z"
             title="Browser extension"
             desc="Animica wallet extension (desktop)"
             onClick={injected}
+            recommended
             badge={{ text: available ? "Detected" : "Not detected", ok: available }}
           />
           <Option
             icon="M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Zm4 17h2"
             title="Animica app"
-            desc="Open this page in the app's browser, then connect"
+            desc="Open the Studio in the app's browser, then connect"
             onClick={injected}
-          />
-          <Option
-            icon="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v2M3 7.5V17a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3M21 11.5h-4a2 2 0 0 0 0 4h4a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5Z"
-            title="Web wallet"
-            desc="Pop-up sign-in via wallet.animica.org"
-            onClick={web}
+            recommended
           />
         </div>
+
+        <p className="mb-1.5 mt-4 text-[11px] font-medium uppercase tracking-wide text-muted">
+          Sign-in only — can't fund
+        </p>
+        <Option
+          icon="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v2M3 7.5V17a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3M21 11.5h-4a2 2 0 0 0 0 4h4a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5Z"
+          title="Web wallet"
+          desc="Pop-up via wallet.animica.org — shares your address only"
+          onClick={web}
+          muted
+        />
 
         {connecting && <p className="mt-3 text-center text-xs text-muted">Waiting for wallet confirmation…</p>}
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
