@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useEnaStore } from "@/state/ena";
 import { useWalletStore } from "@/state/wallet";
 import { WalletButton } from "@/components/wallet/WalletButton";
+import { ManualFund } from "@/components/ena/ManualFund";
 
 const PRESETS = [1, 5, 20];
 
@@ -28,9 +29,17 @@ export function BudgetBar({
   runCap: number | null;
   onUseOwnKey: () => void;
 }) {
-  const { balanceAnm, cap, setCap, perCallAnm, depositing, error } = useEnaStore();
+  const { balanceAnm, cap, setCap, perCallAnm, depositing, error, manualOpen, setManualOpen, ensureBudget } =
+    useEnaStore();
   const walletConnecting = useWalletStore((s) => s.connecting);
+  const walletKind = useWalletStore((s) => s.kind);
   const [draft, setDraft] = useState<string>("");
+
+  function fund() {
+    // Injected wallets can sign in-Studio (one signature); web/none → manual.
+    if (walletKind === "injected") void ensureBudget(cap);
+    else setManualOpen(true);
+  }
 
   const editing = draft !== "";
   const shownCap = editing ? draft : fmt(cap);
@@ -45,6 +54,7 @@ export function BudgetBar({
     sending && runCap != null ? Math.max(0, runCap - spentAnm) : null;
 
   return (
+    <>
     <div className="flex flex-none flex-col gap-2 border-b border-border bg-elevated/40 px-3 py-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -102,6 +112,14 @@ export function BudgetBar({
             </button>
           ))}
         </div>
+        <button
+          className="btn-sm btn-primary ml-auto"
+          disabled={sending || depositing}
+          onClick={fund}
+          title="Top up your prepaid ENA budget"
+        >
+          {depositing ? "Funding…" : "Fund"}
+        </button>
       </div>
 
       {perCallAnm > 0 && (
@@ -112,5 +130,7 @@ export function BudgetBar({
       )}
       {error && <p className="text-xs text-danger">{error}</p>}
     </div>
+    {manualOpen && <ManualFund />}
+    </>
   );
 }

@@ -204,10 +204,17 @@ export async function getWallet(): Promise<WalletInfo> {
 }
 
 // Confirm an on-chain ANM deposit (the broker reads the amount from the
-// chain — we only hand it the tx hash). Returns the new budget balance.
-export async function deposit(txid: string): Promise<{ balanceAnm: number }> {
+// chain — we only hand it the tx hash). The broker replies 202 with
+// {pending:true} while the tx isn't confirmed yet, so surface that.
+export async function deposit(
+  txid: string,
+): Promise<{ balanceAnm: number; pending: boolean; message?: string }> {
   const r: any = await api.post("/api/ide/ena/deposit", { txid });
-  return { balanceAnm: Number(r.balanceAnm ?? 0) };
+  return {
+    balanceAnm: Number(r.balanceAnm ?? 0),
+    pending: !!r.pending,
+    message: r.error || r.message,
+  };
 }
 
 export const enaApi = {

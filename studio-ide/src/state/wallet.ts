@@ -83,6 +83,10 @@ interface WalletState {
   available: boolean;
   connected: boolean;
   connecting: boolean;
+  // How we connected: "injected" can sign txs in-Studio (extension / in-app
+  // browser provider); "web" (wallet.animica.org popup) is accounts-only — it
+  // can't sign for the Studio, so deposits must be funded manually.
+  kind: "injected" | "web" | null;
   address?: string;
   balanceAnm: number; // on-chain wallet balance, decimal ANM
   error: string | null;
@@ -102,6 +106,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   available: typeof window !== "undefined" && !!window.animica,
   connected: false,
   connecting: false,
+  kind: null,
   address: undefined,
   balanceAnm: 0,
   error: null,
@@ -142,7 +147,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       if (!accounts.length && lastErr) throw lastErr;
       const addr = accounts?.[0];
       if (!addr) throw new Error("No account returned by wallet.");
-      set({ connected: true, address: addr, connecting: false, error: null });
+      set({ connected: true, kind: "injected", address: addr, connecting: false, error: null });
       void get().refreshBalance();
       return true;
     } catch (e: any) {
@@ -189,7 +194,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
           continue;
         }
         if (pr.status === "approved" && pr.address) {
-          set({ connected: true, address: pr.address, connecting: false, error: null });
+          set({ connected: true, kind: "web", address: pr.address, connecting: false, error: null });
           try { popup.close(); } catch { /* ignore */ }
           void get().refreshBalance();
           return true;
@@ -241,7 +246,11 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
   sendAnm: async (to: string, amountAnm: number) => {
     const p = provider();
-    if (!p) throw new Error("Animica wallet not installed.");
+    if (get().kind === "web" || !p) {
+      throw new Error(
+        "This wallet can't sign in the Studio. Fund your budget manually (send ANM to the treasury, then confirm the tx), or connect the Animica extension / in-app wallet to sign here.",
+      );
+    }
     const from = get().address;
     if (!from) throw new Error("Wallet not connected.");
     if (!(amountAnm > 0)) throw new Error("Deposit amount must be positive.");

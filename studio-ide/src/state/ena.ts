@@ -60,6 +60,12 @@ interface EnaState {
   // wallet deposit for the difference (the single signature). Returns true
   // when the budget is sufficient afterwards.
   ensureBudget: (cap: number) => Promise<boolean>;
+
+  // Manual funding (for web wallets / any wallet that can't sign in-Studio):
+  // the user sends ANM to the treasury themselves, then confirms by tx id.
+  manualOpen: boolean;
+  setManualOpen: (v: boolean) => void;
+  submitDeposit: (txid: string) => Promise<boolean>;
 }
 
 const NO_FREE: FreeStatus = { enabled: false, limit: 0, used: 0, remaining: 0 };
@@ -78,6 +84,7 @@ export const useEnaStore = create<EnaState>((set, get) => ({
   defaultCap: 5,
   cap: loadCap(5),
   depositing: false,
+  manualOpen: false,
 
   canChat: () => {
     const s = get();
@@ -177,6 +184,13 @@ export const useEnaStore = create<EnaState>((set, get) => ({
       const treasury = s.treasury;
       if (!treasury) throw new Error("No treasury address configured.");
 
+      // The web wallet (and any non-injected connection) can't sign a tx for
+      // the Studio — fall back to manual funding instead of a confusing error.
+      if (useWalletStore.getState().kind !== "injected") {
+        set({ depositing: false, manualOpen: true });
+        return false;
+      }
+
       // Deposit only the shortfall — one wallet signature.
       const shortfall = Math.max(0, cap - s.balanceAnm);
       // Round up to whole nano-ANM to avoid sub-unit rounding leaving us short.
@@ -195,6 +209,26 @@ export const useEnaStore = create<EnaState>((set, get) => ({
         depositing: false,
         error: e?.message || "Deposit failed. Your wallet may have rejected the transaction.",
       });
+      return false;
+    }
+  },
+
+  setManualOpen: (v: boolean) => set({ manualOpen: v }),
+  submitDeposit: async (txid: string) => {
+    const t = (txid || "").trim();
+    if (!t) return false;
+    set({ depositing: true, error: null });
+    try {
+      const r = await enaApi.deposit(t);
+      if (r.pending) {
+        // Tx not confirmed yet — keep the dialog open so they can retry.
+        set({ depositing: false, error: r.message || "Deposit not confirmed yet — try again shortly." });
+        return false;
+      }
+      set({ balanceAnm: r.balanceAnm, depositing: false, manualOpen: false });
+      return true;
+    } catch (e: any) {
+      set({ depositing: false, error: e?.message || "Could not verify that deposit." });
       return false;
     }
   },
