@@ -42,8 +42,23 @@ health_ok() { # node responds and reports a head height
   echo "$out" | grep -q '"head_height"'
 }
 
-deploy_paths_from() { # $1 = git ref; check out node paths from it
-  git_c checkout "$1" -- "${PATHS[@]}"
+deploy_paths_from() { # $1 = git ref; check out node paths from it + refresh installed animica.*
+  git_c checkout "$1" -- "${PATHS[@]}" || return 1
+  # Deploy-gap fix: the node imports animica.* from the in-container INSTALLED
+  # site-packages (e.g. /data/.local), NOT /app/python — so a git checkout of
+  # `python/` alone never updates animica.* (sync/readiness.py, etc.). Refresh
+  # the installed copy from the just-deployed /app/python. Best-effort and
+  # non-fatal; core/p2p/rpc load directly from /app so they're already updated.
+  local site
+  site=$(docker exec "$CONTAINER" python3 -c "import animica,os;print(os.path.dirname(animica.__file__))" 2>/dev/null || true)
+  case "$site" in
+    ""|/app/*) : ;;  # not installed separately, or already loaded from /app
+    *) if docker exec "$CONTAINER" sh -c "cp -rf /app/python/animica/. '$site'/ 2>/dev/null"; then
+         log "refreshed installed animica.* at $site from /app/python"
+       else
+         log "animica.* refresh failed (non-fatal)"
+       fi ;;
+  esac
 }
 
 restart_and_verify() {

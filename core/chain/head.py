@@ -134,6 +134,25 @@ def _recover_head_from_canonical(block_db) -> Optional[Tuple[int, bytes]]:
                 max_height = height
                 max_hash = bytes(value)
         if max_hash is not None:
+            # Defensive (the recurring silent "chain reset"): if the height index
+            # recovered a head far below the canonical-height counter, the index
+            # was truncated/corrupted and we're about to boot thousands of blocks
+            # behind. Log CRITICAL so a watchdog/operator restores from the newest
+            # snapshot immediately instead of discovering it hours later.
+            try:
+                getc = getattr(block_db, "get_canonical_height", None)
+                canon = getc() if callable(getc) else None
+                if canon is not None and int(canon) > int(max_height) + 64:
+                    import logging
+
+                    logging.getLogger("core.chain.head").critical(
+                        "CHAIN-RESET GUARD: recovered head=%s from height index "
+                        "but canonical_height=%s (%s ahead) — index looks "
+                        "TRUNCATED. Restore from the newest snapshot.",
+                        max_height, canon, int(canon) - int(max_height),
+                    )
+            except Exception:
+                pass
             return (max_height, max_hash)
     except Exception:
         return None
