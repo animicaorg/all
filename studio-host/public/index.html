@@ -75,6 +75,7 @@
     <div id="alt">
       <div class="sep">or</div>
       <button class="btn btn-ghost" id="magic-btn">Email me a sign-in link</button>
+      <button class="btn btn-ghost hide" id="anon-btn">Try the Studio — no account</button>
     </div>
 
     <div class="msg" id="msg"></div>
@@ -96,8 +97,9 @@
 
   // Adapt to available methods.
   fetch('/api/me').then(r=>r.json()).then(me=>{
-    if(me.authed){ location.href='/app/vnc.html?autoconnect=true&resize=remote&reconnect=true&path=app/websockify'; return; }
+    if(me.authed){ location.href='/'; return; }
     if(!me.methods.magic) $('magic-btn').classList.add('hide');
+    if(me.methods.anon) $('anon-btn').classList.remove('hide');
   }).catch(()=>{});
 
   $('toggle').onclick = () => {
@@ -129,6 +131,12 @@
     if(!email){ msg('Enter your email first, then tap the link button.'); return; }
     try{ await post('/api/magic/request', { email }); msg('Check your inbox for a sign-in link.','ok'); }
     catch(err){ msg(err.message); }
+  };
+
+  $('anon-btn').onclick = async () => {
+    const b = $('anon-btn'); b.disabled = true; b.textContent = 'Starting your Studio…';
+    try{ const d = await post('/api/anon', {}); location.href = d.redirect || '/go'; }
+    catch(err){ msg(err.message); b.disabled = false; b.textContent = 'Try the Studio — no account'; }
   };
 </script>
 </body>

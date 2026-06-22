@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* color tokens as "R G B" for tailwind rgb(var(--x) / a) */
+  --bg: 11 13 18;
+  --surface: 18 21 28;
+  --elevated: 23 27 36;
+  --border: 37 43 56;
+  --fg: 230 233 239;
+  --muted: 139 147 167;
+  --accent: 110 168 254;
+  --accent-fg: 6 18 43;
+  --ok: 63 185 122;
+  --warn: 224 168 79;
+  --danger: 240 110 110;
+
+  --header-h: 52px;
+  --tabbar-h: 56px;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+  font-family: theme("fontFamily.sans");
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* prevent iOS zoom on input focus */
+input, select, textarea { font-size: 16px; }
+
+/* thin scrollbars */
+* { scrollbar-width: thin; scrollbar-color: rgb(var(--border)) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgb(var(--border)); border-radius: 8px; }
+
+.safe-b { padding-bottom: env(safe-area-inset-bottom); }
+.safe-t { padding-top: env(safe-area-inset-top); }
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium
+           transition-colors select-none min-h-[44px] active:scale-[0.99];
+  }
+  .btn-primary { @apply btn bg-accent text-accent-fg hover:opacity-90; }
+  .btn-ghost { @apply btn bg-elevated text-fg border border-border hover:bg-border/40; }
+  .btn-sm { @apply min-h-0 px-2.5 py-1.5 text-xs rounded-lg; }
+  .card { @apply rounded-2xl border border-border bg-surface; }
+  .input {
+    @apply w-full rounded-xl border border-border bg-elevated px-3 py-2.5 text-fg
+           placeholder:text-muted outline-none focus:border-accent/70;
+  }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-lg bg-elevated px-2 py-1 text-xs text-muted border border-border; }
+}

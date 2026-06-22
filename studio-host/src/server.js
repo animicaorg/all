@@ -40,9 +40,24 @@ const PORT = parseInt(process.env.PORT || '8099', 10);
 const COOKIE = 'anm_sid';
 const PUBLIC_DIR = join(__dir, '..', 'public');
 const INDEX_HTML = join(PUBLIC_DIR, 'index.html');
+// New mobile-first web IDE SPA (studio-ide). Served at / as the default app;
+// the legacy email/password login page moves to /login, the noVNC desktop to /desktop.
+const SPA_DIR = process.env.STUDIO_IDE_DIST || join(__dir, '..', '..', 'studio-ide', 'dist');
+const SPA_INDEX = join(SPA_DIR, 'index.html');
+const SPA_READY = existsSync(SPA_INDEX);
 const ANON_ENABLED = process.env.STUDIO_ALLOW_ANON !== '0';
 // noVNC viewer, auto-connecting through the gated /app proxy.
-const VIEWER = '/app/vnc.html?autoconnect=true&resize=remote&reconnect=true&path=app/websockify';
+// Mobile gets resize=scale (fit the whole desktop to the phone screen + touch
+// cursor dot) since the in-container Xvfb is a fixed size and resize=remote is a
+// no-op without x11vnc -xrandr; desktop keeps resize=remote. One source of truth.
+function viewerUrl(req) {
+  const ua = (req && req.headers && req.headers['user-agent']) || '';
+  const isMobile = /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile|Silk|Kindle/i.test(ua);
+  const resize = isMobile ? 'scale' : 'remote';
+  let u = `/app/vnc.html?autoconnect=true&resize=${resize}&reconnect=true&path=app/websockify`;
+  if (isMobile) u += '&show_dot=true';
+  return u;
+}
 
 const proxy = httpProxy.createProxyServer({ ws: true, xfwd: true });
 proxy.on('error', (_e, _req, res) => { try { res.writeHead?.(502); res.end?.('studio backend unavailable'); } catch {} });
@@ -98,7 +113,7 @@ app.post('/api/signup', async (req, res) => {
   try { user = store.createUser({ email, passHash: await bcrypt.hash(password, 10) }); }
   catch { return res.status(409).json({ error: 'That account already exists — try logging in.' }); }
   startUserSession(res, user);
-  res.json({ ok: true, redirect: VIEWER });
+  res.json({ ok: true, redirect: '/' });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -112,7 +127,7 @@ app.post('/api/login', async (req, res) => {
     if (!totp.verify(user.totpSecret, code)) return res.status(401).json({ error: 'That authenticator code is wrong or expired.', twofa: true });
   }
   startUserSession(res, user);
-  res.json({ ok: true, redirect: VIEWER });
+  res.json({ ok: true, redirect: '/' });
 });
 
 // --- optional authenticator (TOTP 2FA) ------------------------------------- #
@@ -160,7 +175,7 @@ app.post('/api/anon', async (req, res) => {
     return res.status(503).json({ error: e.code === 'AT_CAPACITY' ? 'Studio is at capacity — try again shortly.' : 'Could not start a session.' });
   }
   setCookie(res, sid, ttl);
-  res.json({ ok: true, redirect: VIEWER });
+  res.json({ ok: true, redirect: '/' });
 });
 
 app.post('/api/logout', async (req, res) => {
@@ -201,7 +216,7 @@ app.get('/api/magic/verify', (req, res) => {
   const email = store.consumeMagicToken(String(req.query.token || ''));
   if (!email) return res.status(400).send('This sign-in link is invalid or has expired.');
   startUserSession(res, store.upsertUserByEmail(email));
-  res.redirect(VIEWER);
+  res.redirect('/');
 });
 
 // --- wallet (phase 2) ------------------------------------------------------ #
@@ -237,14 +252,36 @@ app.get('/healthz', (_req, res) => res.json({ ok: true, ...stats() }));
 
 // --- login page + static -------------------------------------------------- #
 app.get('/', (req, res) => {
-  if (currentSession(req)) return res.redirect(VIEWER);
+  // The new mobile-first web IDE is the default app. It reads /api/me itself to
+  // decide auth state, so it's served to everyone. Falls back to the legacy
+  // login page only if the SPA build isn't present.
+  if (SPA_READY) return res.sendFile(SPA_INDEX);
+  if (currentSession(req)) return res.redirect('/go');
   res.sendFile(INDEX_HTML);
 });
+// Legacy email / password / magic-link / anon login page.
+app.get('/login', (_req, res) => res.sendFile(INDEX_HTML));
+// noVNC desktop Studio (fallback / power users).
+app.get('/desktop', (req, res) => res.redirect('/go'));
 app.get('/account', (req, res) => {
   if (!currentSession(req)) return res.redirect('/');
   res.sendFile(join(PUBLIC_DIR, 'account.html'));
 });
+// Single gated entry point to the viewer; picks the UA-appropriate noVNC params
+// (mobile vs desktop). Client links point here instead of hardcoding the URL.
+app.get('/go', (req, res) => {
+  if (!currentSession(req)) return res.redirect('/');
+  res.redirect(viewerUrl(req));
+});
 app.use('/static', express.static(PUBLIC_DIR));
+
+// noVNC's app/ui.js does `fetch('./package.json')` to show its version; the
+// packaged noVNC in the container ships without that file, so it 404s and the
+// user sees "Couldn't fetch package.json: Error: 404" (cosmetic, but visible on
+// mobile). Satisfy it here so the viewer loads clean. Must precede the /app mount.
+app.get('/app/package.json', (_req, res) => {
+  res.type('application/json').send(JSON.stringify({ name: 'noVNC', version: '1.4.0' }));
+});
 
 // --- gated reverse-proxy to the user's container (HTTP) -------------------- #
 app.use('/app', async (req, res) => {
@@ -259,6 +296,17 @@ app.use('/app', async (req, res) => {
   }
   proxy.web(req, res, { target: `http://127.0.0.1:${port}` }); // req.url already has /app stripped by the mount
 });
+
+// --- new web IDE SPA: static assets + client-side routing fallback --------- #
+if (SPA_READY) {
+  app.use(express.static(SPA_DIR, { index: false, maxAge: '1h' }));
+  app.get('*', (req, res, next) => {
+    if (req.method !== 'GET') return next();
+    const p = req.path;
+    if (p.startsWith('/api') || p.startsWith('/app') || p.startsWith('/static')) return next();
+    res.sendFile(SPA_INDEX);
+  });
+}
 
 // --- server + websocket upgrade gating ------------------------------------- #
 const server = http.createServer(app);
