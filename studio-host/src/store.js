@@ -104,6 +104,29 @@ export function clearEnaKey(emailOrId) {
   anonEna.delete(String(emailOrId));
 }
 
+// ---- ENA free-tier daily usage (per user, resets each UTC day) ------------- #
+const anonEnaFree = new Map(); // identity -> { date, used }
+const _today = () => new Date().toISOString().slice(0, 10);
+
+export function getEnaFreeUsed(emailOrId) {
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  const rec = u ? u.enaFree : anonEnaFree.get(String(emailOrId));
+  if (!rec || rec.date !== _today()) return 0;
+  return rec.used || 0;
+}
+
+export function incrEnaFreeUsed(emailOrId) {
+  const t = _today();
+  const u = emailOrId ? findUserByEmail(emailOrId) : null;
+  if (u) {
+    if (!u.enaFree || u.enaFree.date !== t) u.enaFree = { date: t, used: 0 };
+    u.enaFree.used += 1; persist(); return u.enaFree.used;
+  }
+  let rec = anonEnaFree.get(String(emailOrId));
+  if (!rec || rec.date !== t) { rec = { date: t, used: 0 }; anonEnaFree.set(String(emailOrId), rec); }
+  rec.used += 1; return rec.used;
+}
+
 // ---- Optional TOTP 2FA ----------------------------------------------------- #
 export function setTotpPending(email, secret) {
   const u = findUserByEmail(email); if (!u) return null;

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "@/state/chat";
 import { useEnaStore } from "@/state/ena";
 import { ChatMessage } from "@/components/ena/ChatMessage";
@@ -9,21 +9,32 @@ import { ConnectEna } from "@/components/ena/ConnectEna";
 export function EnaPanel() {
   const { messages, sending, proposals, tools, statusPhase, send, stop, resolveProposal } =
     useChatStore();
-  const { connected, checked, status } = useEnaStore();
+  const { connected, free, checked, status, canChat } = useEnaStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [showConnect, setShowConnect] = useState(false);
 
   useEffect(() => {
     if (!checked) void status();
   }, [checked, status]);
+
+  // Refresh ENA status (free quota used) after each turn finishes.
+  useEffect(() => {
+    if (!sending && checked) void status();
+  }, [sending, checked, status]);
 
   // Autoscroll to bottom on new content.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages, proposals, statusPhase, tools.length]);
 
-  // Gate the chat on a connected per-user ENA key.
-  if (checked && !connected) return <ConnectEna />;
+  // Gate the chat on either a connected key or remaining free messages. The
+  // free-tier banner can also force the connect view (with a Back option).
+  if (checked && (!canChat() || showConnect)) {
+    return <ConnectEna onBack={canChat() ? () => setShowConnect(false) : undefined} />;
+  }
+
+  const onFreeTier = !connected && free.enabled;
 
   const empty = messages.length === 0;
   const activeTools = tools.filter((t) => t.status === "start");
@@ -46,6 +57,17 @@ export function EnaPanel() {
           </button>
         )}
       </div>
+
+      {onFreeTier && (
+        <div className="flex flex-none items-center justify-between gap-2 border-b border-border bg-accent/5 px-3 py-1.5 text-xs">
+          <span className="text-muted">
+            <span className="font-medium text-fg">{free.remaining}</span> free message{free.remaining === 1 ? "" : "s"} left today
+          </span>
+          <button className="text-accent hover:underline" onClick={() => setShowConnect(true)}>
+            Use my own key
+          </button>
+        </div>
+      )}
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {empty ? (

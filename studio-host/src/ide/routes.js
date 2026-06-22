@@ -45,6 +45,16 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
 
   // Per-user ENA inference key (each user supplies their own pool key).
   const ENA_BASE = (process.env.STUDIO_ENA_BASE || 'https://pool.animica.org/v1').replace(/\/+$/, '');
+  // Free tier: a studio-funded shared key with a per-user DAILY quota (authed
+  // users only, to resist anonymous abuse). Once spent, direct users to buy a key.
+  const FREE_KEY = process.env.STUDIO_ENA_FREE_KEY || '';
+  const FREE_LIMIT = parseInt(process.env.STUDIO_ENA_FREE_LIMIT || '20', 10);
+  const BUY_URL = process.env.STUDIO_ENA_BUY_URL || 'https://pool.animica.org/keys';
+  function freeStatus(s) {
+    const enabled = !!FREE_KEY && !isAnon(s);
+    const used = enabled ? store.getEnaFreeUsed(tokenKey(s)) : 0;
+    return { enabled, limit: FREE_LIMIT, used, remaining: Math.max(0, FREE_LIMIT - used) };
+  }
   function getEnaKey(s) {
     const blob = store.getEnaKey(tokenKey(s));
     return blob ? secrets.decrypt(blob) : null;
@@ -245,7 +255,8 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     res.json({ connected: true });
   });
   router.get('/ena/key', (req, res) => {
-    res.json({ connected: !!getEnaKey(req.ideSession) });
+    const s = req.ideSession;
+    res.json({ connected: !!getEnaKey(s), free: freeStatus(s), buyUrl: BUY_URL });
   });
   router.post('/ena/key/disconnect', (req, res) => {
     store.clearEnaKey(tokenKey(req.ideSession));
@@ -257,12 +268,38 @@ export function createIdeRouter({ currentSession, store, secrets, github, agentP
     if (typeof message !== 'string' || !message) {
       return res.status(400).json({ error: 'message (string) is required.' });
     }
+    const s = req.ideSession;
     const payload = { message };
     if (Array.isArray(history)) payload.history = history;
-    const enaKey = getEnaKey(req.ideSession);
-    if (enaKey) payload.ena_key = enaKey;
+
+    // Key selection: the user's own key (no quota) → the free tier (authed, under
+    // the daily limit) → otherwise a clean SSE error directing them to buy a key.
+    let key = getEnaKey(s);
+    let usedFree = false;
+    if (!key) {
+      const f = freeStatus(s);
+      if (f.enabled && f.remaining > 0) { key = FREE_KEY; usedFree = true; }
+    }
+    if (!key) {
+      const f = freeStatus(s);
+      const msg = isAnon(s)
+        ? 'Sign in to get free ENA messages, then add your own key to keep going.'
+        : f.enabled
+          ? `You've used your ${f.limit} free ENA messages for today. Get your own key to keep going.`
+          : 'Connect your ENA key to chat.';
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+      });
+      res.write(`event: error\ndata: ${JSON.stringify({ message: msg, needKey: true, buyUrl: BUY_URL })}\n\n`);
+      res.write('event: done\ndata: {}\n\n');
+      return res.end();
+    }
+    payload.ena_key = key;
+    if (usedFree) { try { store.incrEnaFreeUsed(tokenKey(s)); } catch {} }
     try {
-      await agentProxy.streamProxy(req.ideSession, 'POST', '/ena/chat', payload, req, res);
+      await agentProxy.streamProxy(s, 'POST', '/ena/chat', payload, req, res);
     } catch (e) {
       // streamProxy only throws before headers are sent (e.g. no agent port);
       // once it has written SSE headers it handles errors in-band.

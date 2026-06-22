@@ -1,25 +1,48 @@
 import { create } from "zustand";
 import { enaApi } from "@/services/enaApi";
 
+export interface FreeStatus {
+  enabled: boolean;
+  limit: number;
+  used: number;
+  remaining: number;
+}
+
 interface EnaState {
   connected: boolean;
+  free: FreeStatus;
+  buyUrl: string;
   checked: boolean;
   busy: boolean;
   error: string | null;
+  canChat: () => boolean;
   status: () => Promise<void>;
   connect: (key: string) => Promise<boolean>;
   disconnect: () => Promise<void>;
 }
 
-export const useEnaStore = create<EnaState>((set) => ({
+const NO_FREE: FreeStatus = { enabled: false, limit: 0, used: 0, remaining: 0 };
+
+export const useEnaStore = create<EnaState>((set, get) => ({
   connected: false,
+  free: NO_FREE,
+  buyUrl: "https://pool.animica.org/keys",
   checked: false,
   busy: false,
   error: null,
+  canChat: () => {
+    const s = get();
+    return s.connected || (s.free.enabled && s.free.remaining > 0);
+  },
   status: async () => {
     try {
-      const r = await enaApi.keyStatus();
-      set({ connected: !!r.connected, checked: true });
+      const r: any = await enaApi.keyStatus();
+      set({
+        connected: !!r.connected,
+        free: r.free || NO_FREE,
+        buyUrl: r.buyUrl || get().buyUrl,
+        checked: true,
+      });
     } catch {
       set({ checked: true });
     }
@@ -42,5 +65,6 @@ export const useEnaStore = create<EnaState>((set) => ({
       /* ignore */
     }
     set({ connected: false });
+    await get().status();
   },
 }));
