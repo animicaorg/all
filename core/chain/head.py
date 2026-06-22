@@ -394,6 +394,14 @@ def finalize_genesis_if_needed(
     mutating state beyond the block DB finalization so callers can safely invoke
     this during service startup.
     """
+    # Loud, early check: a non-writable chain DB makes every block import fail
+    # SILENTLY (head freezes, miner/pool submissions rejected) — see the 10h
+    # read-only-DB halt. Surface it at boot so it is never silent again.
+    try:
+        _probe_db_writable(block_db)
+    except Exception:
+        pass
+
     from core.genesis.loader import load_genesis
 
     params, header = load_genesis(genesis_path)
@@ -544,3 +552,46 @@ def _reconcile_height_index(block_db) -> None:
     if callable(commit):
         commit()
     log.warning("height-index self-heal: rebuilt %d entries", len(chain))
+
+
+def _probe_db_writable(block_db) -> bool:
+    """Boot-time write probe for the chain DB.
+
+    A read-only chain DB makes EVERY block import fail (`put_header` raises
+    "attempt to write a readonly database"), so the head freezes and miner/pool
+    block submissions are rejected — with almost nothing in the logs. The usual
+    cause is a file-ownership mismatch: the DB file (animica.db / -wal / -shm)
+    is owned by another user (e.g. root, after a manual or root-run DB op) while
+    the node process runs as a non-root uid. Probe once at boot and, if it
+    fails, log loudly with the fix. Non-fatal (the node can still serve reads).
+    """
+    kv = getattr(block_db, "kv", None)
+    if kv is None or not hasattr(kv, "put"):
+        return True
+    probe_key = b"\x00\x00__writable_probe__"
+    commit = getattr(kv, "commit", None)
+    try:
+        kv.put(probe_key, b"1")
+        if callable(commit):
+            commit()
+        # Clean up the probe key (best-effort).
+        try:
+            delete = getattr(kv, "delete", None)
+            if callable(delete):
+                delete(probe_key)
+                if callable(commit):
+                    commit()
+        except Exception:
+            pass
+        return True
+    except Exception as exc:
+        log.critical(
+            "CHAIN DB IS NOT WRITABLE (%s). The node cannot import blocks: the "
+            "head will freeze and all miner/pool block submissions will be "
+            "rejected. Most likely the DB file is owned by a different user than "
+            "the node process (e.g. root-owned after a manual/root DB operation "
+            "while the node runs as a non-root uid). FIX: chown the chain DB "
+            "(animica.db, animica.db-wal, animica.db-shm) to the node's uid and "
+            "restart.", exc,
+        )
+        return False

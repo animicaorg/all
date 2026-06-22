@@ -1,0 +1,12 @@
+[Unit]
+Description=Animica mainnet seed auto-updater (host-side; adopts newer release tags)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/animica/scripts/seed_autoupdate.sh
+# Conservative defaults; override via systemd drop-in if needed.
+Environment=ANIMICA_SEED_REPO=/root/animica
+Environment=ANIMICA_SEED_CONTAINER=animica-mainnet-node
+Environment=ANIMICA_SEED_MIN_AGE_H=6

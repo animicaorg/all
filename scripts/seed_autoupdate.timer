@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Animica seed auto-updater every 30 min
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
