@@ -36,6 +36,8 @@ export function WalletModal({ onClose }: { onClose: () => void }) {
     onClick,
     href,
     badge,
+    recommended,
+    muted,
   }: {
     icon: string;
     title: string;
