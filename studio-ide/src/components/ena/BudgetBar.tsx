@@ -36,8 +36,9 @@ export function BudgetBar({
   const [draft, setDraft] = useState<string>("");
 
   function fund() {
-    // Injected wallets can sign in-Studio (one signature); web/none → manual.
-    if (walletKind === "injected") void ensureBudget(cap);
+    // Injected (one signature) and web (sign-and-send popup) both auto-fund via
+    // ensureBudget; with no wallet connected, fall back to manual funding.
+    if (walletKind === "injected" || walletKind === "web") void ensureBudget(cap);
     else setManualOpen(true);
   }
 

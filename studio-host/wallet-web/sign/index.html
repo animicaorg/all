@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sign &amp; send — Animica Wallet</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/wallet.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">◬</span><span class="brand-text">Animica <em>Wallet</em></span></div>
+</header>
+
+<main class="wrap" style="max-width:640px">
+  <h1 id="title" style="margin-bottom:8px">Approve payment</h1>
+  <p class="muted" id="subtitle">An app is asking you to send ANM.</p>
+
+  <div class="card" id="request-card">
+    <div class="card-title">Payment</div>
+    <div id="summary"></div>
+    <details style="margin-top:10px">
+      <summary class="muted small" style="cursor:pointer">Show full request</summary>
+      <pre class="mono" id="decoded">parsing…</pre>
+    </details>
+  </div>
+
+  <div class="card" id="accounts-card">
+    <div class="card-title">Pay from</div>
+    <p class="muted small">The selected wallet signs and broadcasts this payment. Private keys never leave this device unless your wallet is node-held.</p>
+    <ul id="accounts-list" class="activity"></ul>
+    <p class="muted small" id="accounts-empty" hidden>
+      No wallets in this browser yet — <a href="/">generate or import one</a> before approving.
+    </p>
+  </div>
+
+  <div class="row" id="actions">
+    <button class="primary-btn" id="approve-btn">Approve &amp; send</button>
+    <button class="ghost-btn"   id="deny-btn">Deny</button>
+    <span id="status" class="muted small"></span>
+  </div>
+
+  <p class="muted small">
+    See <a href="https://docs.animica.org/wallet/connect">docs.animica.org/wallet/connect</a> for the
+    full protocol spec.
+  </p>
+</main>
+
+<script type="module">
+const STORAGE_KEY = "animica.wallet.store.v1";
+const ACTIVE_KEY  = "animica.wallet.active.v1";
+const RPC_URL     = "/rpc";
+const NANO = 1_000_000_000n;
+
+// ── Params ───────────────────────────────────────────────────────────
+const url = new URL(location.href);
+const requestBlob = url.searchParams.get("request") || "";
+const requestId   = url.searchParams.get("id") || "";
+
+function tryDecode(s) {
+  try {
+    const padded = s.replace(/-/g, "+").replace(/_/g, "/").padEnd(s.length + (4 - s.length % 4) % 4, "=");
+    return JSON.parse(atob(padded));
+  } catch { return null; }
+}
+const decoded = requestBlob ? tryDecode(requestBlob) : null;
+const payload = (decoded && typeof decoded === "object") ? (decoded.payload || decoded) : null;
+
+const decodedEl  = document.getElementById("decoded");
+const summaryEl  = document.getElementById("summary");
+const accountsEl = document.getElementById("accounts-list");
+const emptyEl    = document.getElementById("accounts-empty");
+const statusEl   = document.getElementById("status");
+const approveBtn = document.getElementById("approve-btn");
+const denyBtn    = document.getElementById("deny-btn");
+
+function escape(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+// Resolve the amount in nano-ANM (accept amount_nano or amount_anm decimal).
+function amountNano() {
+  if (payload?.amount_nano != null && /^\d+$/.test(String(payload.amount_nano))) return BigInt(String(payload.amount_nano));
+  const a = String(payload?.amount_anm ?? "");
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(a);
+  if (!m) return 0n;
+  return BigInt(m[1] || "0") * NANO + BigInt((m[2] || "").padEnd(9, "0").slice(0, 9));
+}
+function fmtAnm(nano) {
+  const whole = nano / NANO, frac = (nano % NANO).toString().padStart(9, "0").replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
+
+const toAddr = payload?.to || "";
+const nano = payload ? amountNano() : 0n;
+let valid = !!(payload && toAddr && nano > 0n && requestId);
+
+if (!valid) {
+  decodedEl.textContent = payload ? JSON.stringify(payload, null, 2) : "(could not decode request — was the URL truncated?)";
+  approveBtn.disabled = true; denyBtn.disabled = !payload;
+  statusEl.textContent = !requestId ? "Request is missing &id=." : "Invalid or incomplete payment request.";
+} else {
+  decodedEl.textContent = JSON.stringify(payload, null, 2);
+  const ts = payload.ts ? new Date(Number(payload.ts) * 1000).toISOString().slice(0, 19).replace("T", " ") : "—";
+  summaryEl.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:13px">
+      <div class="muted small">App</div>      <div>${escape(payload.app || "—")}</div>
+      <div class="muted small">Origin</div>   <div class="mono small">${escape(payload.origin || "—")}</div>
+      <div class="muted small">Amount</div>   <div><strong>${escape(fmtAnm(nano))} ANM</strong></div>
+      <div class="muted small">To</div>       <div class="mono small">${escape(toAddr)}</div>
+      <div class="muted small">Chain ID</div> <div>${escape(payload.chainId ?? 1)}</div>
+      <div class="muted small">Issued</div>   <div>${escape(ts)}</div>
+    </div>`;
+}
+
+// ── Wallet store ─────────────────────────────────────────────────────
+function loadStore() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { wallets: [] };
+    const o = JSON.parse(raw);
+    return (o && Array.isArray(o.wallets)) ? o : { wallets: [] };
+  } catch { return { wallets: [] }; }
+}
+const store = loadStore();
+const activeAddr = localStorage.getItem(ACTIVE_KEY) || (store.wallets[0] && store.wallets[0].address) || "";
+
+if (store.wallets.length === 0) {
+  emptyEl.hidden = false; approveBtn.disabled = true;
+} else {
+  for (let i = 0; i < store.wallets.length; i++) {
+    const w = store.wallets[i];
+    const checked = (w.address === activeAddr) || (!activeAddr && i === 0);
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <input type="radio" name="from" data-addr="${escape(w.address)}" ${checked ? "checked" : ""} />
+        <div><div>${escape(w.label || "(unnamed)")}</div>
+        <div class="mono small muted">${escape(w.address)}</div></div>
+      </label>`;
+    accountsEl.appendChild(li);
+  }
+}
+function selectedFrom() {
+  const c = accountsEl.querySelector('input[name="from"]:checked');
+  return c ? c.dataset.addr : "";
+}
+function findEntry(addr) { return store.wallets.find((w) => w.address === addr) || null; }
+
+// ── RPC + custody + send (mirrors wallet.js) ─────────────────────────
+let _rpcId = 1;
+async function rpc(method, params = {}) {
+  const res = await fetch(RPC_URL, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: _rpcId++, method, params }),
+  });
+  if (!res.ok) throw new Error(`RPC ${res.status}`);
+  const json = await res.json();
+  if (json.error) { const e = new Error(json.error.message || "RPC error"); e.code = json.error.code; e.data = json.error.data; throw e; }
+  return json.result;
+}
+async function checkCustody(address) {
+  const entry = findEntry(address);
+  if (entry && (entry.secret_key_hex || entry.private_key_enc)) return { via: "imported" };
+  try {
+    const res = await fetch("/wallet-export", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ addresses: [address] }),
+    });
+    if (!res.ok) return { via: "none" };
+    const json = await res.json();
+    return (Array.isArray(json.wallets) && json.wallets.length > 0) ? { via: "node" } : { via: "none" };
+  } catch { return { via: "none" }; }
+}
+async function sendPayment(from) {
+  const memo = { kind: "ena.budget.deposit" };
+  const { via } = await checkCustody(from);
+  if (via === "imported") {
+    const res = await fetch("/wallet-sign-and-send", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ wallet: findEntry(from), to: toAddr, amount_nano: nano.toString(), memo }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `signer returned ${res.status}`);
+    return json.txHash || json.txid || "submitted";
+  }
+  if (via === "node") {
+    const res = await rpc("wallet.send", { from, to: toAddr, amount: nano.toString(), memo });
+    return res.txHash || res.tx_hash || res.hash || res.txid || "submitted";
+  }
+  throw new Error("This wallet has no signing key here. Generate one on this site or import a wallets.json.");
+}
+
+// ── Relay the result to the requesting app (callback) ────────────────
+async function relay(body) {
+  if (!payload.callback) return;
+  await fetch(payload.callback, {
+    method: "POST", mode: "cors",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => {});
+}
+
+async function approve() {
+  const from = selectedFrom();
+  if (!from) { statusEl.className = "small status-err"; statusEl.textContent = "Pick an account."; return; }
+  approveBtn.disabled = true; denyBtn.disabled = true;
+  statusEl.className = "small status-busy"; statusEl.textContent = "Signing & broadcasting…";
+  try {
+    const txid = await sendPayment(from);
+    await relay({ requestId, approved: true, txid, accounts: [from] });
+    statusEl.className = "small status-ok";
+    statusEl.textContent = "Sent. Return to the app — it'll confirm shortly.";
+    setTimeout(() => window.close(), 1200);
+  } catch (e) {
+    approveBtn.disabled = false; denyBtn.disabled = false;
+    statusEl.className = "small status-err";
+    statusEl.textContent = "Could not send: " + (e.message || e);
+  }
+}
+async function deny() {
+  denyBtn.disabled = true; approveBtn.disabled = true;
+  await relay({ requestId, approved: false, txid: null, accounts: [] });
+  statusEl.textContent = "Denied. Closing…"; setTimeout(() => window.close(), 600);
+}
+
+approveBtn.addEventListener("click", approve);
+denyBtn.addEventListener("click", deny);
+</script>
+</body>
+</html>

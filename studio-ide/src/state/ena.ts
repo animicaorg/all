@@ -197,14 +197,29 @@ export const useEnaStore = create<EnaState>((set, get) => ({
       const treasury = s.treasury;
       if (!treasury) throw new Error("No treasury address configured.");
 
-      // The web wallet (and any non-injected connection) can't sign a tx for
-      // the Studio — fall back to manual funding instead of a confusing error.
-      if (useWalletStore.getState().kind !== "injected") {
+      const wkind = useWalletStore.getState().kind;
+
+      // Web wallet → one-click sign-and-send via its /sign/ approval popup,
+      // then wait for the first on-chain confirmation and credit. No paste.
+      if (wkind === "web") {
+        const shortfall = Math.max(get().perCallAnm || 0, Number((cap - get().balanceAnm).toFixed(9)));
+        const txid = await useWalletStore.getState().signSendWeb(shortfall);
+        const done = await pollDepositConfirmed(txid);
+        if (!done) {
+          set({ depositing: false, error: "Sent — waiting for on-chain confirmation. Tap Fund to check." });
+          return false;
+        }
+        set({ balanceAnm: done.balanceAnm, depositing: false });
+        return done.balanceAnm >= cap - 1e-12 || done.balanceAnm >= (get().perCallAnm || 0) - 1e-12;
+      }
+
+      // No signer at all → manual funding (send to treasury + confirm).
+      if (wkind !== "injected") {
         set({ depositing: false, manualOpen: true });
         return false;
       }
 
-      // Deposit only the shortfall — one wallet signature.
+      // Injected wallet: deposit only the shortfall — one wallet signature.
       const shortfall = Math.max(0, cap - s.balanceAnm);
       // Round up to whole nano-ANM to avoid sub-unit rounding leaving us short.
       const amount = Math.ceil(shortfall * 1e9) / 1e9;

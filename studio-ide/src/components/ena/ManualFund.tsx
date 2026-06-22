@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useEnaStore } from "@/state/ena";
-import { useWalletStore } from "@/state/wallet";
 
 const WEB_WALLET = "https://wallet.animica.org";
 
@@ -15,7 +14,6 @@ function fmt(n: number, max = 4): string {
 export function ManualFund() {
   const { treasury, cap, balanceAnm, perCallAnm, depositing, error, submitDeposit, setManualOpen } =
     useEnaStore();
-  const walletKind = useWalletStore((s) => s.kind);
   const [txid, setTxid] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -51,13 +49,6 @@ export function ManualFund() {
           </button>
         </div>
 
-        {walletKind === "web" && (
-          <p className="mb-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs leading-snug text-warn">
-            The web wallet can only share your address — it can't sign here. For one-tap
-            funding (confirm in wallet, auto-credit), open the Studio in the Animica app's
-            browser or use the extension. Otherwise, send manually below.
-          </p>
-        )}
         <p className="mb-3 text-sm text-muted">
           Send{" "}
           <span className="font-medium text-fg">{fmt(amount)} ANM</span> to the Studio treasury from your

@@ -96,6 +96,9 @@ interface WalletState {
   // Web-wallet (wallet.animica.org) popup connect — start handshake, open the
   // approval popup, poll the broker until approved.
   connectWeb: () => Promise<boolean>;
+  // Web-wallet one-click sign-and-send: open the wallet's /sign/ approval popup
+  // for an ANM transfer to the funding treasury, poll until signed, return txid.
+  signSendWeb: (amountAnm: number) => Promise<string>;
   refreshBalance: () => Promise<void>;
   // Sign + send an ANM transfer via the wallet extension. Resolves with the
   // tx hash. `amountAnm` is a decimal ANM number.
@@ -212,6 +215,55 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       set({ connecting: false, error: String(e?.message ?? e) });
       try { popup?.close(); } catch { /* ignore */ }
       return false;
+    }
+  },
+
+  signSendWeb: async (amountAnm: number) => {
+    // Open the approval popup synchronously (gesture-safe), then navigate it.
+    const popup = window.open("about:blank", "animica-sign", "width=440,height=760");
+    try {
+      const startRes = await fetch("/api/ide/wallet/sign/start", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amountAnm }),
+      });
+      if (!startRes.ok) throw new Error("Could not start the payment request.");
+      const { requestId, popupUrl } = await startRes.json();
+      if (popup) popup.location.href = popupUrl;
+      else throw new Error("Allow pop-ups for this site to approve the payment.");
+
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        let pr: any;
+        try {
+          const res = await fetch(
+            `/api/ide/wallet/sign/poll?requestId=${encodeURIComponent(requestId)}`,
+            { credentials: "include" },
+          );
+          pr = await res.json();
+        } catch {
+          continue;
+        }
+        if (pr.status === "approved" && pr.txid) {
+          try { popup?.close(); } catch { /* ignore */ }
+          return pr.txid as string;
+        }
+        if (pr.status === "rejected") {
+          try { popup?.close(); } catch { /* ignore */ }
+          throw new Error("Payment was rejected in the wallet.");
+        }
+        if (pr.status === "expired" || pr.status === "unknown") {
+          try { popup?.close(); } catch { /* ignore */ }
+          throw new Error("Payment request expired.");
+        }
+      }
+      try { popup?.close(); } catch { /* ignore */ }
+      throw new Error("Payment timed out.");
+    } catch (e) {
+      try { popup?.close(); } catch { /* ignore */ }
+      throw e;
     }
   },
 

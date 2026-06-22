@@ -26,7 +26,7 @@ import { mailerReady, sendMagicLink } from './mailer.js';
 import * as billing from './billing.js';
 import * as totp from './totp.js';
 import { createIdeRouter } from './ide/routes.js';
-import { createWalletConnectRouter } from './ide/walletConnect.js';
+import { createWalletConnectRouter, createWalletSignRouter } from './ide/walletConnect.js';
 import * as ideSecrets from './ide/secrets.js';
 import * as ideGithub from './ide/github.js';
 import * as ideAgentProxy from './ide/agentProxy.js';
@@ -297,6 +297,8 @@ app.get('/app/package.json', (_req, res) => {
 // Public web-wallet connect handshake — mounted BEFORE the gated ide router so
 // /callback (POSTed by the wallet.animica.org sidecar, no session) isn't 401'd.
 app.use('/api/ide/wallet/connect', createWalletConnectRouter());
+// Web-wallet one-click sign-and-send funding (CORS callback from the wallet).
+app.use('/api/ide/wallet/sign', createWalletSignRouter());
 
 // Mounted before the SPA static/catch-all so /api/ide/* is handled here. The
 // router does its own session gating (401 JSON when unauthenticated).

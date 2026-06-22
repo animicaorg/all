@@ -134,14 +134,13 @@ export function WalletModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <p className="mb-1.5 mt-4 text-[11px] font-medium uppercase tracking-wide text-muted">
-          Sign-in only — can't fund
+          Or sign in the browser
         </p>
         <Option
           icon="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v2M3 7.5V17a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3M21 11.5h-4a2 2 0 0 0 0 4h4a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5Z"
           title="Web wallet"
-          desc="Pop-up via wallet.animica.org — shares your address only"
+          desc="Approve payments in a wallet.animica.org pop-up"
           onClick={web}
-          muted
         />
 
         {connecting && <p className="mt-3 text-center text-xs text-muted">Waiting for wallet confirmation…</p>}
