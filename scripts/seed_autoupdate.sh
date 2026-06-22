@@ -20,7 +20,10 @@ set -euo pipefail
 REPO="${ANIMICA_SEED_REPO:-/root/animica}"
 CONTAINER="${ANIMICA_SEED_CONTAINER:-animica-mainnet-node}"
 RPC="${ANIMICA_SEED_RPC:-http://127.0.0.1:8545/rpc}"
-MIN_AGE_H="${ANIMICA_SEED_MIN_AGE_H:-6}"
+# Default 0 = adopt new release tags immediately (no min-age yank window).
+# Safety still comes from the post-restart health-check + auto-rollback below.
+# Set ANIMICA_SEED_MIN_AGE_H=<hours> to restore a buffer.
+MIN_AGE_H="${ANIMICA_SEED_MIN_AGE_H:-0}"
 PATHS=(core p2p rpc python)
 LOG="${ANIMICA_SEED_AUTOUPDATE_LOG:-/var/log/animica-seed-autoupdate.log}"
 
