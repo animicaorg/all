@@ -3,6 +3,7 @@ import { useAuthStore } from "@/state/auth";
 import { useGithubStore } from "@/state/github";
 import { useScmStore } from "@/state/scm";
 import { useUiStore } from "@/state/ui";
+import { WalletButton } from "@/components/wallet/WalletButton";
 
 export function AppHeader() {
   const { me, logout } = useAuthStore();
@@ -61,6 +62,7 @@ export function AppHeader() {
       </button>
 
       <div className="ml-auto flex items-center gap-2">
+        <WalletButton compact />
         {currentRepo && (
           <button
             className="relative grid h-9 w-9 place-items-center rounded-full border border-border bg-elevated text-muted hover:text-fg"

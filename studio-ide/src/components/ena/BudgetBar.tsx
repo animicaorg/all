@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useEnaStore } from "@/state/ena";
 import { useWalletStore } from "@/state/wallet";
+import { WalletButton } from "@/components/wallet/WalletButton";
 
 const PRESETS = [1, 5, 20];
 
@@ -65,9 +66,12 @@ export function BudgetBar({
             </span>
           )}
         </div>
-        <button className="text-xs text-accent hover:underline" onClick={onUseOwnKey}>
-          Use my own key
-        </button>
+        <div className="flex items-center gap-2">
+          <WalletButton />
+          <button className="text-xs text-accent hover:underline" onClick={onUseOwnKey}>
+            Use my own key
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
