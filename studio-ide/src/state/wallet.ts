@@ -89,6 +89,9 @@ interface WalletState {
 
   detect: () => void;
   connect: () => Promise<boolean>;
+  // Web-wallet (wallet.animica.org) popup connect — start handshake, open the
+  // approval popup, poll the broker until approved.
+  connectWeb: () => Promise<boolean>;
   refreshBalance: () => Promise<void>;
   // Sign + send an ANM transfer via the wallet extension. Resolves with the
   // tx hash. `amountAnm` is a decimal ANM number.
@@ -148,6 +151,61 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         connected: false,
         error: String(e?.message ?? e),
       });
+      return false;
+    }
+  },
+
+  connectWeb: async () => {
+    // Open the popup SYNCHRONOUSLY (still in the click gesture) so it isn't
+    // blocked; we navigate it once the broker returns the handshake URL.
+    const popup = window.open("about:blank", "animica-wallet", "width=440,height=760");
+    set({ connecting: true, error: null });
+    try {
+      const startRes = await fetch("/api/ide/wallet/connect/start", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      if (!startRes.ok) throw new Error("Could not start the wallet handshake.");
+      const { requestId, popupUrl } = await startRes.json();
+      if (popup) popup.location.href = popupUrl;
+      else {
+        set({ connecting: false, error: "Allow pop-ups for this site, then try the web wallet again." });
+        return false;
+      }
+
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        let pr: any;
+        try {
+          const res = await fetch(
+            `/api/ide/wallet/connect/poll?requestId=${encodeURIComponent(requestId)}`,
+            { credentials: "include" },
+          );
+          pr = await res.json();
+        } catch {
+          continue;
+        }
+        if (pr.status === "approved" && pr.address) {
+          set({ connected: true, address: pr.address, connecting: false, error: null });
+          try { popup.close(); } catch { /* ignore */ }
+          void get().refreshBalance();
+          return true;
+        }
+        if (pr.status === "rejected" || pr.status === "expired" || pr.status === "unknown") {
+          set({ connecting: false, error: pr.status === "rejected" ? "Connection rejected in the wallet." : "Wallet connect request expired." });
+          try { popup.close(); } catch { /* ignore */ }
+          return false;
+        }
+      }
+      set({ connecting: false, error: "Wallet connect timed out." });
+      try { popup.close(); } catch { /* ignore */ }
+      return false;
+    } catch (e: any) {
+      set({ connecting: false, error: String(e?.message ?? e) });
+      try { popup?.close(); } catch { /* ignore */ }
       return false;
     }
   },

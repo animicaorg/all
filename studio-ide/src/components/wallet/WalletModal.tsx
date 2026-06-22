@@ -1,8 +1,6 @@
 import { useEffect } from "react";
 import { useWalletStore } from "@/state/wallet";
 
-const WEB_WALLET_URL = "https://wallet.animica.org";
-
 function Icon({ d }: { d: string }) {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5 flex-none" fill="none" stroke="currentColor" strokeWidth="1.7">
@@ -15,7 +13,7 @@ function Icon({ d }: { d: string }) {
 // browser extension AND the mobile app's in-app browser, so both route through
 // connect(); the web wallet opens wallet.animica.org.
 export function WalletModal({ onClose }: { onClose: () => void }) {
-  const { available, connecting, error, connect, detect } = useWalletStore();
+  const { available, connecting, error, connect, connectWeb, detect } = useWalletStore();
 
   useEffect(() => {
     detect();
@@ -23,6 +21,11 @@ export function WalletModal({ onClose }: { onClose: () => void }) {
 
   async function injected() {
     const ok = await connect();
+    if (ok) onClose();
+  }
+
+  async function web() {
+    const ok = await connectWeb();
     if (ok) onClose();
   }
 
@@ -112,8 +115,8 @@ export function WalletModal({ onClose }: { onClose: () => void }) {
           <Option
             icon="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a1 1 0 0 1 1 1v2M3 7.5V17a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3M21 11.5h-4a2 2 0 0 0 0 4h4a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 0-.5-.5Z"
             title="Web wallet"
-            desc="wallet.animica.org"
-            href={WEB_WALLET_URL}
+            desc="Pop-up sign-in via wallet.animica.org"
+            onClick={web}
           />
         </div>
 
