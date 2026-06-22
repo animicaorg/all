@@ -10113,6 +10113,17 @@ class P2PService:
                 best_header_height = max(best_header_height, int(target_height))
             if best_header_height > local_height_int:
                 expected_next_height = local_height_int + 1
+                # Fork recovery: if the peer's header chain diverged from ours
+                # BELOW our head (matched ancestor < local head), we followed/mined
+                # a losing branch. Requesting local_head+1 only ever yields an
+                # orphan — its parent is the peer's block at our head's height,
+                # which we don't have — so the node wedges at its fork tip forever
+                # (the classic "stuck at the block I mined" after solo mining).
+                # Instead, fetch the competing branch from the fork point so we
+                # build the heavier side-chain and the fork choice reorgs onto it.
+                anc = self._sync_last_matched_ancestor_height
+                if anc is not None and int(anc) < local_height_int:
+                    expected_next_height = int(anc) + 1
                 next_hash = next(
                     (
                         h
