@@ -187,6 +187,10 @@ def settings_from_env(env: dict[str, str]) -> Settings:
         api_key=key,
         model=model,
         streaming=True,
+        # CPU-only AICF workers are slow (~2 tok/s); a full answer can take
+        # minutes. Default to a generous 600s read timeout so inference completes
+        # instead of failing with "Request timed out after 180.0s".
+        request_timeout=float(env.get("ANIMICA_ENA_TIMEOUT") or 600.0),
         # The sidecar acts on behalf of the connected user; apply edits after the
         # browser approves each diff (which we surface ourselves), so the executor
         # itself runs in SUGGEST mode (diff-then-apply gating).

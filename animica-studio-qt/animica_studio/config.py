@@ -190,7 +190,10 @@ class Settings:
     # Generous default so a single write_file body (a whole source file) is not
     # truncated mid-output; agentic coding turns routinely need more than 4k.
     max_tokens: int = 8192
-    request_timeout: float = 180.0
+    # Generous: ENA inference can run on a CPU-only AICF worker (~2 tok/s) where a
+    # full answer takes minutes. 180s timed out mid-generation; 600s lets it
+    # complete. Override per-session via ANIMICA_ENA_TIMEOUT (settings_from_env).
+    request_timeout: float = 600.0
     system_prompt_override: Optional[str] = None
     autonomy_level: AutonomyLevel = AutonomyLevel.SUGGEST
     theme: str = "dark"
