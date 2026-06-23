@@ -192,11 +192,69 @@ def _detect_rocm_smi(exe: str) -> tuple[str, float, str]:
     return name, vram, "rocm"
 
 
+def _amd_gpu_present() -> bool:
+    """True if AMD/ROCm hardware looks present, regardless of whether the
+    installed torch can use it (/dev/kfd, rocm-smi, or an AMD VGA in lspci)."""
+    try:
+        if os.path.exists("/dev/kfd"):
+            return True
+    except Exception:
+        pass
+    if shutil.which("rocm-smi"):
+        return True
+    try:
+        out = subprocess.run(["lspci"], capture_output=True, text=True, timeout=5)
+        for ln in (out.stdout or "").splitlines():
+            low = ln.lower()
+            if ("vga" in low or "display" in low or "3d" in low) and (
+                "amd" in low or "radeon" in low or "advanced micro" in low
+            ):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _torch_cuda_build_unusable() -> bool:
+    """True if torch is installed but is a CUDA/CPU build with no usable GPU
+    (torch.version.hip is None and torch.cuda is unavailable) — i.e. it cannot
+    drive a ROCm/AMD GPU."""
+    try:
+        import torch  # type: ignore
+    except Exception:
+        return False
+    try:
+        hip = getattr(getattr(torch, "version", None), "hip", None)
+        return hip is None and not torch.cuda.is_available()
+    except Exception:
+        return False
+
+
+def _maybe_hint_rocm_torch() -> None:
+    """If an AMD GPU is present but the installed torch can't use it (CUDA build),
+    print an actionable hint — otherwise the GPU silently falls back to CPU."""
+    try:
+        if _torch_cuda_build_unusable() and _amd_gpu_present():
+            print("[up] AMD GPU detected, but the installed PyTorch is a CUDA build "
+                  "and cannot use ROCm — inference/mining will run on CPU.")
+            print("[up] Install the ROCm PyTorch wheel (match your ROCm version), e.g.:")
+            print("[up]   pip uninstall -y torch && pip install --index-url "
+                  "https://download.pytorch.org/whl/rocm6.2 torch")
+            print("[up] Then re-run. Consumer Radeons may also need "
+                  "HSA_OVERRIDE_GFX_VERSION (e.g. 11.0.0 RDNA3, 10.3.0 RDNA2).")
+    except Exception:
+        pass
+
+
 def detect_capabilities() -> Capabilities:
     """Detect CPU/GPU/VRAM across NVIDIA/AMD/Apple. Never raises; degrades to
     CPU-only."""
     cpu = os.cpu_count() or 1
     found = _detect_gpu_via_torch() or _detect_gpu_via_smi()
+    # If we couldn't get a torch-usable GPU but AMD hardware is present, the most
+    # common cause is the default CUDA torch wheel on an AMD box — hint loudly.
+    if found is None or _torch_cuda_build_unusable():
+        _maybe_hint_rocm_torch()
     if found:
         name, vram, kind = found
         return Capabilities(cpu_count=cpu, gpu=True, gpu_name=name,
