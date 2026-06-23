@@ -1,59 +1,51 @@
 #!/usr/bin/env python3
-"""Patch the mainnet node's tx-submission gate so the authoritative verifier
-seed can accept transactions when it's at/above the whole network's height.
+"""Patch the mainnet node's tx-submission gate (installed copy) so the seed
+accepts transactions while it sits at the leading edge of the chain.
 
-The node imports the INSTALLED copy of animica.sync.readiness (in its /data
-volume), NOT the repo at /app/python — so this patches that installed file in
+The node imports the INSTALLED copy of animica.sync.readiness from its /data
+volume, NOT the repo at /app/python — so this patches that installed file in
 place. Idempotent. After running, restart the node:
 
     docker restart animica-mainnet-node
 
-Why: the seed runs ahead of lagging peers and keeps a few queued look-ahead
-blocks, so assess_tx_submission_readiness never sees a "synced" state and
-rejects every tx (-32002), which blocks AICF/ANM inference and all submissions.
-The added allowance returns True when head_height >= network_best_height (we
-hold the leading edge). Nodes genuinely behind are unaffected.
+History:
+- v1 added an "authoritative-edge" allowance that required network_best_height
+  to be known and <= head. But after the proven-peers net_best fix, a node at
+  the canonical tip with no proven peer ahead reports network_best = None, so
+  that allowance never fired -> the seed rejected every tx with
+  -32002 'Node is still syncing' (phase=headers, head==best_header), blocking
+  AICF/ANM inference payments.
+- v2 (this) BROADENS the allowance: allow when we're caught up on blocks vs our
+  own headers (head >= best_header) AND no peer is known ahead (network_best is
+  None / <=0 / <= head). Genuinely-behind nodes are unaffected.
 """
 import sys
 
 TARGET = ("/var/lib/docker/volumes/animica_mainnet_chain_1_31ae91ca_data/_data/"
           ".local/lib/python3.11/site-packages/animica/sync/readiness.py")
 
+# The v1 (narrow) allowance currently installed.
 OLD = '''    if (
-        last_header_error == "at_tip"
-        and head_height is not None
-        and best_header_height is not None
-        and head_height >= best_header_height
-    ):
-        return True, info
-
-    return False, info'''
-
-NEW = '''    if (
-        last_header_error == "at_tip"
-        and head_height is not None
-        and best_header_height is not None
-        and head_height >= best_header_height
-    ):
-        return True, info
-
-    # Authoritative-edge allowance: at/above the highest height any peer reports
-    # (network_best) we hold the leading edge; queued look-ahead blocks are our
-    # own production, not "behind the network", so allow submission. A
-    # block-producing seed ahead of lagging peers otherwise stays "still
-    # syncing" forever and can never accept transactions. Behind nodes
-    # (head < network_best) are unaffected; an inflated peer height keeps us
-    # deferring.
-    if (
         head_height is not None
         and network_best_height is not None
         and network_best_height > 0
         and head_height >= network_best_height
         and (best_header_height is None or head_height >= best_header_height)
     ):
-        return True, info
+        return True, info'''
 
-    return False, info'''
+# The v2 (broadened) allowance — also covers network_best is None (no proven
+# peer ahead = at the canonical tip).
+NEW = '''    if (
+        head_height is not None
+        and (best_header_height is None or head_height >= best_header_height)
+        and (
+            network_best_height is None
+            or network_best_height <= 0
+            or head_height >= network_best_height
+        )
+    ):
+        return True, info'''
 
 
 def main() -> int:
@@ -62,17 +54,17 @@ def main() -> int:
     except OSError as e:
         print(f"cannot read {TARGET}: {e}")
         return 2
-    if "Authoritative-edge allowance" in src:
-        print("already patched — nothing to do")
+    if "network_best_height is None" in src:
+        print("already broadened (v2) — nothing to do")
         return 0
     if OLD not in src:
-        print("anchor not found; the installed file differs — patch manually")
+        print("v1 anchor not found; installed file differs — patch manually")
         return 3
     open(TARGET, "w").write(src.replace(OLD, NEW, 1))
-    # sanity: must still compile
     import py_compile
+
     py_compile.compile(TARGET, doraise=True)
-    print("patched OK — now run: docker restart animica-mainnet-node")
+    print("patched v2 OK — now run: docker restart animica-mainnet-node")
     return 0
 
 
