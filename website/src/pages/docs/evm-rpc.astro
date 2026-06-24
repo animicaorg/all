@@ -79,10 +79,11 @@ const faqs = [
   },
   {
     q: "Can I send a transaction from MetaMask?",
-    a: "Reads work today. Sends are bounded: a secp256k1-signed EVM transaction can't be admitted directly " +
-      "because Animica accounts are post-quantum. eth_sendRawTransaction returns a clear -32004 explaining " +
-      "the binding + relayer requirement (a Phase 2 relayer re-signs with the anim1 key), rather than failing " +
-      "silently.",
+    a: "Yes, when the node operator enables the custodial relayer (ANIMICA_EVM_RELAYER=1). Each EVM address " +
+      "maps to a relayer-held native account A(E); you fund A(E) (animica_evmAccount returns its anim1), then " +
+      "sign a normal EVM tx and eth_sendRawTransaction moves ANM natively from A(E). It is custodial (the " +
+      "operator holds the keys) and enforces chainId 149, monotonic nonces, replay protection, and AES-256-GCM " +
+      "key-at-rest. With the relayer off, sends return a clear -32004 instead of failing silently.",
   },
 ];
 
@@ -258,11 +259,12 @@ w3.eth.block_number; w3.eth.get_block("latest")`}</code></pre>
         </p>
       </div>
       <div class={card}>
-        <div class="font-semibold text-sm">Bounded send path</div>
+        <div class="font-semibold text-sm">Send path — the custodial relayer</div>
         <p class="mt-2 text-sm opacity-80">
-          A secp256k1-signed EVM tx can't be admitted directly. <code>eth_sendRawTransaction</code> decodes
-          the tx, recovers the EVM sender, and returns <code>-32004</code> explaining the binding + relayer
-          requirement. A Phase 2 relayer binds <code>0x→anim1</code> and re-signs with the anim1 key.
+          Set <code>ANIMICA_EVM_RELAYER=1</code> and <code>eth_sendRawTransaction</code> becomes a working
+          bridge: each EVM address gets a relayer-held native account <code>A(E)</code>; an EVM signature
+          authorizes a native transfer from it. Fund <code>A(E)</code> (via <code>animica_evmAccount</code>),
+          then send normally. <strong>Custodial</strong> (operator holds the keys); off by default.
         </p>
       </div>
     </div>
@@ -288,8 +290,8 @@ w3.eth.block_number; w3.eth.get_block("latest")`}</code></pre>
     <h2 class="mt-12 text-2xl font-semibold">Roadmap</h2>
     <ol class="mt-3 space-y-2 text-sm opacity-85 list-decimal pl-5 max-w-3xl">
       <li><strong>EVM RPC facade</strong> (shipped) — <code>eth_*</code> connect + read.</li>
-      <li><strong>Wallet compatibility</strong> — MetaMask chain config, binding flow, a relayer for
-        <code>eth_sendRawTransaction</code>, EIP-712-style signing where possible.</li>
+      <li><strong>Custodial relayer</strong> (shipped) — <code>ANIMICA_EVM_RELAYER=1</code> moves value
+        between EVM and native Animica via managed accounts.</li>
       <li><strong>ERC facade</strong> — native Animica contracts presented as ERC-20/721 via
         <code>eth_call</code> / <code>eth_getLogs</code> / receipt topics.</li>
       <li><strong>Full EVM module</strong> — a real EVM runtime so Solidity deploys unchanged.</li>

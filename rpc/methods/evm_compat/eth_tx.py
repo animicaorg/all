@@ -17,7 +17,8 @@ from rpc.methods import method
 
 from . import formatters as F
 from .bridge import anim_to_evm, bind, evm_to_anim
-from .errors_evm import (RPC_METHOD_NOT_SUPPORTED, RPC_SERVER_ERROR,
+from .errors_evm import (RPC_INVALID_PARAMS, RPC_METHOD_NOT_SUPPORTED,
+                         RPC_SERVER_ERROR, RPC_TRANSACTION_REJECTED,
                          rpc_error, to_eth_error)
 
 
@@ -102,11 +103,31 @@ def eth_getFilterLogs(filter_id: str) -> list:
 
 
 # ---- write path (bounded by the identity model) ------------------------------
-@method("eth_sendRawTransaction", desc="EVM-compat: submit a signed EVM tx (requires an EVM<->Animica binding + relayer).")
+@method("eth_sendRawTransaction", desc="EVM-compat: submit a signed EVM tx. With the relayer enabled (ANIMICA_EVM_RELAYER) this moves value between EVM and native Animica; otherwise it is bounded (see -32004).")
 def eth_sendRawTransaction(raw_tx: str) -> str:
     raw = str(raw_tx or "")
-    # Back-compat: if this is an Animica-format raw tx (the old eth_sendRawTransaction
-    # alias behavior), submit it natively. Only Ethereum-RLP txs fall through.
+
+    # 1) Relayer path (only when ANIMICA_EVM_RELAYER is set): decode the EVM tx
+    #    and relay it as a native transfer from the sender's managed account.
+    from .relayer import is_enabled
+    if is_enabled():
+        parsed = None
+        try:
+            from .decode import decode_evm_tx, RelayerReject
+            parsed = decode_evm_tx(raw)
+        except RelayerReject as exc:
+            # Decodable EVM tx that violates policy (high-s, pre-EIP-155, bad
+            # yParity, out-of-range r/s): surface the real reason, don't mask it
+            # as the generic -32004.
+            raise rpc_error(RPC_TRANSACTION_REJECTED, str(exc))
+        except Exception:
+            parsed = None  # genuinely undecodable -> native passthrough below
+        if parsed is not None:
+            from .relayer import submit
+            return submit(raw, parsed["sender"], parsed)  # rpc_error(...) propagates
+
+    # 2) Back-compat: an Animica-format raw tx (the old eth_sendRawTransaction alias
+    #    behavior) is submitted natively. Only Ethereum-RLP txs fall through.
     try:
         rid = F.native("tx.sendRawTransaction", raw if raw.startswith(("0x", "0X")) else "0x" + raw)
         if isinstance(rid, dict):
@@ -115,26 +136,21 @@ def eth_sendRawTransaction(raw_tx: str) -> str:
             return F.hexhash(rid)
     except Exception:
         pass  # not an Animica raw -> treat as an Ethereum tx below
+
+    # 3) Relayer disabled (or tx undecodable): honest, bounded guidance.
     sender_alias = None
     try:
         import eth_account  # base dep
         sender_alias = eth_account.Account.recover_transaction(raw)
     except Exception:
         sender_alias = None
-    # If a relayer is configured AND the sender is bound to an anim1 account, a
-    # future phase forwards a re-signed Animica tx here.
-    relayer = os.environ.get("ANIMICA_EVM_RELAYER")
     bound = evm_to_anim(sender_alias) if sender_alias else None
-    if relayer and bound:
-        raise rpc_error(RPC_METHOD_NOT_SUPPORTED,
-                        "EVM relayer is configured but tx translation is not yet enabled "
-                        "(Phase 2). Bound Animica account: " + bound)
     raise rpc_error(
         RPC_METHOD_NOT_SUPPORTED,
         "Animica is post-quantum; a secp256k1-signed EVM transaction cannot be admitted "
-        "directly. Bind your EVM address to an anim1 account (animica_evmBind) and use the "
-        "native tx.sendRawTransaction path, or wait for the Phase 2 relayer.",
-        data={"recoveredEvmSender": sender_alias, "bound": bound},
+        "directly. Enable the custodial relayer (ANIMICA_EVM_RELAYER=1) to move value "
+        "between EVM and native Animica, or use the native tx.sendRawTransaction path.",
+        data={"recoveredEvmSender": sender_alias, "bound": bound, "relayer": False},
     )
 
 
@@ -166,3 +182,33 @@ def animica_evmBind(address: str) -> dict:
 @method("animica_evmAlias", desc="Get the deterministic EVM alias (0x) for an Animica address.")
 def animica_evmAlias(address: str) -> dict:
     return {"evm_alias": anim_to_evm(address), "anim_address": str(address)}
+
+
+# ---- Relayer (custodial EVM<->native value transfer) -------------------------
+@method("animica_evmAccount",
+        desc="Relayer (CUSTODIAL): the managed native account for an EVM address. Fund this anim1 to give the EVM address an on-chain balance.")
+def animica_evmAccount(evm_address: str) -> dict:
+    from .relayer import is_enabled, get_or_create_account
+    if not is_enabled():
+        raise rpc_error(RPC_METHOD_NOT_SUPPORTED,
+                        "EVM relayer is disabled (set ANIMICA_EVM_RELAYER=1).")
+    a = str(evm_address or "")
+    if not a.startswith(("0x", "0X")) or len(a) != 42:
+        raise rpc_error(RPC_INVALID_PARAMS, "Expected a 20-byte 0x EVM address.")
+    acct = get_or_create_account(a.lower())
+    return {
+        "evm_address": a.lower(),
+        "anim1": acct.anim1,
+        "fund_native": acct.anim1,   # send ANM here; it shows under eth_getBalance(evm_address)
+        "alg_id": acct.alg_id,
+        "alg": "ml_dsa_65",
+        "managed": True,
+        "custodial": True,
+    }
+
+
+@method("animica_evmRelayerInfo",
+        desc="Relayer status. CUSTODIAL: the operator holds all managed native keys.")
+def animica_evmRelayerInfo() -> dict:
+    from .relayer import info
+    return info()

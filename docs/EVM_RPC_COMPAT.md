@@ -83,11 +83,55 @@ post-quantum (`anim1…`, ML-DSA/SPHINCS+). So:
   `eth_getBalance(0xalias)` resolves back. `animica_evmAlias(anim1)` returns the
   alias; `animica_evmBind` records the binding. An alias is a display/lookup
   handle — **not** key-compatibility.
-- **`eth_sendRawTransaction` is bounded:** a secp256k1-signed EVM tx cannot be
-  admitted directly (Animica accounts are PQ). The facade decodes the tx, recovers
-  the EVM sender, and returns `-32004` explaining the binding + relayer
-  requirement, rather than silently failing. Real EVM-wallet sends are a Phase 2
-  relayer (bind 0x→anim1, re-sign with the anim1 key).
+- **`eth_sendRawTransaction` is bounded by default:** a secp256k1-signed EVM tx
+  cannot be admitted directly (Animica accounts are PQ). With the relayer **off**,
+  the facade decodes the tx, recovers the EVM sender, and returns `-32004`
+  explaining how to enable the relayer, rather than silently failing.
+
+## The relayer — moving value between EVM and native
+
+Set **`ANIMICA_EVM_RELAYER=1`** to turn `eth_sendRawTransaction` into a working
+bridge that **actually moves ANM between an EVM wallet and native Animica**. It is
+**off by default** and **CUSTODIAL**: the node operator holds the native keys.
+
+**Model — one managed native account per EVM address.** Each EVM address `E`
+(recovered via `ecrecover`, never a client-supplied field) maps to a
+relayer-controlled ML-DSA-65 account `A(E)`, generated lazily and persisted. The
+EVM signature proves intent; the relayer enforces it by signing the **native** tx
+from `A(E)` with `A(E)`'s post-quantum key.
+
+- **Fund (native → EVM):** call `animica_evmAccount(E)` to get `A(E)`'s `anim1`
+  address, then send ANM there with any native wallet. `eth_getBalance(E)` then
+  reflects it.
+- **Spend (EVM → EVM or EVM → native):** sign a normal EVM tx `{from E, to, value,
+  nonce, chainId: 149}` in MetaMask/ethers and `eth_sendRawTransaction` it. The
+  relayer recovers `E`, resolves the recipient (a bound real `anim1`, else the
+  recipient's own managed account), submits a native transfer `A(E) → recipient`
+  of `value` nANM, and returns the EVM tx hash. `eth_getTransactionReceipt(hash)`
+  resolves to the reshaped native receipt.
+
+**Security (enforced in `relayer.py`):** the debited account is derived **only**
+from `ecrecover`; `chainId` must equal **149** exactly (EIP-155 cross-chain replay
+protection; pre-EIP-155 txs rejected); a per-`E` monotonic nonce plus
+`keccak256(raw)` idempotency stop same-chain replay; secp256k1 signatures must be
+canonical (EIP-2 low-s); `value` is **nANM** with a sanity cap and a `value+fee ≤
+balance` check; native keys are encrypted at rest with **AES-256-GCM** under
+`ANIMICA_EVM_RELAYER_KEK` (the relayer refuses to start with plaintext keys unless
+`ANIMICA_EVM_RELAYER_ALLOW_PLAINTEXT=1`) and never cross an RPC boundary.
+
+**Custodial, not trustless.** An EVM signature *authorizes* a spend from its
+managed account; it is **not** secp256k1↔PQ key-equivalence. `animica_evmRelayerInfo`
+reports `custodial: true`. Operators run this as a managed gateway (e.g. an
+exchange or app backend), not as a trustless bridge.
+
+> **Decimals caveat.** `value` is in **nANM** (Animica's 9-decimal smallest unit),
+> matching the chain's registered `nativeCurrency.decimals = 9`. Configure your
+> wallet accordingly. If you operate for wallets that assume 18-decimal native
+> currency, set `ANIMICA_EVM_RELAYER_VALUE_SCALE=1000000000` so `1e18 → 1e9 nANM`.
+
+Env vars: `ANIMICA_EVM_RELAYER` (gate) · `ANIMICA_EVM_RELAYER_KEK` (32-byte
+hex/base64 at-rest key) · `ANIMICA_EVM_RELAYER_ALLOW_PLAINTEXT` · `ANIMICA_EVM_RELAYER_VALUE_SCALE`
+· `ANIMICA_EVM_RELAYER_MAX_NANM` (per-tx sanity cap).
 
 ## What works vs. what doesn't (from the facade alone)
 
@@ -101,9 +145,9 @@ not EVM bytecode. `eth_getLogs` is empty until an EVM-shaped log index exists.
 
 ## Roadmap
 
-1. **EVM RPC facade** *(this release)* — `eth_*` connect + read.
-2. **Wallet compatibility** — MetaMask chain config, binding flow, relayer for
-   `eth_sendRawTransaction`, EIP-712-style signing where possible.
+1. **EVM RPC facade** *(shipped)* — `eth_*` connect + read.
+2. **Custodial relayer** *(shipped)* — `ANIMICA_EVM_RELAYER=1` moves value between
+   EVM and native Animica via managed accounts (see above).
 3. **ERC facade** — native Animica contracts presented as ERC-20/721 via
    `eth_call`/`eth_getLogs`/receipt topics.
 4. **Full EVM module** — an actual EVM runtime so Solidity deploys unchanged.

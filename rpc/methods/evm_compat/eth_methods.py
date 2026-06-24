@@ -19,12 +19,25 @@ def _chain_id() -> int:
 
 
 def _resolve_addr(addr: Any) -> Optional[str]:
-    """0x EVM alias or anim1 address -> Animica address (or None)."""
+    """0x EVM alias / relayer-managed account / anim1 -> Animica address (or None)."""
     a = str(addr or "")
     if a.startswith("anim1"):
         return a
     if a.startswith(("0x", "0X")):
-        return evm_to_anim(a)
+        bound = evm_to_anim(a)
+        if bound:
+            return bound
+        # With the relayer enabled, an EVM address may be a managed account whose
+        # home anim1 holds its balance.
+        try:
+            from .relayer import is_enabled, get_account
+            if is_enabled():
+                acct = get_account(a.lower())
+                if acct:
+                    return acct.anim1
+        except Exception:
+            pass
+        return None
     return None
 
 
@@ -101,6 +114,16 @@ def eth_getBalance(address: str, tag: Any = "latest") -> str:
 
 @method("eth_getTransactionCount", desc="EVM-compat: account nonce (hex).")
 def eth_getTransactionCount(address: str, tag: Any = "latest") -> str:
+    # Relayer-managed EVM accounts use a relayer-maintained nonce (native v2 txs
+    # have no nonce; this is the EVM-facing sequence wallets need to sign).
+    a = str(address or "")
+    if a.startswith(("0x", "0X")):
+        try:
+            from .relayer import is_enabled, get_account, get_nonce
+            if is_enabled() and get_account(a.lower()):
+                return F.q(get_nonce(a.lower()))
+        except Exception:
+            pass
     anim = _resolve_addr(address)
     if not anim:
         return F.q(0)
@@ -129,8 +152,39 @@ def eth_accounts() -> list:
 
 
 # ---- transactions (read) ----------------------------------------------------
+def _relayed_record(tx_hash: Any):
+    """If tx_hash is an EVM hash the relayer produced, return its map row + native tx."""
+    try:
+        from .relayer import is_enabled, lookup_by_evm_hash
+        if not is_enabled():
+            return None, None
+        rec = lookup_by_evm_hash(F.hexhash(tx_hash))
+        if not rec:
+            return None, None
+        native = F.native("tx.getTransactionByHash", rec["native_txid"])
+        return rec, native
+    except Exception:
+        return None, None
+
+
+def _apply_evm_identity(view: dict, rec: dict) -> dict:
+    """Substitute the EVM-facing identity fields onto a native-derived tx/receipt."""
+    view = dict(view)
+    view["hash"] = F.hexhash(rec["evm_hash"])
+    view["from"] = rec["evm_from"]
+    view["to"] = rec.get("evm_to")
+    view["nonce"] = F.q(rec["evm_nonce"])
+    view["value"] = F.q(rec["value"])
+    view["chainId"] = F.q(rec["chain_id"])
+    return view
+
+
 @method("eth_getTransactionByHash", desc="EVM-compat: transaction by hash.")
 def eth_getTransactionByHash(tx_hash: str) -> Optional[dict]:
+    rec, native = _relayed_record(tx_hash)
+    if rec is not None:
+        base = F.tx_to_eth(native) if native else {}
+        return _apply_evm_identity(base, rec)
     tx = F.native("tx.getTransactionByHash", F.hexhash(tx_hash))
     if not tx:
         return None
@@ -139,6 +193,19 @@ def eth_getTransactionByHash(tx_hash: str) -> Optional[dict]:
 
 @method("eth_getTransactionReceipt", desc="EVM-compat: transaction receipt.")
 def eth_getTransactionReceipt(tx_hash: str) -> Optional[dict]:
+    rec, native = _relayed_record(tx_hash)
+    if rec is not None:
+        if not native:
+            return None  # relayer recorded it but the native tx isn't mined yet
+        try:
+            status = F.native("tx.getTransactionStatus", rec["native_txid"]) or {}
+        except Exception:
+            status = {}
+        bnum = F.from_q(native.get("blockNumber", native.get("blockHeight")), -1)
+        if bnum < 0:
+            return None
+        receipt = F.receipt_to_eth(native, status, F.head_height())
+        return _apply_evm_identity(receipt, rec)
     tx = F.native("tx.getTransactionByHash", F.hexhash(tx_hash))
     if not tx:
         return None
