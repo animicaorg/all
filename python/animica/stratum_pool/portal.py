@@ -13,7 +13,7 @@ from .config import PoolConfig
 PLACEHOLDER_ADDRESS = "YOUR_ANIMICA_ADDRESS"
 DEFAULT_THREADS = 0
 DEFAULT_SCAN_WINDOW = 200_000
-DEFAULT_VERSION = os.getenv("ANIMICA_MINER_BUNDLE_VERSION", "0.1.1")
+DEFAULT_VERSION = os.getenv("ANIMICA_MINER_BUNDLE_VERSION", "0.1.2")
 WILDCARD_HOSTS = {"", "0.0.0.0", "::", "[::]"}
 PRIMARY_SITE_HOSTS = {"animica.org", "www.animica.org"}
 STAGED_SITE_HOSTS = {"dev.animica.org", "staging.animica.org", "preview.animica.org"}
@@ -408,79 +408,70 @@ def build_launcher_script(
     *,
     config_name: str = "animica-miner.config.json",
 ) -> str:
+    """Bootstrap launcher: installs/updates the `animica` package and runs
+    `animica up` — the UNIFIED fleet (SHA3 PoW mining + ENA useful-work + GPU
+    train/serve + Studio serverless functions), all bound to one ANM address,
+    with the native fast-hash path (animica-fastpow) when a wheel is available.
+
+    Falls back to the bundled standalone PoW miner (animica_cpu_miner.py) only
+    when pip / network is unavailable.
+    """
     if platform == "windows":
         return (
             "@echo off\r\n"
-            "setlocal\r\n"
+            "setlocal enabledelayedexpansion\r\n"
             "cd /d %~dp0\r\n"
-            "title Animica CPU Miner\r\n"
+            "title Animica Unified Miner\r\n"
             "set CONFIG=animica-miner.config.json\r\n"
-            "set MINER_EXE=animica-miner.exe\r\n"
-            f"echo Connecting to {resolved.stratum_url}\r\n"
-            "if exist %MINER_EXE% (\r\n"
-            "  %MINER_EXE% --config %CONFIG%\r\n"
-            ") else (\r\n"
-            "  set PYTHON_CMD=\r\n"
-            "  where py >nul 2>nul\r\n"
-            "  if %ERRORLEVEL%==0 set PYTHON_CMD=py -3\r\n"
-            "  if not defined PYTHON_CMD (\r\n"
-            "    where python >nul 2>nul\r\n"
-            "    if %ERRORLEVEL%==0 set PYTHON_CMD=python\r\n"
-            "  )\r\n"
-            "  if not defined PYTHON_CMD (\r\n"
-            "    echo Neither animica-miner.exe nor Python 3.10+ was found.\r\n"
-            "    echo Re-download the latest miner bundle or install Python and retry.\r\n"
-            "    pause\r\n"
-            "    exit /b 1\r\n"
-            "  )\r\n"
-            "  %PYTHON_CMD% animica_cpu_miner.py --config %CONFIG%\r\n"
+            "set PY=\r\n"
+            "where py >nul 2>nul && set PY=py -3\r\n"
+            "if not defined PY ( where python >nul 2>nul && set PY=python )\r\n"
+            "if not defined PY (\r\n"
+            "  echo Python 3.10+ is required. Install it from https://python.org and re-run.\r\n"
+            "  pause & exit /b 1\r\n"
             ")\r\n"
+            "echo [animica] Installing/updating the miner (first run can take a few minutes)...\r\n"
+            "%PY% -m pip install --upgrade pip >nul 2>nul\r\n"
+            '%PY% -m pip install --upgrade "animica[all]"\r\n'
+            "if errorlevel 1 (\r\n"
+            "  echo [animica] Full install failed; running the bundled CPU miner instead.\r\n"
+            "  %PY% animica_cpu_miner.py --config %CONFIG%\r\n"
+            "  pause & exit /b %ERRORLEVEL%\r\n"
+            ")\r\n"
+            "%PY% -m pip install --upgrade animica-fastpow >nul 2>nul\r\n"
+            "set ADDR=\r\n"
+            "for /f \"delims=\" %%a in ('%PY% -c \"import json;print((json.load(open('animica-miner.config.json')) or {}).get('address') or '')\" 2^>nul') do set ADDR=%%a\r\n"
+            "echo [animica] Starting the unified miner (PoW + useful-work + GPU train/serve + Studio). Close this window to stop.\r\n"
+            "if defined ADDR ( %PY% -m animica.cli.main up --address %ADDR% ) else ( %PY% -m animica.cli.main up )\r\n"
             "set EXIT_CODE=%ERRORLEVEL%\r\n"
             "echo.\r\n"
             "if not %EXIT_CODE%==0 echo Miner exited with status %EXIT_CODE%.\r\n"
             "pause\r\n"
             "exit /b %EXIT_CODE%\r\n"
         )
-    if platform == "macos":
-        return (
-            "#!/bin/bash\n"
-            "set -euo pipefail\n"
-            'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n'
-            'cd "$SCRIPT_DIR"\n'
-            f'echo "Connecting to {resolved.stratum_url}"\n'
-            "if [ -x \"./animica-miner\" ]; then\n"
-            f"  ./animica-miner --config \"{config_name}\"\n"
-            "elif command -v python3 >/dev/null 2>&1; then\n"
-            f"  python3 animica_cpu_miner.py --config \"{config_name}\"\n"
-            "elif command -v python >/dev/null 2>&1; then\n"
-            f"  python animica_cpu_miner.py --config \"{config_name}\"\n"
-            "else\n"
-            '  echo "Neither ./animica-miner nor Python 3.10+ was found."\n'
-            '  read -r -p "Press Return to close this window."\n'
-            "  exit 1\n"
-            "fi\n"
-            "status=$?\n"
-            'echo ""\n'
-            'if [ "$status" -ne 0 ]; then echo "Miner exited with status $status."; fi\n'
-            'read -r -p "Press Return to close this window."\n'
-            "exit $status\n"
-        )
+
+    # macOS (.command) and Linux (.sh) share the same bootstrap body.
+    tail = (
+        'read -r -p "Press Return to close this window."\n' if platform == "macos" else ""
+    )
+    shebang = "#!/bin/bash\n" if platform == "macos" else "#!/usr/bin/env bash\n"
     return (
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
+        shebang
+        + "set -u\n"
         'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n'
         'cd "$SCRIPT_DIR"\n'
-        f'echo "Connecting to {resolved.stratum_url}"\n'
-        "if [ -x \"./animica-miner\" ]; then\n"
-        f"  ./animica-miner --config \"{config_name}\"\n"
-        "elif command -v python3 >/dev/null 2>&1; then\n"
-        f"  python3 animica_cpu_miner.py --config \"{config_name}\"\n"
-        "elif command -v python >/dev/null 2>&1; then\n"
-        f"  python animica_cpu_miner.py --config \"{config_name}\"\n"
-        "else\n"
-        '  echo "Neither ./animica-miner nor Python 3.10+ was found."\n'
-        "  exit 1\n"
+        'PY="$(command -v python3 || command -v python || true)"\n'
+        'if [ -z "$PY" ]; then echo "Python 3.10+ is required. Install it and re-run."; ' + tail + "exit 1; fi\n"
+        'echo "[animica] Installing/updating the miner (first run can take a few minutes)..."\n'
+        '"$PY" -m pip install --user --upgrade pip >/dev/null 2>&1 || true\n'
+        'if ! "$PY" -m pip install --user --upgrade "animica[all]"; then\n'
+        '  echo "[animica] Full install failed; running the bundled CPU miner instead."\n'
+        f'  exec "$PY" animica_cpu_miner.py --config "{config_name}"\n'
         "fi\n"
+        '"$PY" -m pip install --user --upgrade animica-fastpow >/dev/null 2>&1 || true\n'
+        'ADDR="$("$PY" -c "import json;print((json.load(open(\'animica-miner.config.json\')) or {}).get(\'address\') or \'\')" 2>/dev/null || true)"\n'
+        'echo "[animica] Starting the unified miner (PoW + useful-work + GPU train/serve + Studio). Ctrl-C to stop."\n'
+        'exec "$PY" -m animica.cli.main up ${ADDR:+--address "$ADDR"}\n'
     )
 
 

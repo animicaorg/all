@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "2.0.1"
+version = "2.0.2"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -72,12 +72,13 @@ stratum = [
   "fastapi>=0.115.0,<0.116.0",
   "uvicorn[standard]>=0.30.0,<1.0.0",
   "prometheus-client>=0.20.0,<1.0.0",
-  # Native SHA3-256 nonce scanner — real CPU hashrate (falls back to pure Python
-  # if a wheel isn't available for the platform). See mining/native/.
-  "animica-fastpow>=1.0.0",
 ]
-# Native CPU-miner fast path on its own (no server deps). `pip install animica[fast]`
-# is the smallest install that gives `animica up` / the CPU miner native hashrate.
+# Native CPU-miner fast path (real multi-core hashrate). OPT-IN and isolated:
+# kept out of `all`/`stratum` so a missing platform wheel can never break a plain
+# `pip install animica[all]`. It needs a prebuilt animica-fastpow wheel for the
+# platform (Linux on PyPI; Windows/macOS via the fastpow-wheels CI) or a C
+# compiler to build the sdist. The miner imports it if present and otherwise
+# falls back to the pure-Python loop, so this is purely an accelerator.
 fast = [
   "animica-fastpow>=1.0.0",
 ]
@@ -117,8 +118,11 @@ studio = [
   "cloudpickle>=3.0.0",
   "omni-sdk>=0.1.0",
 ]
+# NOTE: `fast` (native miner) is intentionally NOT in `all` — it requires a
+# platform-specific native wheel and must never break a plain `animica[all]`
+# install. Add it explicitly: `pip install "animica[all,fast]"`.
 all = [
-  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,studio,fast]",
+  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,studio]",
 ]
 
 [project.urls]
