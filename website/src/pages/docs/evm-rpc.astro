@@ -1,0 +1,315 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import InlineLink from "../../components/InlineLink.astro";
+
+const pageTitle = "Ethereum / EVM-Compatible RPC — Animica Docs";
+const pageDesc =
+  "Connect ethers.js, web3.js and MetaMask to Animica. The EVM-compatible RPC facade exposes " +
+  "eth_*/net_*/web3_* methods over Animica's post-quantum PoIES L1 — chain id 149, address bridge, " +
+  "and honest boundaries (it's an RPC facade, not EVM execution).";
+const canonical = "https://animica.org/docs/evm-rpc";
+
+const RPC = "https://mainnet.animica.org";
+
+// Method inventory (40 methods), grouped.
+const groups = [
+  {
+    h: "Connect & chain",
+    items: ["eth_chainId", "net_version", "net_listening", "net_peerCount", "web3_clientVersion",
+      "web3_sha3", "eth_blockNumber", "eth_syncing", "eth_protocolVersion", "eth_mining",
+      "eth_hashrate", "eth_coinbase"],
+  },
+  { h: "Blocks", items: ["eth_getBlockByNumber", "eth_getBlockByHash",
+      "eth_getBlockTransactionCountByNumber", "eth_getBlockTransactionCountByHash"] },
+  { h: "Accounts", items: ["eth_getBalance", "eth_getTransactionCount", "eth_getCode",
+      "eth_getStorageAt", "eth_accounts"] },
+  { h: "Transactions (read)", items: ["eth_getTransactionByHash", "eth_getTransactionReceipt",
+      "eth_getTransactionByBlockNumberAndIndex"] },
+  { h: "Gas, fees & call", items: ["eth_gasPrice", "eth_maxPriorityFeePerGas", "eth_feeHistory",
+      "eth_estimateGas", "eth_call"] },
+  { h: "Logs & filters", items: ["eth_getLogs", "eth_newFilter", "eth_newBlockFilter",
+      "eth_newPendingTransactionFilter", "eth_uninstallFilter", "eth_getFilterChanges",
+      "eth_getFilterLogs"] },
+  { h: "Write & sign (bounded)", items: ["eth_sendRawTransaction", "eth_sendTransaction", "eth_sign"] },
+  { h: "Address bridge (Animica)", items: ["animica_evmBind", "animica_evmAlias"] },
+];
+
+const network = [
+  ["Network name", "Animica"],
+  ["RPC URL", RPC],
+  ["Chain ID", "149"],
+  ["Currency symbol", "ANM"],
+  ["Decimals", "9 (1 ANM = 1e9 nANM)"],
+  ["Block explorer", "https://explorer.animica.org"],
+];
+
+const works = [
+  "MetaMask \"Add network\" and EIP-1193 provider connect",
+  "ethers.js / web3.js provider connect (JsonRpcProvider, Web3)",
+  "eth_blockNumber, block / tx / receipt lookups",
+  "eth_getBalance & eth_getTransactionCount for bridged addresses",
+  "explorer & indexer read traffic; web3_sha3 (real keccak-256)",
+];
+const doesnt = [
+  "Running Solidity contracts — Animica executes a deterministic Python VM, not EVM bytecode",
+  "eth_call returns 0x and eth_getCode returns 0x (no EVM ABI execution in the facade)",
+  "eth_getLogs is empty until an EVM-shaped log index exists (roadmap)",
+  "Sending from a raw secp256k1 EVM wallet — see the address & signature boundary below",
+];
+
+const faqs = [
+  {
+    q: "Is Animica EVM-compatible?",
+    a: "Animica exposes an Ethereum RPC-compatible facade, with a path toward full EVM execution. " +
+      "Ethereum tooling (ethers, web3, MetaMask, explorers) can connect through familiar eth_* methods. " +
+      "But Animica does NOT run Solidity bytecode — it stays its own post-quantum PoIES useful-work L1. " +
+      "\"EVM-compatible\" in the full sense (deploy & execute Solidity) is a future phase, not today.",
+  },
+  {
+    q: "What chain id does Animica use for EVM?",
+    a: "Chain id 149 (0x95) for eth_chainId / net_version — the lowest unregistered EIP-155 id. Animica's " +
+      "native chain id stays 1 internally; the facade advertises a dedicated id so it doesn't collide with " +
+      "Ethereum mainnet (also 1) in wallet chain-lists. Override with ANIMICA_EVM_CHAIN_ID.",
+  },
+  {
+    q: "How do Ethereum 0x addresses map to Animica anim1 accounts?",
+    a: "Every Animica account gets a deterministic 20-byte EVM alias = 0x ‖ keccak256(anim1)[-20:], with a " +
+      "binding registry so eth_getBalance(0xalias) resolves back. An alias is a display/lookup handle, not " +
+      "key-compatibility — a secp256k1 key cannot control an anim1 (ML-DSA/SPHINCS+) account.",
+  },
+  {
+    q: "Can I send a transaction from MetaMask?",
+    a: "Reads work today. Sends are bounded: a secp256k1-signed EVM transaction can't be admitted directly " +
+      "because Animica accounts are post-quantum. eth_sendRawTransaction returns a clear -32004 explaining " +
+      "the binding + relayer requirement (a Phase 2 relayer re-signs with the anim1 key), rather than failing " +
+      "silently.",
+  },
+];
+
+const jsonLd = [
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    headline: "Ethereum / EVM-Compatible RPC on Animica",
+    description: pageDesc,
+    url: canonical,
+    inLanguage: "en",
+    keywords: "Ethereum JSON-RPC, EVM compatible, eth_chainId, MetaMask, ethers.js, web3.js, " +
+      "chain id 149, EIP-1193, post-quantum blockchain, Animica",
+    about: ["Ethereum JSON-RPC", "EVM compatibility", "MetaMask", "ethers.js", "web3.js"],
+    isPartOf: { "@type": "WebSite", name: "Animica", url: "https://animica.org" },
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: faqs.map((f) => ({
+      "@type": "Question", name: f.q,
+      acceptedAnswer: { "@type": "Answer", text: f.a },
+    })),
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Animica", item: "https://animica.org" },
+      { "@type": "ListItem", position: 2, name: "Docs", item: "https://animica.org/docs" },
+      { "@type": "ListItem", position: 3, name: "EVM RPC", item: canonical },
+    ],
+  },
+];
+
+const card = "rounded-2xl border p-5 bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]";
+const pre = "mt-4 overflow-x-auto rounded-2xl border p-5 text-sm leading-relaxed bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc} canonical={canonical} jsonLd={jsonLd}>
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
+    <p class="font-mono text-xs uppercase tracking-[0.16em] opacity-60">
+      Docs · RPC compatibility
+    </p>
+    <h1 class="mt-3 text-4xl sm:text-5xl font-semibold tracking-tight">
+      Ethereum / EVM-Compatible RPC
+    </h1>
+    <p class="mt-4 text-lg opacity-85 max-w-3xl">
+      Point <strong>ethers.js</strong>, <strong>web3.js</strong> and <strong>MetaMask</strong> at an
+      Animica node and they connect through familiar <code>eth_*</code> / <code>net_*</code> /
+      <code>web3_*</code> methods. This is an <strong>Ethereum RPC-compatible facade, with a path
+      toward full EVM execution</strong> — Animica stays its own post-quantum PoIES useful-work L1.
+    </p>
+
+    <!-- Honest banner -->
+    <div class="mt-6 rounded-2xl border p-5 bg-[color-mix(in_srgb,var(--text-primary)_/_5%,transparent)] border-[color-mix(in_srgb,var(--text-primary)_/_14%,transparent)]">
+      <p class="m-0 text-sm opacity-85">
+        <strong>RPC facade, not EVM execution.</strong> Animica does <strong>not</strong> run Solidity
+        bytecode. Read this as “Ethereum tooling can connect,” not “Animica is EVM-compatible” — the
+        latter is only true once Solidity deployment/execution ships (a future phase).
+      </p>
+    </div>
+
+    <!-- Quick connect -->
+    <h2 class="mt-12 text-2xl font-semibold">Connect</h2>
+    <p class="mt-2 text-sm opacity-80 max-w-3xl">
+      Ethereum clients POST JSON-RPC. Methods answer at both <code>/</code> and <code>/rpc</code>.
+      The public mainnet endpoint is <InlineLink href={RPC}>{RPC}</InlineLink>.
+    </p>
+    <pre class={pre}><code>{`# curl
+curl -s ${RPC}/ \\
+  -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
+# -> {"jsonrpc":"2.0","id":1,"result":"0x95"}   (chain id 149)
+
+# ethers v6
+import { JsonRpcProvider } from "ethers";
+const provider = new JsonRpcProvider("${RPC}");
+await provider.getBlockNumber();
+
+# web3.py
+from web3 import Web3
+w3 = Web3(Web3.HTTPProvider("${RPC}"))
+w3.is_connected(); w3.eth.chain_id        # 149
+w3.eth.block_number; w3.eth.get_block("latest")`}</code></pre>
+
+    <!-- Add to MetaMask -->
+    <h2 class="mt-12 text-2xl font-semibold">Add Animica to a wallet</h2>
+    <p class="mt-2 text-sm opacity-80 max-w-3xl">
+      MetaMask → <em>Add network</em> → <em>Add a network manually</em>, then use:
+    </p>
+    <div class="mt-4 overflow-x-auto rounded-2xl border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <table class="w-full text-sm">
+        <tbody>
+          {network.map((row) => (
+            <tr class="border-t border-[color-mix(in_srgb,var(--text-primary)_/_8%,transparent)] first:border-t-0">
+              <td class="px-4 py-2.5 font-medium w-44">{row[0]}</td>
+              <td class="px-4 py-2.5 opacity-85 font-mono text-xs sm:text-sm break-all">{row[1]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-3 text-xs opacity-60 max-w-3xl">
+      Chain id <strong>149</strong> is the lowest unregistered EIP-155 id (Ethereum mainnet is 1, which
+      would collide). It is registered with <InlineLink href="https://github.com/ethereum-lists/chains">
+      ethereum-lists/chains</InlineLink>, which feeds chainid.network and chainlist.org. The native
+      currency uses <strong>9 decimals</strong> (nANM is the wei-style smallest unit).
+    </p>
+
+    <!-- Methods -->
+    <h2 class="mt-12 text-2xl font-semibold">Implemented methods</h2>
+    <p class="mt-2 text-sm opacity-75 max-w-3xl">40 methods across eight groups.</p>
+    <div class="mt-5 grid gap-4 sm:grid-cols-2">
+      {groups.map((g) => (
+        <div class={card}>
+          <div class="font-semibold text-sm">{g.h}</div>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {g.items.map((m) => (
+              <code class="text-[11px] opacity-80 bg-[color-mix(in_srgb,var(--text-primary)_/_8%,transparent)] border border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] rounded px-1.5 py-0.5">{m}</code>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <!-- Mapping -->
+    <h2 class="mt-12 text-2xl font-semibold">How the mapping works</h2>
+    <div class="mt-4 overflow-x-auto rounded-2xl border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <table class="w-full text-sm">
+        <tbody>
+          <tr class="bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)] font-semibold">
+            <td class="px-4 py-2.5">Ethereum method</td><td class="px-4 py-2.5">Animica source</td>
+          </tr>
+          {[
+            ["eth_chainId / net_version", "dedicated EVM id 149 (override ANIMICA_EVM_CHAIN_ID)"],
+            ["eth_blockNumber", "chain.getHead().height → hex"],
+            ["eth_getBlockBy{Number,Hash}", "chain.getBlockByHeight / …ByHash → Ethereum block shape"],
+            ["eth_getBalance", "state.getBalance (nANM as the wei-style smallest unit)"],
+            ["eth_getTransactionCount", "state.getNonce / getPendingNonce"],
+            ["eth_getTransactionByHash / …Receipt", "tx.getTransactionByHash (+ tx.getTransactionStatus)"],
+            ["eth_gasPrice / eth_estimateGas", "synthetic — Animica fee is account-model, not a gas market"],
+            ["web3_sha3", "real keccak-256 (eth_utils)"],
+          ].map((row) => (
+            <tr class="border-t border-[color-mix(in_srgb,var(--text-primary)_/_8%,transparent)]">
+              <td class="px-4 py-2.5 font-mono text-xs">{row[0]}</td>
+              <td class="px-4 py-2.5 opacity-80">{row[1]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-3 text-xs opacity-60 max-w-3xl">
+      Hex encoding is strict Ethereum: QUANTITY is <code>0x</code>-compact (<code>0x0</code> for zero),
+      DATA is <code>0x</code> with even length. Animica <code>0x</code>+64-hex hashes pass through as
+      32-byte hashes.
+    </p>
+
+    <!-- Address / signature boundary -->
+    <h2 class="mt-12 text-2xl font-semibold">The address &amp; signature boundary</h2>
+    <p class="mt-2 text-sm opacity-80 max-w-3xl">
+      Ethereum assumes 20-byte <code>0x</code> addresses and secp256k1 ECDSA. Animica is post-quantum
+      (<code>anim1…</code>, ML-DSA / SPHINCS+). The facade bridges the two:
+    </p>
+    <div class="mt-4 grid gap-4 sm:grid-cols-2">
+      <div class={card}>
+        <div class="font-semibold text-sm">Deterministic alias</div>
+        <p class="mt-2 text-sm opacity-80">
+          Every Animica account has a 20-byte EVM alias = <code>0x ‖ keccak256(anim1)[-20:]</code>, with
+          a binding registry so <code>eth_getBalance(0xalias)</code> resolves back.
+          <code>animica_evmAlias(anim1)</code> returns the alias; <code>animica_evmBind</code> records it.
+          An alias is a display/lookup handle — <strong>not</strong> key-compatibility.
+        </p>
+      </div>
+      <div class={card}>
+        <div class="font-semibold text-sm">Bounded send path</div>
+        <p class="mt-2 text-sm opacity-80">
+          A secp256k1-signed EVM tx can't be admitted directly. <code>eth_sendRawTransaction</code> decodes
+          the tx, recovers the EVM sender, and returns <code>-32004</code> explaining the binding + relayer
+          requirement. A Phase 2 relayer binds <code>0x→anim1</code> and re-signs with the anim1 key.
+        </p>
+      </div>
+    </div>
+
+    <!-- Works / doesn't -->
+    <h2 class="mt-12 text-2xl font-semibold">What works vs. what doesn't</h2>
+    <div class="mt-4 grid gap-4 sm:grid-cols-2">
+      <div class={card}>
+        <div class="font-semibold text-sm text-[color-mix(in_srgb,green_55%,var(--text-primary))]">Works today</div>
+        <ul class="mt-2 space-y-1.5 text-sm opacity-85 list-disc pl-5">
+          {works.map((w) => <li>{w}</li>)}
+        </ul>
+      </div>
+      <div class={card}>
+        <div class="font-semibold text-sm opacity-80">Not yet (facade alone)</div>
+        <ul class="mt-2 space-y-1.5 text-sm opacity-85 list-disc pl-5">
+          {doesnt.map((w) => <li>{w}</li>)}
+        </ul>
+      </div>
+    </div>
+
+    <!-- Roadmap -->
+    <h2 class="mt-12 text-2xl font-semibold">Roadmap</h2>
+    <ol class="mt-3 space-y-2 text-sm opacity-85 list-decimal pl-5 max-w-3xl">
+      <li><strong>EVM RPC facade</strong> (shipped) — <code>eth_*</code> connect + read.</li>
+      <li><strong>Wallet compatibility</strong> — MetaMask chain config, binding flow, a relayer for
+        <code>eth_sendRawTransaction</code>, EIP-712-style signing where possible.</li>
+      <li><strong>ERC facade</strong> — native Animica contracts presented as ERC-20/721 via
+        <code>eth_call</code> / <code>eth_getLogs</code> / receipt topics.</li>
+      <li><strong>Full EVM module</strong> — a real EVM runtime so Solidity deploys unchanged.</li>
+    </ol>
+
+    <!-- FAQ -->
+    <h2 class="mt-12 text-2xl font-semibold">FAQ</h2>
+    <div class="mt-4 space-y-4">
+      {faqs.map((f) => (
+        <details class={card}>
+          <summary class="cursor-pointer font-medium">{f.q}</summary>
+          <p class="mt-2 text-sm opacity-80">{f.a}</p>
+        </details>
+      ))}
+    </div>
+
+    <p class="mt-10 text-sm opacity-70">
+      See also: <InlineLink href="/docs/bitcoin-rpc">Bitcoin-Core-Compatible RPC</InlineLink> ·
+      <InlineLink href="/docs">All docs</InlineLink> ·
+      <InlineLink href="https://github.com/animicaorg/all/blob/main/docs/EVM_RPC_COMPAT.md">EVM_RPC_COMPAT.md</InlineLink>
+    </p>
+  </section>
+</BaseLayout>

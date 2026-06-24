@@ -1,0 +1,220 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import InlineLink from "../../components/InlineLink.astro";
+
+const pageTitle = "Bitcoin-Core-Compatible RPC — Animica Docs";
+const pageDesc =
+  "Point bitcoin-cli, BTCPay, Electrum-personal-server and Bitcoin RPC tooling at an Animica node. " +
+  "A compatibility layer exposing Bitcoin Core 30.x JSON-RPC method names and response shapes over " +
+  "Animica's post-quantum PoIES L1 — a facade, not an identity claim.";
+const canonical = "https://animica.org/docs/bitcoin-rpc";
+
+const RPC = "https://mainnet.animica.org";
+
+const tiers = [
+  {
+    h: "Tier 1 — read-only core",
+    note: "production-grade for read integrations",
+    items: ["getblockcount", "getbestblockhash", "getblockhash", "getblock", "getblockheader",
+      "getblockchaininfo", "getchaintips", "getdifficulty", "getmempoolinfo", "getrawmempool",
+      "getrawtransaction", "sendrawtransaction", "testmempoolaccept", "decoderawtransaction",
+      "validateaddress", "getnetworkinfo", "getpeerinfo", "uptime", "stop", "help"],
+  },
+  {
+    h: "Tier 2 — wallet adapter",
+    note: "account-model caveats apply",
+    items: ["getnewaddress", "getbalance", "listunspent", "sendtoaddress", "sendmany",
+      "listtransactions", "gettransaction", "createwallet", "loadwallet", "listwallets", "backupwallet"],
+  },
+  {
+    h: "Tier 3 — mining",
+    note: "PoIES envelope under animica:*",
+    items: ["getblocktemplate", "submitblock", "prioritisetransaction", "generatetoaddress", "getmininginfo"],
+  },
+];
+
+const mapping = [
+  ["getblockcount", "chain.getHead().height"],
+  ["getbestblockhash", "chain.getHead().hash (0x stripped)"],
+  ["getblock / getblockheader", "chain.getBlockByHash → Bitcoin-shaped header/block"],
+  ["getrawtransaction", "tx.getTransactionByHash + mempool.getRawTx"],
+  ["sendrawtransaction", "tx.sendRawTransaction"],
+  ["getmempoolinfo / getrawmempool", "mempool.getStats / mempool.getPending"],
+  ["getnetworkinfo / getpeerinfo", "node.health / p2p.listPeers"],
+  ["getblockchaininfo", "chain.getHead + chain.getChainIdentity"],
+  ["getblocktemplate / submitblock", "miner.getBlockTemplate / miner.submitBlock"],
+];
+
+const caveats = [
+  ["Account model, not UTXO", "decoderawtransaction / getrawtransaction synthesize one vin (sender, txid: null) + one vout (recipient + value). The real sender / kind / nonce / fee are carried under animica:* keys (clients ignore them)."],
+  ["Block height by hash", "The node has no reverse hash→height index, so height is resolved only for the chain tip; deeper blocks fetched by hash report height -1 (Bitcoin's \"unknown\"). Block content (txs, parent, roots) is always correct."],
+  ["No address-indexed history", "listtransactions returns []; listunspent synthesizes one \"UTXO\" per address balance. Use an explorer index for history."],
+  ["Synthetic difficulty", "exp(thetaMicro / 1e6) — a monotonic Bitcoin-difficulty analogue (PoIES has no compact nBits target). chainwork = 00*32, bits = 1d00ffff are compatibility constants."],
+  ["Single node wallet", "createwallet / loadwallet are advisory; wallet_name is ignored."],
+  ["stop is a no-op", "Returns a string by default (the node may be the verifier seed). Set ANIMICA_BTC_COMPAT_ALLOW_STOP=1 to enable."],
+];
+
+const faqs = [
+  {
+    q: "Does this make Animica behave like Bitcoin?",
+    a: "No. It's a compatibility layer, not an identity claim. Animica is a post-quantum, account-model, " +
+      "PoIES useful-work chain. This mode exposes Bitcoin Core's JSON-RPC method names and response shapes " +
+      "(targeting Bitcoin Core 30.x) and maps their meaning onto Animica, so existing explorers, wallets, " +
+      "exchanges, bots, indexers and pool dashboards can point Bitcoin RPC tooling at a new endpoint.",
+  },
+  {
+    q: "How do hashes and units map?",
+    a: "Animica uses 0x+64-hex SHA3-256 hashes; responses strip 0x for Bitcoin's bare-hex convention " +
+      "(SHA3 vs double-SHA256 is invisible to clients). Units map nANM ↔ Bitcoin coin-unit float via /1e9 " +
+      "(nANM ≈ satoshi).",
+  },
+  {
+    q: "Which error codes are used?",
+    a: "Bitcoin RPC error codes: -5 (invalid address/tx), -8 (invalid parameter), -22 (deserialization), " +
+      "-25/-26/-27 (verify / rejected / already-in-chain), -28 (warmup), -32601 (method not found). Native " +
+      "Animica failures are remapped to the nearest Bitcoin code plus a reject-reason string.",
+  },
+];
+
+const jsonLd = [
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    headline: "Bitcoin-Core-Compatible RPC on Animica",
+    description: pageDesc,
+    url: canonical,
+    inLanguage: "en",
+    keywords: "Bitcoin Core JSON-RPC, bitcoin-cli, getblockchaininfo, getblocktemplate, BTCPay, " +
+      "compatibility layer, post-quantum blockchain, Animica",
+    about: ["Bitcoin Core JSON-RPC", "bitcoin-cli", "RPC compatibility"],
+    isPartOf: { "@type": "WebSite", name: "Animica", url: "https://animica.org" },
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: faqs.map((f) => ({
+      "@type": "Question", name: f.q,
+      acceptedAnswer: { "@type": "Answer", text: f.a },
+    })),
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Animica", item: "https://animica.org" },
+      { "@type": "ListItem", position: 2, name: "Docs", item: "https://animica.org/docs" },
+      { "@type": "ListItem", position: 3, name: "Bitcoin RPC", item: canonical },
+    ],
+  },
+];
+
+const card = "rounded-2xl border p-5 bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]";
+const pre = "mt-4 overflow-x-auto rounded-2xl border p-5 text-sm leading-relaxed bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc} canonical={canonical} jsonLd={jsonLd}>
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
+    <p class="font-mono text-xs uppercase tracking-[0.16em] opacity-60">
+      Docs · RPC compatibility
+    </p>
+    <h1 class="mt-3 text-4xl sm:text-5xl font-semibold tracking-tight">
+      Bitcoin-Core-Compatible RPC
+    </h1>
+    <p class="mt-4 text-lg opacity-85 max-w-3xl">
+      Point <code>bitcoin-cli</code>, BTCPay, Electrum-personal-server and other Bitcoin RPC tooling at
+      an Animica node. This mode exposes Bitcoin Core's JSON-RPC <strong>method names and response
+      shapes</strong> (targeting <strong>Bitcoin Core 30.x</strong>) over Animica.
+    </p>
+
+    <div class="mt-6 rounded-2xl border p-5 bg-[color-mix(in_srgb,var(--text-primary)_/_5%,transparent)] border-[color-mix(in_srgb,var(--text-primary)_/_14%,transparent)]">
+      <p class="m-0 text-sm opacity-85">
+        <strong>A compatibility layer, not an identity claim.</strong> Animica is a post-quantum,
+        account-model, PoIES useful-work chain. This maps Bitcoin RPC <em>meaning</em> onto Animica so
+        existing tooling can “point at a new endpoint” — it does <strong>not</strong> make Animica behave
+        identically to Bitcoin.
+      </p>
+    </div>
+
+    <!-- Endpoints -->
+    <h2 class="mt-12 text-2xl font-semibold">Endpoints</h2>
+    <p class="mt-2 text-sm opacity-80 max-w-3xl">
+      Bitcoin clients POST JSON-RPC to the root path; Animica's native namespaces stay on
+      <code>/rpc</code>. Both go through the same dispatcher.
+    </p>
+    <pre class={pre}><code>{`POST /        ← Bitcoin-compat (bitcoin-cli, BTCPay, Electrum-personal-server, …)
+POST /rpc     ← Bitcoin-compat AND native state.*/chain.*/miner.*/aicf.*
+
+# point bitcoin-cli at an Animica node
+bitcoin-cli -rpcconnect=<host> -rpcport=443 getblockcount
+
+# or curl the public endpoint
+curl -s ${RPC}/ \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"getblockchaininfo","params":[]}'`}</code></pre>
+
+    <!-- Tiers -->
+    <h2 class="mt-12 text-2xl font-semibold">What's implemented</h2>
+    <div class="mt-5 grid gap-4 lg:grid-cols-3">
+      {tiers.map((t) => (
+        <div class={card}>
+          <div class="font-semibold text-sm">{t.h}</div>
+          <div class="text-xs opacity-60 mt-0.5">{t.note}</div>
+          <div class="mt-3 flex flex-wrap gap-1.5">
+            {t.items.map((m) => (
+              <code class="text-[11px] opacity-80 bg-[color-mix(in_srgb,var(--text-primary)_/_8%,transparent)] border border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] rounded px-1.5 py-0.5">{m}</code>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <!-- Mapping -->
+    <h2 class="mt-12 text-2xl font-semibold">How the mapping works</h2>
+    <div class="mt-4 overflow-x-auto rounded-2xl border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <table class="w-full text-sm">
+        <tbody>
+          <tr class="bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)] font-semibold">
+            <td class="px-4 py-2.5">Bitcoin method</td><td class="px-4 py-2.5">Animica source</td>
+          </tr>
+          {mapping.map((row) => (
+            <tr class="border-t border-[color-mix(in_srgb,var(--text-primary)_/_8%,transparent)]">
+              <td class="px-4 py-2.5 font-mono text-xs">{row[0]}</td>
+              <td class="px-4 py-2.5 opacity-80">{row[1]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Caveats -->
+    <h2 class="mt-12 text-2xl font-semibold">Where compatibility is degraded (by design)</h2>
+    <p class="mt-2 text-sm opacity-75 max-w-3xl">
+      Animica diverges from Bitcoin at the data-model level. These are returned as compatibility-only
+      values so clients don't break:
+    </p>
+    <div class="mt-4 grid gap-4 sm:grid-cols-2">
+      {caveats.map((c) => (
+        <div class={card}>
+          <div class="font-semibold text-sm">{c[0]}</div>
+          <p class="mt-2 text-sm opacity-80">{c[1]}</p>
+        </div>
+      ))}
+    </div>
+
+    <!-- FAQ -->
+    <h2 class="mt-12 text-2xl font-semibold">FAQ</h2>
+    <div class="mt-4 space-y-4">
+      {faqs.map((f) => (
+        <details class={card}>
+          <summary class="cursor-pointer font-medium">{f.q}</summary>
+          <p class="mt-2 text-sm opacity-80">{f.a}</p>
+        </details>
+      ))}
+    </div>
+
+    <p class="mt-10 text-sm opacity-70">
+      See also: <InlineLink href="/docs/evm-rpc">Ethereum / EVM-Compatible RPC</InlineLink> ·
+      <InlineLink href="/docs">All docs</InlineLink> ·
+      <InlineLink href="https://github.com/animicaorg/all/blob/main/docs/BITCOIN_RPC_COMPAT.md">BITCOIN_RPC_COMPAT.md</InlineLink>
+    </p>
+  </section>
+</BaseLayout>
