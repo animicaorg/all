@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "2.0.0"
+version = "2.0.1"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -72,6 +72,14 @@ stratum = [
   "fastapi>=0.115.0,<0.116.0",
   "uvicorn[standard]>=0.30.0,<1.0.0",
   "prometheus-client>=0.20.0,<1.0.0",
+  # Native SHA3-256 nonce scanner — real CPU hashrate (falls back to pure Python
+  # if a wheel isn't available for the platform). See mining/native/.
+  "animica-fastpow>=1.0.0",
+]
+# Native CPU-miner fast path on its own (no server deps). `pip install animica[fast]`
+# is the smallest install that gives `animica up` / the CPU miner native hashrate.
+fast = [
+  "animica-fastpow>=1.0.0",
 ]
 wallet_qt = [
   "segno>=1.6.1,<2.0.0",
@@ -110,7 +118,7 @@ studio = [
   "omni-sdk>=0.1.0",
 ]
 all = [
-  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,studio]",
+  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,studio,fast]",
 ]
 
 [project.urls]

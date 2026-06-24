@@ -1,0 +1,71 @@
+name: animica-fastpow wheels
+
+# Builds native wheels for animica-fastpow across Linux / macOS / Windows (the
+# .pyd that was missing from the miner release) and publishes them to PyPI on a
+# `fastpow-v*` tag. Manual runs just build + upload artifacts.
+
+on:
+  push:
+    tags: ["fastpow-v*"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: mining/native
+
+jobs:
+  build_wheels:
+    name: wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21
+        with:
+          package-dir: mining/native
+        env:
+          # CPython 3.8–3.13, 64-bit; skip musllinux + 32-bit to keep it lean.
+          CIBW_BUILD: "cp38-* cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*-musllinux_* *_i686 *-win32"
+          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          # Parity test inside each built wheel before it ships.
+          CIBW_TEST_REQUIRES: ""
+          CIBW_TEST_COMMAND: >-
+            python -c "import animica_fastpow as f, hashlib, os; assert f.available();
+            assert f.sha3_256(b'') == hashlib.sha3_256(b'').digest();
+            [globals().__setitem__('d', os.urandom(i)) or (f.sha3_256(d) == hashlib.sha3_256(d).digest()) or exit(1) for i in range(0,300,7)];
+            print('fastpow wheel parity OK')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastpow-wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  build_sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pipx run build --sdist
+      - uses: actions/upload-artifact@v4
+        with: { name: fastpow-sdist, path: mining/native/dist/*.tar.gz }
+
+  publish:
+    name: publish to PyPI
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/fastpow-v')
+    environment: pypi
+    permissions:
+      id-token: write   # PyPI Trusted Publishing (no token needed)
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Project metadata + the C extension live in setup.py (ext_modules). This file
+# just pins the build backend so `python -m build` and cibuildwheel work cleanly
+# across Linux / macOS / Windows.
+
+[project]
+name = "animica-fastpow"
+version = "1.0.0"
+description = "Native SHA3-256 PoW nonce scanner for the Animica CPU miner"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+keywords = ["animica", "mining", "sha3", "proof-of-work", "pow"]
+classifiers = [
+  "Programming Language :: C",
+  "Programming Language :: Python :: 3",
+  "Topic :: Security :: Cryptography",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://animica.org"
+Repository = "https://github.com/animicaorg/all"

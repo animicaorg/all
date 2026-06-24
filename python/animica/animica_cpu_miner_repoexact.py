@@ -36,6 +36,15 @@ except Exception:
     _hash_candidate_header = None
     _header_from_template_view = None
 
+# Native SHA3-256 nonce scanner (C extension). Replaces the pure-Python hot loop
+# with a GIL-released C loop for real multi-core hashrate. Falls back to the pure
+# Python loop when the extension isn't built/shipped, so the miner always runs.
+try:
+    import animica_fastpow as _fastpow_mod
+    _NATIVE_SCAN = _fastpow_mod.scan if _fastpow_mod.available() else None
+except Exception:
+    _NATIVE_SCAN = None
+
 UINT256_MAX = (1 << 256) - 1
 MICRO = 1_000_000
 PLACEHOLDER_ADDRESS = "YOUR_ANIMICA_ADDRESS"
@@ -300,6 +309,27 @@ def _scan_range_worker(
     start_nonce: int,
     iterations: int,
 ) -> Optional[ShareResult]:
+    # Native fast path: the whole nonce range is scanned in C with the GIL
+    # released. Digest is byte-identical to digest_from_sign_bytes (validated).
+    if _NATIVE_SCAN is not None:
+        target_bytes = int(min(int(target), UINT256_MAX)).to_bytes(32, "big")
+        res = _NATIVE_SCAN(
+            prefix,
+            mix_seed or b"",
+            target_bytes,
+            start_nonce & 0xFFFFFFFFFFFFFFFF,
+            int(iterations),
+        )
+        if res is None:
+            return None
+        found_nonce, digest = res
+        tried = ((found_nonce - start_nonce) & 0xFFFFFFFFFFFFFFFF) + 1
+        return ShareResult(
+            nonce=found_nonce,
+            digest_int=int.from_bytes(digest, "big", signed=False),
+            h_micro=h_micro_from_digest(digest),
+            hashes_tried=tried,
+        )
     nonce = start_nonce
     for attempt in range(1, iterations + 1):
         digest = digest_from_sign_bytes(prefix, mix_seed=mix_seed, nonce_int=nonce, nonce_byteorder="little")
