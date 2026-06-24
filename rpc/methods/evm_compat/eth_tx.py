@@ -105,6 +105,16 @@ def eth_getFilterLogs(filter_id: str) -> list:
 @method("eth_sendRawTransaction", desc="EVM-compat: submit a signed EVM tx (requires an EVM<->Animica binding + relayer).")
 def eth_sendRawTransaction(raw_tx: str) -> str:
     raw = str(raw_tx or "")
+    # Back-compat: if this is an Animica-format raw tx (the old eth_sendRawTransaction
+    # alias behavior), submit it natively. Only Ethereum-RLP txs fall through.
+    try:
+        rid = F.native("tx.sendRawTransaction", raw if raw.startswith(("0x", "0X")) else "0x" + raw)
+        if isinstance(rid, dict):
+            rid = rid.get("txid") or rid.get("hash")
+        if rid:
+            return F.hexhash(rid)
+    except Exception:
+        pass  # not an Animica raw -> treat as an Ethereum tx below
     sender_alias = None
     try:
         import eth_account  # base dep

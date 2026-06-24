@@ -31,7 +31,7 @@ def net_peerCount() -> str:
 
 @method("web3_clientVersion", desc="EVM-compat: client version string.")
 def web3_clientVersion() -> str:
-    ver = str((F.native("node.health") or {}).get("version", "3.0.1"))
+    ver = str((F.native("node.health") or {}).get("version", "4.0.0"))
     return f"Animica/v{ver}/evm-facade"
 
 
