@@ -71,6 +71,11 @@ compatibility-only values so clients don't break:
 - **Account model, not UTXO:** `decoderawtransaction`/`getrawtransaction` synthesize
   one `vin` (sender, `txid: null`) + one `vout` (recipient + value). The real
   sender/kind/nonce/fee are carried under `animica:*` keys (clients ignore them).
+- **`getblock`/`getblockheader` by hash:** the node has no reverse hash→height
+  index, so block *height* is resolved only for the chain tip (best block); for
+  deeper blocks fetched by hash it is reported as `-1` (Bitcoin's "unknown"
+  convention). Callers that obtained the hash via `getblockhash(height)` already
+  know the height; block content (txs, parent, roots) is always correct.
 - **No address-indexed history:** `listtransactions` returns `[]`; `listunspent`
   synthesizes one "UTXO" per address balance. Use an explorer index for history.
 - **Single node wallet:** `createwallet`/`loadwallet` are advisory; `wallet_name`

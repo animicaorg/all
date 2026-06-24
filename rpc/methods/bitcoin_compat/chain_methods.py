@@ -47,6 +47,26 @@ def _resolve(blockhash: str, include_txs: bool):
     blk = F.native("chain.getBlockByHash", F.px(blockhash), include_txs, False)
     if not blk:
         raise rpc_error(RPC_INVALID_ADDRESS_OR_KEY, "Block not found")
+    # chain.getBlockByHash returns block content but NOT its height (height is a
+    # chain-position fact, not in the header, and there is no reverse hash->height
+    # index reachable). Resolve it where we can: the tip (best block) is the head;
+    # otherwise try the block resolver (best-effort). Non-tip blocks whose height
+    # can't be resolved report height -1 (Bitcoin's "unknown" convention) rather
+    # than a misleading 0; callers that came via getblockhash(height) already know it.
+    if blk.get("height") is None and blk.get("number") is None:
+        height = None
+        head = _head()
+        if F.hx(head.get("hash")) == F.hx(blockhash):
+            height = _height(head)
+        else:
+            try:
+                from rpc.methods.block import _resolve_block_by_hash
+                h, _ = _resolve_block_by_hash(F.px(blockhash))
+                height = h
+            except Exception:
+                height = None
+        blk["height"] = int(height) if height is not None else -1
+        blk["number"] = blk["height"]
     return blk
 
 
