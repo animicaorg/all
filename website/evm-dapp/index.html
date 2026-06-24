@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Animica EVM Bridge — move ANM between MetaMask and native Animica</title>
+<meta name="description" content="Connect MetaMask to Animica (chain 149). Get an ANM deposit address, see your balance, and withdraw to any native anim1 wallet. A custodial EVM↔native relayer on a post-quantum L1." />
+<link rel="canonical" href="https://evm.animica.org/" />
+<meta property="og:title" content="Animica EVM Bridge" />
+<meta property="og:description" content="Move ANM between an EVM wallet and native Animica. Chain 149." />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --bg:#0a0b0d; --panel:#121317; --panel2:#16181d; --line:#23262d;
+    --txt:#e9eaed; --dim:#9aa0a8; --accent:#7c9cff; --good:#43d17a; --warn:#ffcf6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#14161c,var(--bg));color:var(--txt);
+       font:15px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  a{color:var(--accent);text-decoration:none}
+  .wrap{max-width:760px;margin:0 auto;padding:28px 18px 64px}
+  .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .brand{font-weight:700;letter-spacing:.2px;font-size:18px}
+  .brand small{color:var(--dim);font-weight:500}
+  .chip{font:12px ui-monospace,Menlo,monospace;color:var(--dim);border:1px solid var(--line);
+        border-radius:999px;padding:4px 10px}
+  h1{font-size:30px;line-height:1.15;margin:26px 0 6px;letter-spacing:-.3px}
+  .lede{color:var(--dim);margin:0 0 22px;max-width:60ch}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;margin:14px 0}
+  .card h2{font-size:14px;margin:0 0 10px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--txt);
+         border-radius:10px;padding:10px 14px;font-weight:600;font-size:14px}
+  button.primary{background:var(--accent);color:#0a0b0d;border-color:transparent}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  input{background:#0e0f13;border:1px solid var(--line);color:var(--txt);border-radius:10px;
+        padding:10px 12px;font:14px ui-monospace,Menlo,monospace;width:100%}
+  .mono{font:13px ui-monospace,Menlo,monospace}
+  .addr{display:flex;gap:8px;align-items:center}
+  .addr code{background:#0e0f13;border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+             overflow:auto;flex:1;white-space:nowrap}
+  .bal{font-size:30px;font-weight:700;letter-spacing:-.5px}
+  .bal small{font-size:14px;color:var(--dim);font-weight:600}
+  #qr{background:#fff;padding:10px;border-radius:12px;width:max-content}
+  .grid{display:grid;gap:14px}
+  @media(min-width:620px){.split{grid-template-columns:1fr auto}}
+  .muted{color:var(--dim);font-size:13px}
+  .ok{color:var(--good)} .warn{color:var(--warn)}
+  .hide{display:none}
+  .note{font-size:12.5px;color:var(--dim);border-left:2px solid var(--line);padding-left:10px;margin-top:10px}
+  label{display:block;font-size:12px;color:var(--dim);margin:0 0 5px}
+  .field{margin:10px 0}
+  footer{color:var(--dim);font-size:12.5px;margin-top:28px;border-top:1px solid var(--line);padding-top:16px}
+  .pill{display:inline-block;font:11px ui-monospace,monospace;background:#0e0f13;border:1px solid var(--line);
+        border-radius:6px;padding:2px 7px;color:var(--dim)}
+  #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#1c1f26;border:1px solid var(--line);
+         color:var(--txt);padding:10px 14px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;font-size:13px}
+  #toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">Animica <small>EVM Bridge</small></div>
+    <span class="chip" id="netchip">chain 149 · ANM</span>
+  </div>
+
+  <h1>Move ANM between MetaMask&nbsp;and native Animica</h1>
+  <p class="lede">Connect an EVM wallet to Animica (a post-quantum L1). Get a deposit
+    address, see your balance, send to other EVM addresses, and withdraw to any native
+    <span class="mono">anim1…</span> wallet. <strong>Custodial</strong> — the relayer holds the
+    native key; your EVM signature authorizes the move.</p>
+
+  <!-- Connect -->
+  <div class="card" id="connectCard">
+    <div class="row split grid">
+      <div>
+        <h2 style="margin-bottom:4px">Step 1 — connect</h2>
+        <div class="muted">Adds the Animica network (chain 149) if needed.</div>
+      </div>
+      <button class="primary" id="connectBtn" onclick="connect()">Connect Wallet</button>
+    </div>
+    <div class="note" id="noProvider" style="display:none">
+      No EVM wallet detected. Install <a href="https://metamask.io" target="_blank" rel="noopener">MetaMask</a>,
+      or use the JSON-RPC at <span class="mono">https://mainnet.animica.org</span> directly.
+    </div>
+  </div>
+
+  <!-- Account -->
+  <div id="account" class="hide">
+    <div class="card">
+      <h2>Connected</h2>
+      <div class="addr"><code id="evmAddr"></code><button onclick="copy(state.evm,'EVM address')">Copy</button></div>
+      <div style="margin-top:14px" class="bal"><span id="bal">—</span> <small>ANM</small></div>
+      <div class="muted" id="balRaw"></div>
+    </div>
+
+    <div class="card">
+      <h2>Step 2 — deposit (native → EVM)</h2>
+      <div class="muted">Send ANM to <strong>your deposit address</strong> from any Animica wallet.
+        It then shows up here under your EVM address.</div>
+      <div class="grid split" style="margin-top:12px;align-items:start">
+        <div>
+          <label>Your ANM deposit address</label>
+          <div class="addr"><code id="depAddr"></code><button onclick="copy(state.anim1,'deposit address')">Copy</button></div>
+          <div class="note">From a native wallet: <span class="mono">animica tx send --to &lt;this&gt; --value 1.0</span></div>
+        </div>
+        <div id="qr"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Step 3 — send</h2>
+      <div class="field">
+        <label>To — an EVM address (<span class="mono">0x…</span>) or a native wallet (<span class="mono">anim1…</span>)</label>
+        <input id="to" placeholder="0x…  or  anim1…" />
+      </div>
+      <div class="field">
+        <label>Amount (ANM)</label>
+        <input id="amt" inputmode="decimal" placeholder="0.10" />
+      </div>
+      <div class="row">
+        <button class="primary" id="sendBtn" onclick="send()">Send</button>
+        <span class="muted" id="sendHint">A native <span class="mono">anim1…</span> recipient is bound automatically, then paid natively.</span>
+      </div>
+      <div class="note" id="sendStatus"></div>
+    </div>
+  </div>
+
+  <footer>
+    <p><strong>How it works.</strong> Each EVM address maps to a relayer-held native account.
+      A deposit credits that account; an EVM-signed transaction moves it — to another EVM address,
+      or (after a one-time bind) to a native <span class="mono">anim1</span> wallet. It is a
+      <strong>custodial</strong> gateway: the operator holds the native keys; the EVM key is the
+      authorization, not self-custody.</p>
+    <p class="muted">Network: Animica · chain id <span class="pill">149 (0x95)</span> · currency
+      <span class="pill">ANM</span> · <span class="pill">9 decimals</span> · RPC
+      <span class="mono">https://mainnet.animica.org</span> ·
+      <a href="https://animica.org/docs/evm-rpc" target="_blank" rel="noopener">docs</a> ·
+      <a href="https://explorer.animica.org" target="_blank" rel="noopener">explorer</a></p>
+    <p class="muted">Amounts here are in ANM (Animica's native 9-decimal unit). Your wallet's own
+      confirmation screen may display the raw nANM value differently; the amount shown above is what moves.</p>
+  </footer>
+</div>
+<div id="toast"></div>
+
+<script>
+const RPC = "/rpc";                              // same-origin proxy (avoids CORS) for read calls
+const PUBLIC_RPC = "https://mainnet.animica.org"; // absolute URL handed to the wallet
+const CHAIN_ID_HEX = "0x95";        // 149
+const NANM = 1_000_000_000n;        // 1 ANM = 1e9 nANM (9 decimals)
+const state = { evm:null, anim1:null };
+
+async function rpc(method, params){
+  const r = await fetch(RPC, {method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})});
+  const j = await r.json();
+  if(j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+  return j.result;
+}
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");
+  clearTimeout(window._tt);window._tt=setTimeout(()=>t.classList.remove("show"),2200);}
+function copy(text,what){navigator.clipboard?.writeText(text).then(()=>toast((what||"")+" copied"));}
+function fmtANM(nanmHex){
+  let n = BigInt(nanmHex||"0x0");
+  const whole = n / NANM, frac = (n % NANM).toString().padStart(9,"0").replace(/0+$/,"");
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
+
+function eth(){ return window.ethereum; }
+
+async function ensureChain(){
+  try{
+    await eth().request({method:"wallet_switchEthereumChain",params:[{chainId:CHAIN_ID_HEX}]});
+  }catch(e){
+    if(e.code===4902 || /Unrecognized chain/i.test(e.message||"")){
+      await eth().request({method:"wallet_addEthereumChain",params:[{
+        chainId:CHAIN_ID_HEX, chainName:"Animica",
+        nativeCurrency:{name:"Animica",symbol:"ANM",decimals:9},
+        rpcUrls:[PUBLIC_RPC], blockExplorerUrls:["https://explorer.animica.org"]
+      }]});
+    } else throw e;
+  }
+}
+
+async function connect(){
+  if(!eth()){ document.getElementById("noProvider").style.display="block"; return; }
+  document.getElementById("connectBtn").disabled = true;
+  try{
+    const accts = await eth().request({method:"eth_requestAccounts"});
+    await ensureChain();
+    state.evm = accts[0];
+    await refresh();
+    document.getElementById("account").classList.remove("hide");
+    document.getElementById("connectCard").classList.add("hide");
+    eth().on?.("accountsChanged", a=>{ state.evm=a[0]; refresh(); });
+  }catch(e){ toast(e.message||"connection failed"); }
+  finally{ document.getElementById("connectBtn").disabled = false; }
+}
+
+async function refresh(){
+  document.getElementById("evmAddr").textContent = state.evm;
+  // deposit (managed native account) + balance
+  const acc = await rpc("animica_evmAccount",[state.evm]);
+  state.anim1 = acc.anim1;
+  document.getElementById("depAddr").textContent = acc.anim1;
+  const qr = document.getElementById("qr"); qr.innerHTML="";
+  new QRCode(qr,{text:acc.anim1,width:132,height:132,colorDark:"#0a0b0d",colorLight:"#ffffff"});
+  const bal = await rpc("eth_getBalance",[state.evm,"latest"]);
+  document.getElementById("bal").textContent = fmtANM(bal);
+  document.getElementById("balRaw").textContent = `${BigInt(bal)} nANM`;
+}
+
+async function send(){
+  const toRaw = document.getElementById("to").value.trim();
+  const amt = document.getElementById("amt").value.trim();
+  const st = document.getElementById("sendStatus");
+  st.className="note"; st.textContent="";
+  if(!toRaw){ st.textContent="Enter a recipient."; return; }
+  let nanm;
+  try{
+    const [w,f=""] = amt.split("."); nanm = BigInt(w||"0")*NANM + BigInt((f+"000000000").slice(0,9)||"0");
+  }catch{ st.textContent="Invalid amount."; return; }
+  if(nanm<=0n){ st.textContent="Amount must be > 0."; return; }
+  document.getElementById("sendBtn").disabled=true;
+  try{
+    let to = toRaw;
+    if(toRaw.startsWith("anim1")){
+      st.textContent="Binding native recipient…";
+      const b = await rpc("animica_evmBind",[toRaw]);
+      to = b.evm_alias;
+      st.innerHTML = `Native recipient bound → alias <span class="mono">${to}</span>. Confirm in your wallet…`;
+    } else if(!/^0x[0-9a-fA-F]{40}$/.test(toRaw)){
+      st.textContent="Recipient must be a 0x address or an anim1 wallet."; return;
+    } else {
+      st.textContent="Confirm in your wallet…";
+    }
+    const valueHex = "0x"+nanm.toString(16);
+    const hash = await eth().request({method:"eth_sendTransaction",params:[{
+      from:state.evm, to, value:valueHex
+    }]});
+    st.innerHTML = `<span class="ok">Submitted.</span> tx <span class="mono">${hash.slice(0,18)}…</span> — settling on-chain.`;
+    setTimeout(refresh, 4000); setTimeout(refresh, 12000);
+  }catch(e){ st.innerHTML = `<span class="warn">${(e.message||"send failed")}</span>`; }
+  finally{ document.getElementById("sendBtn").disabled=false; }
+}
+
+// pre-flight: hide connect if no provider
+if(!window.ethereum){ document.getElementById("noProvider").style.display="block"; }
+</script>
+</body>
+</html>

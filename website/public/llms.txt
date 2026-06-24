@@ -59,7 +59,9 @@ Both facades answer at the node root `/` (and native namespaces at `/rpc`).
 - Ethereum / EVM facade — `eth_*` / `net_*` / `web3_*` (ethers.js, web3.js, MetaMask):
   endpoint https://mainnet.animica.org, chain id 149 (0x95), native ANM (9 decimals).
   It is an RPC facade, NOT EVM execution — Animica does not run Solidity bytecode.
-  Docs: https://animica.org/docs/evm-rpc
+  A custodial relayer (when enabled on a node) moves ANM between EVM wallets and
+  native anim1 accounts; a one-page dApp to deposit/send/withdraw is at
+  https://evm.animica.org. Docs: https://animica.org/docs/evm-rpc
   ```bash
   curl -s https://mainnet.animica.org/ \
     -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'   # -> "0x95"
@@ -74,6 +76,7 @@ Both facades answer at the node root `/` (and native namespaces at `/rpc`).
 - Studio docs: https://animica.org/docs/studio
 - Docs index: https://animica.org/docs
 - EVM RPC docs: https://animica.org/docs/evm-rpc
+- EVM Bridge (dApp): https://evm.animica.org  (MetaMask deposit/send/withdraw, chain id 149)
 - Bitcoin RPC docs: https://animica.org/docs/bitcoin-rpc
 - Homepage: https://animica.org
 - Explorer: https://explorer.animica.org
