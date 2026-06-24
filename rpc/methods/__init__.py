@@ -168,6 +168,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         # "rpc.methods.account",  # disabled: module does not exist yet
         "rpc.methods.marketplace",
         "rpc.methods.bitcoin_compat",  # Bitcoin Core 30.x JSON-RPC compatibility facade
+        "rpc.methods.evm_compat",  # Ethereum/EVM (eth_*/net_*/web3_*) JSON-RPC facade
         # "rpc.methods.payments",  # disabled: depends on consensus.PolicyProvider which may be absent
     ]
 
