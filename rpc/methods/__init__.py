@@ -167,6 +167,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.quantum",  # Quantum compute status and job stubs
         # "rpc.methods.account",  # disabled: module does not exist yet
         "rpc.methods.marketplace",
+        "rpc.methods.bitcoin_compat",  # Bitcoin Core 30.x JSON-RPC compatibility facade
         # "rpc.methods.payments",  # disabled: depends on consensus.PolicyProvider which may be absent
     ]
 

@@ -413,6 +413,39 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
     # --- Metrics mount ---
     _mount_metrics(app)
 
+    # --- Bitcoin-Core-compat: JSON-RPC at root "/" (bitcoin-cli & friends POST to /) ---
+    # Reuses the exact same dispatcher as /rpc, so Bitcoin-shaped methods
+    # (getblockcount, getblock, sendrawtransaction, ...) work for clients that
+    # post to root. GET "/" remains the banner below (FastAPI routes by method).
+    @app.post("/")
+    async def root_rpc_endpoint(request: Request) -> Response:
+        try:
+            payload = await request.json()
+        except Exception as e:
+            err = rpc_errors.ParseError(f"Invalid JSON body: {e}")  # type: ignore[misc]
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": None, "error": err.to_dict()}, status_code=200
+            )
+        try:
+            result = await _call_dispatch(payload, request)
+        except rpc_errors.RpcError as re:  # type: ignore[attr-defined]
+            rpc_id = payload.get("id") if isinstance(payload, dict) else None
+            return JSONResponse(
+                {"jsonrpc": "2.0", "id": rpc_id, "error": re.to_dict()}, status_code=200
+            )
+        except Exception as e:
+            log.exception("Unhandled error in JSON-RPC (root)")
+            return JSONResponse(
+                {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error",
+                 "data": str(e)}, "id": payload.get("id") if isinstance(payload, dict) else None},
+                status_code=200,
+            )
+        if result is None:
+            return Response(status_code=204)
+        if isinstance(result, (dict, list)):
+            return JSONResponse(result)
+        return Response(content=json.dumps(result), media_type="application/json")
+
     # --- JSON index (optional tiny banner) ---
     @app.get("/")
     async def index() -> JSONResponse:
