@@ -69,3 +69,6 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          # The 1.0.0 sdist is already on PyPI (published manually); only the new
+          # platform wheels need uploading. Don't fail on the existing file.
+          skip-existing: true
