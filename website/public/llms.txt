@@ -50,13 +50,35 @@ Animica ships a Model Context Protocol server exposing Studio + chain tools:
 - Chain tools: balance, send, contract call, job status.
 - Config example: https://github.com/animicaorg/all/tree/main/animica-mcp/config-examples
 
+## RPC compatibility (connect existing tooling)
+
+Animica is a post-quantum PoIES L1 that also speaks Ethereum and Bitcoin JSON-RPC
+through compatibility facades, so existing wallets/SDKs/tooling can connect.
+Both facades answer at the node root `/` (and native namespaces at `/rpc`).
+
+- Ethereum / EVM facade — `eth_*` / `net_*` / `web3_*` (ethers.js, web3.js, MetaMask):
+  endpoint https://mainnet.animica.org, chain id 149 (0x95), native ANM (9 decimals).
+  It is an RPC facade, NOT EVM execution — Animica does not run Solidity bytecode.
+  Docs: https://animica.org/docs/evm-rpc
+  ```bash
+  curl -s https://mainnet.animica.org/ \
+    -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'   # -> "0x95"
+  ```
+- Bitcoin Core facade — Bitcoin Core 30.x method names/shapes (bitcoin-cli, BTCPay):
+  a compatibility layer, not an identity claim.
+  Docs: https://animica.org/docs/bitcoin-rpc
+
 ## Key links
 
 - Studio: https://studio.animica.org
 - Studio docs: https://animica.org/docs/studio
+- Docs index: https://animica.org/docs
+- EVM RPC docs: https://animica.org/docs/evm-rpc
+- Bitcoin RPC docs: https://animica.org/docs/bitcoin-rpc
 - Homepage: https://animica.org
 - Explorer: https://explorer.animica.org
 - JSON-RPC: https://rpc.animica.org  (namespaces: state.*, chain.*, miner.*, aicf.*)
+- Ethereum-compatible RPC: https://mainnet.animica.org  (eth_*/net_*/web3_*, chain id 149)
 - Source (Apache-2.0): https://github.com/animicaorg/all
 - PyPI: https://pypi.org/project/animica/
 
