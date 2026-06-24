@@ -1,0 +1,57 @@
+# Animica
+
+> Animica is a live post-quantum Layer-1 blockchain (Dilithium3 + SPHINCS+
+> signatures, deterministic Python smart contracts, PoIES useful-work consensus)
+> with a native coin, ANM. Animica Studio is its serverless compute platform:
+> run Python functions on a decentralized GPU/CPU fleet and pay in ANM.
+
+This file helps AI agents and LLMs discover and use Animica. Everything below is
+public, live, and callable.
+
+## Animica Studio — serverless compute (Modal-style)
+
+Write a Python function, decorate it, and run it on the fleet. Agents can use
+Studio to execute and deploy compute autonomously, paying from a wallet.
+
+- Install: `pip install animica`
+- SDK (Python):
+  ```python
+  import animica.studio as studio
+  app = studio.App("agent-jobs")
+
+  @app.function(image=studio.Image.debian_slim().pip_install("numpy"), gpu="A100")
+  def run(seed: int) -> float:
+      import numpy as np
+      return float(np.random.default_rng(seed).standard_normal(1000).mean())
+
+  run.remote(42)        # one call on the fleet (or local sandbox in dev)
+  run.map(range(64))    # fan-out
+  ```
+- CLI: `animica studio run app.py::run --kw seed=42` · `animica studio deploy app.py`
+- Modes: `ANIMICA_STUDIO_MODE=local` runs in a local sandbox with zero infra;
+  `remote` escrows ANM and dispatches to the fleet.
+
+## MCP (use Studio from an agent)
+
+Animica ships a Model Context Protocol server exposing Studio + chain tools:
+
+- Package: `animica-mcp` (npm) and `animica_mcp` (PyPI)
+- Studio tools: `studio_run` (run a function), `studio_deploy` (register an app),
+  `studio_list` (list deployed functions), `studio_estimate` (quote a run cost).
+- Chain tools: balance, send, contract call, job status.
+- Config example: https://github.com/animicaorg/all/tree/main/animica-mcp/config-examples
+
+## Key links
+
+- Studio: https://studio.animica.org
+- Studio docs: https://animica.org/docs/studio
+- Homepage: https://animica.org
+- Explorer: https://explorer.animica.org
+- JSON-RPC: https://rpc.animica.org  (namespaces: state.*, chain.*, miner.*, aicf.*)
+- Source (Apache-2.0): https://github.com/animicaorg/all
+- PyPI: https://pypi.org/project/animica/
+
+## How to pay
+
+Compute is metered per second and settled in ANM on-chain. Get ANM by mining
+through the pool (https://animica.org/mine) — the only official channel today.

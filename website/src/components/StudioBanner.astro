@@ -1,0 +1,183 @@
+---
+// Front-page promo banner for Animica Studio — the serverless compute platform
+// at studio.animica.org. Sits high on the homepage (just under the hero) as a
+// full-width gradient band that reads as part of the site chrome, not an ad.
+//
+// Design: brand-tinted gradient, a kicker, a headline, one line of copy, a copy
+// pip/CLI snippet, and two CTAs. Uses the page's existing design tokens
+// (--brand-*, --font-mono) and the aicf-* button classes so it matches without
+// new global CSS. No JS required beyond the optional copy button.
+
+interface Props {
+  href?: string;
+}
+const { href = "https://studio.animica.org" } = Astro.props;
+const cliCmd = "animica studio run app.py::train --gpu A100";
+---
+
+<section class="studio-banner" aria-label="Animica Studio — serverless compute">
+  <div class="studio-banner__inner">
+    <div class="studio-banner__copy">
+      <span class="studio-banner__kicker">New · Animica Studio</span>
+      <h2 class="studio-banner__title">Serverless compute, paid in ANM</h2>
+      <p class="studio-banner__sub">
+        Write a Python function, add a decorator, and run it on Animica's
+        decentralized GPU&nbsp;&amp;&nbsp;CPU fleet — Modal-style developer
+        experience, settled on-chain. The same rigs that mine and train ANM now
+        run your functions.
+      </p>
+      <div class="studio-banner__cta">
+        <a class="aicf-btn" href={href}>Open Studio -&gt;</a>
+        <a class="aicf-ghost-btn" href="/docs/studio">Read the docs</a>
+      </div>
+    </div>
+
+    <div class="studio-banner__snippet">
+      <div class="studio-banner__chip">
+        <code data-studio-cmd>{cliCmd}</code>
+        <button type="button" class="studio-banner__copy" data-studio-copy
+          aria-label={`Copy command: ${cliCmd}`}>Copy</button>
+      </div>
+      <pre class="studio-banner__code"><span class="c-dim">@app.function(</span><span class="c-arg">gpu</span>=<span class="c-str">"A100"</span><span class="c-dim">)</span>
+<span class="c-kw">def</span> <span class="c-fn">train</span>(seed): <span class="c-dim">...</span>
+
+train.<span class="c-fn">remote</span>(<span class="c-num">42</span>)   <span class="c-dim"># one call on the fleet</span>
+train.<span class="c-fn">map</span>(range(<span class="c-num">128</span>)) <span class="c-dim"># fan-out</span></pre>
+    </div>
+  </div>
+</section>
+
+<style>
+  .studio-banner {
+    width: 100%;
+    border-top: 1px solid color-mix(in oklab, var(--brand-400), transparent 70%);
+    border-bottom: 1px solid color-mix(in oklab, var(--brand-400), transparent 80%);
+    background:
+      radial-gradient(1100px 220px at 12% -40%, color-mix(in oklab, var(--brand-400), transparent 78%), transparent 60%),
+      linear-gradient(180deg, rgba(22, 217, 195, 0.06) 0%, rgba(7, 11, 22, 0) 100%);
+  }
+  .studio-banner__inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 1.6rem 1.25rem;
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 1.75rem;
+    align-items: center;
+  }
+  .studio-banner__kicker {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: color-mix(in oklab, var(--brand-300), transparent 15%);
+  }
+  .studio-banner__title {
+    font-size: clamp(1.5rem, 2.6vw, 2.1rem);
+    line-height: 1.1;
+    margin: 0.4rem 0 0.55rem;
+    color: #fff;
+  }
+  .studio-banner__sub {
+    color: rgba(241, 246, 255, 0.82);
+    max-width: 56ch;
+    margin: 0 0 1.05rem;
+    font-size: 0.98rem;
+  }
+  .studio-banner__cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+  .studio-banner__snippet {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    min-width: 0;
+  }
+  .studio-banner__chip {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.5rem 0.45rem 0.8rem;
+    border-radius: 0.7rem;
+    border: 1px solid color-mix(in oklab, var(--brand-400), transparent 55%);
+    background: rgba(7, 11, 22, 0.72);
+  }
+  .studio-banner__chip code {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--brand-200);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .studio-banner__copy {
+    margin-left: auto;
+    flex-shrink: 0;
+    border: 1px solid color-mix(in oklab, var(--brand-400), transparent 45%);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: var(--brand-300);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.55rem;
+    cursor: pointer;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  }
+  .studio-banner__copy:hover,
+  .studio-banner__copy.is-copied {
+    color: #07120f;
+    background: var(--brand-300);
+    border-color: var(--brand-300);
+  }
+  .studio-banner__code {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    border-radius: 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(7, 11, 22, 0.55);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: rgba(241, 246, 255, 0.9);
+    overflow-x: auto;
+  }
+  .studio-banner__code .c-dim { color: rgba(241,246,255,0.4); }
+  .studio-banner__code .c-kw  { color: #c792ea; }
+  .studio-banner__code .c-fn  { color: var(--brand-200); }
+  .studio-banner__code .c-arg { color: #82aaff; }
+  .studio-banner__code .c-str { color: #c3e88d; }
+  .studio-banner__code .c-num { color: #f78c6c; }
+
+  @media (max-width: 860px) {
+    .studio-banner__inner {
+      grid-template-columns: 1fr;
+      gap: 1.1rem;
+      padding: 1.3rem 1.1rem;
+    }
+    .studio-banner__snippet { display: none; }
+  }
+</style>
+
+<script>
+  const btn = document.querySelector<HTMLButtonElement>("[data-studio-copy]");
+  const cmd = document.querySelector<HTMLElement>("[data-studio-cmd]");
+  if (btn && cmd) {
+    btn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(cmd.textContent?.trim() ?? "");
+        btn.textContent = "Copied";
+        btn.classList.add("is-copied");
+        window.setTimeout(() => {
+          btn.textContent = "Copy";
+          btn.classList.remove("is-copied");
+        }, 1600);
+      } catch {
+        /* clipboard unavailable — snippet stays selectable */
+      }
+    });
+  }
+</script>

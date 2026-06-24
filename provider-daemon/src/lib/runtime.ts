@@ -4,9 +4,10 @@ import { runAgentAdapter } from '../adapters/agent.js';
 import { runChatAdapter } from '../adapters/chat.js';
 import { runCustomAdapter } from '../adapters/custom.js';
 import { runEmbeddingAdapter } from '../adapters/embedding.js';
+import { runFunctionAdapter } from '../adapters/function.js';
 import { runTrainingAdapter } from '../adapters/training.js';
 
-export function executeJob(job: JobRecord): {
+export async function executeJob(job: JobRecord): Promise<{
   output: Record<string, unknown>;
   usage: {
     inputTokens?: number;
@@ -16,7 +17,7 @@ export function executeJob(job: JobRecord): {
     bytesIn?: number;
     bytesOut?: number;
   };
-} {
+}> {
   switch (job.request.class) {
     case 'chat_inference':
     case 'batch_inference':
@@ -29,6 +30,8 @@ export function executeJob(job: JobRecord): {
       return runTrainingAdapter(job.request.input);
     case 'agent_task':
       return runAgentAdapter(job.request.input);
+    case 'function_compute':
+      return runFunctionAdapter(job.request.input);
     case 'custom_compute':
       return runCustomAdapter(job.request.input);
     default:

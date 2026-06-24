@@ -185,6 +185,108 @@ def animica_become_provider() -> str:
     })
 
 
+# ---------------- Animica Studio (serverless compute) ----------------
+# These tools let an agent RUN and DEPLOY Python compute on Animica Studio. They
+# reuse the Studio SDK shipped with `pip install animica`; in local mode they run
+# with zero infrastructure, in remote mode they escrow ANM and dispatch to the
+# fleet (ANIMICA_STUDIO_MODE=remote + a wallet).
+
+
+def _studio_run_dynamic(code: str, entry: str, args, kwargs, gpu: str, pip: str):
+    import importlib.util
+    import sys
+    import tempfile
+
+    import animica.studio as studio  # raises ImportError if animica isn't installed
+
+    tmpdir = tempfile.mkdtemp(prefix="studio_agent_")
+    path = os.path.join(tmpdir, "agent_job.py")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(code)
+    spec = importlib.util.spec_from_file_location("agent_job", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["agent_job"] = mod
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    fn = getattr(mod, entry, None)
+    if fn is None or not callable(fn):
+        raise ValueError(f"function {entry!r} not found in submitted code")
+
+    img = studio.Image.debian_slim()
+    if pip:
+        img = img.pip_install(*[p.strip() for p in pip.split(",") if p.strip()])
+    app = studio.App("agent")
+    wrapped = app.function(image=img, gpu=gpu or None)(fn)
+    return wrapped.remote(*args, **kwargs), app.config.mode
+
+
+@mcp.tool()
+def studio_run(code: str, entry: str = "main", args_json: str = "[]",
+               kwargs_json: str = "{}", gpu: str = "", pip: str = "",
+               mode: str = "auto") -> str:
+    """Run a Python function on Animica Studio serverless compute.
+
+    Submit `code` (Python source), name the function to call via `entry`, and pass
+    `args_json`/`kwargs_json` (JSON). Optionally request a `gpu` (e.g. "A100") and
+    `pip` dependencies (comma-separated). `mode`: auto|local|remote. Returns the
+    function's result. In local mode this runs in a sandbox with no chain; in
+    remote mode it pays in ANM and runs on the fleet.
+    """
+    try:
+        if mode:
+            os.environ["ANIMICA_STUDIO_MODE"] = mode
+        args = json.loads(args_json or "[]")
+        kwargs = json.loads(kwargs_json or "{}")
+        result, used_mode = _studio_run_dynamic(code, entry, args, kwargs, gpu, pip)
+        return _j({"result": result, "mode": used_mode})
+    except ImportError:
+        return "⚠️ Studio SDK not installed. Run `pip install animica` to enable serverless compute."
+    except Exception as e:  # noqa: BLE001 - report the function/dispatch error to the agent
+        return f"⚠️ studio_run failed: {e}"
+
+
+@mcp.tool()
+def studio_estimate(seconds: float = 15.0, gpu: bool = False, mem_gb: float = 0.5) -> str:
+    """Estimate the ANM cost of a Studio run before paying (resource-seconds → ANM)."""
+    try:
+        from animica.studio import billing
+        q = billing.local_quote(est_seconds=seconds, gpu=gpu, mem_gb=mem_gb)
+        return _j({"cost_anm": q.cost_anm, "cost_nanos": q.cost_nanos, "units": q.units, "source": q.source})
+    except ImportError:
+        return "⚠️ `pip install animica` to estimate Studio costs."
+
+
+@mcp.tool()
+def studio_list() -> str:
+    """List functions deployed to Animica Studio (aicf.fn.list) on the configured node."""
+    try:
+        from animica.studio.client import BrokerClient
+        from animica.studio.config import StudioConfig
+        cfg = StudioConfig.from_env()
+        client = BrokerClient(cfg.rpc_url, timeout=10.0)
+        try:
+            return _j(client.fn_list())
+        finally:
+            client.close()
+    except ImportError:
+        return "⚠️ `pip install animica` to use Studio."
+    except Exception as e:  # noqa: BLE001
+        return f"⚠️ registry unavailable: {e}"
+
+
+@mcp.tool()
+def studio_info() -> str:
+    """What Animica Studio is and how an agent can use it (serverless compute, paid in ANM)."""
+    return _j({
+        "summary": "Animica Studio runs Python functions on a decentralized GPU/CPU fleet, paid in ANM. Modal-style serverless.",
+        "use_from_agent": "Call studio_run(code, entry, args_json, gpu, pip). studio_estimate quotes cost; studio_list shows deployed functions.",
+        "sdk": "pip install animica  →  import animica.studio as studio",
+        "cli": "animica studio run app.py::fn  •  animica studio deploy app.py",
+        "modes": "ANIMICA_STUDIO_MODE=local (no chain) | remote (pays ANM, runs on fleet)",
+        "site": "https://studio.animica.org",
+        "llms_txt": "https://studio.animica.org/llms.txt",
+    })
+
+
 def main() -> None:
     transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
     if transport == "http":

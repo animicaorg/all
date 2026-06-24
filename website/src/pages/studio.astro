@@ -5,142 +5,221 @@ import InlineLink from "../components/InlineLink.astro";
 import { links } from "../config/links";
 import { loadStudioDownloadPageData } from "../features/studio/downloads";
 
-const pageTitle = "Studio — Linux Download";
+const pageTitle = "Animica Studio — Serverless GPU Compute, paid in ANM";
 const pageDesc =
-  "Download the official Animica Studio Linux desktop build and verify its checksum before installing.";
+  "Animica Studio is serverless compute for the post-quantum chain: write a Python " +
+  "function, add a decorator, and run it on a decentralized GPU & CPU fleet, paying " +
+  "in ANM. A Modal-style developer experience — run.remote(), .map(), cron, web " +
+  "endpoints — settled on-chain.";
+
+const canonical = "https://studio.animica.org";
+
+const features = [
+  { t: "@app.function", d: "Decorate any Python function and run it remotely — no servers, no YAML, no Dockerfiles required." },
+  { t: ".remote() & .map()", d: "Call a function once on the fleet, or fan out across thousands of inputs with one line." },
+  { t: "GPU on demand", d: "Pin A100/H100-class GPUs per function. Pay per second of compute, settled in ANM." },
+  { t: "Images in Python", d: "Declare pip/apt deps inline with Image.debian_slim().pip_install(...). Deterministic, content-addressed." },
+  { t: "Secrets & Volumes", d: "Inject secrets into a function and mount persistent volumes — no plaintext in your job." },
+  { t: "Cron & web endpoints", d: "Schedule functions on a cron, or expose them as HTTP endpoints for your app and agents." },
+  { t: "Decentralized fleet", d: "The same rigs that mine and train ANM run your functions — useful work, not wasted hashes." },
+  { t: "On-chain settlement", d: "Every run is metered and paid in ANM on a live post-quantum L1. Verifiable in the explorer." },
+];
+
+const steps = [
+  { n: "1", t: "Install", d: "pip install animica" },
+  { n: "2", t: "Decorate", d: "@app.function(gpu=\"A100\") def train(seed): ..." },
+  { n: "3", t: "Run", d: "train.remote(42)  •  animica studio run app.py::train" },
+];
+
+// Modal-comparison rows — honest positioning for developers searching for a
+// decentralized / crypto-native serverless compute platform.
+const compare = [
+  ["Decorator-based Python SDK", "Animica Studio", "Modal"],
+  ["Serverless GPU functions", "✓", "✓"],
+  [".remote() / .map() ergonomics", "✓", "✓"],
+  ["Cron + web endpoints", "✓", "✓"],
+  ["Pay-per-second billing", "ANM (on-chain)", "USD (card)"],
+  ["Runs on a decentralized fleet", "✓ miners & GPU providers", "✗ centralized cloud"],
+  ["Useful-work mining synergy", "✓ same rig mines + serves", "—"],
+  ["Post-quantum, verifiable settlement", "✓", "—"],
+  ["Open source", "✓ Apache-2.0", "partial"],
+];
+
+const faqs = [
+  {
+    q: "Is Animica Studio a Modal alternative?",
+    a: "Yes. Animica Studio gives you the same decorator-based serverless developer experience as Modal — @app.function, .remote(), .map(), GPUs, images, secrets, cron, and web endpoints — but functions run on Animica's decentralized GPU/CPU fleet and are paid for in ANM on a live post-quantum blockchain.",
+  },
+  {
+    q: "How do I run a Python function on Animica Studio?",
+    a: "Install the SDK with `pip install animica`, decorate a function with @app.function(), and call train.remote(42) — or run it from the CLI with `animica studio run app.py::train`. In local mode it runs in a sandbox on your machine with zero infrastructure; in remote mode it dispatches to the fleet and settles in ANM.",
+  },
+  {
+    q: "How is compute priced?",
+    a: "Per second of CPU/GPU time, quoted before each run and escrowed in ANM. Payout is split to the provider, treasury, and miners by the on-chain economics. There are no monthly minimums.",
+  },
+  {
+    q: "Can AI agents use Animica Studio?",
+    a: "Yes. Studio ships an MCP server and an llms.txt manifest so AI agents can discover the platform and call studio_run / studio_deploy tools to execute and deploy functions autonomously, paying with a wallet.",
+  },
+];
+
+const jsonLd = [
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "Animica Studio",
+    applicationCategory: "DeveloperApplication",
+    applicationSubCategory: "Serverless Compute Platform",
+    operatingSystem: "Linux, macOS, Windows",
+    url: canonical,
+    downloadUrl: "https://pypi.org/project/animica/",
+    softwareVersion: "2.0.0",
+    description: pageDesc,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD", description: "Pay per second of compute in ANM; no subscription." },
+    featureList: features.map((f) => f.t),
+    keywords:
+      "serverless compute, serverless GPU, Modal alternative, run Python functions in the cloud, " +
+      "GPU functions, AI compute, decentralized compute, pay per second GPU, FaaS, serverless functions, " +
+      "cloud functions, Animica, ANM",
+    sameAs: ["https://github.com/animicaorg/all", "https://animica.org"],
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: faqs.map((f) => ({
+      "@type": "Question",
+      name: f.q,
+      acceptedAnswer: { "@type": "Answer", text: f.a },
+    })),
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Animica", item: "https://animica.org" },
+      { "@type": "ListItem", position: 2, name: "Studio", item: canonical },
+    ],
+  },
+];
 
 const studioDownloads = loadStudioDownloadPageData();
-const studioDocs = "https://github.com/animicaorg/all/blob/main/docs/studio_deploy_quickstart.md";
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
+<BaseLayout title={pageTitle} description={pageDesc} canonical={canonical} jsonLd={jsonLd}>
   <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Animica Studio</h1>
-    <p class="mt-3 opacity-80">
-      Download the official Linux desktop build of Studio for local contract work, node-connected
-      workflows, and bundled Qt desktop tooling. The hosted web Studio is currently being rebuilt —
-      the desktop build below remains fully available in the meantime.
+    <p class="font-mono text-xs uppercase tracking-[0.16em] opacity-60">Serverless compute · paid in ANM</p>
+    <h1 class="mt-3 text-4xl sm:text-5xl font-semibold tracking-tight">
+      Run any Python function on a decentralized GPU fleet
+    </h1>
+    <p class="mt-4 text-lg opacity-85 max-w-3xl">
+      Animica Studio is a <strong>Modal-style serverless platform</strong> for the post-quantum
+      chain. Write a function, add a decorator, and run it on Animica's GPU&nbsp;&amp;&nbsp;CPU
+      fleet — <code>.remote()</code>, <code>.map()</code>, cron, and web endpoints — metered and
+      settled on-chain in ANM. The same rigs that mine and train ANM now run your code.
     </p>
 
-    <div class="mt-8 grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 class="text-xl font-semibold">Linux desktop download</h2>
-            <p class="mt-2 text-sm opacity-80">
-              This page serves the current published <code>.deb</code> build from{" "}
-              <code>website/public/studio</code>.
-            </p>
-          </div>
-          {studioDownloads.buildLabel && (
-            <div class="rounded-lg border px-3 py-2 text-sm
-                        border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-              <div class="font-medium">Build</div>
-              <div class="opacity-80">{studioDownloads.buildLabel}</div>
-            </div>
-          )}
-        </div>
-
-        {studioDownloads.linuxDownload ? (
-          <>
-            <div class="mt-6 flex flex-wrap gap-3">
-              <a
-                href={studioDownloads.linuxDownload.href}
-                download={studioDownloads.linuxDownload.download}
-                class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-                       bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
-                       hover:opacity-90"
-              >
-                {studioDownloads.linuxDownload.label}
-              </a>
-
-              {studioDownloads.checksumLink && (
-                <a
-                  href={studioDownloads.checksumLink.href}
-                  class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-                         border border-[color-mix(in_srgb,var(--text-primary)_/_20%,transparent)]
-                         hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]"
-                >
-                  {studioDownloads.checksumLink.label}
-                </a>
-              )}
-            </div>
-
-            <ul class="mt-4 space-y-1 text-xs opacity-70">
-              <li>
-                Filename: <code>{studioDownloads.linuxDownload.download}</code>
-              </li>
-              {studioDownloads.architecture && <li>Architecture: {studioDownloads.architecture}</li>}
-              {studioDownloads.linuxDownload.sizeLabel && <li>Size: {studioDownloads.linuxDownload.sizeLabel}</li>}
-              {studioDownloads.linuxDownload.sha256 && (
-                <li>
-                  SHA-256: <code>{studioDownloads.linuxDownload.sha256}</code>
-                </li>
-              )}
-              {studioDownloads.generatedAt && <li>Published: {studioDownloads.generatedAt}</li>}
-            </ul>
-
-            <div class="mt-5">
-              <h3 class="font-medium">Install</h3>
-              <ul class="mt-2 space-y-2 text-sm opacity-80">
-                {studioDownloads.instructions.map((instruction) => (
-                  <li>{instruction}</li>
-                ))}
-              </ul>
-            </div>
-          </>
-        ) : (
-          <div class="mt-6">
-            <p class="text-sm opacity-80">
-              A website-hosted Studio artifact is not published yet. Use{" "}
-              <InlineLink href={links.github.releases()}>GitHub Releases</InlineLink> until the
-              Linux package is published into <code>website/public/studio</code>.
-            </p>
-          </div>
-        )}
-      </div>
-
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h2 class="text-xl font-semibold">Need the browser version?</h2>
-        <p class="mt-2 text-sm opacity-80">
-          The hosted web Studio is being rebuilt. A holding page is live while we work — use the
-          Linux desktop build for edit, simulate, and deploy sessions in the meantime.
-        </p>
-        <div class="mt-4 flex flex-col gap-3">
-          <span
-            class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-                   border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]
-                   opacity-60 cursor-not-allowed select-none"
-            aria-disabled="true"
-            title="The hosted web Studio is being rebuilt"
-          >
-            Hosted Studio — rebuilding
-          </span>
-          <InlineLink href={studioDocs}>Read Studio docs</InlineLink>
-        </div>
-      </div>
+    <div class="mt-6 flex flex-wrap gap-3">
+      <a href="https://studio.animica.org"
+         class="inline-flex items-center rounded-lg px-5 py-2.5 font-medium bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)] hover:opacity-90">
+        Open Studio →
+      </a>
+      <a href="/docs/studio"
+         class="inline-flex items-center rounded-lg px-5 py-2.5 font-medium border border-[color-mix(in_srgb,var(--text-primary)_/_20%,transparent)] hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]">
+        Read the docs
+      </a>
+      <code class="inline-flex items-center rounded-lg px-4 py-2.5 font-mono text-sm border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">pip install animica</code>
     </div>
 
-    <div class="mt-10 grid gap-6 md:grid-cols-2">
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-semibold">What’s included</h3>
-        <p class="mt-2 text-sm opacity-80">
-          The Linux desktop package wraps the PySide6-based Studio application and bundled runtime
-          assets needed for local workflows.
-        </p>
-      </div>
+    <pre class="mt-8 overflow-x-auto rounded-2xl border p-5 text-sm leading-relaxed bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]"><code>import animica.studio as studio
 
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-semibold">Verify before install</h3>
-        <p class="mt-2 text-sm opacity-80">
-          Compare the downloaded package hash with the published SHA-256 file before running the
-          installer on production machines.
-        </p>
-      </div>
+app = studio.App("trainer")
+
+@app.function(image=studio.Image.debian_slim().pip_install("torch"), gpu="A100", timeout=900)
+def train(seed: int) -> float:
+    import torch
+    return float(torch.randn(1024, seed % 8 + 1).mean())
+
+train.remote(42)          # one call on the fleet
+train.map(range(128))     # fan-out across providers</code></pre>
+
+    <!-- How it works -->
+    <h2 class="mt-14 text-2xl font-semibold">From zero to running in three steps</h2>
+    <div class="mt-5 grid gap-4 sm:grid-cols-3">
+      {steps.map((s) => (
+        <div class="rounded-2xl border p-5 bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <div class="font-mono text-sm opacity-60">{s.n}</div>
+          <div class="mt-1 font-semibold">{s.t}</div>
+          <code class="mt-2 block text-xs opacity-80 break-words">{s.d}</code>
+        </div>
+      ))}
     </div>
+
+    <!-- Features -->
+    <h2 class="mt-14 text-2xl font-semibold">Everything you expect from serverless</h2>
+    <div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {features.map((f) => (
+        <div class="rounded-2xl border p-5 bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <div class="font-mono text-sm">{f.t}</div>
+          <p class="mt-2 text-sm opacity-80">{f.d}</p>
+        </div>
+      ))}
+    </div>
+
+    <!-- Modal comparison -->
+    <h2 class="mt-14 text-2xl font-semibold">Animica Studio vs. Modal</h2>
+    <p class="mt-2 text-sm opacity-75 max-w-3xl">
+      If you know Modal, you already know Studio — the SDK is intentionally familiar. The
+      difference is where your functions run and how they're paid for.
+    </p>
+    <div class="mt-5 overflow-x-auto rounded-2xl border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <table class="w-full text-sm">
+        <tbody>
+          {compare.map((row, i) => (
+            <tr class={i === 0 ? "bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)] font-semibold" : "border-t border-[color-mix(in_srgb,var(--text-primary)_/_8%,transparent)]"}>
+              <td class="px-4 py-2.5">{row[0]}</td>
+              <td class="px-4 py-2.5">{row[1]}</td>
+              <td class="px-4 py-2.5 opacity-75">{row[2]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- For AI agents -->
+    <h2 class="mt-14 text-2xl font-semibold">Built for AI agents, too</h2>
+    <p class="mt-2 text-sm opacity-80 max-w-3xl">
+      Studio is discoverable and usable by autonomous agents. An <code>llms.txt</code> manifest and
+      an <strong>MCP server</strong> expose <code>studio_run</code>, <code>studio_deploy</code>, and
+      <code>studio_list</code> tools so an agent can run and deploy compute on its own, paying from a
+      wallet. Point your agent at <InlineLink href="https://studio.animica.org/llms.txt">studio.animica.org/llms.txt</InlineLink>.
+    </p>
+
+    <!-- FAQ (mirrors JSON-LD for SEO) -->
+    <h2 class="mt-14 text-2xl font-semibold">FAQ</h2>
+    <div class="mt-4 space-y-4">
+      {faqs.map((f) => (
+        <details class="rounded-2xl border p-5 bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <summary class="cursor-pointer font-medium">{f.q}</summary>
+          <p class="mt-2 text-sm opacity-80">{f.a}</p>
+        </details>
+      ))}
+    </div>
+
+    <!-- Desktop build (secondary, preserved) -->
+    <h2 class="mt-14 text-2xl font-semibold">Prefer the desktop studio?</h2>
+    <p class="mt-2 text-sm opacity-80 max-w-3xl">
+      The Animica Studio desktop app (local contract authoring, simulation, and node-connected
+      workflows) is still available.
+      {studioDownloads.linuxDownload ? (
+        <>
+          {" "}<InlineLink href={studioDownloads.linuxDownload.href}>Download the Linux .deb build</InlineLink>
+          {studioDownloads.linuxDownload.sha256 && <> (verify SHA-256 before installing)</>}, or get all
+          platforms from <InlineLink href="/downloads">Downloads</InlineLink>.
+        </>
+      ) : (
+        <> Grab it from <InlineLink href={links.github.releases()}>GitHub Releases</InlineLink> or <InlineLink href="/downloads">Downloads</InlineLink>.</>
+      )}
+    </p>
   </section>
 </BaseLayout>

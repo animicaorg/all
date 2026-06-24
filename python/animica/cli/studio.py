@@ -946,5 +946,17 @@ def config_validate(
         raise typer.Exit(code=1)
 
 
+# Attach the serverless-compute commands (run/deploy/serve/fn) to this same
+# `animica studio` group. Kept in a separate module so this file stays focused
+# on Studio Services lifecycle. Best-effort: a failure here must not break the
+# lifecycle commands.
+try:  # pragma: no cover - registration glue
+    from .studio_serverless import register as _register_serverless
+
+    _register_serverless(app)
+except Exception as _exc:  # noqa: BLE001
+    LOGGER.debug("studio serverless commands unavailable: %s", _exc)
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()

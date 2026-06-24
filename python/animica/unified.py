@@ -504,6 +504,20 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
         enabled=True, reason="CPU useful-work (scrape/clean/embed/eval)",
         env=dict(base_env)))
 
+    # Animica Studio — serve serverless function_compute jobs. Every rig (CPU or
+    # GPU) can run Studio functions, so the same hardware that mines and trains
+    # also executes users' (and agents') code, all paid to cfg.address. GPU rigs
+    # advertise the GPU capability so gpu-pinned functions route here.
+    studio_argv = a + ["studio", "worker", "--address", cfg.address,
+                       "--tiers", "function_compute"]
+    if gpu:
+        studio_argv += ["--gpu"]
+    plan.append(Component(
+        "studio", studio_argv, enabled=True,
+        reason="serves Animica Studio serverless functions (GPU-tier)" if gpu
+               else "serves Animica Studio serverless functions",
+        env=dict(base_env)))
+
     # GPU: train pool shards toward the global model
     plan.append(Component(
         "trainer",

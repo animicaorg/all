@@ -8,7 +8,8 @@ export type JobClass =
   | 'evaluation'
   | 'retrieval_indexing'
   | 'agent_task'
-  | 'custom_compute';
+  | 'custom_compute'
+  | 'function_compute';
 
 export type JobStatus =
   | 'queued'

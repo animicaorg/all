@@ -3,6 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 import AdBanner from "../components/AdBanner.astro";
+import StudioBanner from "../components/StudioBanner.astro";
 import ParticleLogo from "../components/ParticleLogo.astro";
 
 const title = "Animica — Post-Quantum Blockchain for Verifiable Compute";
@@ -104,8 +105,8 @@ const ecosystemProducts = [
   {
     title: "Studio",
     description:
-      "Contract IDE for authoring, simulation, and deployment. The hosted web version is being rebuilt.",
-    href: "/studio",
+      "Serverless compute — write a Python function, decorate it, and run it on the fleet for ANM. Modal-style DX at studio.animica.org.",
+    href: "https://studio.animica.org",
   },
   {
     title: "Academy",
@@ -170,6 +171,32 @@ const ecosystemProducts = [
           </li>
         ))}
       </ul>
+    </div>
+  </section>
+
+  <StudioBanner href="https://studio.animica.org" />
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">New · Desktop app</span>
+      <h2 class="aicf-heading aicf-h2">Animica Studio — agentic code studio</h2>
+      <p class="aicf-subheading">
+        A local AI coding IDE powered by Animica: chat with agents, browse and edit your
+        project, generate complete features, and run commands with approval — an agentic
+        workflow that builds software with you, all on your machine.
+      </p>
+
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="/studio/animica-studio-qt-linux-amd64.deb" download>Linux (.deb)</a>
+        <a class="aicf-btn" href="/studio/animica-studio-qt-windows-x64-setup.exe" download>Windows (.exe)</a>
+        <a class="aicf-btn" href="/studio/animica-studio-qt-macos.zip" download>macOS (.zip)</a>
+        <a class="aicf-ghost-btn" href="/studio/animica-studio-qt-src.zip" download>Source (pip)</a>
+      </div>
+      <p class="aicf-subheading" style="margin-top:0.75rem; font-size:0.9rem; opacity:0.75;">
+        Self-contained desktop builds that bundle Python + Qt. Windows: run the installer.
+        macOS: unzip, then right-click → Open (unsigned). Or run from source:
+        <code>pip install -r requirements.txt</code> &amp; <code>python main.py</code>.
+      </p>
     </div>
   </section>
 

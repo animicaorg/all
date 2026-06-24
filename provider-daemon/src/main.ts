@@ -45,7 +45,7 @@ async function execute(job: JobRecord) {
   const startedAt = Date.now();
   inFlight += 1;
   try {
-    const result = executeJob(job);
+    const result = await executeJob(job);
     const duration = Date.now() - startedAt;
     await api.submitResult(job.id, {
       output: {
