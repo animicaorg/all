@@ -127,6 +127,13 @@ def _make_handler(facade):
                     if not pid:
                         return self._send(400, {"error": "pool_id required"})
                     return self._send(200, {"leaderboard": facade.pool.leaderboard(pid)})
+                if path == "/pool/payouts":
+                    pid = q.get("pool_id")
+                    if not pid:
+                        return self._send(400, {"error": "pool_id required"})
+                    rnd = q.get("round")
+                    return self._send(200, {"payouts": facade.pool.payouts(
+                        pid, round=int(rnd) if rnd is not None else None)})
                 if path == "/pool/models":
                     return self._send(200, {"models": facade.pool.list_models()})
                 if path == "/pool/model":
@@ -261,9 +268,44 @@ def _make_handler(facade):
     return Handler
 
 
+def _start_pool_sweeper(facade) -> None:
+    """Background ticker that unsticks stalled training rounds.
+
+    Periodically calls ``facade.pool.sweep()`` to reopen abandoned shard claims
+    and force-aggregate rounds that have stalled (>=1 submitted shard, no live
+    claims, no progress for the timeout). Daemon thread — dies with the process.
+    Disable with ENA_POOL_SWEEP=0; interval via ENA_POOL_SWEEP_SECS (default 120).
+    """
+    import os
+    import threading
+    import time
+
+    if os.environ.get("ENA_POOL_SWEEP", "1") == "0":
+        return
+    interval = max(15, int(os.environ.get("ENA_POOL_SWEEP_SECS", "120")))
+    sweep = getattr(getattr(facade, "pool", None), "sweep", None)
+    if not callable(sweep):
+        return
+
+    def _loop() -> None:
+        while True:
+            time.sleep(interval)
+            try:
+                actions = sweep()
+                for a in (actions or []):
+                    if a.get("aggregated") or a.get("reclaimed"):
+                        print(f"[ena.sweep] {a}")
+            except Exception as exc:  # noqa: BLE001 - sweeper must never crash the server
+                print(f"[ena.sweep] error: {exc}")
+
+    threading.Thread(target=_loop, name="ena-pool-sweeper", daemon=True).start()
+    print(f"[ena] pool sweeper started (every {interval}s)")
+
+
 def serve(facade, host: str = "127.0.0.1", port: int = 8787) -> None:
     httpd = ThreadingHTTPServer((host, port), _make_handler(facade))
     print(f"[ena] serving on http://{host}:{port}")
+    _start_pool_sweeper(facade)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover

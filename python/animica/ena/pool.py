@@ -776,6 +776,7 @@ class PoolService:
         rejected = list(meta.get("rejected_rounds") or [])
         rejected.append({"round": rnd, "score": eval_score,
                          "threshold": gate_info.get("threshold"),
+                         "reason": gate_info.get("reason", "eval_below_threshold"),
                          "checkpoint_hash": candidate.get("checkpoint_hash"),
                          "at": now_ts()})
         meta["rejected_rounds"] = rejected[-20:]
@@ -843,6 +844,91 @@ class PoolService:
                   ).get("topics_seed") or []
         return {"pool_id": pool_id, "rows": rows, "topics": topics}
 
+    # -- stuck-round sweep (anti-deadlock) --------------------------------
+    def sweep(self, *, now: Optional[int] = None,
+              aggregate_timeout_secs: Optional[int] = None,
+              pool_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """Reclaim abandoned shard claims and aggregate stalled rounds.
+
+        Prevents the deadlock that strands a round forever: a round splits into N
+        shards, some trainers claim shards and then die/leave, and because
+        ``aggregate`` requires *all* shards (and claim-reclaim is lazy — it only
+        fires when a NEW trainer claims) the round never completes if no fresh
+        trainers arrive.
+
+        For each training pool, this:
+          1. Reopens shards still ``claimed`` past ``shard_reclaim_secs`` (so an
+             active trainer can re-pick them immediately).
+          2. If the current round has >=1 submitted shard AND either all shards
+             are submitted OR the round has made no progress for
+             ``round_aggregate_timeout_secs`` with no live claims left, calls
+             ``aggregate(auto=True, min_submitted=<#submitted>)``. With the
+             promote guard, that either promotes real work or reject-and-advances
+             (keeping the last real served checkpoint) — the flywheel never
+             deadlocks, and serving never regresses.
+
+        Idempotent and best-effort: never raises; returns a per-pool action log.
+        Driven by the coordinator's background ticker (see ena.service.serve).
+        """
+        now = now or now_ts()
+        out: list[dict[str, Any]] = []
+        pools = ([self.get(pool_id)] if pool_id
+                 else list(self.store.list_pools(status=POOL_STATUS_TRAINING, limit=1000)))
+        for pool in pools:
+            if not pool or pool.get("status") != POOL_STATUS_TRAINING:
+                continue
+            pid = pool["pool_id"]
+            rnd = pool["round"]
+            meta = pool.get("metadata") or {}
+            reclaim_secs = int(meta.get("shard_reclaim_secs", 1800))
+            timeout = int(aggregate_timeout_secs
+                          if aggregate_timeout_secs is not None
+                          else meta.get("round_aggregate_timeout_secs", 3600))
+            try:
+                shards = list(self.store.list_shards(pid, round=rnd))
+            except Exception:
+                continue
+            if not shards:
+                continue
+
+            # 1) reopen abandoned claims
+            reclaimed = 0
+            for s in shards:
+                if s.get("status") == SHARD_CLAIMED and (now - int(s.get("updated_at") or 0)) > reclaim_secs:
+                    try:
+                        if self.release_shard(pid, s["shard_id"],
+                                              worker_id=s.get("worker_id")).get("reopened"):
+                            reclaimed += 1
+                    except Exception:
+                        pass
+
+            # 2) decide whether to force-aggregate a stalled round
+            shards = list(self.store.list_shards(pid, round=rnd))  # refresh post-reclaim
+            submitted = [s for s in shards if s["status"] in (SHARD_SUBMITTED, SHARD_VERIFIED)]
+            if not submitted:
+                if reclaimed:
+                    out.append({"pool_id": pid, "round": rnd, "reclaimed": reclaimed})
+                continue
+            remaining = [s for s in shards if s["status"] not in (SHARD_SUBMITTED, SHARD_VERIFIED)]
+            no_live_claims = all(s.get("status") != SHARD_CLAIMED for s in remaining)
+            last_progress = max((int(s.get("updated_at") or 0) for s in submitted), default=0)
+            stalled = (now - last_progress) > timeout
+            ready = (not remaining) or (stalled and no_live_claims)
+            if not ready:
+                if reclaimed:
+                    out.append({"pool_id": pid, "round": rnd, "reclaimed": reclaimed,
+                                "ready": False})
+                continue
+            try:
+                res = self.aggregate(pid, min_submitted=len(submitted), auto=True)
+                out.append({"pool_id": pid, "round": rnd, "reclaimed": reclaimed,
+                            "aggregated": True, "promoted": res.get("promoted"),
+                            "reason": res.get("reason"), "next_round": res.get("next_round")})
+            except Exception as exc:  # noqa: BLE001
+                out.append({"pool_id": pid, "round": rnd, "reclaimed": reclaimed,
+                            "error": str(exc)})
+        return out
+
     # -- aggregate + eval gate + promote ----------------------------------
     def aggregate(self, pool_id: str, *, eval_score: Optional[float] = None,
                   min_submitted: Optional[int] = None,
@@ -897,16 +983,38 @@ class PoolService:
             pool["training_head"] = {
                 "round": rnd, "path": merged["path"],
                 "checkpoint_hash": merged["hash"], "created_at": now_ts()}
+            # Record that this round produced REAL, finite, usable work (a finite
+            # merged adapter). Payout pays only finite rounds — never NaN-poison
+            # rounds the merge guard rejected — so the budget can't be drained on
+            # diverged submissions.
+            _meta = dict(pool.get("metadata") or {})
+            _fin = list(_meta.get("finite_rounds") or [])
+            if rnd not in _fin:
+                _fin.append(rnd)
+            _meta["finite_rounds"] = _fin[-500:]
+            pool["metadata"] = _meta
 
-        # HARD GUARD: if real adapter weights were uploaded but the merge couldn't
-        # produce a FINITE adapter (every shard diverged to NaN/inf), there is
-        # nothing safe to serve — never promote NaN garbage even though the gate
-        # "passed" on a stale/self-reported score. (Command-backend pools have no
-        # adapter files and legitimately use the merge-plan fallback, so only guard
-        # when adapters were actually present.)
-        if not merged.get("merged") and self._shards_have_adapters(submitted):
+        # HARD GUARD: a weight-training pool (lora/qlora/sft/dpo/full/ppo) MUST
+        # produce a real, FINITE merged adapter to promote. Serving loads
+        # served_checkpoint["path"] as the adapter dir, so promoting a round with
+        # no real adapter silently regresses serving to the BASE model.
+        #
+        # This fires in two cases:
+        #   (a) adapters were uploaded but every shard diverged to NaN/inf, OR
+        #   (b) a weight-training round produced NO adapter at all — e.g. trainers
+        #       reported a score but never uploaded weights (checkpoint_path=None).
+        # Only a genuine command-backend pool (no weights expected) may serve the
+        # merge-plan fallback. In both cases the auto path reject-and-advances
+        # (round advances, last real served_checkpoint preserved); the manual path
+        # returns not-promoted so it can never overwrite a good checkpoint.
+        _method = str(pool.get("method")
+                      or (pool.get("hyperparameters") or {}).get("method") or "").lower()
+        _weights_expected = _method in ("lora", "qlora", "sft", "dpo", "full", "ppo")
+        if not merged.get("merged") and (_weights_expected or self._shards_have_adapters(submitted)):
             info = {"gated": bool(pool.get("eval_gate")),
-                    "reason": "no_finite_merged_adapter"}
+                    "reason": "no_finite_merged_adapter",
+                    "method": _method or None,
+                    "adapters_uploaded": self._shards_have_adapters(submitted)}
             if auto:
                 return self._reject_and_advance(pool, pool_id, rnd, candidate, info,
                                                 eval_score, trainer_topics)
@@ -1017,6 +1125,16 @@ class PoolService:
             rnd = (pool["round"] - 1) if round is None else int(round)
             if rnd < 1:
                 raise PoolError("no completed round to pay out")
+            # SERVING/QUALITY GATE: never pay a round the merge guard rejected
+            # (NaN-poison or a regression). Such a round produced nothing servable,
+            # so paying it would drain the budget on diverged work. Rounds that
+            # produced a finite merged adapter are not in rejected_rounds.
+            meta = pool.get("metadata") or {}
+            rejected_set = {int(r.get("round")) for r in (meta.get("rejected_rounds") or [])
+                            if isinstance(r, dict) and r.get("round") is not None}
+            if rnd in rejected_set:
+                return {"pool_id": pool_id, "round": rnd, "entries": [],
+                        "reason": "round_rejected_unservable"}
             contribs = [c for c in self.store.list_contributions(pool_id, round=rnd)
                         if not c.get("paid")]
             budget = int(pool.get("budget_nano", 0))
@@ -1061,9 +1179,15 @@ class PoolService:
                     total_paid += nano
 
             self.store.mark_contributions_paid(paid_ids)
+            ts = now_ts()
+            # Per-recipient ledger: persist who was paid how much for this round so
+            # disbursements are auditable and the on-chain settlement path has a
+            # source of truth (mark_contributions_paid only flips a bool).
+            if entries:
+                self.store.record_payouts(pool_id, rnd, entries, ts)
             pool["budget_nano"] = budget - total_paid
             pool["paid_out_nano"] = int(pool.get("paid_out_nano", 0)) + total_paid
-            pool["updated_at"] = now_ts()
+            pool["updated_at"] = ts
             self.store.upsert_pool(pool)
             return {"pool_id": pool_id, "round": rnd, "budget_nano": budget,
                     "paid_nano": total_paid, "remaining_nano": pool["budget_nano"],
@@ -1098,9 +1222,18 @@ class PoolService:
             "budget_nano": int(pool.get("budget_nano", 0)),
             "budget_anm": pay.nano_to_anm(int(pool.get("budget_nano", 0))),
             "paid_out_nano": int(pool.get("paid_out_nano", 0)),
+            # auditable ledger total (sum of per-recipient disbursements) and the
+            # rounds that produced real finite work (payable).
+            "paid_out_ledger_nano": self.store.total_paid_out_nano(pool_id),
+            "finite_rounds": list((pool.get("metadata") or {}).get("finite_rounds") or []),
             "served_checkpoint": pool.get("served_checkpoint"),
             "reward_split": pool["reward_split"],
         }
+
+    def payouts(self, pool_id: str,
+                round: Optional[int] = None) -> list[dict[str, Any]]:
+        """Per-recipient payout ledger (auditable disbursement history)."""
+        return self.store.list_payouts(pool_id, round=round)
 
     def leaderboard(self, pool_id: str, limit: int = 10) -> list[dict[str, Any]]:
         agg: dict[tuple[str, str], float] = {}
