@@ -48,6 +48,30 @@ ergonomics — about six new modules of glue over four production subsystems.
 See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full wire trace and
 [`ROADMAP.md`](./ROADMAP.md) for what's built vs. staged.
 
+## Install
+
+```bash
+pip install animica
+```
+
+The complete client. Everything to mine, run a node, use the wallet, deploy
+Python contracts, run `animica up` (the unified miner: PoW + useful-work +
+GPU train/serve + Studio functions), and use the Studio SDK. The native CPU
+miner (`animica-fastpow`) is included **by default**. This is what most people
+want.
+
+```bash
+pip install "animica[all]"
+```
+
+Everything above **plus** every optional extra: Qt desktop-wallet QR codes, the
+full distributed Studio client (`cloudpickle` for closures + `omni-sdk` for
+on-chain ANM escrow), and all server/operator dependencies pinned. Use it if you
+want the kitchen sink or are running pool/API infrastructure.
+
+> Quote the extras form as `pip install "animica[all]"` (with quotes) so
+> zsh/macOS does not glob the brackets.
+
 ## Layout
 
 ```

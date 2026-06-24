@@ -21,6 +21,30 @@ falls back to its pure-Python loop if the extension isn't installed — so it's 
 
 ## Install
 
+Most people don't install this package directly — it ships with the full
+Animica client:
+
+```bash
+pip install animica          # the complete client; native CPU miner included by default
+pip install "animica[all]"   # everything above PLUS every optional extra
+```
+
+- `pip install animica` — the complete client. Everything to mine, run a node,
+  use the wallet, deploy Python contracts, run `animica up` (the unified miner:
+  PoW + useful-work + GPU train/serve + Studio functions), and use the Studio
+  SDK. The native CPU miner (`animica-fastpow`) is included BY DEFAULT. This is
+  what most people want.
+- `pip install "animica[all]"` — everything above PLUS every optional extra: Qt
+  desktop-wallet QR codes, the full distributed Studio client (cloudpickle for
+  closures + omni-sdk for on-chain ANM escrow), and all server/operator
+  dependencies pinned. Use it if you want the kitchen sink or are running
+  pool/API infrastructure.
+
+Quote the extras form as `pip install "animica[all]"` (with quotes) so
+zsh/macOS does not glob the brackets.
+
+To install only this native accelerator:
+
 ```bash
 pip install animica-fastpow         # prebuilt wheel (Linux/macOS/Windows)
 pip install "animica[fast]"          # via the animica miner extra

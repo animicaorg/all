@@ -555,6 +555,21 @@ animica up</span></pre>
           <pre class="mt-4 overflow-x-auto rounded-2xl bg-black/40 p-4 text-sm text-slate-100">pip install animica
 animica miner dual-mine &lt;anm-address&gt; \
   --pool-host pool.animica.org</pre>
+          <p class="mt-3 text-sm text-slate-300">
+            <code>pip install animica</code> is the complete client — everything to mine, run a node,
+            use the wallet, deploy Python contracts, run <code>animica up</code>, and use the Studio SDK.
+            The native CPU miner (<code>animica-fastpow</code>) ships by default, so this is all most
+            people need.
+          </p>
+          <p class="mt-2 text-sm text-slate-300">
+            Want the kitchen sink — Qt desktop-wallet QR codes, the full distributed Studio client
+            (cloudpickle + omni-sdk for on-chain ANM escrow), and all server/operator dependencies
+            pinned — or are you running pool/API infrastructure? Install the extras instead:
+          </p>
+          <pre class="mt-3 overflow-x-auto rounded-2xl bg-black/40 p-4 text-sm text-slate-100">pip install "animica[all]"</pre>
+          <p class="mt-2 text-sm text-slate-300">
+            Keep the quotes around <code>animica[all]</code> so zsh/macOS does not glob the brackets.
+          </p>
         </div>
 
         <div class="rounded-[28px] border border-slate-200/10 bg-[color:var(--bg-elevated)] p-6 shadow-xl shadow-slate-950/10">

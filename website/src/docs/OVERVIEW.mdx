@@ -47,7 +47,18 @@ The commands below are illustrative — run `animica --help` for the exact surfa
 
 ```bash
 # 1) Install the CLI + Python SDK
+#    The complete client: mine, run a node, use the wallet, deploy Python
+#    contracts, run `animica up` (the unified miner: PoW + useful-work +
+#    GPU train/serve + Studio functions), and use the Studio SDK. The native
+#    CPU miner (animica-fastpow) is included BY DEFAULT. Most people want this.
 pip install animica
+
+#    Or grab the kitchen sink — everything above PLUS every optional extra:
+#    Qt desktop-wallet QR codes, the full distributed Studio client (cloudpickle
+#    closures + omni-sdk on-chain ANM escrow), and all server/operator deps
+#    pinned. Use it for pool/API infrastructure. Quote the brackets so
+#    zsh/macOS does not glob them:
+pip install "animica[all]"
 
 # 2) Create a wallet (keys stay local; addresses are bech32m anim1...)
 animica wallet create --label mywallet

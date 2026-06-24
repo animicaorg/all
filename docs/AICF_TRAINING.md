@@ -315,12 +315,33 @@ rlhf_job = JobSpec(
 #### 1. Install Worker Software
 
 ```bash
+# Install the Animica client (provides the `animica aicf` CLI used below)
+pip install animica
+
+# Or install with every optional extra (kitchen sink / operators)
+pip install "animica[all]"
+
 # Install ENA worker package
 pip install animica-ena-worker
 
 # Verify installation
 ena-worker --version
 ```
+
+**Which install do I need?**
+
+- `pip install animica` — the complete client. Everything to mine, run a node,
+  use the wallet, deploy Python contracts, run `animica up` (the unified miner:
+  PoW + useful-work + GPU train/serve + Studio functions), and use the Studio
+  SDK. The native CPU miner (`animica-fastpow`) is included **by default**. This
+  is what most people want, and it provides the `animica aicf` commands used
+  throughout this guide.
+- `pip install "animica[all]"` — everything above **plus** every optional extra:
+  Qt desktop-wallet QR codes, the full distributed Studio client (cloudpickle
+  for closures + omni-sdk for on-chain ANM escrow), and all server/operator
+  dependencies pinned. Use it if you want the kitchen sink or are running
+  pool/API infrastructure. Quote the extras form (`"animica[all]"`) so
+  zsh/macOS does not glob the brackets.
 
 #### 2. Configure Worker
 

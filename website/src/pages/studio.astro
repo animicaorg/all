@@ -131,6 +131,29 @@ const studioDownloads = loadStudioDownloadPageData();
       <code class="inline-flex items-center rounded-lg px-4 py-2.5 font-mono text-sm border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">pip install animica</code>
     </div>
 
+    <!-- Install: base vs. all -->
+    <div class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div class="rounded-2xl border p-5 bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <code class="block font-mono text-sm">pip install animica</code>
+        <p class="mt-2 text-sm opacity-80">
+          The complete client — mine, run a node, use the wallet, deploy Python contracts,
+          run <code>animica up</code> (the unified miner: PoW + useful-work + GPU train/serve +
+          Studio functions), and use the <strong>Studio SDK</strong>. The native CPU miner
+          (<code>animica-fastpow</code>) is included by default. This is what most people want.
+        </p>
+      </div>
+      <div class="rounded-2xl border p-5 bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <code class="block font-mono text-sm">pip install "animica[all]"</code>
+        <p class="mt-2 text-sm opacity-80">
+          Everything above plus every optional extra: Qt desktop-wallet QR codes, the full
+          <strong>distributed Studio client</strong> (cloudpickle for closures + omni-sdk for
+          on-chain ANM escrow), and all server/operator dependencies pinned. Use it for the
+          kitchen sink or to run pool/API infrastructure. Quote the brackets so zsh/macOS
+          does not glob them.
+        </p>
+      </div>
+    </div>
+
     <pre class="mt-8 overflow-x-auto rounded-2xl border p-5 text-sm leading-relaxed bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]"><code>import animica.studio as studio
 
 app = studio.App("trainer")

@@ -133,6 +133,28 @@ const jsonLd = {
       </div>
     </div>
 
+    <div class="mt-8 rounded-lg border border-white/10 bg-white/5 p-4 sm:p-5">
+      <h2 class="m-0 text-lg font-semibold">Install</h2>
+      <p class="m-0 mt-2 text-sm opacity-80">
+        <code class="bg-white/10 rounded px-1.5 py-0.5">pip install animica</code> — the complete
+        client. Everything to mine, run a node, use the wallet, deploy Python contracts, run
+        <code class="bg-white/10 rounded px-1.5 py-0.5">animica up</code> (the unified miner: PoW +
+        useful-work + GPU train/serve + Studio functions), and use the Studio SDK. The native CPU
+        miner (animica-fastpow) is included by default. This is what most people want.
+      </p>
+      <p class="m-0 mt-2 text-sm opacity-80">
+        <code class="bg-white/10 rounded px-1.5 py-0.5">pip install "animica[all]"</code> — everything
+        above plus every optional extra: Qt desktop-wallet QR codes, the full distributed Studio
+        client (cloudpickle for closures + omni-sdk for on-chain ANM escrow), and all server/operator
+        dependencies pinned. Use it if you want the kitchen sink or are running pool/API
+        infrastructure.
+      </p>
+      <p class="m-0 mt-2 text-xs opacity-60">
+        Quote the extras form as <code class="bg-white/10 rounded px-1.5 py-0.5">pip install "animica[all]"</code>
+        (with quotes) so zsh/macOS does not glob the brackets.
+      </p>
+    </div>
+
     <div class="mt-8 grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" id="docs-cards">
       {cards.map((c) => (
         <a

@@ -53,6 +53,10 @@ export const faqData: FAQCategory[] = [
         answer: "There is a web wallet at wallet.animica.org, a desktop Qt wallet for Windows and macOS, and a browser extension wallet. The CLI (pip install animica) also includes wallet commands for hot and cold workflows. See the /wallet page for downloads and checksums."
       },
       {
+        question: "What is the difference between pip install animica and animica[all]?",
+        answer: "pip install animica is the complete client: everything to mine, run a node, use the wallet, deploy Python contracts, run `animica up` (the unified miner — PoW + useful-work + GPU train/serve + Studio functions), and use the Studio SDK. The native CPU miner (animica-fastpow) is included by default. This is what most people want. pip install \"animica[all]\" (keep the quotes so zsh/macOS does not glob the brackets) adds every optional extra on top: Qt desktop-wallet QR codes, the full distributed Studio client (cloudpickle for closures plus omni-sdk for on-chain ANM escrow), and all server/operator dependencies pinned. Use it if you want the kitchen sink or are running pool/API infrastructure."
+      },
+      {
         question: "How do I mine?",
         answer: "Point a RandomX CPU miner at the pool at pool.animica.org — and you can dual-mine XMR on the same hardware at the same time. Step-by-step setup, miner bundles, and pool stats are on the /mine page."
       },

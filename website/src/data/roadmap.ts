@@ -188,7 +188,7 @@ export const roadmapData: RoadmapPhase[] = [
       },
       {
         title: "animica CLI 0.4.x on PyPI",
-        description: "pip install animica — wallet, mining, dual-mine, and Bittensor commands",
+        description: `pip install animica — the complete client: mine (native CPU miner included by default), run a node, use the wallet, deploy Python contracts, run "animica up" (unified miner: PoW + useful-work + GPU train/serve + Studio), and use the Studio SDK. This is what most people want. pip install "animica[all]" adds every optional extra: Qt desktop-wallet QR codes, the full distributed Studio client (cloudpickle + omni-sdk for on-chain ANM escrow), and all server/operator deps — use it for the kitchen sink or pool/API infrastructure.`,
         status: "done",
         date: "Q2 2026",
         category: "tooling"

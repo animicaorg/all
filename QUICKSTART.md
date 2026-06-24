@@ -123,6 +123,27 @@ newgrp docker  # Or log out and back in
 sudo apt-get install -y build-essential pkg-config libssl-dev curl
 ```
 
+### Install Animica (from PyPI)
+
+The quickest way to get the client is from PyPI. There are two install forms:
+
+```bash
+# The complete client. Everything to mine, run a node, use the wallet, deploy
+# Python contracts, run `animica up` (the unified miner: PoW + useful-work +
+# GPU train/serve + Studio functions), and use the Studio SDK. The native CPU
+# miner (animica-fastpow) is included BY DEFAULT. This is what most people want.
+pip install animica
+
+# Everything above PLUS every optional extra: Qt desktop-wallet QR codes,
+# the full distributed Studio client (cloudpickle for closures + omni-sdk for
+# on-chain ANM escrow), and all server/operator dependencies pinned. Use it if
+# you want the kitchen sink or are running pool/API infrastructure.
+# Quote the extras form so zsh/macOS does not glob the brackets.
+pip install "animica[all]"
+```
+
+To work from source instead, clone and run the setup script (below).
+
 ### Clone and Setup Repository
 ```bash
 # Clone the repository

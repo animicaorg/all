@@ -582,6 +582,26 @@ by capability — SHA3 proof-of-work, ENA useful-work, and (on a GPU) model trai
 to your address.** No flags, no separate daemons. Preview what will run with
 `animica up --plan`.
 
+#### Which install?
+
+```bash
+pip install animica          # the complete client (what most people want)
+pip install "animica[all]"   # everything above + every optional extra
+```
+
+- **`pip install animica`** — the complete client. Everything to mine, run a node,
+  use the wallet, deploy Python contracts, run `animica up` (the unified miner: PoW
+  + useful-work + GPU train/serve + Studio functions), and use the Studio SDK. The
+  native CPU miner (`animica-fastpow`) is included **by default**. This is what most
+  people want.
+- **`pip install "animica[all]"`** — everything above **plus** every optional extra:
+  Qt desktop-wallet QR codes, the full distributed Studio client (cloudpickle for
+  closures + omni-sdk for on-chain ANM escrow), and all server/operator dependencies
+  pinned. Use it if you want the kitchen sink or are running pool/API infrastructure.
+
+> Quote the extras form as `pip install "animica[all]"` (with quotes) so zsh/macOS
+> does not glob the brackets.
+
 The pool enforces a **minimum miner version (1.0.0)** and rejects older miners, so
 keep `animica` upgraded. Full guide: <https://pool.animica.org/mining-onboard>.
 

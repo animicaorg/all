@@ -99,9 +99,14 @@ const description =
         <article class="aicf-card">
           <h3 style="font-size:1.1rem;">CLI &amp; SDK</h3>
           <p class="aicf-muted" style="margin-top:0.55rem;">
-            <code>pip install animica</code> gives you the <code>animica</code> CLI for wallets,
-            transactions, mining, and node interaction. See <a href="/downloads">downloads</a> and
-            <a href="/docs">docs</a>.
+            <code>pip install animica</code> gives you the complete <code>animica</code> client —
+            everything to mine, run a node, use the wallet, deploy Python contracts, run the unified
+            <code>animica up</code> miner, and use the Studio SDK, with the native CPU miner included
+            by default. This is what most people want. Prefer
+            <code>pip install "animica[all]"</code> (quote the brackets so zsh/macOS won't glob them)
+            for the kitchen sink: every optional extra — Qt wallet QR codes, the full distributed
+            Studio client, and all server/operator dependencies pinned. See
+            <a href="/downloads">downloads</a> and <a href="/docs">docs</a>.
           </p>
         </article>
       </div>

@@ -258,7 +258,12 @@ const walletExtension = loadWalletExtensionDownloadData();
         animica wallet export mywallet --out cold.key
       </div>
       <p class="mt-2 text-xs opacity-70">
-        Install with <code>pip install animica</code>. Learn more in the{" "}
+        Install with <code>pip install animica</code> — the complete client (mine, run a node, use
+        the wallet, deploy Python contracts, run <code>animica up</code>, and use the Studio SDK;
+        the native CPU miner ships by default). This is what most people want. For the kitchen sink
+        use <code>pip install "animica[all]"</code> (quote the brackets so zsh/macOS does not glob
+        them), which adds every optional extra: Qt desktop-wallet QR codes, the full distributed
+        Studio client, and all server/operator dependencies pinned. Learn more in the{" "}
         <InlineLink href="https://github.com/animicaorg/all/tree/main/docs/wallets">wallet docs on GitHub</InlineLink>{" "}
         or the <InlineLink href="/docs">docs hub</InlineLink>.
       </p>

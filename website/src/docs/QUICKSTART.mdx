@@ -32,6 +32,7 @@ rustc --version
 pip install animica
 animica node up
 animica node status
+# (Want every optional extra too? See "Choosing your install" below.)
 # Keep this running in a terminal; it exposes HTTP RPC and WS endpoints locally.
 # Don't want to run a node yet? Use the public mainnet RPC instead:
 # https://rpc.animica.org/rpc (JSON-RPC, POST only)
@@ -60,7 +61,20 @@ From Studio you can edit → simulate → deploy → verify contracts end-to-end
 
 Python (published on PyPI as `animica` — CLI + client libraries):
 
+Choosing your install:
+
 pip install animica
+# The complete client. Everything to mine, run a node, use the wallet, deploy
+# Python contracts, run `animica up` (the unified miner: PoW + useful-work +
+# GPU train/serve + Studio functions), and use the Studio SDK. The native CPU
+# miner (animica-fastpow) is included by default. This is what most people want.
+
+pip install "animica[all]"
+# Everything above PLUS every optional extra: Qt desktop-wallet QR codes,
+# the full distributed Studio client (cloudpickle for closures + omni-sdk for
+# on-chain ANM escrow), and all server/operator dependencies pinned. Use it if
+# you want the kitchen sink or are running pool/API infrastructure.
+# Quote the brackets ("animica[all]") so zsh/macOS does not glob them.
 
 # Create a wallet and inspect it (keys stay local)
 animica wallet create --label mywallet

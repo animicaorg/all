@@ -13,7 +13,16 @@ public, live, and callable.
 Write a Python function, decorate it, and run it on the fleet. Agents can use
 Studio to execute and deploy compute autonomously, paying from a wallet.
 
-- Install: `pip install animica`
+- Install: `pip install animica` — the complete client: mine, run a node, use
+  the wallet, deploy Python contracts, run `animica up` (the unified miner: PoW +
+  useful-work + GPU train/serve + Studio functions), and use the Studio SDK. The
+  native CPU miner (animica-fastpow) is included by default. This is what most
+  people want.
+- Everything + extras: `pip install "animica[all]"` (quote the brackets so
+  zsh/macOS does not glob them) — all of the above PLUS every optional extra: Qt
+  desktop-wallet QR codes, the full distributed Studio client (cloudpickle +
+  omni-sdk for on-chain ANM escrow), and all server/operator dependencies pinned.
+  Use it for the kitchen sink or when running pool/API infrastructure.
 - SDK (Python):
   ```python
   import animica.studio as studio

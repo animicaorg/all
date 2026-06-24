@@ -158,6 +158,14 @@ const ecosystemProducts = [
           aria-label="Copy command: pip install animica"
         >Copy</button>
       </div>
+      <p class="aicf-pip-note">
+        The complete client — mine, run a node, use the wallet, deploy Python contracts,
+        run <code>animica up</code> (the unified PoW + useful-work + GPU train/serve +
+        Studio miner), and use the Studio SDK. The native CPU miner is included by default.
+        Want the kitchen sink? <code>pip install "animica[all]"</code> adds every optional
+        extra: Qt wallet QR codes, the full distributed Studio client (cloudpickle + omni-sdk
+        for on-chain ANM escrow), and all pinned server/operator deps.
+      </p>
 
       <ul class="aicf-fact-strip" aria-label="Chain facts">
         {heroFacts.map((fact) => (
@@ -329,6 +337,20 @@ const ecosystemProducts = [
       color: #07120f;
       background: var(--brand-300);
       border-color: var(--brand-300);
+    }
+
+    .aicf-pip-note {
+      margin: 0.7rem 0 0;
+      max-width: 64ch;
+      font-size: 0.86rem;
+      line-height: 1.5;
+      color: rgba(241, 246, 255, 0.72);
+    }
+
+    .aicf-pip-note code {
+      font-family: var(--font-mono);
+      font-size: 0.82em;
+      color: var(--brand-200);
     }
 
     .aicf-fact-strip {

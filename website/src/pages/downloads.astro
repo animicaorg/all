@@ -80,6 +80,30 @@ const provider = loadProviderDownloadsPageData();
             aria-label="Copy pip install command"
           >Copy</button>
         </div>
+        <p class="aicf-muted" style="margin-top:0.7rem;">
+          The complete client — everything to mine, run a node, use the wallet, deploy Python
+          contracts, run <code>animica up</code> (the unified miner: PoW + useful-work + GPU
+          train/serve + Studio functions), and use the Studio SDK. The native CPU miner
+          (<code>animica-fastpow</code>) is included by default. This is what most people want.
+        </p>
+        <div class="aicf-code" style="margin-top:0.85rem; display:flex; align-items:center; justify-content:space-between; gap:0.75rem;">
+<pre style="margin:0;"><code>pip install "animica[all]"</code></pre>
+          <button
+            id="copy-pip-all"
+            class="aicf-ghost-btn"
+            type="button"
+            style="flex-shrink:0; font-size:0.8rem; padding:0.35rem 0.8rem;"
+            data-copy-text={'pip install "animica[all]"'}
+            aria-label="Copy pip install animica[all] command"
+          >Copy</button>
+        </div>
+        <p class="aicf-muted" style="margin-top:0.7rem;">
+          Everything above <em>plus</em> every optional extra: Qt desktop-wallet QR codes, the full
+          distributed Studio client (cloudpickle for closures + omni-sdk for on-chain ANM escrow),
+          and all server/operator dependencies pinned. Use it if you want the kitchen sink or are
+          running pool/API infrastructure. Quote the extras form so zsh/macOS does not glob the
+          brackets.
+        </p>
         <div class="aicf-btn-row" style="margin-top:0.95rem;">
           <a class="aicf-btn" href="https://pypi.org/project/animica/" target="_blank" rel="noopener noreferrer">View on PyPI</a>
           <a class="aicf-ghost-btn" href="/docs">CLI Docs</a>
@@ -180,19 +204,22 @@ const provider = loadProviderDownloadsPageData();
   </section>
 
   <script>
-    const btn = document.getElementById('copy-pip');
-    if (btn) {
-      btn.addEventListener('click', async () => {
-        const text = btn.getAttribute('data-copy-text') || '';
-        try {
-          await navigator.clipboard.writeText(text);
-          btn.textContent = 'Copied';
-          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-        } catch {
-          btn.textContent = 'Copy failed';
-          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-        }
-      });
+    const copyButtons = ['copy-pip', 'copy-pip-all'];
+    for (const id of copyButtons) {
+      const btn = document.getElementById(id);
+      if (btn) {
+        btn.addEventListener('click', async () => {
+          const text = btn.getAttribute('data-copy-text') || '';
+          try {
+            await navigator.clipboard.writeText(text);
+            btn.textContent = 'Copied';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+          } catch {
+            btn.textContent = 'Copy failed';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+          }
+        });
+      }
     }
   </script>
 </BaseLayout>

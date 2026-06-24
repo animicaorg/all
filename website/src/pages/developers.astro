@@ -40,8 +40,11 @@ const description =
         <article class="aicf-card">
           <span class="aicf-kicker">Quickstart</span>
           <div class="aicf-code" style="margin-top:0.8rem;">
-<pre style="margin:0;"><code>{`# Install the Animica CLI (Python 3.10+)
+<pre style="margin:0;"><code>{`# Install the complete Animica client (Python 3.10+)
 pip install animica
+
+# ...or pull in every optional extra (quote the brackets for zsh/macOS)
+pip install "animica[all]"
 
 # Create a post-quantum wallet (ML-DSA / Dilithium)
 animica wallet create --label dev
@@ -51,6 +54,14 @@ animica contract compile contract.py
 animica contract deploy --help
 animica contract call --help`}</code></pre>
           </div>
+          <p class="aicf-muted" style="margin-top:0.7rem;">
+            <code>pip install animica</code> is the complete client — everything to mine, run a node, use the wallet, deploy
+            Python contracts, run <code>animica up</code> (the unified miner: PoW + useful-work + GPU train/serve + Studio
+            functions), and use the Studio SDK; the native CPU miner (animica-fastpow) is included by default. This is what
+            most people want. <code>pip install "animica[all]"</code> adds every optional extra on top — Qt desktop-wallet QR
+            codes, the full distributed Studio client (cloudpickle closures + omni-sdk for on-chain ANM escrow), and all
+            pinned server/operator dependencies — use it for the kitchen sink or pool/API infrastructure.
+          </p>
           <p class="aicf-muted" style="margin-top:0.7rem;">
             The <code>animica</code> CLI also covers transactions, chain queries, mining, and node tooling — run
             <code>animica --help</code> for the full command tree.
