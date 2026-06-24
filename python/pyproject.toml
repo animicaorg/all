@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "2.0.2"
+version = "2.0.3"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -57,6 +57,13 @@ dependencies = [
   "safetensors>=0.4.0",
   "scipy>=1.11.0",
   "einops>=0.7.0",
+  # Native SHA3-256 CPU-miner fast path — shipped BY DEFAULT so `pip install
+  # animica` + `animica up` (and the miner archives) get native hashrate with no
+  # extra step. Its build is tolerant: on a platform with no prebuilt wheel and
+  # no C compiler it installs a pure-Python no-op (available()==False) and the
+  # miner falls back, so this can never break the install. Prebuilt wheels:
+  # Linux on PyPI; Windows/macOS via the fastpow-wheels CI (Trusted Publishing).
+  "animica-fastpow>=1.0.1",
 ]
 
 [project.scripts]

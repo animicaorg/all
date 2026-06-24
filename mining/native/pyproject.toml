@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "animica-fastpow"
-version = "1.0.0"
+version = "1.0.1"
 description = "Native SHA3-256 PoW nonce scanner for the Animica CPU miner"
 readme = "README.md"
 license = { text = "MIT" }
