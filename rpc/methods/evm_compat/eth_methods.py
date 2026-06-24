@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 from rpc.methods import method
@@ -13,13 +12,10 @@ from .errors_evm import RPC_INVALID_PARAMS, rpc_error
 
 
 def _chain_id() -> int:
-    ov = os.environ.get("ANIMICA_EVM_CHAIN_ID")
-    if ov:
-        return F.from_q(ov, 0)
-    try:
-        return int(F.native("chain.getChainId"))
-    except Exception:
-        return F.from_q((F.native("node.health") or {}).get("chain_id"), 0)
+    # The EVM facade advertises its OWN dedicated chain id (default 149), NOT
+    # Animica's native chain id (1 = Ethereum mainnet). The native chain is
+    # never reset for EVM compat; only what we report here changes.
+    return F.evm_chain_id()
 
 
 def _resolve_addr(addr: Any) -> Optional[str]:

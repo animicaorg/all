@@ -67,13 +67,19 @@ def mock_registry(monkeypatch):
 def test_eth_chainid_blocknumber(mock_registry, monkeypatch):
     monkeypatch.delenv("ANIMICA_EVM_CHAIN_ID", raising=False)
     from rpc.methods.evm_compat import eth_methods as E
-    assert E.eth_chainId() == "0x1"
+    # Dedicated EVM-facade chain id (149 = 0x95), decoupled from the native
+    # chain id (1 = Ethereum mainnet). The chain itself is never reset for EVM.
+    assert E.eth_chainId() == "0x95"
     assert E.eth_blockNumber() == "0x6aa4"  # 27300
+    # env override wins
+    monkeypatch.setenv("ANIMICA_EVM_CHAIN_ID", "424242")
+    assert E.eth_chainId() == F.q(424242)
+    monkeypatch.delenv("ANIMICA_EVM_CHAIN_ID", raising=False)
 
 
 def test_net_web3(mock_registry):
     from rpc.methods.evm_compat import net_web3 as N
-    assert N.net_version() == "1"
+    assert N.net_version() == "149"
     assert N.net_listening() is True
     assert N.net_peerCount() == "0x3"
     assert N.web3_clientVersion().startswith("Animica/")

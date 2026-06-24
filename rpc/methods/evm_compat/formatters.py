@@ -17,9 +17,17 @@ Conventions (strict Ethereum JSON-RPC):
 from __future__ import annotations
 
 import inspect
+import os
 from typing import Any, Optional
 
 CHAIN_UNKNOWN = -1
+
+# EVM-facade chain id. Animica's NATIVE chain id is 1 (and stays 1 — the chain is
+# never reset for EVM compatibility). But chain id 1 is Ethereum mainnet, so the
+# EVM facade advertises its OWN dedicated id for EIP-155 replay protection and a
+# clean MetaMask "add network". 149 is the lowest unregistered EIP-155 chain id
+# (everything 1..148 is taken on chainid.network). Override: ANIMICA_EVM_CHAIN_ID.
+ANIMICA_EVM_DEFAULT_CHAIN_ID = 149
 ZERO32 = "0x" + "00" * 32
 ZERO20 = "0x" + "00" * 20
 EMPTY_BLOOM = "0x" + "00" * 256
@@ -67,6 +75,21 @@ def from_q(v: Any, default: int = 0) -> int:
         return int(v)
     except (TypeError, ValueError):
         return default
+
+
+def evm_chain_id() -> int:
+    """The EVM facade's dedicated chain id (default 149).
+
+    Decoupled from Animica's native chain id (1) on purpose: id 1 is Ethereum
+    mainnet, so advertising it to EVM wallets collides in chain-lists and weakens
+    EIP-155 replay protection. This changes ONLY what the facade reports — the
+    underlying chain, its blocks, and its native chain id are untouched.
+    Override with the ANIMICA_EVM_CHAIN_ID env var.
+    """
+    ov = os.environ.get("ANIMICA_EVM_CHAIN_ID")
+    if ov:
+        return from_q(ov, ANIMICA_EVM_DEFAULT_CHAIN_ID)
+    return ANIMICA_EVM_DEFAULT_CHAIN_ID
 
 
 def hexhash(s: Any) -> Optional[str]:

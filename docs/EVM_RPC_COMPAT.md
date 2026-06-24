@@ -110,6 +110,17 @@ not EVM bytecode. `eth_getLogs` is empty until an EVM-shaped log index exists.
 
 ## Chain-id note
 
-`eth_chainId` defaults to Animica's chain id. On mainnet that is `1`, which
-**collides with Ethereum mainnet** in wallet chain-lists; set
-`ANIMICA_EVM_CHAIN_ID` to a distinct id for a cleaner MetaMask "add network".
+The EVM facade advertises its **own dedicated chain id**, decoupled from
+Animica's native chain id. Animica's native chain id is `1`, but `1` is Ethereum
+mainnet — advertising it to EVM wallets collides in chain-lists and weakens
+EIP-155 replay protection. So:
+
+- **`eth_chainId` / `net_version` default to `149`** (`0x95`), the lowest
+  unregistered EIP-155 chain id (everything `1..148` is taken on
+  `chainid.network`). This is a clean, low, collision-free id for MetaMask
+  "add network".
+- This changes **only what the facade reports.** Animica's underlying chain, its
+  blocks, its state, and its native chain id (`1`) are **untouched** — the chain
+  is never reset for EVM compatibility.
+- Override with the `ANIMICA_EVM_CHAIN_ID` env var if you need a different id
+  (e.g. a private deployment).

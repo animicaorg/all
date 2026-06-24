@@ -8,10 +8,9 @@ from . import formatters as F
 
 
 def _chain_id() -> int:
-    try:
-        return int(F.native("chain.getChainId"))
-    except Exception:
-        return F.from_q((F.native("node.health") or {}).get("chain_id"), 0)
+    # Dedicated EVM-facade chain id (default 149), decoupled from the native
+    # chain id (1). See formatters.evm_chain_id().
+    return F.evm_chain_id()
 
 
 @method("net_version", desc="EVM-compat: network id (decimal string).")
