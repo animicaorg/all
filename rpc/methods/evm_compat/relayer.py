@@ -128,24 +128,70 @@ def _resolve_kek() -> Optional[bytes]:
     return _KEK
 
 
-def at_rest_mode() -> str:
-    if _resolve_kek() is not None:
-        try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # noqa: F401
-            return "aes-256-gcm"
-        except Exception:
-            return "chacha20-poly1305"
-    return "plaintext"
-
-
 def _allow_plaintext() -> bool:
     return str(os.environ.get("ANIMICA_EVM_RELAYER_ALLOW_PLAINTEXT", "")).strip().lower() in (
         "1", "true", "yes", "on")
 
 
-def _aead():
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
-    return AESGCM, ChaCha20Poly1305
+# AEAD backend — portable across environments. Prefers `cryptography`; falls back
+# to `pycryptodome` (Crypto/Cryptodome), which is what the node images ship. A
+# single deployment uses ONE backend consistently (the keystore is per-node), so
+# the on-disk format never needs to be cross-backend compatible.
+_AEAD = None  # (name, encrypt(kek,nonce,pt,aad)->ct, decrypt(kek,nonce,ct,aad)->pt)
+
+
+def _aead_backend():
+    global _AEAD
+    if _AEAD is not None:
+        return _AEAD
+    # 1) cryptography AES-256-GCM
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        _AEAD = ("aes-256-gcm",
+                 lambda kek, n, pt, aad: AESGCM(kek).encrypt(n, pt, aad),
+                 lambda kek, n, ct, aad: AESGCM(kek).decrypt(n, ct, aad))
+        return _AEAD
+    except Exception:
+        pass
+    # 2) cryptography ChaCha20-Poly1305
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+        _AEAD = ("chacha20-poly1305",
+                 lambda kek, n, pt, aad: ChaCha20Poly1305(kek).encrypt(n, pt, aad),
+                 lambda kek, n, ct, aad: ChaCha20Poly1305(kek).decrypt(n, ct, aad))
+        return _AEAD
+    except Exception:
+        pass
+    # 3) pycryptodome AES-256-GCM (Crypto or Cryptodome namespace)
+    AES = None
+    for mod in ("Crypto.Cipher", "Cryptodome.Cipher"):
+        try:
+            AES = __import__(mod, fromlist=["AES"]).AES
+            break
+        except Exception:
+            continue
+    if AES is not None:
+        def _enc(kek, n, pt, aad):
+            c = AES.new(kek, AES.MODE_GCM, nonce=n)
+            c.update(aad)
+            ct, tag = c.encrypt_and_digest(pt)
+            return ct + tag  # 16-byte tag appended
+        def _dec(kek, n, blob, aad):
+            ct, tag = bytes(blob[:-16]), bytes(blob[-16:])
+            c = AES.new(kek, AES.MODE_GCM, nonce=n)
+            c.update(aad)
+            return c.decrypt_and_verify(ct, tag)
+        _AEAD = ("aes-256-gcm", _enc, _dec)
+        return _AEAD
+    _AEAD = (None, None, None)
+    return _AEAD
+
+
+def at_rest_mode() -> str:
+    if _resolve_kek() is None:
+        return "plaintext"
+    name = _aead_backend()[0]
+    return name or "unavailable"
 
 
 def _encrypt_sk(sk: bytes, evm: str) -> Tuple[bytes, bytes]:
@@ -160,12 +206,15 @@ def _encrypt_sk(sk: bytes, evm: str) -> Tuple[bytes, bytes]:
                 "with ANIMICA_EVM_RELAYER_ALLOW_PLAINTEXT=1.")
         log.warning("EVM relayer storing native secret keys in PLAINTEXT (no KEK set).")
         return bytes(sk), b""
-    AESGCM, ChaCha20Poly1305 = _aead()
+    name, enc, _dec = _aead_backend()
+    if enc is None:
+        raise rpc_error(
+            RPC_INTERNAL_ERROR,
+            "EVM relayer KEK is set but no AEAD backend is available (need the "
+            "`cryptography` or `pycryptodome` package). Install one, or opt into "
+            "plaintext with ANIMICA_EVM_RELAYER_ALLOW_PLAINTEXT=1.")
     nonce = os.urandom(12)
-    try:
-        ct = AESGCM(kek).encrypt(nonce, bytes(sk), evm.encode())  # AAD binds ct to its account
-    except Exception:
-        ct = ChaCha20Poly1305(kek).encrypt(nonce, bytes(sk), evm.encode())
+    ct = enc(kek, nonce, bytes(sk), evm.encode())  # AAD binds ct to its account
     return ct, nonce
 
 
@@ -174,11 +223,8 @@ def _decrypt_sk(ct: bytes, nonce: bytes, evm: str) -> bytearray:
     kek = _resolve_kek()
     if kek is None or not nonce:
         return bytearray(ct)  # plaintext path (only if it was stored that way)
-    AESGCM, ChaCha20Poly1305 = _aead()
-    try:
-        return bytearray(AESGCM(kek).decrypt(nonce, ct, evm.encode()))
-    except Exception:
-        return bytearray(ChaCha20Poly1305(kek).decrypt(nonce, ct, evm.encode()))
+    _name, _enc, dec = _aead_backend()
+    return bytearray(dec(kek, nonce, ct, evm.encode()))
 
 
 def _zeroize(b: Any) -> None:

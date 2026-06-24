@@ -69,6 +69,7 @@ def relayer(tmp_path, monkeypatch):
     R._CONN = None
     R._KEK = None
     R._KEK_RESOLVED = False
+    R._AEAD = None
     return R
 
 
@@ -112,6 +113,7 @@ def test_plaintext_refused_without_kek(tmp_path, monkeypatch):
     R._CONN = None
     R._KEK = None
     R._KEK_RESOLVED = False
+    R._AEAD = None
     with pytest.raises(Exception):
         R.get_or_create_account("0x" + "b2" * 20)
 
