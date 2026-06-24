@@ -1,0 +1,90 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "animica-node"
+version = "4.0.1"
+description = "Animica node — slim, no-GPU runtime: run a full node + JSON-RPC (native + Bitcoin- and Ethereum-compatible). Built for exchanges and infrastructure operators."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+keywords = ["animica", "blockchain", "node", "rpc", "exchange", "bitcoin-rpc", "evm-rpc", "json-rpc"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Financial and Insurance Industry",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Office/Business :: Financial",
+]
+# Slim runtime: the SAME dependencies the node uses under the full `animica`
+# package, MINUS the GPU/AI stack (torch, transformers, accelerate, peft, trl,
+# datasets, bitsandbytes, sentence-transformers, sentencepiece, safetensors,
+# scipy, einops, huggingface_hub, animica-fastpow). Nothing NVIDIA here.
+dependencies = [
+  "typer>=0.12.3",
+  "rich>=13.7.0",
+  "httpx>=0.27.0",
+  "pydantic>=2.7.0",
+  "sqlalchemy>=2.0.44,<3.0.0",
+  "alembic>=1.17.0,<2.0.0",
+  "psycopg[binary]>=3.2.12,<4.0.0",
+  "eth-account>=0.13.7,<1.0.0",
+  "web3>=7.14.0,<8.0.0",
+  "pyyaml>=6.0.1",
+  "cbor2>=5.6.0",
+  "requests>=2.31.0",
+  "fastapi>=0.115.0,<0.116.0",
+  "uvicorn[standard]>=0.30.0,<1.0.0",
+  "prometheus-client>=0.20.0,<1.0.0",
+]
+
+[project.scripts]
+animica-node = "animica_node.run:main"
+
+[project.urls]
+Homepage = "https://animica.org"
+Repository = "https://github.com/animicaorg/all"
+Documentation = "https://animica.org/docs"
+Issues = "https://github.com/animicaorg/all/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["animica_node"]
+
+# Vendors the node sibling packages into _build_vendor/ before each build.
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+# Node runtime packages, force-included at the wheel root (matching the layout
+# the `animica` wheel uses, so `import rpc`, `import core`, … resolve).
+[tool.hatch.build.targets.wheel.force-include]
+"_build_vendor/aicf" = "aicf"
+"_build_vendor/capabilities" = "capabilities"
+"_build_vendor/consensus" = "consensus"
+"_build_vendor/core" = "core"
+"_build_vendor/coretx" = "coretx"
+"_build_vendor/da" = "da"
+"_build_vendor/execution" = "execution"
+"_build_vendor/mempool" = "mempool"
+"_build_vendor/mempool2" = "mempool2"
+"_build_vendor/mining" = "mining"
+"_build_vendor/p2p" = "p2p"
+"_build_vendor/pq" = "pq"
+"_build_vendor/rpc" = "rpc"
+"_build_vendor/stdlib" = "stdlib"
+"_build_vendor/vm_py" = "vm_py"
+"_build_vendor/animica" = "animica"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "animica_node",
+  "_build_vendor",
+  "hatch_build.py",
+  "README.md",
+]
