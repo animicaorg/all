@@ -117,8 +117,11 @@ export const Links = {
 
   studio: {
     root: ENV.STUDIO_URL,
+    // The main-page "Studio" CTA (Hero, CTAButtons) links here. Studio is now
+    // the live serverless platform, so this points at studio.animica.org. The
+    // /studio marketing+SEO page still exists at its route (sitemap/direct).
     page(): string {
-      return '/studio';
+      return ENV.STUDIO_URL;
     },
     home(): string {
       return join(ENV.STUDIO_URL, '/');
