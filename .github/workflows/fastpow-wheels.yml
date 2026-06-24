@@ -20,7 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        # macos-13 (Intel) runners are scarce and queue for a long time; dropped
+        # so the publish isn't blocked. Apple Silicon (macos-14) is covered; Intel
+        # Macs fall back to the tolerant sdist (compiles with Xcode CLT, else
+        # pure-Python). Re-add "macos-13" here when runner availability is fine.
+        os: [ubuntu-latest, windows-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
       - name: Build wheels
