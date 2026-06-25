@@ -200,6 +200,43 @@ describe('address and amount normalization', () => {
     expect(summary.to?.startsWith('anim1')).toBe(true)
   })
 
+  // Decode an anim1… address back to (alg_id, digest) so we can assert the
+  // reconstructed alg_id, not just the prefix. payload = alg_id(2 BE) ‖ digest.
+  const decodeAddr = (addr: string) => {
+    const payload = Buffer.from(bech32m.fromWords(bech32m.decode(addr).words))
+    return { algId: (payload[0] << 8) | payload[1], digest: payload.subarray(2).toString('hex') }
+  }
+
+  it('reconstructs a digest with the active default alg_id 0x1003 (ml_dsa_65), not deprecated 0x1001', () => {
+    const digestHex = 'aa'.repeat(32)
+    const summary = normalizeTxSummary({ hash: '0xabc', to: '0x' + digestHex, value: '0x1' })
+    const dec = decodeAddr(summary.to as string)
+    expect(dec.algId).toBe(0x1003)
+    expect(dec.digest).toBe(digestHex)
+  })
+
+  it('derives the sender address from its signature alg_id exactly (sphincs+ 0x1002)', () => {
+    const digestHex = 'bb'.repeat(32)
+    const summary = normalizeTxSummary({
+      hash: '0xs',
+      from: '0x' + digestHex,
+      to: '0x' + 'cc'.repeat(32),
+      sigs: [{ alg: 0x1002, pubkey: '0xdead' }]
+    })
+    const dec = decodeAddr(summary.from as string)
+    expect(dec.algId).toBe(0x1002) // not the 0x1003 default — taken from the sig
+    expect(dec.digest).toBe(digestHex)
+  })
+
+  it('remembers a learned sender alg_id so the same account renders correctly as a recipient', () => {
+    const digestHex = 'ab'.repeat(32)
+    // First seen as a sender signing with sphincs+ (0x1002) -> learned.
+    normalizeTxSummary({ hash: '0xs1', from: '0x' + digestHex, to: '0x' + 'ee'.repeat(32), sigs: [{ alg: 0x1002, pubkey: '0x01' }] })
+    // Later seen only as a recipient: should use the learned 0x1002, not the default.
+    const recv = normalizeTxSummary({ hash: '0xs2', from: '0x' + 'ff'.repeat(32), to: '0x' + digestHex, sigs: [{ alg: 0x1003, pubkey: '0x02' }] })
+    expect(decodeAddr(recv.to as string).algId).toBe(0x1002)
+  })
+
   it('maps equivalent bech32 payloads to the same canonical address key', () => {
     const digest = Uint8Array.from(Buffer.from('22'.repeat(32), 'hex'))
     const payloadA = Uint8Array.from([0x10, 0x01, ...digest])

@@ -21,6 +21,7 @@ import { RequestCoalescer } from './cache.js'
 import { HttpError } from './errors.js'
 import {
   canonicalAddressKey,
+  learnAddressAlg,
   normalizeAddress,
   normalizeBlockDetail,
   normalizeBlockSummary,
@@ -345,6 +346,10 @@ export class ExplorerService {
 
   async getAddressDetail(address: string, limitInput: number, cursor?: string): Promise<AddressSummary> {
     const limit = clampLimit(limitInput)
+    // The requested bech32m address carries its own alg_id; learn it so this
+    // account renders with the correct alg_id wherever it appears below
+    // (notably as a recipient of incoming transfers).
+    learnAddressAlg(address)
     const normalizedAddress = normalizeAddress(address) ?? address
     const targetAddressKey = canonicalAddressKey(normalizedAddress) ?? canonicalAddressKey(address)
     const [confirmedBalance, pendingBalance] = await Promise.all([

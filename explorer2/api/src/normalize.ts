@@ -4,7 +4,93 @@ import { bech32m } from 'bech32'
 const HEX_PREFIX = /^0x/i
 const HEX_BODY = /^[0-9a-f]+$/i
 const ADDRESS_HRP = 'anim'
-const DEFAULT_ADDRESS_ALG_ID = 0x1001
+
+// Re-encoding a 32-byte digest as a bech32m `anim1…` address needs the account's
+// signature-algorithm id, which forms the 2-byte big-endian prefix of the
+// address payload (payload = alg_id(2) ‖ sha3_256(pubkey)(32); see
+// pq/py/address.py). But the chain stores accounts by the bare 32-byte digest
+// only — the alg_id is NOT kept on-chain (core/utils/address.py, and the Account
+// record holds just balance/code_hash). The node's RPC therefore returns
+// `from`/`to`/rich-list entries as raw hex digests, leaving us to reconstruct
+// the address.
+//
+// The alg_id is only ever revealed in a transaction signature (`sigs[].alg`),
+// i.e. when an account *sends*. So we (a) derive a sender's address exactly from
+// its own signature, (b) remember digest→alg_id in `senderAlgByDigest` so the
+// same account renders correctly when it later appears as a `to`/miner/rich-list
+// entry, and (c) fall back to the active default when an account has only ever
+// received (its alg_id is genuinely unknowable from chain data alone).
+//
+// DEFAULT is 0x1003 = ml_dsa_65 (FIPS 204), the only *active* scheme. 0x1001
+// (dilithium3) and 0x1002 (sphincs+) are deprecated stubs; this used to be
+// hardcoded to 0x1001, which produced the wrong `anim1…` for every live wallet.
+const DEFAULT_ADDRESS_ALG_ID = 0x1003
+
+const ALG_NAME_TO_ID: Record<string, number> = {
+  dilithium3: 0x1001,
+  sphincs_shake_128s: 0x1002,
+  ml_dsa_65: 0x1003,
+}
+
+// Learned digest(64-hex, no 0x) → alg_id, populated from transaction signatures.
+const senderAlgByDigest = new Map<string, number>()
+
+function digestKey(digest: Uint8Array): string {
+  return Buffer.from(digest).toString('hex')
+}
+
+/** Record an account's signing algorithm, learned from a signature it produced. */
+export function learnSenderAlg(digestHex: string, algId: number): void {
+  if (!Number.isInteger(algId) || algId < 0 || algId > 0xffff) return
+  const key = digestHex.toLowerCase().replace(/^0x/, '')
+  if (key.length === 64) senderAlgByDigest.set(key, algId)
+}
+
+/** Best-known alg_id for a digest: learned-from-a-sig if seen, else the active default. */
+function algForDigest(digest: Uint8Array): number {
+  return senderAlgByDigest.get(digestKey(digest)) ?? DEFAULT_ADDRESS_ALG_ID
+}
+
+/**
+ * Learn an account's alg_id directly from a bech32m `anim1…` string (the address
+ * itself carries alg_id ‖ digest). Used so that when a user opens an address
+ * page, that account renders correctly wherever it appears in the response —
+ * including as a *recipient* of incoming transfers, where its alg_id would
+ * otherwise be unknown (e.g. the sphincs+/0x1002 aicf treasury). A no-op for
+ * non-anim1 inputs (hex digests, system: addresses).
+ */
+export function learnAddressAlg(addr: unknown): void {
+  if (typeof addr !== 'string' || !/^anim1/i.test(addr.trim())) return
+  try {
+    const payload = Buffer.from(bech32m.fromWords(bech32m.decode(addr.trim().toLowerCase()).words))
+    if (payload.length !== 34) return
+    const algId = (payload[0] << 8) | payload[1]
+    learnSenderAlg(payload.subarray(2).toString('hex'), algId)
+  } catch {
+    // ignore malformed addresses
+  }
+}
+
+function parseAlgId(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value)) return value
+  if (typeof value === 'string') {
+    const t = value.trim().toLowerCase()
+    if (/^0x[0-9a-f]+$/.test(t)) return Number.parseInt(t, 16)
+    if (/^[0-9]+$/.test(t)) return Number.parseInt(t, 10)
+    if (t in ALG_NAME_TO_ID) return ALG_NAME_TO_ID[t]
+  }
+  return undefined
+}
+
+/** Pull the signer alg_id out of a tx's first signature, across naming styles. */
+function extractSenderAlg(tx: any): number | undefined {
+  const sigs = tx?.sigs ?? tx?.tx?.sigs ?? tx?.body?.sigs ?? tx?.payload?.sigs
+  if (Array.isArray(sigs) && sigs.length > 0 && sigs[0] && typeof sigs[0] === 'object') {
+    const s = sigs[0] as Record<string, unknown>
+    return parseAlgId(s.alg ?? s.alg_id ?? s.algId ?? s.algID)
+  }
+  return undefined
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
@@ -138,10 +224,10 @@ function digestFromAddressBytes(bytes: Uint8Array): Uint8Array | null {
   return null
 }
 
-function withDefaultAlgPrefix(digest: Uint8Array): Uint8Array {
+function withAlgPrefix(digest: Uint8Array, algId: number): Uint8Array {
   const payload = new Uint8Array(34)
-  payload[0] = (DEFAULT_ADDRESS_ALG_ID >> 8) & 0xff
-  payload[1] = DEFAULT_ADDRESS_ALG_ID & 0xff
+  payload[0] = (algId >> 8) & 0xff
+  payload[1] = algId & 0xff
   payload.set(digest, 2)
   return payload
 }
@@ -202,7 +288,7 @@ export function normalizeAddress(value: unknown): Address | undefined {
 
     const digest = digestFromAddressBytes(bytes)
     if (digest) {
-      const encoded = encodeAddressPayload(withDefaultAlgPrefix(digest))
+      const encoded = encodeAddressPayload(withAlgPrefix(digest, algForDigest(digest)))
       if (encoded) return encoded
     }
 
@@ -219,7 +305,7 @@ export function normalizeAddress(value: unknown): Address | undefined {
 
   const digest = digestFromAddressBytes(bytes)
   if (digest) {
-    const encoded = encodeAddressPayload(withDefaultAlgPrefix(digest))
+    const encoded = encodeAddressPayload(withAlgPrefix(digest, algForDigest(digest)))
     if (encoded) return encoded
   }
 
@@ -410,6 +496,7 @@ export function normalizeBlockSummary(block: any): BlockSummary {
       block?.ts
     ) ?? 0
   const txs = Array.isArray(block?.txs) ? block.txs : Array.isArray(block?.transactions) ? block.transactions : []
+  learnBlockSenders(txs)
   const txCount = toNumber(block?.txCount ?? block?.tx_count ?? header?.txCount ?? header?.tx_count) ?? txs.length
   return {
     height,
@@ -427,13 +514,46 @@ export function normalizeBlockSummary(block: any): BlockSummary {
   }
 }
 
+/**
+ * Resolve a transaction's sender address. The signature reveals the sender's
+ * exact alg_id, so we encode the address from (sig alg_id ‖ digest) — always
+ * correct regardless of scheme — and remember it for when this account later
+ * shows up only as a recipient. Falls back to generic normalization when the tx
+ * carries no signature (e.g. coinbase or a pre-normalized bech32m `from`).
+ */
+function normalizeSender(tx: any): Address | undefined {
+  const fromVal = extractTxFrom(tx)
+  const algId = extractSenderAlg(tx)
+  if (algId !== undefined) {
+    const bytes = valueToBytes(fromVal)
+    const digest = bytes ? digestFromAddressBytes(bytes) : null
+    if (digest) {
+      learnSenderAlg(digestKey(digest), algId)
+      const encoded = encodeAddressPayload(withAlgPrefix(digest, algId))
+      if (encoded) return encoded
+    }
+  }
+  return normalizeAddress(fromVal)
+}
+
+/** Learn every sender's alg_id up front so recipients in the same block resolve. */
+function learnBlockSenders(txs: any[]): void {
+  for (const tx of txs) {
+    const algId = extractSenderAlg(tx)
+    if (algId === undefined) continue
+    const bytes = valueToBytes(extractTxFrom(tx))
+    const digest = bytes ? digestFromAddressBytes(bytes) : null
+    if (digest) learnSenderAlg(digestKey(digest), algId)
+  }
+}
+
 export function normalizeTxSummary(tx: any): TxSummary {
   if (typeof tx === 'string') {
     return { hash: tx }
   }
   return {
     hash: tx?.hash ?? tx?.txHash ?? tx?.txid ?? '0x0',
-    from: normalizeAddress(extractTxFrom(tx)),
+    from: normalizeSender(tx),
     to: normalizeAddress(extractTxTo(tx)),
     nonce: toNumber(tx?.nonce) ?? tx?.nonce,
     value: extractTxValue(tx)
@@ -443,6 +563,7 @@ export function normalizeTxSummary(tx: any): TxSummary {
 export function normalizeBlockDetail(block: any): BlockDetail {
   const header = getHeader(block)
   const txs = Array.isArray(block?.txs) ? block.txs : Array.isArray(block?.transactions) ? block.transactions : []
+  learnBlockSenders(txs)
   return {
     height: toNumber(header?.height ?? header?.number ?? block?.number) ?? 0,
     canonicalHeight: toNumber(header?.canonicalHeight ?? header?.canonical_height ?? block?.canonicalHeight ?? block?.canonical_height),
@@ -495,7 +616,7 @@ export function normalizeTxDetail(tx: any, receipt: any | null): TxDetail {
     status,
     blockHash: receipt?.blockHash ?? receipt?.block_hash ?? tx?.blockHash ?? tx?.block_hash,
     blockHeight,
-    from: normalizeAddress(extractTxFrom(tx)),
+    from: normalizeSender(tx),
     to: normalizeAddress(extractTxTo(tx)),
     value: extractTxValue(tx),
     gasUsed: toStringValue(receipt?.gasUsed),
