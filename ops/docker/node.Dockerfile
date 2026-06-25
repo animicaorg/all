@@ -123,6 +123,13 @@ RUN set -eux; \
       || echo "python-rocksdb not installed (optional)"; \
     rm -rf /wheels
 
+# EVM execution lane (optional; runtime-gated by ANIMICA_EVM_EXECUTION): a real
+# py-evm so Solidity contracts deploy and run on the node-local EVM sequencer
+# (chain id 149). Fetched from PyPI (not part of the offline wheel set);
+# fail-open — if it's absent the lane simply stays disabled.
+RUN python -m pip install "py-evm>=0.10.1b1" \
+      || echo "py-evm not installed (EVM execution lane disabled)"
+
 # Create non-root user & runtime dirs
 ARG USER=animica
 ARG UID=10001
