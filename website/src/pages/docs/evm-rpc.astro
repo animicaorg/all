@@ -48,13 +48,14 @@ const works = [
   "ethers.js / web3.js provider connect (JsonRpcProvider, Web3)",
   "eth_blockNumber, block / tx / receipt lookups",
   "eth_getBalance & eth_getTransactionCount for bridged addresses",
+  "ANM as an ERC-20 (Import token 0xbb22…00af): name/symbol/decimals/balanceOf",
+  "Real Solidity deploy + execute with ANIMICA_EVM_EXECUTION=1 (node-local EVM)",
   "explorer & indexer read traffic; web3_sha3 (real keccak-256)",
 ];
 const doesnt = [
-  "Running Solidity contracts — Animica executes a deterministic Python VM, not EVM bytecode",
-  "eth_call returns 0x and eth_getCode returns 0x (no EVM ABI execution in the facade)",
-  "eth_getLogs is empty until an EVM-shaped log index exists (roadmap)",
-  "Sending from a raw secp256k1 EVM wallet — see the address & signature boundary below",
+  "PoIES-consensus-validated EVM — execution is node-local sequencer state, not yet re-validated by all validators",
+  "ANM-metered gas + payable value forwarding (v1: gas sponsored, msg.value must be 0)",
+  "Native Animica (Python-VM) contracts via eth_call — those use the native ABI, not EVM",
 ];
 
 const faqs = [
@@ -304,9 +305,11 @@ w3.eth.block_number; w3.eth.get_block("latest")`}</code></pre>
       <li><strong>EVM RPC facade</strong> (shipped) — <code>eth_*</code> connect + read.</li>
       <li><strong>Custodial relayer</strong> (shipped) — <code>ANIMICA_EVM_RELAYER=1</code> moves value
         between EVM and native Animica via managed accounts.</li>
-      <li><strong>ERC facade</strong> — native Animica contracts presented as ERC-20/721 via
-        <code>eth_call</code> / <code>eth_getLogs</code> / receipt topics.</li>
-      <li><strong>Full EVM module</strong> — a real EVM runtime so Solidity deploys unchanged.</li>
+      <li><strong>ERC facade</strong> (shipped) — ANM presented as a read-only ERC-20
+        (<code>eth_call</code>); real Solidity ERC-20/721 deploy + run on the execution lane.</li>
+      <li><strong>EVM execution lane</strong> (shipped, node-local) — <code>ANIMICA_EVM_EXECUTION=1</code>
+        runs real Solidity. <strong>Next:</strong> PoIES re-validation (consensus-level EVM),
+        ANM-metered gas, payable value forwarding.</li>
     </ol>
 
     <!-- FAQ -->
