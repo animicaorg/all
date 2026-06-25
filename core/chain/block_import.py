@@ -727,21 +727,32 @@ class BlockImporter:
             # consensus.difficulty uses: target_block_time_s, half_life_blocks, gain_beta,
             #                            step_clamp_micro, theta_min_micro, theta_max_micro
 
-            # Convert window to half_life_blocks (approximation: use window as half-life)
-            half_life_blocks = float(self.params.retarget.window)
-
-            # Use ema_alpha as gain_beta (proportional gain)
-            gain_beta = float(self.params.retarget.ema_alpha)
-
-            # Compute step clamp from bounds: convert multiplicative ratio to additive µ-nats
-            # For a typical initial theta, compute a reasonable step clamp
-            # bounds.max = 2.0 means we can double; that's ln(2) ≈ 0.693 nats
-            # Convert to µ-nats: ~693,000 µ-nats per retarget window
-            # Per-block step: divide by window size
             import math
 
+            # Derive the EMA half-life from the configured smoothing factor
+            # (retarget.ema_alpha), NOT from retarget.window.
+            #
+            # difficulty.update_theta() uses alpha = 1 - 2^(-1/half_life). Setting
+            # half_life = retarget.window (e.g. 720 on mainnet) yields alpha ~= 0.001,
+            # which effectively FREEZES the retarget: Θ cannot track hashrate, so when
+            # the network hashrate drops the difficulty stays too high and the chain
+            # crawls / stalls (minutes-to-hours between blocks). Honour ema_alpha as the
+            # intended EMA smoothing factor instead:
+            #     alpha = 1 - 2^(-1/half_life)  =>  half_life = -1 / log2(1 - alpha)
+            ema_alpha = float(self.params.retarget.ema_alpha)
+            if not (0.0 < ema_alpha < 1.0):
+                ema_alpha = 0.15
+            half_life_blocks = max(2.0, -1.0 / math.log2(1.0 - ema_alpha))
+
+            # Proportional gain β: how aggressively τ reacts to the smoothed error.
+            # Kept moderate for smooth, non-oscillating convergence.
+            gain_beta = 0.5
+
+            # Compute step clamp from bounds: convert multiplicative ratio to additive µ-nats.
+            # bounds.max = 2.0 means we may at most double Θ over a half-life window
+            # (ln(2) ≈ 0.693 nats); spread that across the half-life as a per-block cap.
             max_change_nats = math.log(self.params.retarget.bounds.max)
-            step_clamp_micro = int(max_change_nats * 1_000_000 / max(1, half_life_blocks))
+            step_clamp_micro = int(max_change_nats * 1_000_000 / max(1.0, half_life_blocks))
             step_clamp_micro = max(100_000, min(1_000_000, step_clamp_micro))
 
             # Read max_block_time_s from params if available
