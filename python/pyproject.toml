@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "4.1.1"
+version = "4.2.0"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -124,6 +124,13 @@ gpu = []
 studio = [
   "cloudpickle>=3.0.0",
   "omni-sdk>=0.1.0",
+]
+# EVM execution lane (ANIMICA_EVM_EXECUTION=1): embeds py-evm so real Solidity
+# contracts deploy and run on a node-local EVM sequencer (chain id 149). Optional;
+# if absent the lane stays disabled and the rest of the EVM facade is unaffected.
+# The native-ANM ERC-20 read facade needs no extra deps.
+evm = [
+  "py-evm>=0.10.1b1",
 ]
 # NOTE: `fast` (native miner) is intentionally NOT in `all` — it requires a
 # platform-specific native wheel and must never break a plain `animica[all]`

@@ -133,24 +133,51 @@ Env vars: `ANIMICA_EVM_RELAYER` (gate) · `ANIMICA_EVM_RELAYER_KEK` (32-byte
 hex/base64 at-rest key) · `ANIMICA_EVM_RELAYER_ALLOW_PLAINTEXT` · `ANIMICA_EVM_RELAYER_VALUE_SCALE`
 · `ANIMICA_EVM_RELAYER_MAX_NANM` (per-tx sanity cap).
 
-## What works vs. what doesn't (from the facade alone)
+## Native ANM as ERC-20 (read-only facade)
 
-**Works:** MetaMask "add network", ethers/web3 provider connect, block number /
-block / tx / receipt lookup, balance & nonce lookup (for bridged addresses),
-explorer/indexer read traffic, EIP-1193-style provider usage.
+ANM is presented as an ERC-20 token at a fixed address
+**`0xbb22d4e8fd879ca21b89ef727155e81cb13500af`** so an EVM wallet can
+"Import token" and see an ANM balance with the familiar token UI. `eth_call`
+decodes the standard selectors — `name()` → "Animica", `symbol()` → "ANM",
+`decimals()` → 9, `totalSupply()`, `balanceOf(addr)` (→ native `state.getBalance`,
+in nANM) — and `eth_getCode` returns a stub so wallets treat it as a contract.
 
-**Doesn't (facade alone):** running Solidity contracts. `eth_call` returns `0x`
-and `eth_getCode` returns `0x` because Animica executes **Python-VM** contracts,
-not EVM bytecode. `eth_getLogs` is empty until an EVM-shaped log index exists.
+It is **read-only** (a static ABI shim, not a deployed contract): `transfer` /
+`approve` / `transferFrom` revert with a clear message — move ANM natively or via
+the relayer. This facade is always on (gate-independent) and cannot move funds.
+
+## EVM execution lane — real Solidity (node-local)
+
+Set **`ANIMICA_EVM_EXECUTION=1`** (with `pip install "animica[evm]"`) and the node
+embeds a **real EVM (py-evm)** at chain id 149: a normal MetaMask/ethers tx that
+**deploys or calls a Solidity contract executes for real** — ERC-20/721 and typical
+dApp calls included. `eth_call`, `eth_getCode`, `eth_getStorageAt`, `eth_getLogs`,
+`eth_getTransactionReceipt` (with logs + `contractAddress`) and `eth_estimateGas`
+all reflect actual EVM execution. State persists to the data dir and reloads on
+restart.
+
+> **Honest boundary — node-local sequencer.** Contract **execution** runs on THIS
+> RPC node only and is **NOT yet re-validated by Animica's PoIES validators**
+> (sequencer state; trust-the-sequencer until an EVM-execution proof lands in
+> consensus). Real **ANM value** still moves only via consensus-validated native
+> transactions (the relayer). `1 ANM = 1e9 nANM = 1e18 wei`.
+
+**v1 scope:** deploy + call contracts with `msg.value == 0` (covers ERC-20/721 and
+most dApp interactions); gas is **sponsored** by the node (no ANM gas charge yet),
+so no ANM moves inside the EVM lane. **Deferred:** ANM-metered gas, payable value
+forwarding, and PoIES re-validation. Off by default; requires the relayer for
+account/nonce coordination; per-tx gas cap + per-sender rate limit bound abuse.
 
 ## Roadmap
 
 1. **EVM RPC facade** *(shipped)* — `eth_*` connect + read.
 2. **Custodial relayer** *(shipped)* — `ANIMICA_EVM_RELAYER=1` moves value between
-   EVM and native Animica via managed accounts (see above).
-3. **ERC facade** — native Animica contracts presented as ERC-20/721 via
-   `eth_call`/`eth_getLogs`/receipt topics.
-4. **Full EVM module** — an actual EVM runtime so Solidity deploys unchanged.
+   EVM and native Animica via managed accounts.
+3. **ERC facade** *(shipped)* — native ANM presented as ERC-20 via `eth_call`;
+   real Solidity ERC-20/721 deploy + run on the EVM execution lane.
+4. **EVM execution lane** *(shipped, node-local)* — `ANIMICA_EVM_EXECUTION=1`
+   runs real Solidity. **Next:** PoIES re-validation (consensus-level EVM),
+   ANM-metered gas, payable value forwarding.
 
 ## Chain-id note
 

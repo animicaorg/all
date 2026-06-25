@@ -33,10 +33,20 @@ def eth_maxPriorityFeePerGas() -> str:
     return F.q(0)
 
 
-@method("eth_estimateGas", desc="EVM-compat: gas estimate (synthetic 21000 for transfers).")
+@method("eth_estimateGas", desc="EVM-compat: gas estimate. Real EVM estimate when ANIMICA_EVM_EXECUTION=1; else synthetic.")
 def eth_estimateGas(transaction: Optional[dict] = None, tag: Any = None) -> str:
-    data = (transaction or {}).get("data") or (transaction or {}).get("input")
-    # data-carrying call -> larger synthetic estimate; plain transfer -> 21000
+    tx = transaction or {}
+    try:
+        from .evm_runtime import is_enabled as _evm_on, estimate_gas
+        if _evm_on():
+            g = estimate_gas(sender=tx.get("from"), to=tx.get("to"),
+                             value_wei=F.from_q(tx.get("value"), 0),
+                             data=tx.get("data") or tx.get("input") or "0x")
+            if g:
+                return F.q(g)
+    except Exception:
+        pass
+    data = tx.get("data") or tx.get("input")
     if data and len(str(data)) > 2:
         return F.q(F.DEFAULT_GAS + 30000)
     return F.q(F.DEFAULT_GAS)
@@ -56,19 +66,57 @@ def eth_feeHistory(block_count: Any, newest_block: Any = "latest",
     return out
 
 
-# ---- read-only call (no EVM execution in the facade) -------------------------
-@method("eth_call", desc="EVM-compat: read-only call. Animica uses Python-VM, not EVM; returns 0x.")
+# ---- read-only call ---------------------------------------------------------
+@method("eth_call", desc="EVM-compat: read-only call. Native-ANM ERC-20 facade always; real EVM static_call when ANIMICA_EVM_EXECUTION=1.")
 def eth_call(transaction: Optional[dict] = None, tag: Any = "latest",
              state_overrides: Optional[dict] = None) -> str:
-    # Phase 1: no EVM bytecode execution. Native Animica contract reads use
-    # state.call / state.simulateCall with Animica ABI, not EVM ABI, so we don't
-    # pretend to decode EVM calldata here. Returns empty data.
+    tx = transaction or {}
+    to = tx.get("to")
+    data = tx.get("data") or tx.get("input") or "0x"
+
+    # 1) Native-ANM ERC-20 facade — gate-independent, read-only, can't move funds.
+    from .erc20_native import is_token, handle_call, FacadeRevert
+    if is_token(to):
+        try:
+            return handle_call(data)
+        except FacadeRevert as rv:
+            raise rpc_error(3, "execution reverted", data=rv.data)
+
+    # 2) Real EVM execution lane (read-only static call) when enabled.
+    try:
+        from .evm_runtime import is_enabled as _evm_on, static_call
+        if _evm_on():
+            frm = tx.get("from")
+            out = static_call(sender=frm, to=to, value_wei=F.from_q(tx.get("value"), 0), data=data)
+            return F.d(out.hex() if isinstance(out, (bytes, bytearray)) else out)
+    except rpc_error.__class__ if False else Exception:
+        pass
     return "0x"
 
 
-# ---- logs / filters (no EVM event index yet -> empty, Phase 3) ---------------
-@method("eth_getLogs", desc="EVM-compat: event logs (no EVM log index yet; empty).")
+# ---- logs / filters ---------------------------------------------------------
+@method("eth_getLogs", desc="EVM-compat: event logs from the EVM execution lane (when enabled); else empty.")
 def eth_getLogs(filter_params: Optional[dict] = None) -> list:
+    try:
+        from .evm_runtime import is_enabled as _evm_on, get_logs
+        if _evm_on():
+            fp = filter_params or {}
+            # The EVM lane has its own block numbering; treat latest/pending/None
+            # as unbounded (get_logs filters against the index's real numbers).
+            def _bound(tag, default):
+                s = str(tag).lower() if tag is not None else ""
+                if s in ("", "latest", "pending", "safe", "finalized"):
+                    return default
+                if s == "earliest":
+                    return 0
+                return F.from_q(tag, default)
+            frm = _bound(fp.get("fromBlock"), 0)
+            to = _bound(fp.get("toBlock"), 1 << 62)
+            addr = fp.get("address")
+            addrs = [addr] if isinstance(addr, str) else (addr or [])
+            return get_logs(int(frm), int(to), addrs, fp.get("topics"))
+    except Exception:
+        pass
     return []
 
 
@@ -106,6 +154,50 @@ def eth_getFilterLogs(filter_id: str) -> list:
 @method("eth_sendRawTransaction", desc="EVM-compat: submit a signed EVM tx. With the relayer enabled (ANIMICA_EVM_RELAYER) this moves value between EVM and native Animica; otherwise it is bounded (see -32004).")
 def eth_sendRawTransaction(raw_tx: str) -> str:
     raw = str(raw_tx or "")
+
+    # 0) EVM execution lane: a contract DEPLOY/CALL (msg.value==0) runs as real
+    #    Solidity on the node-local EVM sequencer when ANIMICA_EVM_EXECUTION=1.
+    #    Pure value transfers fall through to the relayer (real native ANM).
+    from .evm_runtime import is_enabled as _evm_on, is_contract_tx, execute
+    if _evm_on():
+        parsed = None
+        try:
+            from .decode import decode_evm_tx, RelayerReject, evm_tx_hash
+            parsed = decode_evm_tx(raw)
+        except RelayerReject as exc:
+            raise rpc_error(RPC_TRANSACTION_REJECTED, str(exc))
+        except Exception:
+            parsed = None
+        if parsed is not None and is_contract_tx(parsed):
+            if int(parsed.get("chainId") or 0) != F.evm_chain_id():
+                raise rpc_error(RPC_TRANSACTION_REJECTED, f"wrong chainId; expected {F.evm_chain_id()}.")
+            sender = parsed["sender"]
+            raw_bytes = parsed["raw"]
+            ehash = evm_tx_hash(raw_bytes)
+            # Single nonce authority via the relayer's managed account.
+            from .relayer import (is_enabled as _relayer_on, get_account, get_nonce,
+                                  _reserve_nonce, _release_nonce)
+            if not _relayer_on():
+                raise rpc_error(RPC_METHOD_NOT_SUPPORTED,
+                                "EVM execution requires the relayer (ANIMICA_EVM_RELAYER=1) for nonce/account coordination.")
+            acct = get_account(sender.lower())
+            if acct is None:
+                raise rpc_error(RPC_TRANSACTION_REJECTED,
+                                "unknown EVM account; provision it first via animica_evmAccount.")
+            expected = get_nonce(sender.lower())
+            n = int(parsed.get("nonce", 0))
+            if n < expected:
+                raise rpc_error(RPC_TRANSACTION_REJECTED, f"nonce too low ({n} < {expected}).")
+            if n > expected:
+                raise rpc_error(RPC_TRANSACTION_REJECTED, f"nonce too high ({n} > {expected}).")
+            if not _reserve_nonce(sender.lower(), expected):
+                raise rpc_error(RPC_TRANSACTION_REJECTED, "nonce race; retry.")
+            try:
+                execute(raw_bytes, ehash, sender, expected)
+            except Exception as exc:
+                _release_nonce(sender.lower(), expected)
+                raise rpc_error(RPC_SERVER_ERROR, f"EVM execution failed: {exc}")
+            return ehash
 
     # 1) Relayer path (only when ANIMICA_EVM_RELAYER is set): decode the EVM tx
     #    and relay it as a native transfer from the sender's managed account.

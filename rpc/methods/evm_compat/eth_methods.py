@@ -136,13 +136,29 @@ def eth_getTransactionCount(address: str, tag: Any = "latest") -> str:
     return F.q(0)
 
 
-@method("eth_getCode", desc="EVM-compat: contract code at address (Animica uses Python-VM, not EVM bytecode).")
+@method("eth_getCode", desc="EVM-compat: contract code. Stub for the native-ANM token; real code from the EVM lane when enabled.")
 def eth_getCode(address: str, tag: Any = "latest") -> str:
+    from .erc20_native import is_token, STUB_CODE
+    if is_token(address):
+        return STUB_CODE
+    try:
+        from .evm_runtime import is_enabled as _evm_on, get_code
+        if _evm_on():
+            code = get_code(address)
+            return F.d(code.hex() if isinstance(code, (bytes, bytearray)) else code)
+    except Exception:
+        pass
     return "0x"
 
 
-@method("eth_getStorageAt", desc="EVM-compat: storage slot (not EVM-addressable; 0x0).")
+@method("eth_getStorageAt", desc="EVM-compat: storage slot (from the EVM lane when enabled; else 0x0).")
 def eth_getStorageAt(address: str, position: str, tag: Any = "latest") -> str:
+    try:
+        from .evm_runtime import is_enabled as _evm_on, get_storage
+        if _evm_on():
+            return get_storage(address, F.from_q(position, 0))
+    except Exception:
+        pass
     return F.ZERO32
 
 
@@ -193,6 +209,17 @@ def eth_getTransactionByHash(tx_hash: str) -> Optional[dict]:
 
 @method("eth_getTransactionReceipt", desc="EVM-compat: transaction receipt.")
 def eth_getTransactionReceipt(tx_hash: str) -> Optional[dict]:
+    # EVM execution lane receipt (already in eth-JSON shape) takes precedence.
+    try:
+        from .evm_runtime import is_enabled as _evm_on, receipt as _evm_receipt
+        if _evm_on():
+            er = _evm_receipt(F.hexhash(tx_hash))
+            if er:
+                out = dict(er)
+                out.pop("evmError", None)
+                return out
+    except Exception:
+        pass
     rec, native = _relayed_record(tx_hash)
     if rec is not None:
         if not native:
