@@ -28,8 +28,19 @@ hardware path when a QRNG + HSM/TPM are present.
 
 - **Sources** (`randomness/qrng/providers.py`): `QuantisQRNG` (IDQ Quantis
   PCIe/USB, auto-discovers `/dev/qrandom0`…), `HwRngQRNG` (`/dev/hwrng`),
-  `SoftwareFallbackQRNG` (non-attested). `auto_select()` picks the best, wrapped
-  in a `HealthGatedSource`.
+  `NetworkQRNG` (remote QRNG endpoint), `SoftwareFallbackQRNG` (non-attested).
+  `auto_select()` picks the best, wrapped in a `HealthGatedSource`.
+- **Pseudo-quantum & auto-flip (5.0.2+)** (`randomness/qrng/pseudo.py`,
+  `randomness/qrng/manager.py`): with NO real provider the lane serves a
+  **pseudo-quantum** source (a simulated qubit-measurement RNG, clearly
+  `is_quantum=False`/non-attested) so beacons/draws/contributions keep working.
+  The `EntropySourceManager` re-detects providers (`refresh()`, called each round
+  by the worker; or `start_watch()`) and **flips automatically to a real attested
+  QRNG the moment one connects** — a device appearing (`/dev/qrandom0`) or a
+  provider registered at runtime (`connect_provider()` / `rand.connectQuantumProvider`).
+  Flips are timestamped and surfaced via `rand.getQuantumMode` /
+  `animica quantum quw mode`. Once flipped to real hardware + an HSM/TPM signer,
+  contributions become attested with no restart.
 - **Health** (`randomness/qrng/health.py`): NIST SP 800-90B Repetition Count +
   Adaptive Proportion tests and a min-entropy estimate; default gate ≥ 7.0 of 8.0
   bits/byte. Bad batches are dropped and never submitted/credited.

@@ -150,3 +150,47 @@ def run(
         if rounds != 0 and n >= rounds:
             break
         _time.sleep(interval)
+
+
+@quw_app.command("mode")
+def mode(json_output: bool = typer.Option(False, "--json")):
+    """Show the entropy source mode (pseudo-quantum vs real provider) + flip history."""
+    from randomness.qrng.manager import get_manager
+    st = get_manager().refresh()
+    if json_output:
+        console.print_json(json.dumps(st)); return
+    color = "green" if st["real_available"] else "yellow"
+    console.print(f"[bold {color}]mode={st['mode']}[/]  real_provider={st['real_available']}  "
+                  f"attested={st['attested']}  source={st['active_source']['name']}")
+    if st["flips"]:
+        console.print("flips:")
+        for f in st["flips"][-5:]:
+            console.print(f"  {f['from_source']} -> {f['to_source']} ({f['reason']})")
+    if not st["real_available"]:
+        console.print("[yellow]serving PSEUDO-quantum — will auto-flip when a real QRNG connects "
+                      "(plug in an IDQ Quantis, or `animica quantum quw connect --url ...`).[/]")
+
+
+@quw_app.command("connect")
+def connect(url: str = typer.Option(..., "--url", help="network QRNG endpoint (returns raw bytes)"),
+            is_quantum: bool = typer.Option(True, "--quantum/--no-quantum"),
+            model: str = typer.Option("network QRNG", "--model"),
+            json_output: bool = typer.Option(False, "--json")):
+    """Connect a real QRNG provider at runtime and flip the lane to it."""
+    from randomness.qrng import providers
+    from randomness.qrng.manager import get_manager
+    src = providers.NetworkQRNG(url, is_quantum=is_quantum, model=model)
+    st = get_manager().connect_provider(src, name="network-qrng")
+    if json_output:
+        console.print_json(json.dumps(st)); return
+    console.print(f"[green]connected[/] {url} -> mode={st['mode']} real_provider={st['real_available']}")
+
+
+@quw_app.command("simulate")
+def simulate(json_output: bool = typer.Option(False, "--json")):
+    """Disconnect runtime providers and serve pseudo-quantum (testing/degraded)."""
+    from randomness.qrng.manager import get_manager
+    st = get_manager().disconnect_all()
+    if json_output:
+        console.print_json(json.dumps(st)); return
+    console.print(f"[yellow]serving pseudo-quantum[/] mode={st['mode']}")

@@ -46,10 +46,12 @@ class QuwWorker:
         self.n_bytes = int(n_bytes)
         self.min_h = float(min_entropy_per_byte)
         self.max_health_retries = int(max_health_retries)
-        # Raw source (NOT health-gated here; we evaluate per-batch and retry).
-        gated = providers.auto_select(prefer_hardware=prefer_hardware, health_gated=False,
-                                      min_entropy_per_byte=self.min_h)
-        self.source = gated
+        # Source via the auto-flipping manager: serves pseudo-quantum when no real
+        # provider is present, and flips to a real attested QRNG the moment one
+        # connects (checked each round via manager.refresh()).
+        from randomness.qrng.manager import get_manager
+        self.manager = get_manager()
+        self.source = self.manager.active_raw()  # raw; we run our own health retry
         self.signer = hsm_tpm.make_signer(prefer=signer_prefer)
         self._submit_fn = submit_fn or self._default_submit
 
@@ -78,6 +80,9 @@ class QuwWorker:
 
     # --- single round ---
     def run_once(self, round_id: int) -> Dict[str, Any]:
+        # Re-detect providers each round: flips pseudo<->real automatically.
+        self.manager.refresh()
+        self.source = self.manager.active_raw()
         ch = self._submit_fn("rand.getQuantumChallenge", {"round_id": int(round_id)})
         nonce = bytes.fromhex(ch["nonce_hex"])
         # Read until a batch passes the health gate (a degraded source is dropped).
@@ -98,7 +103,7 @@ class QuwWorker:
                                    address=self.address, n_bytes=len(data),
                                    min_entropy_per_byte=self.min_h)
         res = self._submit_fn("rand.contributeQuantumEntropy", {"contribution": c.to_dict()})
-        return {"round_id": round_id, "submitted": True,
+        return {"round_id": round_id, "submitted": True, "mode": self.manager.mode,
                 "source": self.source.info().as_dict(), "signer": self.signer.info().backend,
                 "result": res}
 

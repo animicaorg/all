@@ -192,6 +192,14 @@ def quantum_get_status() -> Dict[str, Any]:
         st["local_sources"] = [s.info().as_dict() for s in _p.detect_sources()]
     except Exception:
         st["local_sources"] = []
+    try:
+        from randomness.qrng.manager import get_manager
+        m = get_manager().refresh()
+        st["source_mode"] = m["mode"]            # "pseudo" | "hardware"
+        st["real_provider"] = m["real_available"]
+        st["flips"] = m["flips"][-5:]
+    except Exception:
+        pass
     return st
 
 
@@ -286,3 +294,47 @@ def quantum_random_bytes(n: int = 32, attested: bool = True) -> Dict[str, Any]:
             "signature_hex": signer.sign(digest).hex(),
         }
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Pseudo-quantum service + auto-flip: the lane works with no real provider
+# (pseudo-quantum) and flips to a real attested QRNG the moment one connects.
+# ---------------------------------------------------------------------------
+
+
+def _quw_manager():
+    from randomness.qrng.manager import get_manager
+    return get_manager()
+
+
+@method(
+    "rand.getQuantumMode",
+    desc="Entropy source mode: pseudo-quantum vs real provider, + flip history.",
+    aliases=("quantum.quw.getMode",),
+)
+def quantum_get_mode() -> Dict[str, Any]:
+    return _quw_manager().refresh()  # refresh re-detects providers, then returns status
+
+
+@method(
+    "rand.connectQuantumProvider",
+    desc="Connect a real QRNG provider at runtime (url=network endpoint) and flip to it.",
+    aliases=("quantum.quw.connectProvider",),
+)
+def quantum_connect_provider(url: str = "", is_quantum: bool = True,
+                             model: str = "network QRNG") -> Dict[str, Any]:
+    from randomness.qrng import providers as _p
+    if not url:
+        return {"ok": False, "reason": "url required (network QRNG endpoint)"}
+    src = _p.NetworkQRNG(url, is_quantum=bool(is_quantum), model=model)
+    st = _quw_manager().connect_provider(src, name="network-qrng")
+    return {"ok": True, **st}
+
+
+@method(
+    "rand.usePseudoQuantum",
+    desc="Disconnect runtime providers and serve pseudo-quantum (testing/degraded).",
+    aliases=("quantum.quw.usePseudo",),
+)
+def quantum_use_pseudo() -> Dict[str, Any]:
+    return {"ok": True, **_quw_manager().disconnect_all()}

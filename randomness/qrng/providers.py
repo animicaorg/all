@@ -452,6 +452,32 @@ class SoftwareFallbackQRNG(QuantumEntropySource):
         return os.urandom(n)
 
 
+class NetworkQRNG(QuantumEntropySource):
+    """
+    A real external QRNG reached over HTTP(S) (e.g. an IDQ network appliance or a
+    remote attested QRNG service). Presented as a hardware source so the source
+    manager flips to it when it connects. Attestation is separate (an HSM/TPM
+    signer still governs whether contributions are *attested*).
+    """
+
+    def __init__(self, url: str, *, is_quantum: bool = True, model: str = "network QRNG",
+                 vendor: str = "network", attested: bool = False, timeout: float = 5.0) -> None:
+        self._url = url
+        self._is_quantum = bool(is_quantum)
+        self._model = model
+        self._vendor = vendor
+        self._attested = bool(attested)
+        self._http = HTTPQRNG(url, timeout=timeout)
+
+    def info(self) -> SourceInfo:
+        return SourceInfo(name="network-qrng", vendor=self._vendor, model=self._model,
+                          is_hardware=True, is_quantum=self._is_quantum, device_path=self._url,
+                          attested=self._attested, notes="remote QRNG endpoint")
+
+    def random_bytes(self, n: int) -> bytes:
+        return self._http.random_bytes(n)
+
+
 class HealthGatedSource(QuantumEntropySource):
     """
     Wrap any EntropySource and run the SP 800-90B health battery on every read.
@@ -533,6 +559,7 @@ __all__ = [
     "QuantisQRNG",
     "HwRngQRNG",
     "SoftwareFallbackQRNG",
+    "NetworkQRNG",
     "HealthGatedSource",
     "QuantumEntropySource",
     "SourceInfo",
