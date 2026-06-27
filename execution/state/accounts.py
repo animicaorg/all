@@ -20,7 +20,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import MutableMapping, Optional
 
-from execution.errors import ExecError
+from execution.errors import ExecError, StateConflict
 from execution.types.gas import U256_MAX, is_u256, saturating_add
 
 # --------------------------------------------------------------------------- #

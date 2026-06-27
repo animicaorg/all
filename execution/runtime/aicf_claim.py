@@ -204,8 +204,6 @@ def apply_aicf_claim(
     # Load AICF state and validate claim
     try:
         from execution.state.aicf_state import (
-            compute_claimable,
-            process_claim,
             get_epoch_length,
             compute_epoch,
         )
@@ -289,48 +287,11 @@ def apply_aicf_claim(
             receipt=None,
         )
     
-    total_claimable = claimable_info.total_claimable
-    
-    # Validate claim amount
-    if claim_amount > total_claimable:
-        return ApplyResult(
-            status=TxStatus.REVERT,
-            gas_used=21000,
-            logs=[
-                LogEvent(
-                    address=b"\x00" * 20,
-                    topics=[b"aicf.claim.error"],
-                    data=f"Insufficient claimable credits: requested={claim_amount}, available={total_claimable}".encode(),
-                )
-            ],
-            state_root=_state_root(state),
-            receipt=None,
-        )
-    
-    # Process the claim (debits pool, credits claimant, updates last_claimed_epoch)
-    try:
-        actual_paid, epochs_claimed = process_claim(state, sender, current_epoch, max_claim_epochs)
-    except Exception as e:
-        log.error(f"Failed to process claim: {e}", exc_info=True)
-        return ApplyResult(
-            status=TxStatus.REVERT,
-            gas_used=21000,
-            logs=[
-                LogEvent(
-                    address=b"\x00" * 20,
-                    topics=[b"aicf.claim.error"],
-                    data=f"Claim processing failed: {e}".encode(),
-                )
-            ],
-            state_root=_state_root(state),
-            receipt=None,
-        )
-    
-    # Validate that we got what was expected
-    # Note: process_claim always claims ALL available credits, not a partial amount
-    # The claim_amount parameter in the transaction is ignored for now
-    # Phase 2: Partial claim support (if needed for UX)
-    
+    # process_partial_claim() above is the single source of truth: it validated
+    # the request (cooldown / min_claim / amount vs. available) and already paid
+    # out `actual_paid` over `epochs_claimed` epochs (amount==0 means claim-all).
+    # (The previous code here referenced an undefined `claimable_info` and then
+    # called process_claim() a second time, double-processing the claim.)
     if actual_paid == 0:
         return ApplyResult(
             status=TxStatus.REVERT,
