@@ -1590,12 +1590,48 @@ class BlockImporter:
             return False
         self._ensure_fork_choice_parent(parent_hash)
         weight = _weight_micro_of(header, payload, self.params)
+        height = _height_of(header, payload)
         result = self.fork_choice.add_block(
             h=header_hash,
             parent=parent_hash,
-            height=_height_of(header, payload),
+            height=height,
             weight_micro=weight,
         )
+        if not result.became_best:
+            # Self-heal against fork-choice desync — the root cause of the recurring
+            # "chain head frozen / chain reset" incidents that previously required a
+            # manual process restart. A block whose parent IS the persisted canonical
+            # head, with positive weight, always forms a strictly heavier chain than
+            # the head itself and MUST become the new best. If the in-memory fork
+            # choice disagrees, its `_best` has desynced from the durable DB head
+            # (e.g. a phantom tip left behind by a prior failed reorg / state restore,
+            # which reverts the DB head but not the in-memory best). Rebuild the tree
+            # from the authoritative canonical chain and re-evaluate, so the head can
+            # never get permanently stuck behind a stale in-memory tip again.
+            db_head = self.block_db.get_canonical_head()
+            if (
+                db_head is not None
+                and weight > 0
+                and bytes(parent_hash) == bytes(db_head[1])
+            ):
+                log.warning(
+                    "fork-choice desync detected: block height=%s extends canonical "
+                    "head height=%s but did not become best; rebuilding fork-choice "
+                    "from the canonical DB and retrying head advance",
+                    height,
+                    db_head[0],
+                )
+                self.fork_choice = None
+                self._init_fork_choice_from_db()
+                if self.fork_choice is None:
+                    return False
+                self._ensure_fork_choice_parent(parent_hash)
+                result = self.fork_choice.add_block(
+                    h=header_hash,
+                    parent=parent_hash,
+                    height=height,
+                    weight_micro=weight,
+                )
         if not result.became_best:
             return False
         self._apply_reorg(result.detached, result.attached, result.best)

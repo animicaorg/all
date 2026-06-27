@@ -6756,9 +6756,18 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                 credited_amount = int(expected_reward)
                 credited_source = "expected_reward"
 
-            # AICF Credit Minting: Mint credits from block reward + fees
-            # This happens AFTER block is committed and rewards are applied to state
+            # AICF Credit Minting: Mint credits from block reward + fees.
+            # Gate on head_changed so credits are minted only when this block actually
+            # advanced the canonical head. A fork-choice desync could leave a block
+            # ACCEPTED-but-non-canonical (head frozen); the old code minted on every
+            # such retry, inflating AICF credits for the same height. The root-cause
+            # fix lives in block_import._apply_fork_choice (self-heal); this is
+            # defense in depth so a stalled head can never mint duplicate credits.
+            class _AicfMintSkipped(Exception):
+                pass
             try:
+                if not result.head_changed:
+                    raise _AicfMintSkipped()
                 from aicf.protocol.state import ProtocolState
                 from aicf.credits.minting import mint_block_credits, get_aicf_slice_bps
                 
@@ -6807,6 +6816,12 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
                     f"aicf_credits={mint_result['aicf_credits']}, "
                     f"ledger_id={mint_result['ledger_id']}"
                 )
+            except _AicfMintSkipped:
+                log.debug(
+                    "Skipped AICF mint for non-canonical block height=%s "
+                    "(head did not advance)",
+                    result.height,
+                )
             except Exception as e:
                 # Don't fail block submission if credit minting has issues
                 # Credit minting is tracked separately and can be reconciled later
@@ -6819,7 +6834,11 @@ def miner_submit_block(payload: Any = None, **kwargs: Any) -> Dict[str, Any]:
         head_after_height = int(head_after.get("height") or 0)
         committed_height = int(result.height or 0)
         new_head_height = head_after_height
-        if committed_height > new_head_height:
+        # Only claim the submitted height as the new head if the import actually
+        # advanced the canonical head. Previously this overrode unconditionally, so a
+        # stalled head still reported new_head=committed_height — telling miners to move
+        # on while the chain was frozen, a self-reinforcing resubmit loop.
+        if result.head_changed and committed_height > new_head_height:
             new_head_height = committed_height
 
         new_head_hash = head_after.get("hash")
