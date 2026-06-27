@@ -193,3 +193,96 @@ def quantum_get_status() -> Dict[str, Any]:
     except Exception:
         st["local_sources"] = []
     return st
+
+
+# ---------------------------------------------------------------------------
+# Consumable verifiable quantum randomness (beacon + draws + QRNG-as-a-service).
+# Makes the attested quantum entropy usable by dApps/games/governance: every
+# output is a pure function of (beacon, request_id, params) -> client-verifiable.
+# ---------------------------------------------------------------------------
+
+
+@method(
+    "rand.getQuantumBeacon",
+    desc="Get the verifiable quantum beacon for a round (aggregated attested entropy).",
+    aliases=("quantum.quw.getBeacon",),
+)
+def quantum_get_beacon(round_id: int = 0) -> Dict[str, Any]:
+    svc = _quw_service()
+    bc = svc.get_quantum_beacon(int(round_id))
+    if bc is None:
+        return {"available": False, "round_id": int(round_id),
+                "reason": "no accepted contributions for round"}
+    agg = svc.aggregate_for_round(int(round_id))
+    out = bc.as_dict()
+    out["available"] = True
+    if agg is not None:
+        out["aggregate"] = agg.as_dict()
+    return out
+
+
+@method(
+    "rand.quantumDraw",
+    desc="Verifiable randomness from the round beacon: lottery/choice/weighted/shuffle/range/coin/dice/bytes.",
+    aliases=("quantum.quw.draw",),
+)
+def quantum_draw(round_id: int = 0, request_id: str = "", kind: str = "lottery",
+                 params: Dict[str, Any] = None, **kwargs) -> Dict[str, Any]:
+    from randomness.qrng import public
+    svc = _quw_service()
+    bc = svc.get_quantum_beacon(int(round_id))
+    if bc is None:
+        return {"ok": False, "reason": "no beacon for round (need accepted contributions)"}
+    p = params if isinstance(params, dict) else {k: v for k, v in kwargs.items()}
+    try:
+        res = public.compute(str(kind), bc.value(), int(round_id), str(request_id), p)
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
+    res["ok"] = True
+    res["attested"] = bc.attested
+    return res
+
+
+@method(
+    "rand.verifyQuantumResult",
+    desc="Client-side verification: recompute a draw from its inputs and confirm the output.",
+    aliases=("quantum.quw.verify",),
+)
+def quantum_verify_result(result: Dict[str, Any] = None, **kwargs) -> Dict[str, Any]:
+    from randomness.qrng import public
+    r = result if isinstance(result, dict) else dict(kwargs)
+    return {"verified": bool(public.verify_result(r))}
+
+
+@method(
+    "rand.quantumRandomBytes",
+    desc="QRNG-as-a-service: attested quantum random bytes from local hardware (or fallback).",
+    aliases=("quantum.quw.randomBytes",),
+)
+def quantum_random_bytes(n: int = 32, attested: bool = True) -> Dict[str, Any]:
+    from randomness.qrng import providers, health, hsm_tpm
+    import hashlib as _h
+    n = max(0, min(int(n), 1 << 20))  # cap 1 MiB
+    src = providers.auto_select(health_gated=False)
+    # Assess a stable batch (>=4096B) for a reliable min-entropy estimate even on
+    # tiny requests, then return the requested n bytes from it.
+    assess = max(n, 4096)
+    batch = src.random_bytes(assess)
+    rep = health.evaluate(batch)
+    out = batch[:n]
+    info = src.info().as_dict()
+    resp: Dict[str, Any] = {
+        "bytes_hex": out.hex(), "n": n, "source": info,
+        "health": {"passed": rep.passed, "min_entropy_per_byte": round(rep.min_entropy_per_byte, 4)},
+    }
+    if attested:
+        signer = hsm_tpm.make_signer()
+        digest = _h.sha3_256(out).digest()
+        si = signer.info()
+        resp["attestation"] = {
+            "alg": si.alg, "backend": si.backend, "attested": si.attested,
+            "public_key_hex": signer.public_key().hex(),
+            "digest_hex": digest.hex(),
+            "signature_hex": signer.sign(digest).hex(),
+        }
+    return resp

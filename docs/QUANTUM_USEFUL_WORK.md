@@ -92,6 +92,33 @@ sudo udevadm control --reload && sudo udevadm trigger
 sudo systemctl enable --now animica-quw
 ```
 
+## Consumable verifiable randomness (5.0.1+)
+
+The attested quantum entropy isn't just an internal reward loop — it powers a
+**public, verifiable randomness service** that dApps, games, and governance can
+consume. All accepted attested contributions for a round are aggregated
+(`randomness/qrng/aggregate.py`, XOR-fold, contributor-bound — no single
+contributor controls it) into a **quantum beacon**
+(`randomness/qrng/public.py:build_quantum_beacon`). From that beacon, a family of
+primitives produces outputs that are a **pure function of (beacon, request_id,
+params)** — anyone recomputes and verifies them offline:
+
+- `lottery_draw` (k distinct winners), `random_choice`, `weighted_choice`,
+  `shuffle`, `random_in_range`, `coin_flip`, `dice`, `random_bytes`.
+- `verify_result(result)` recomputes and confirms any draw — unbiasable
+  (beacon is fixed/quantum) and unpredictable before the beacon is revealed.
+
+Use it for fair lotteries/raffles, NFT trait/mint randomization, random
+committee/auditor/validator selection, games, tie-breaks, and sampling.
+
+```bash
+animica quantum rand random --bytes 32            # attested QRNG-as-a-service
+animica quantum rand lottery --entries a,b,c,d,e --k 2 --beacon <hex>
+animica quantum rand draw --kind dice --sides 20 --count 3 --beacon <hex>
+animica quantum rand beacon --round 42 --rpc-url http://127.0.0.1:8545/rpc
+echo '<result-json>' | animica quantum rand verify -   # client-side verify
+```
+
 ## RPC API
 
 | Method | Aliases | Purpose |
@@ -100,6 +127,10 @@ sudo systemctl enable --now animica-quw
 | `rand.contributeQuantumEntropy{contribution}` | `quantum.quw.contributeEntropy` | submit attested entropy (verified + credited) |
 | `rand.getQuantumCredits{address}` | `quantum.quw.getCredits` | credit units earned |
 | `rand.getQuantumStatus{}` | `quantum.quw.getStatus` | lane status + detected sources |
+| `rand.getQuantumBeacon{round_id}` | `quantum.quw.getBeacon` | verifiable quantum beacon (aggregated) |
+| `rand.quantumDraw{round_id,request_id,kind,params}` | `quantum.quw.draw` | verifiable lottery/dice/shuffle/range/… |
+| `rand.quantumRandomBytes{n,attested}` | `quantum.quw.randomBytes` | attested quantum random bytes (QRNG-as-a-service) |
+| `rand.verifyQuantumResult{result}` | `quantum.quw.verify` | recompute + verify a draw |
 
 ## Security model
 

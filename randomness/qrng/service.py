@@ -55,6 +55,7 @@ class QuantumWorkService:
         self._seen_nullifiers: set = set()
         self._credits_units: Dict[str, float] = {}
         self._credits_rounds: Dict[str, Dict[int, float]] = {}
+        self._beacons: Dict[int, Any] = {}
 
     # --- challenge ---
     def get_challenge(self, round_id: int) -> Dict[str, Any]:
@@ -152,6 +153,35 @@ class QuantumWorkService:
             "contributor": c.address,
             "min_entropy_per_byte": vr.min_entropy_per_byte,
         }
+
+    # --- aggregation + consumable beacon ---
+    def aggregate_for_round(self, round_id: int, *, require_attested: bool = True):
+        """Aggregate ALL accepted contributions for a round (attested-preferred)."""
+        from .aggregate import aggregate_entropy
+        rs = self._rounds.get(round_id)
+        if rs is None or not rs.contributions:
+            return None
+        items = [(c.entropy(), vr.attested, c.address)
+                 for c, vr in zip(rs.contributions, rs.results)]
+        return aggregate_entropy(items, require_attested=require_attested)
+
+    def get_quantum_beacon(self, round_id: int):
+        """
+        Build (and cache) the consumable, verifiable quantum beacon for a round
+        from the aggregated entropy, chaining the previous round's beacon value.
+        """
+        from .public import build_quantum_beacon
+        if round_id in self._beacons:
+            return self._beacons[round_id]
+        agg = self.aggregate_for_round(round_id)
+        if agg is None:
+            return None
+        prev = b""
+        if (round_id - 1) in self._beacons:
+            prev = self._beacons[round_id - 1].value()
+        beacon = build_quantum_beacon(round_id, prev, agg)
+        self._beacons[round_id] = beacon
+        return beacon
 
     # --- views ---
     def get_credits(self, address: str) -> Dict[str, Any]:

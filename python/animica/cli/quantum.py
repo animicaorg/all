@@ -31,6 +31,10 @@ app.add_typer(quantum_contribute_app, name="contribute")
 from .quantum_quw import quw_app
 app.add_typer(quw_app, name="quw")
 
+# Consumable verifiable quantum randomness (beacon, lottery/draw, dice, verify)
+from .quantum_rand import rand_app
+app.add_typer(rand_app, name="rand")
+
 # Create jobs subcommand group
 jobs_app = typer.Typer(
     name="jobs",
