@@ -138,3 +138,58 @@ _METHODS = {
     "explorer_list_job_results": explorer_list_job_results,
     "explorer_get_result": explorer_get_result,
 }
+
+
+# ---------------------------------------------------------------------------
+# Quantum Useful Work (QUW) — hardware-QRNG attested entropy contribution lane.
+# Backed by randomness.qrng.service.QuantumWorkService (verifies attestation +
+# SP 800-90B health, credits ProofType.QUANTUM, selects beacon entropy).
+# ---------------------------------------------------------------------------
+
+
+def _quw_service():
+    from randomness.qrng.service import get_service
+    return get_service()
+
+
+@method(
+    "rand.getQuantumChallenge",
+    desc="Issue a fresh per-round nonce for a QUW entropy contribution.",
+    aliases=("quantum.quw.getChallenge",),
+)
+def quantum_get_challenge(round_id: int = 0) -> Dict[str, Any]:
+    return _quw_service().get_challenge(int(round_id))
+
+
+@method(
+    "rand.contributeQuantumEntropy",
+    desc="Submit an attested quantum-entropy contribution for a round (verified + credited).",
+    aliases=("quantum.quw.contributeEntropy",),
+)
+def quantum_contribute_entropy(contribution: Dict[str, Any] = None, **kwargs) -> Dict[str, Any]:
+    payload = contribution if isinstance(contribution, dict) else dict(kwargs)
+    return _quw_service().contribute(payload)
+
+
+@method(
+    "rand.getQuantumCredits",
+    desc="Quantum useful-work credit units earned by an address.",
+    aliases=("quantum.quw.getCredits",),
+)
+def quantum_get_credits(address: str = "") -> Dict[str, Any]:
+    return _quw_service().get_credits(str(address))
+
+
+@method(
+    "rand.getQuantumStatus",
+    desc="QUW lane status: contributors, attested share, detected local sources.",
+    aliases=("quantum.quw.getStatus",),
+)
+def quantum_get_status() -> Dict[str, Any]:
+    st = _quw_service().status()
+    try:
+        from randomness.qrng import providers as _p
+        st["local_sources"] = [s.info().as_dict() for s in _p.detect_sources()]
+    except Exception:
+        st["local_sources"] = []
+    return st

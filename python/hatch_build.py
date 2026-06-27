@@ -46,6 +46,7 @@ _VENDOR_MAP: list[tuple[str, str]] = [
     ("../mining", "mining"),
     ("../p2p", "p2p"),
     ("../pq", "pq"),
+    ("../randomness", "randomness"),
     ("../rpc", "rpc"),
     ("../stdlib", "stdlib"),
     ("../vm_py", "vm_py"),

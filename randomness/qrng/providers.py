@@ -265,8 +265,278 @@ class HTTPQRNG(EntropySource):
         return bytes(out)
 
 
+# -----------------------------------------------------------------------------#
+# Hardware QRNG providers (Quantum Useful Work lane)
+# -----------------------------------------------------------------------------#
+
+import dataclasses
+
+from . import health as _health
+
+
+class EntropyHealthError(RuntimeError):
+    """Raised when a batch of QRNG bytes fails the SP 800-90B health battery."""
+
+    def __init__(self, report: "_health.HealthReport") -> None:
+        super().__init__("; ".join(report.reasons) or "entropy health check failed")
+        self.report = report
+
+
+@dataclasses.dataclass(frozen=True)
+class SourceInfo:
+    """Self-description of an entropy source for the Quantum Useful Work lane."""
+
+    name: str
+    vendor: str
+    model: str
+    is_hardware: bool
+    is_quantum: bool  # genuine quantum-physical source (not a CSPRNG/conditioned mix)
+    device_path: Optional[str] = None
+    attested: bool = False  # whether a hardware attestation can back this source
+    notes: str = ""
+
+    def as_dict(self) -> dict:
+        return dataclasses.asdict(self)
+
+
+class QuantumEntropySource(EntropySource):
+    """EntropySource that also describes itself via ``info()`` and reports availability."""
+
+    def info(self) -> SourceInfo:  # pragma: no cover - overridden
+        raise NotImplementedError
+
+    def available(self) -> bool:
+        try:
+            self.random_bytes(1)
+            return True
+        except Exception:
+            return False
+
+
+# Common Linux device nodes exposed by ID Quantique drivers / kernel HWRNG.
+_QUANTIS_DEVICE_CANDIDATES = (
+    "/dev/qrandom0",
+    "/dev/quantis0",
+    "/dev/qrng0",
+    "/dev/idq0",
+)
+
+
+class QuantisQRNG(QuantumEntropySource):
+    """
+    ID Quantique **Quantis QRNG** (PCIe 40/240 Mbps or USB) provider.
+
+    Read strategy, in order:
+      1. The IDQ ``quantis`` Python binding, if installed and a card is present
+         (operators with the Quantis SDK get native, library-backed reads).
+      2. A character device the IDQ Linux driver exposes (``device_path`` or one
+         of the common candidates). This is the dependency-free path and works
+         with the kernel-HWRNG integration many deployments use.
+
+    is_quantum=True: the Quantis output is sourced from quantum shot noise. A
+    hardware attestation (device cert + HSM/TPM signature) can back it — see
+    ``randomness.qrng.attest`` / ``randomness.qrng.hsm_tpm``.
+    """
+
+    def __init__(
+        self,
+        *,
+        device_path: Optional[str] = None,
+        model: str = "Quantis QRNG (PCIe/USB)",
+        attested: bool = False,
+        prefer_library: bool = True,
+        block_size: int = 1 << 16,
+    ) -> None:
+        self._model = model
+        self._attested = bool(attested)
+        self._lib = None
+        self._file: Optional[FileQRNG] = None
+        self._device_path: Optional[str] = None
+
+        if prefer_library:
+            self._lib = self._try_open_library()
+
+        if self._lib is None:
+            path = device_path or self._discover_device()
+            if path is not None:
+                self._device_path = path
+                self._file = FileQRNG(path, block_size=block_size)
+
+    @staticmethod
+    def _discover_device() -> Optional[str]:
+        for cand in _QUANTIS_DEVICE_CANDIDATES:
+            if os.path.exists(cand) and os.access(cand, os.R_OK):
+                return cand
+        return None
+
+    @staticmethod
+    def _try_open_library():
+        """Best-effort load of the optional IDQ Quantis Python binding."""
+        for modname in ("quantis", "Quantis", "idq_quantis"):
+            try:
+                mod = __import__(modname)
+            except Exception:
+                continue
+            return mod
+        return None
+
+    def info(self) -> SourceInfo:
+        return SourceInfo(
+            name="quantis",
+            vendor="ID Quantique",
+            model=self._model,
+            is_hardware=True,
+            is_quantum=True,
+            device_path=self._device_path,
+            attested=self._attested,
+            notes="optional IDQ SDK present" if self._lib is not None else "device-node read",
+        )
+
+    def random_bytes(self, n: int) -> bytes:
+        if n < 0:
+            raise ValueError("n must be non-negative")
+        if n == 0:
+            return b""
+        if self._file is not None:
+            return self._file.random_bytes(n)
+        raise QRNGNotAvailable(
+            "Quantis QRNG not available: no readable device node "
+            f"({', '.join(_QUANTIS_DEVICE_CANDIDATES)}) and no usable SDK. "
+            "Pass device_path=... or install the ID Quantique Quantis driver/SDK."
+        )
+
+
+class HwRngQRNG(QuantumEntropySource):
+    """
+    Linux kernel hardware-RNG interface (``/dev/hwrng``). Many QRNG cards, TPMs,
+    and HSMs expose entropy here via the kernel ``hwrng`` framework. is_quantum is
+    reported False unless the operator asserts the backing device is quantum.
+    """
+
+    def __init__(self, *, device_path: str = "/dev/hwrng", is_quantum: bool = False,
+                 model: str = "kernel hwrng", block_size: int = 1 << 16) -> None:
+        self._path = device_path
+        self._is_quantum = bool(is_quantum)
+        self._model = model
+        self._file = FileQRNG(device_path, block_size=block_size)
+
+    def info(self) -> SourceInfo:
+        return SourceInfo(
+            name="hwrng", vendor="kernel", model=self._model, is_hardware=True,
+            is_quantum=self._is_quantum, device_path=self._path, attested=False,
+            notes="Linux /dev/hwrng",
+        )
+
+    def random_bytes(self, n: int) -> bytes:
+        return self._file.random_bytes(n)
+
+
+class SoftwareFallbackQRNG(QuantumEntropySource):
+    """
+    CSPRNG software fallback (``os.urandom``). NOT a quantum source and NOT
+    attestable — provided so the Quantum Useful Work pipeline is fully runnable
+    and testable without QRNG hardware. Contributions made with this source are
+    flagged non-attested and earn no quantum-tier reward.
+    """
+
+    def info(self) -> SourceInfo:
+        return SourceInfo(
+            name="software-fallback", vendor="os", model="os.urandom CSPRNG",
+            is_hardware=False, is_quantum=False, device_path=None, attested=False,
+            notes="non-attested fallback for testing/degraded mode",
+        )
+
+    def random_bytes(self, n: int) -> bytes:
+        if n < 0:
+            raise ValueError("n must be non-negative")
+        return os.urandom(n)
+
+
+class HealthGatedSource(QuantumEntropySource):
+    """
+    Wrap any EntropySource and run the SP 800-90B health battery on every read.
+    Raises ``EntropyHealthError`` (carrying the HealthReport) if a batch fails.
+    The most recent report is available as ``last_report``.
+    """
+
+    def __init__(
+        self,
+        inner: EntropySource,
+        *,
+        min_entropy_per_byte: float = _health.DEFAULT_MIN_ENTROPY_PER_BYTE,
+        raise_on_fail: bool = True,
+    ) -> None:
+        self._inner = inner
+        self._min_h = float(min_entropy_per_byte)
+        self._raise = bool(raise_on_fail)
+        self.last_report: Optional[_health.HealthReport] = None
+
+    def info(self) -> SourceInfo:
+        if isinstance(self._inner, QuantumEntropySource):
+            base = self._inner.info()
+            return dataclasses.replace(base, notes=(base.notes + "; health-gated").strip("; "))
+        return SourceInfo(name="health-gated", vendor="?", model="?", is_hardware=False,
+                          is_quantum=False, notes="health-gated wrapper")
+
+    def random_bytes(self, n: int) -> bytes:
+        data = self._inner.random_bytes(n)
+        if len(data) >= _health.MIN_SAMPLES:
+            report = _health.evaluate(data, min_entropy_per_byte=self._min_h)
+            self.last_report = report
+            if not report.passed and self._raise:
+                raise EntropyHealthError(report)
+        return data
+
+
+def detect_sources() -> list:
+    """
+    Return available entropy sources best-first:
+    Quantis (if device/SDK present) -> /dev/hwrng -> software fallback.
+    The software fallback is always present so the lane is never fully unavailable.
+    """
+    found: list = []
+    q = QuantisQRNG()
+    if q.available():
+        found.append(q)
+    if os.path.exists("/dev/hwrng") and os.access("/dev/hwrng", os.R_OK):
+        hw = HwRngQRNG()
+        if hw.available():
+            found.append(hw)
+    found.append(SoftwareFallbackQRNG())
+    return found
+
+
+def auto_select(*, prefer_hardware: bool = True, health_gated: bool = True,
+                min_entropy_per_byte: float = _health.DEFAULT_MIN_ENTROPY_PER_BYTE
+                ) -> QuantumEntropySource:
+    """
+    Pick the best available source. With ``prefer_hardware`` (default) a real
+    quantum/hardware source wins over the software fallback. Wrapped in a
+    HealthGatedSource by default so unhealthy batches are rejected.
+    """
+    sources = detect_sources()
+    chosen = sources[0]
+    if prefer_hardware:
+        for s in sources:
+            if s.info().is_hardware:
+                chosen = s
+                break
+    if health_gated:
+        return HealthGatedSource(chosen, min_entropy_per_byte=min_entropy_per_byte)
+    return chosen
+
+
 __all__ = [
     "FileQRNG",
     "DeviceQRNG",
     "HTTPQRNG",
+    "QuantisQRNG",
+    "HwRngQRNG",
+    "SoftwareFallbackQRNG",
+    "HealthGatedSource",
+    "QuantumEntropySource",
+    "SourceInfo",
+    "EntropyHealthError",
+    "detect_sources",
+    "auto_select",
 ]

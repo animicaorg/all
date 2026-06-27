@@ -228,6 +228,42 @@ def _auto_memory_hparams(hp: dict[str, Any],
 # run
 # ---------------------------------------------------------------------------
 
+def _maybe_apply_quantum_seed(rec: dict[str, Any], manifest: dict[str, Any]) -> Optional[dict]:
+    """
+    If enabled (ANIMICA_ENA_QUANTUM_SEED=1), derive this run's RNG seed from the
+    chain's quantum randomness beacon and apply it to torch/numpy/python RNG, so
+    weight init / data shuffling / sampling come from hardware-attested quantum
+    entropy. The (verifiable) provenance is recorded in run metadata: anyone can
+    recompute the seed from the public beacon + job_id, so a worker cannot
+    cherry-pick a favourable seed. Default OFF and a no-op if no beacon is given.
+
+    Beacon source (in priority): manifest["quantum_beacon"]={seed_hex,round,attested}
+    else env ANIMICA_ENA_BEACON_SEED_HEX / ANIMICA_ENA_BEACON_ROUND.
+    """
+    if (os.environ.get("ANIMICA_ENA_QUANTUM_SEED", "") or "").strip() not in ("1", "true", "yes"):
+        return None
+    qb = manifest.get("quantum_beacon") or {}
+    seed_hex = qb.get("seed_hex") or os.environ.get("ANIMICA_ENA_BEACON_SEED_HEX", "")
+    if not seed_hex:
+        return None
+    try:
+        beacon_seed = bytes.fromhex(seed_hex)
+        beacon_round = int(qb.get("round") if qb.get("round") is not None
+                           else os.environ.get("ANIMICA_ENA_BEACON_ROUND", "0"))
+        attested = bool(qb.get("attested", False))
+        from aicf.integration import quantum_seed as _qs
+        qseed = _qs.quantum_seed_for(
+            beacon_seed=beacon_seed, beacon_round=beacon_round,
+            job_id=str(rec.get("run_id")), attested=attested,
+        )
+        applied = _qs.seed_everything(qseed)
+        prov = {**qseed.as_dict(), "applied_backends": applied.get("backends", [])}
+        rec.setdefault("metadata", {})["quantum_seed"] = prov
+        return prov
+    except Exception:  # never fail a training run on seeding
+        return None
+
+
 def run(cfg, store, *, manifest_path: str,
         backend: Optional[str] = None) -> dict[str, Any]:
     mp = Path(manifest_path)
@@ -244,6 +280,8 @@ def run(cfg, store, *, manifest_path: str,
         manifest_path=str(mp.resolve()), base_model=manifest.get("base_model", ""),
         output_dir=out_dir, metadata={"run_name": manifest.get("run_name")},
     ).to_dict()
+    # Quantum-seed the run (verifiable, anti-cheat) before any RNG is consumed.
+    _maybe_apply_quantum_seed(rec, manifest)
     store.upsert_run(rec)
 
     try:
@@ -396,6 +434,23 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any],
     return tok, model, peft_enabled
 
 
+def _assert_finite_after_train(train_result: Any, model: Any, *, method: str) -> None:
+    """NaN GUARD: never submit a diverged adapter. If the training loss or any
+    trained (requires_grad) weight is non-finite, FAIL the run so the coordinator
+    gets nothing rather than NaN poison that would collapse the served checkpoint.
+    Shared by SFT and DPO so neither method can bypass the guard."""
+    import torch as _torch
+    loss = float(getattr(train_result, "training_loss", 0.0) or 0.0)
+    loss_bad = loss != loss or loss in (float("inf"), float("-inf"))
+    weights_bad = any(p.requires_grad and not bool(_torch.isfinite(p).all())
+                      for p in model.parameters())
+    if loss_bad or weights_bad:
+        raise TrainingError(
+            f"{method} training diverged to non-finite values "
+            f"(loss_bad={loss_bad}, weights_bad={weights_bad}) — adapter NOT submitted",
+            hint="reduce learning_rate; this run hit fp16/bf16 instability")
+
+
 def encode_sft_row(tok, r: dict[str, Any], max_len: int, has_chat: bool):
     """Tokenize one SFT row into {input_ids, attention_mask, labels} with the
     PROMPT masked to -100 so loss is taken on the RESPONSE only (completion-style
@@ -492,19 +547,7 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     trainer = transformers.Trainer(model=model, args=args, train_dataset=dset,
                                    data_collator=collator)
     train_result = trainer.train()
-    # NaN GUARD: never submit a diverged adapter. If the loss or any trained
-    # (LoRA) weight is non-finite, FAIL the run so the coordinator gets nothing
-    # rather than NaN poison that would collapse the served checkpoint.
-    import torch as _torch
-    _loss = float(getattr(train_result, "training_loss", 0.0) or 0.0)
-    _loss_bad = _loss != _loss or _loss in (float("inf"), float("-inf"))
-    _weights_bad = any(p.requires_grad and not bool(_torch.isfinite(p).all())
-                       for p in model.parameters())
-    if _loss_bad or _weights_bad:
-        raise TrainingError(
-            f"training diverged to non-finite values (loss_bad={_loss_bad}, "
-            f"weights_bad={_weights_bad}) — adapter NOT submitted",
-            hint="reduce learning_rate; this run hit fp16/bf16 instability")
+    _assert_finite_after_train(train_result, model, method="sft")
     trainer.save_model(out_dir)
     tok.save_pretrained(out_dir)
     rec["metrics"] = {"method": method, "peft": peft_enabled,
@@ -563,6 +606,7 @@ def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     trainer = DPOTrainer(model=model, args=args, train_dataset=pref,
                          processing_class=tok)
     result = trainer.train()
+    _assert_finite_after_train(result, model, method="dpo")
     trainer.save_model(out_dir)
     rec["metrics"] = {"method": "dpo", "peft": peft_enabled,
                       "train_loss": float(getattr(result, "training_loss", 0.0)),

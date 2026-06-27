@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "4.2.2"
+version = "5.0.0"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -174,6 +174,7 @@ path = "hatch_build.py"
 "_build_vendor/mining" = "mining"
 "_build_vendor/p2p" = "p2p"
 "_build_vendor/pq" = "pq"
+"_build_vendor/randomness" = "randomness"
 "_build_vendor/rpc" = "rpc"
 "_build_vendor/stdlib" = "stdlib"
 "_build_vendor/vm_py" = "vm_py"

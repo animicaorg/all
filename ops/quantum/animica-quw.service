@@ -1,0 +1,36 @@
+# Animica Quantum Useful Work (QUW) contributor worker.
+# Install: cp ops/quantum/animica-quw.service /etc/systemd/system/
+#          systemctl enable --now animica-quw
+[Unit]
+Description=Animica Quantum Useful Work — attested QRNG entropy contributor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=animica
+EnvironmentFile=/etc/animica/quw.env
+# Runs forever (--rounds 0), time-based round id, auto-detects IDQ Quantis/HSM/TPM.
+ExecStart=/usr/bin/animica quantum quw run \
+  --address ${ANIMICA_QUW_ADDRESS} \
+  --rpc-url ${ANIMICA_QUW_RPC_URL} \
+  --signer ${ANIMICA_QUW_SIGNER} \
+  --bytes ${ANIMICA_QUW_BYTES} \
+  --interval ${ANIMICA_QUW_INTERVAL} \
+  --rounds 0
+Restart=always
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/animica /home/animica/.animica
+# QRNG + HSM/TPM device access
+SupplementaryGroups=tss
+DeviceAllow=/dev/qrandom0 r
+DeviceAllow=/dev/hwrng r
+DeviceAllow=/dev/tpmrm0 rw
+
+[Install]
+WantedBy=multi-user.target

@@ -27,6 +27,10 @@ app = typer.Typer(
 # Add the contribute subcommand
 app.add_typer(quantum_contribute_app, name="contribute")
 
+# Quantum Useful Work (QUW): attested-QRNG entropy contribution lane
+from .quantum_quw import quw_app
+app.add_typer(quw_app, name="quw")
+
 # Create jobs subcommand group
 jobs_app = typer.Typer(
     name="jobs",

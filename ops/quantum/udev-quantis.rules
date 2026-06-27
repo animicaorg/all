@@ -1,0 +1,7 @@
+# /etc/udev/rules.d/99-animica-quantis.rules
+# Make the ID Quantique Quantis QRNG and the kernel hwrng readable by the 'animica' user.
+KERNEL=="qrandom[0-9]*", MODE="0440", GROUP="animica"
+KERNEL=="quantis[0-9]*", MODE="0440", GROUP="animica"
+KERNEL=="hwrng", MODE="0440", GROUP="animica"
+# ID Quantique USB QRNG (vendor 1ddc). Adjust idProduct as needed.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1ddc", MODE="0660", GROUP="animica"
