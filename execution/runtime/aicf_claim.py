@@ -288,15 +288,6 @@ def apply_aicf_claim(
             state_root=_state_root(state),
             receipt=None,
         )
-                LogEvent(
-                    address=b"\x00" * 20,
-                    topics=[b"aicf.claim.error"],
-                    data=f"Failed to compute claimable: {e}".encode(),
-                )
-            ],
-            state_root=_state_root(state),
-            receipt=None,
-        )
     
     total_claimable = claimable_info.total_claimable
     

@@ -1174,7 +1174,10 @@ def env() -> None:  # noqa: A001
 
 @app.command(name="new")
 def new_alias(label: str = typer.Option(..., "--label")) -> None:
-    create(label=label, allow_insecure_fallback=True)
+    # Call the real command function directly, so pass concrete values for every
+    # parameter — otherwise the unsupplied typer.Option defaults leak through as
+    # OptionInfo objects (e.g. `alg` -> "Unknown signature algorithm: <OptionInfo>").
+    create(label=label, alg=None, allow_insecure_fallback=True)
 
 
 if __name__ == "__main__":  # pragma: no cover

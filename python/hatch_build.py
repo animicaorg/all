@@ -59,11 +59,23 @@ _VENDOR_MAP: list[tuple[str, str]] = [
 
 
 def _ignore(_dir: str, names: list[str]) -> set[str]:
-    """Skip caches + build artifacts that bloat the sdist."""
-    return {n for n in names if n in {
-        "__pycache__", ".pytest_cache", ".mypy_cache",
-        "node_modules", ".venv", ".cache",
-    } or n.endswith((".pyc", ".pyo"))}
+    """Skip caches, editor/patch artifacts, and secrets that bloat or pollute the sdist/wheel."""
+    skip: set[str] = set()
+    for n in names:
+        if n in {
+            "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+            "node_modules", ".venv", ".cache", "tests",
+        }:
+            skip.add(n)
+        elif n.endswith((".pyc", ".pyo", ".orig", ".rej")):
+            skip.add(n)
+        elif ".bak" in n or ".fix_" in n:   # *.bak, *.bak_<ts>, *.fix_<ts>
+            skip.add(n)
+        elif n in {"mykey.json", "tx.json"}:  # stray dev/test artifacts (mykey.json held a key)
+            skip.add(n)
+        elif n.endswith(".py") and (n.startswith("test_") or n.endswith("_test.py")):
+            skip.add(n)  # loose test files living outside a tests/ dir
+    return skip
 
 
 class VendorExternalsHook(BuildHookInterface):

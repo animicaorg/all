@@ -294,15 +294,14 @@ def main(argv: list[str] | None = None) -> int:
     error: Optional[str] = None
 
     def _try(alg_name: str) -> bool:
+        nonlocal error
         try:
             return pq_verify.verify_detached(alg_name, pk, msg, sig, domain=domain_tag)
         except pq_registry.PQNotAvailableError as e:
             # Environment missing PQ backend for this alg; treat as a hard failure for this alg
-            nonlocal error
             error = f"{e}"
             return False
         except Exception as e:
-            nonlocal error
             error = f"{e}"
             return False
 

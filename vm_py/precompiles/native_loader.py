@@ -71,5 +71,3 @@ def verify(pubkey: bytes, message: bytes, signature: bytes, scheme: str = "Dilit
     if res == 0:
         return False
     raise RuntimeError("pq_precompile call returned error code")
-
-*** End Patch

@@ -133,7 +133,7 @@ class GossipMesh:
         self._peers: Dict[str, PeerInfo] = {}
         self._topics: Dict[str, TopicState] = {}
         self._tick: int = 0
-        self._rng = random.Random(0xA11M1CA)  # deterministic by default
+        self._rng = random.Random(int.from_bytes(b"ANIMICA", "big"))  # deterministic by default
 
     # ---- Peer lifecycle -----------------------------------------------------
 

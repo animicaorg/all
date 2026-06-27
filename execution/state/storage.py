@@ -221,7 +221,7 @@ class StorageView:
         """Total number of keys across all accounts."""
         return sum(len(acc) for acc in self._store.values())
 
-    def __repr.me__(self) -> str:  # pragma: no cover (human-only)
+    def __repr__(self) -> str:  # pragma: no cover (human-only)
         return f"StorageView(accounts={len(self._store)}, total_keys={self.total_keys()}, key_len={self.key_len})"
 
 

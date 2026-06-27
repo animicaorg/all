@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "5.0.2"
+version = "5.0.3"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -39,24 +39,10 @@ dependencies = [
   "uvicorn[standard]>=0.30.0,<1.0.0",
   "prometheus-client>=0.20.0,<1.0.0",
   "huggingface_hub>=0.24.0",
-  # GPU / AI stack — shipped in the base install so `pip install animica` is
-  # GPU-ready out of the box (mine on-GPU + ENA train/serve) with no extra.
-  # torch's default PyPI wheels cover NVIDIA CUDA (Linux) and Apple Silicon
-  # MPS (macOS); AMD users install a ROCm torch build from AMD's index.
-  # bitsandbytes is Linux+CUDA only, so it's platform-gated.
-  "torch>=2.2.0",
-  "accelerate>=1.3.0,<2.0.0",
-  "transformers>=4.44.0,<5.0.0",
-  "datasets>=2.20.0,<4.0.0",
-  "sentence-transformers>=2.7.0,<6.0.0",
-  "peft>=0.11.0,<1.0.0",
-  "trl>=0.12.0,<1.0.0",  # DPOTrainer(processing_class=) needs >=0.12
-  "bitsandbytes>=0.43.0 ; platform_system == 'Linux'",
-  "sentencepiece>=0.2.0",
-  "protobuf>=4.23.0",
-  "safetensors>=0.4.0",
-  "scipy>=1.11.0",
-  "einops>=0.7.0",
+  # NOTE: the heavy GPU/AI stack (torch, transformers, datasets, peft, trl, …) is
+  # NOT in the base install — it lives in the `ai` / `gpu` extras so a plain
+  # `pip install animica` stays light (node, wallet, miner, RPC, contracts). ENA
+  # AI train/serve needs `pip install "animica[ai]"` (CPU) or `animica[gpu]` (CUDA).
   # Native SHA3-256 CPU-miner fast path — shipped BY DEFAULT so `pip install
   # animica` + `animica up` (and the miner archives) get native hashrate with no
   # extra step. Its build is tolerant: on a platform with no prebuilt wheel and
@@ -113,10 +99,29 @@ bridge = [
   "eth-account>=0.13.7,<1.0.0",
   "web3>=7.14.0,<8.0.0",
 ]
-# The GPU / AI stack now ships in the base install (see [project.dependencies]),
-# so `pip install animica` is already GPU-ready. This extra is kept as a no-op
-# alias so existing `animica[gpu]` / `animica[all]` installs keep resolving.
-gpu = []
+# AI stack for ENA training/serving + semantic eval (CPU-capable). torch's PyPI
+# wheels cover NVIDIA CUDA (Linux) and Apple Silicon MPS; AMD users install a
+# ROCm torch from AMD's index. Kept OUT of the base install so a plain
+# `pip install animica` stays light and robust.
+ai = [
+  "torch>=2.2.0",
+  "accelerate>=1.3.0,<2.0.0",
+  "transformers>=4.44.0,<5.0.0",
+  "datasets>=2.20.0,<4.0.0",
+  "sentence-transformers>=2.7.0,<6.0.0",
+  "peft>=0.11.0,<1.0.0",
+  "trl>=0.12.0,<1.0.0",  # DPOTrainer(processing_class=) needs >=0.12
+  "sentencepiece>=0.2.0",
+  "protobuf>=4.23.0",
+  "safetensors>=0.4.0",
+  "scipy>=1.11.0",
+  "einops>=0.7.0",
+]
+# GPU = the AI stack plus Linux+CUDA quantization (bitsandbytes).
+gpu = [
+  "animica[ai]",
+  "bitsandbytes>=0.43.0 ; platform_system == 'Linux'",
+]
 # Animica Studio (serverless compute) extras: cloudpickle enables pickle-mode
 # serialization (closures/lambdas); omni-sdk enables on-chain ANM escrow for
 # remote runs. The SDK itself works without these (ref+JSON serialization,
@@ -136,7 +141,7 @@ evm = [
 # platform-specific native wheel and must never break a plain `animica[all]`
 # install. Add it explicitly: `pip install "animica[all,fast]"`.
 all = [
-  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,studio]",
+  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,ai,studio]",
 ]
 
 [project.urls]
@@ -147,6 +152,25 @@ Issues = "https://github.com/animicaorg/all/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["animica"]
+
+# Keep the wheel release-quality: no bytecode caches, editor/patch backups, test
+# trees (which also carried test-key fixtures), or stray secrets.
+exclude = [
+  "**/__pycache__",
+  "**/__pycache__/**",
+  "**/*.pyc",
+  "**/*.pyo",
+  "**/*.bak",
+  "**/*.bak_*",
+  "**/*.fix_*",
+  "**/*.orig",
+  "**/*.rej",
+  "**/tests",
+  "**/tests/**",
+  "**/test_*.py",
+  "**/mykey.json",
+  "**/tx.json",
+]
 
 # Custom build hook materialises sibling source dirs (../aicf,
 # ../ai/agent_runtime/src/agent_runtime, etc.) into python/_build_vendor/
