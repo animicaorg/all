@@ -405,6 +405,26 @@ def _coordinator_endpoint(pool_host: str) -> str:
     return host + "/api/ena"
 
 
+def _node_rpc_url(cfg: "UnifiedConfig") -> str:
+    """JSON-RPC URL for the chain node the AICF broker lives behind.
+
+    The Studio worker claims ``function_compute`` jobs from the broker over
+    JSON-RPC (``ANIMICA_RPC_URL``). Without this, a miner running ``animica up``
+    with no local node fell back to ``http://127.0.0.1:8545`` and every claim got
+    ECONNREFUSED (errno 61). With ``--with-node`` we run a local node; otherwise
+    point at the pool's public RPC (``rpc.<pool-domain>``, e.g. pool.animica.org →
+    https://rpc.animica.org), which fronts the same broker.
+    """
+    if cfg.run_node:
+        return "http://127.0.0.1:8545"
+    host = (cfg.pool_host or "").strip().rstrip("/")
+    if "://" in host:                       # already a URL → derive nothing
+        return "https://rpc.animica.org"
+    if host.startswith("pool."):
+        return "https://rpc." + host[len("pool."):]
+    return "https://rpc.animica.org"
+
+
 def _resolve_best_pool(pool_host: str, *, timeout: float = 6.0) -> Optional[str]:
     """Best-effort: pick the highest-paying open training pool from the pool's
     public coordinator API. Returns a pool_id or None (never raises).
@@ -462,8 +482,13 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
     a = animica_cmd()
     wid = cfg.wid()
     gpu, qual = caps.gpu, caps.qualified_bittensor
+    # ANIMICA_RPC_URL: the chain RPC the AICF broker lives behind. The Studio
+    # worker claims function_compute jobs over JSON-RPC against it — point it at
+    # the local node (--with-node) or the pool's public RPC so a node-less miner
+    # doesn't get ECONNREFUSED on every claim.
     base_env = {"ANIMICA_MINER_VERSION": UNIFIED_VERSION,
-                "ANIMICA_PAYOUT_ADDRESS": cfg.address}
+                "ANIMICA_PAYOUT_ADDRESS": cfg.address,
+                "ANIMICA_RPC_URL": _node_rpc_url(cfg)}
     plan: list[Component] = []
 
     # optional local node

@@ -28,11 +28,30 @@ def _names(plan, *, enabled=True, available=None):
     return set(out)
 
 
+def test_studio_worker_gets_public_rpc_so_claims_dont_refuse():
+    # The Studio worker claims function_compute jobs from the AICF broker over
+    # ANIMICA_RPC_URL. Without a local node it must point at the pool's public RPC,
+    # else every claim hits 127.0.0.1:8545 and fails with ECONNREFUSED (errno 61).
+    caps = u.Capabilities(cpu_count=8)
+    plan = {c.name: c for c in u.build_plan(caps, _cfg(run_node=False))}
+    assert plan["studio"].env["ANIMICA_RPC_URL"] == "https://rpc.animica.org"
+    # every component inherits a non-local RPC
+    for name, c in plan.items():
+        assert c.env.get("ANIMICA_RPC_URL"), f"{name} missing ANIMICA_RPC_URL"
+    # --with-node runs a local node, so the local RPC is correct
+    plan_node = {c.name: c for c in u.build_plan(caps, _cfg(run_node=True))}
+    assert plan_node["studio"].env["ANIMICA_RPC_URL"] == "http://127.0.0.1:8545"
+    # a custom pool host derives rpc.<domain>
+    plan_custom = {c.name: c for c in u.build_plan(caps, _cfg(pool_host="pool.example.com"))}
+    assert plan_custom["studio"].env["ANIMICA_RPC_URL"] == "https://rpc.example.com"
+
+
 def test_cpu_only_tier_runs_miner_and_useful_work():
     caps = u.Capabilities(cpu_count=8)  # no GPU
     plan = u.build_plan(caps, _cfg())
     runnable = _names(plan, enabled=True, available=True)
-    assert runnable == {"miner", "useful-work"}
+    # every rig also serves Studio function_compute jobs (CPU-tier)
+    assert runnable == {"miner", "useful-work", "studio"}
     # trainer/server/bittensor are disabled with a "no GPU" reason
     disabled = {c.name: c.reason for c in plan if not c.enabled}
     assert "trainer" in disabled and "no GPU" in disabled["trainer"]
@@ -97,7 +116,7 @@ def test_up_plan_cli_runs_nothing(monkeypatch):
     assert res.exit_code == 0
     data = json.loads(res.stdout)
     assert data["address"] == "anim1payme"
-    assert data["will_run"] == ["miner", "useful-work"]
+    assert data["will_run"] == ["miner", "useful-work", "studio"]
     assert data["version"] == u.UNIFIED_VERSION
 
 
