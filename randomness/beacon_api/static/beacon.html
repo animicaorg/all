@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Animica Quantum Randomness Beacon</title>
+<meta name="description" content="Public, verifiable quantum randomness beacon. Don't trust — verify it in your browser."/>
+<style>
+  :root{--bg:#0b0e14;--panel:#131722;--ink:#e6e9ef;--mut:#8b93a7;--ok:#3fd68b;--bad:#ff5d6c;--acc:#7aa2ff;--line:#222838}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:920px;margin:0 auto;padding:28px 18px 60px}
+  h1{font-size:26px;margin:0 0 4px} .sub{color:var(--mut);margin:0 0 18px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0}
+  .row{display:flex;flex-wrap:wrap;gap:10px 26px} .row>div{min-width:120px}
+  .k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .v{font-size:15px;word-break:break-all}
+  .big{font-size:30px;font-weight:700}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:rgba(63,214,139,.15);color:var(--ok)} .pill.warn{background:rgba(255,193,7,.15);color:#ffce5a}
+  .pill.bad{background:rgba(255,93,108,.15);color:var(--bad)}
+  button,select,input{font:inherit}
+  button{background:var(--acc);color:#0b0e14;border:0;border-radius:8px;padding:9px 14px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;color:var(--acc);border:1px solid var(--acc)}
+  select,input{background:#0e1320;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  pre{background:#0e1320;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:13px}
+  .verdict{font-weight:700;margin-left:8px} .verdict.ok{color:var(--ok)} .verdict.bad{color:var(--bad)}
+  .muted{color:var(--mut)} .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:680px){.grid2{grid-template-columns:1fr}}
+  code{background:#0e1320;padding:1px 5px;border-radius:5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Animica Quantum Randomness Beacon</h1>
+  <p class="sub">Public, verifiable randomness as a public good. <b>Don't trust — verify.</b>
+     Every round and every draw is recomputed <b>in your browser</b> below.</p>
+
+  <div id="modebar" class="card" style="padding:10px 16px"><span class="muted">loading…</span></div>
+
+  <div class="card">
+    <div class="row" style="align-items:flex-end;justify-content:space-between">
+      <div><div class="k">Latest round</div><div id="round" class="big mono">—</div></div>
+      <div><div class="k">Next round in</div><div id="countdown" class="big mono">—</div></div>
+      <div><button class="ghost" onclick="verifyRound()">Verify this round in my browser</button>
+           <span id="roundVerdict" class="verdict"></span></div>
+    </div>
+    <div style="margin-top:14px"><div class="k">Randomness (beacon value)</div><div id="value" class="v mono">—</div></div>
+    <div class="row" style="margin-top:12px">
+      <div><div class="k">prev (hash chain)</div><div id="prev" class="v mono">—</div></div>
+      <div><div class="k">entropy commitment</div><div id="agg" class="v mono">—</div></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div><div class="k">source</div><div id="source" class="v">—</div></div>
+      <div><div class="k">min-entropy</div><div id="hpb" class="v">—</div></div>
+      <div><div class="k">round time (utc)</div><div id="time" class="v mono">—</div></div>
+    </div>
+    <p class="muted" style="margin:12px 0 0;font-size:13px">Integrity check (done locally):
+      <code>value == sha3_256("animica/qrng/beacon/v1" ‖ round ‖ prev ‖ entropy_commitment)</code>
+      and <code>prev == previous round's value</code>.</p>
+  </div>
+
+  <div class="card">
+    <div class="k" style="margin-bottom:8px">Make a verifiable draw</div>
+    <div class="row" style="align-items:center">
+      <select id="kind" onchange="renderKindFields()">
+        <option value="dice">dice</option><option value="lottery">lottery</option>
+        <option value="coin">coin flip</option><option value="range">range</option>
+        <option value="shuffle">shuffle</option>
+      </select>
+      <input id="rid" placeholder="request id (e.g. mydraw-2026)" value="demo-1" style="min-width:220px"/>
+      <span id="kindFields"></span>
+      <button onclick="doDraw()">Draw</button>
+    </div>
+    <div id="drawOut" style="margin-top:14px"></div>
+  </div>
+
+  <div class="card">
+    <div class="k" style="margin-bottom:8px">Verify it yourself (no server trust)</div>
+    <div class="grid2">
+      <div><div class="muted" style="margin-bottom:6px">curl</div>
+        <pre id="snipCurl">—</pre></div>
+      <div><div class="muted" style="margin-bottom:6px">python</div>
+<pre>pip install animica
+python - &lt;&lt;'PY'
+from randomness.qrng import public
+import urllib.request, json
+d = json.load(urllib.request.urlopen("<span class='host'></span>/draw?kind=dice&amp;sides=6&amp;count=3&amp;request_id=demo-1"))
+print("verified:", public.verify_result(d))   # recomputes from the beacon
+PY</pre></div>
+    </div>
+    <p class="muted" style="font-size:13px;margin:10px 0 0">
+      The in-browser checks above use <a href="/verify.js">/verify.js</a> — the same SHA3-256 + DRNG math as the
+      server, reimplemented client-side. API: <a href="/beacon/latest">/beacon/latest</a> ·
+      <a href="/beacon/info">/beacon/info</a> · <a href="/beacon/chain">/beacon/chain</a>.</p>
+  </div>
+</div>
+
+<script src="/verify.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let LATEST = null, INFO = null, NEXT_TS = 0;
+
+async function getJSON(u){ const r = await fetch(u); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+
+async function loadInfo(){
+  INFO = await getJSON("/beacon/info");
+  const real = INFO.real_provider;
+  $("modebar").innerHTML =
+    `<span class="pill ${real?'ok':'warn'}">${real?'REAL QRNG':'PSEUDO-QUANTUM'}</span> `+
+    `<span class="muted">mode=<b>${INFO.mode}</b> · attested=<b>${INFO.attested}</b> · `+
+    `${INFO.hash} · new round every ${INFO.interval_seconds}s · round ${INFO.current_round}</span>`+
+    (real?``:` <span class="muted">— serving a simulated source until a real attested QRNG connects (then it auto-flips).</span>`);
+  document.querySelectorAll(".host").forEach(e=>e.textContent=location.origin);
+}
+
+async function loadLatest(){
+  LATEST = await getJSON("/beacon/latest");
+  $("round").textContent = "#"+LATEST.round;
+  $("value").textContent = LATEST.value;
+  $("prev").textContent = LATEST.prev || "(genesis)";
+  $("agg").textContent = LATEST.aggregate_commitment;
+  $("source").textContent = LATEST.source + (LATEST.attested?" (attested)":"");
+  $("hpb").textContent = LATEST.min_entropy_per_byte + " bits/byte";
+  $("time").textContent = new Date(LATEST.time*1000).toISOString().replace("T"," ").replace(".000Z"," UTC");
+  NEXT_TS = LATEST.next_round_time;
+  $("roundVerdict").textContent = "";
+  $("snipCurl").textContent =
+    `curl ${location.origin}/beacon/latest\ncurl "${location.origin}/draw?kind=dice&sides=6&count=3&request_id=demo-1"`;
+}
+
+function tick(){
+  const s = Math.max(0, Math.round(NEXT_TS - Date.now()/1000));
+  $("countdown").textContent = s+"s";
+  if (s===0) { loadLatest().catch(()=>{}); }
+}
+
+async function verifyRound(){
+  const v = $("roundVerdict");
+  try{
+    const cur = LATEST;
+    const okIntegrity = AnimicaBeacon.verifyBeacon(cur.round, cur.prev, cur.aggregate_commitment, cur.value);
+    let okChain = true;
+    if (cur.round > 0){
+      const prevRec = await getJSON("/beacon/round/"+(cur.round-1));
+      okChain = (prevRec.value === cur.prev);
+    }
+    const ok = okIntegrity && okChain;
+    v.textContent = ok ? "✓ verified locally (integrity + hash chain)" : "✗ verification FAILED";
+    v.className = "verdict "+(ok?"ok":"bad");
+  }catch(e){ v.textContent="✗ "+e.message; v.className="verdict bad"; }
+}
+
+function renderKindFields(){
+  const k = $("kind").value;
+  const f = {
+    dice:`sides <input id="sides" type="number" value="6" style="width:70px"> count <input id="count" type="number" value="3" style="width:70px">`,
+    lottery:`entries <input id="entries" value="alice,bob,carol,dave,erin" style="width:240px"> winners <input id="k" type="number" value="2" style="width:60px">`,
+    coin:`count <input id="count" type="number" value="5" style="width:70px">`,
+    range:`lo <input id="lo" type="number" value="1" style="width:70px"> hi <input id="hi" type="number" value="100" style="width:70px"> count <input id="count" type="number" value="5" style="width:70px">`,
+    shuffle:`items <input id="items" value="1,2,3,4,5,6,7" style="width:220px">`,
+  }[k];
+  $("kindFields").innerHTML = f;
+}
+
+async function doDraw(){
+  const k = $("kind").value, rid = encodeURIComponent($("rid").value || "demo");
+  let q = `/draw?kind=${k}&request_id=${rid}&round=${LATEST.round}`;
+  const add = (id)=>{ const el=$(id); if(el) q+=`&${id}=${encodeURIComponent(el.value)}`; };
+  ["sides","count","entries","k","lo","hi","items"].forEach(add);
+  const out = $("drawOut");
+  try{
+    const res = await getJSON(q);
+    const localOk = AnimicaBeacon.verifyResult(res);   // re-verify in the browser
+    out.innerHTML =
+      `<div><b>result:</b> <span class="mono">${JSON.stringify(res.output)}</span></div>`+
+      `<div style="margin-top:6px" class="verdict ${localOk?'ok':'bad'}">`+
+      `${localOk?'✓ verified in your browser':'✗ local verification failed'}</div>`+
+      `<div class="muted" style="font-size:13px;margin-top:6px">from beacon round #${res.beacon_round} `+
+      `(value <span class="mono">${res.beacon_value.slice(0,16)}…</span>) — `+
+      `recomputed locally via /verify.js, no server trust.</div>`+
+      `<pre style="margin-top:8px">${JSON.stringify(res,null,1)}</pre>`;
+  }catch(e){ out.innerHTML = `<span class="verdict bad">error: ${e.message}</span>`; }
+}
+
+(async()=>{ try{ await loadInfo(); await loadLatest(); renderKindFields(); setInterval(tick,1000);
+  setInterval(()=>loadInfo().catch(()=>{}),15000);}catch(e){ $("modebar").innerHTML='<span class="pill bad">offline</span> '+e.message; }})();
+</script>
+</body>
+</html>

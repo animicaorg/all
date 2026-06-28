@@ -50,7 +50,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import (aicf, bittensor, chain, chat, contract, da, debug, ena, faucet, gui, key,
+from . import (aicf, beacon, bittensor, chain, chat, contract, da, debug, ena, faucet, gui, key,
                mempool, mining, network, node, p2p, peer, phase2, quantum,
                rpc, script, snapshot, stratum, studio, sync, tx, up, wallet)
 
@@ -212,6 +212,7 @@ app.add_typer(chat.app, name="chat")
 app.add_typer(stratum.app, name="stratum")
 app.add_typer(stratum.app, name="pool")
 app.add_typer(quantum.app, name="quantum")
+app.add_typer(beacon.app, name="beacon")
 app.add_typer(bittensor.app, name="bittensor")
 app.add_typer(ena.app, name="ena")
 app.add_typer(up.app, name="up")

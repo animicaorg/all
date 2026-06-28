@@ -1,0 +1,26 @@
+# Animica public Quantum Randomness Beacon (HTTP API + /beacon page).
+# cp ops/beacon/animica-beacon.service /etc/systemd/system/ && systemctl enable --now animica-beacon
+[Unit]
+Description=Animica Quantum Randomness Beacon (public API + /beacon page)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=animica
+# base install is enough (fastapi/uvicorn are base deps; no torch needed)
+ExecStart=/usr/bin/animica beacon serve --host 127.0.0.1 --port 8780 --interval 30
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/home/animica/.animica
+# QRNG/HSM/TPM access (optional; lane auto-flips to real hardware when present)
+SupplementaryGroups=tss
+DeviceAllow=/dev/qrandom0 r
+DeviceAllow=/dev/hwrng r
+
+[Install]
+WantedBy=multi-user.target
