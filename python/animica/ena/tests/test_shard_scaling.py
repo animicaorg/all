@@ -184,11 +184,19 @@ def test_scaled_round_completes_only_when_all_shards_submitted(tmp_path, monkeyp
     e.pool.claim_shard(pid, "m0")  # materialise 6 shards
     shards = e.store.list_shards(pid, round=1)
     assert len(shards) == 6
-    # submit 5 of 6 → not complete; the 6th → completes (round advances)
+    # submit 5 of 6 → not complete (aggregation not attempted yet)
     for s in shards[:5]:
         e.pool.submit_shard(pid, s["shard_id"], worker_id=s["worker_id"],
                             metrics={"samples": 1})
     assert e.store.get_pool(pid)["round"] == 1
+    assert not (e.store.get_pool(pid).get("metadata") or {}).get("held_rounds")
+    # the 6th completes the round → aggregation IS attempted. These shards carry no
+    # real adapter, so the corrected behavior HOLDS the round (it no longer
+    # empty-advances / runs the round counter away while serving is stranded — the
+    # "stuck on round N for days" bug). Completion fired only at all-shards-in.
     e.pool.submit_shard(pid, shards[5]["shard_id"], worker_id=shards[5]["worker_id"],
                         metrics={"samples": 1})
-    assert e.store.get_pool(pid)["round"] == 2
+    pool = e.store.get_pool(pid)
+    assert pool["round"] == 1
+    held = (pool.get("metadata") or {}).get("held_rounds") or []
+    assert held and held[-1]["round"] == 1

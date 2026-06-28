@@ -791,6 +791,33 @@ class PoolService:
                 "reason": "eval_below_threshold_advanced", "gate": gate_info,
                 "next_round": pool["round"]}
 
+    def _hold_round_for_adapters(self, pool: dict[str, Any], pool_id: str,
+                                 rnd: int) -> int:
+        """No adapter was uploaded this round (trainers reported scores but never
+        uploaded weights). Hold the round at ``rnd`` — do NOT advance — and reopen
+        its non-adapter shards so a healthy trainer can still upload real weights.
+        Without this the round counter runs away while the served checkpoint is
+        stranded at the last real round (the "stuck on round N for days" bug)."""
+        reopened = 0
+        for s in self.store.list_shards(pool_id, round=rnd):
+            cp = s.get("checkpoint_path")
+            has_adapter = bool(cp) and (Path(cp) / "adapter_model.safetensors").is_file()
+            if s.get("status") in (SHARD_SUBMITTED, SHARD_CLAIMED) and not has_adapter:
+                s.update(status=SHARD_OPEN, worker_id=None, run_id=None,
+                         checkpoint_path=None, updated_at=now_ts())
+                self.store.upsert_shard(s)
+                reopened += 1
+        meta = dict(pool.get("metadata") or {})
+        held = list(meta.get("held_rounds") or [])
+        held.append({"round": rnd, "at": now_ts(),
+                     "reason": "no_adapters_uploaded", "reopened": reopened})
+        meta["held_rounds"] = held[-20:]
+        pool["metadata"] = meta
+        pool["status"] = POOL_STATUS_TRAINING
+        pool["updated_at"] = now_ts()
+        self.store.upsert_pool(pool)
+        return reopened
+
     # -- distributed training artifacts (off-coordinator workers) ---------
     def read_shard_data(self, shard_id: str) -> dict[str, Any]:
         """Return a claimed shard's training rows so a remote trainer (on its own
@@ -1016,6 +1043,19 @@ class PoolService:
                     "method": _method or None,
                     "adapters_uploaded": self._shards_have_adapters(submitted)}
             if auto:
+                # Distinguish "adapters uploaded but all diverged (NaN/inf)" from
+                # "no adapter uploaded at all". Only the former is real-but-bad work
+                # worth rejecting-and-advancing. For the latter, advancing just burns
+                # the round and strands the served checkpoint while the round counter
+                # runs away — the "stuck on round N for days" failure. HOLD instead:
+                # reopen the round's shards so a healthy trainer can upload real
+                # weights, and do NOT advance.
+                if not info["adapters_uploaded"]:
+                    reopened = self._hold_round_for_adapters(pool, pool_id, rnd)
+                    return {"pool_id": pool_id, "round": rnd, "promoted": False,
+                            "reason": "held_awaiting_adapter_upload", "held": True,
+                            "reopened_shards": reopened, "gate": info,
+                            "next_round": rnd}
                 return self._reject_and_advance(pool, pool_id, rnd, candidate, info,
                                                 eval_score, trainer_topics)
             return {"pool_id": pool_id, "round": rnd, "promoted": False,
