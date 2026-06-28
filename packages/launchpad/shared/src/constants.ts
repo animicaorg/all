@@ -15,8 +15,10 @@ export const URLS = {
   main: "https://animica.org",
   wallet: "https://wallet.animica.org",
   explorer: "https://explorer.animica.org",
-  trade: "https://trade.animica.org",
-  buy: "https://buy.animica.org",
+  // Buy / Sell ANM now points to the nonkyc.io listing (the old buy/trade
+  // gateways are retired). CONFIRM the exact pair slug (ANM_USDT vs another quote).
+  trade: "https://nonkyc.io/market/ANM_USDT",
+  buy: "https://nonkyc.io/market/ANM_USDT",
   discord: "https://discord.gg/vQHJc2jWUJ",
   extensionInstall: "https://animica.org/wallet"
 } as const;
