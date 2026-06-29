@@ -348,6 +348,51 @@ class CurriculumService:
                         pool.get("pool_id"), exc)
             return None
 
+    def synthesis_targets(self, pool: dict[str, Any], *, max_targets: int = 8,
+                          chunk_chars: int = 6000) -> list[dict[str, Any]]:
+        """Helix eval-targeting for worker-local synthesis ('hyper-genius').
+
+        Returns ``[{topic, corpus, source_sha}]`` for the pool's WEAKEST,
+        not-yet-mastered topics (weakest-first via :meth:`_discover_topics`),
+        each paired with a grounding corpus slice retrieved from the pool's own
+        material (:meth:`_load_corpus` + :meth:`_retrieve`). The feeder hands
+        each slice to a ``synthesize_qa`` job so miners aim their LLM compute at
+        the topics where new data moves the model most — growing ENA's genome
+        where it counts.
+
+        Deterministic, GPU-free, model-free and best-effort: any failure yields
+        an empty list (the feeder then falls back to untargeted synthesis). The
+        coordinator stores the returned ``corpus`` on the job at create time, and
+        :func:`curation.quality_gate` re-derives groundedness against THAT stored
+        corpus — never the miner's self-report — so a miner cannot fake grounding.
+        """
+        try:
+            topics = self._discover_topics(pool, None)
+            if not topics:
+                return []
+            corpus = self._load_corpus(pool)
+            if not corpus:
+                return []
+            out: list[dict[str, Any]] = []
+            for topic in topics[: max(1, int(max_targets))]:
+                hits = self._retrieve(corpus, topic, k=3)
+                if not hits:
+                    continue
+                text = "\n\n".join(
+                    f"{str(h.get('prompt') or '')}\n"
+                    f"{str(h.get('response') or h.get('text') or '')}".strip()
+                    for h in hits).strip()
+                text = text[: max(1, int(chunk_chars))]
+                if not text:
+                    continue
+                out.append({"topic": topic, "corpus": text,
+                            "source_sha": sha3_hex(text)})
+            return out
+        except Exception as exc:  # noqa: BLE001 - targeting is best-effort
+            log.warning("[curriculum] synthesis_targets failed for %s: %s",
+                        pool.get("pool_id"), exc)
+            return []
+
     @staticmethod
     def _active_miner_count(pool: dict[str, Any]) -> int:
         """Active miners for this pool (recent heartbeats/claims), used to scale
@@ -771,7 +816,15 @@ class CurriculumService:
         match rate over the shared eval rows. Runs the model (the trainer has a
         GPU), so it is NOT env-gated. Best-effort: returns {} on any failure."""
         try:
-            from .serving import PoolModelRunner
+            from .serving import PoolModelRunner, adapter_is_finite
+            # A diverged (NaN/inf) adapter deterministically yields argmax(NaN)=0
+            # degenerate output that still scores a misleading non-zero match_rate
+            # and would feed the gate. Report NULL (no score) instead so the gate
+            # treats the round as unevaluated rather than passing on garbage.
+            if checkpoint_path and not adapter_is_finite(checkpoint_path):
+                log.warning("[curriculum] non-finite adapter %s — reporting null eval",
+                            checkpoint_path)
+                return {}
             runner = PoolModelRunner(base_model or "", adapter_path=checkpoint_path)
             return evaluate_detailed(
                 lambda p: runner.generate(p, max_tokens=128), eval_rows, topics)

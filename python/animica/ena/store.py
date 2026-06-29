@@ -184,6 +184,17 @@ CREATE TABLE IF NOT EXISTS models (
     updated_at  INTEGER NOT NULL,
     data        TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pool_payouts (
+    payout_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    pool_id     TEXT NOT NULL,
+    round       INTEGER NOT NULL,
+    role        TEXT NOT NULL,
+    address     TEXT,
+    nano        INTEGER NOT NULL DEFAULT 0,
+    weight      REAL NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pool_payouts_pool ON pool_payouts(pool_id);
 """
 
 
@@ -734,6 +745,38 @@ class Store:
                     "UPDATE pool_contributions SET paid=1, data=? WHERE contribution_id=?",
                     (json.dumps(c), cid))
             self._conn.commit()
+
+    def record_payouts(self, pool_id: str, round: int,
+                       entries: list[dict[str, Any]], created_at: int) -> None:
+        """Persist a per-recipient payout ledger row for every disbursement so the
+        on-chain settlement path has an auditable source of truth (who got paid how
+        much, for which round/role)."""
+        if not entries:
+            return
+        with self._lock:
+            for e in entries:
+                self._conn.execute(
+                    "INSERT INTO pool_payouts (pool_id, round, role, address, nano, weight, created_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (pool_id, int(round), str(e.get("role", "")), e.get("address"),
+                     int(e.get("nano", 0)), float(e.get("weight", 0)), int(created_at)))
+            self._conn.commit()
+
+    def list_payouts(self, pool_id: str,
+                     round: Optional[int] = None) -> list[dict[str, Any]]:
+        clauses, params = ["pool_id=?"], [pool_id]
+        if round is not None:
+            clauses.append("round=?"); params.append(int(round))
+        rows = self._query(
+            f"SELECT round, role, address, nano, weight, created_at FROM pool_payouts "
+            f"WHERE {' AND '.join(clauses)} ORDER BY created_at ASC, payout_id ASC",
+            tuple(params))
+        return [dict(r) for r in rows]
+
+    def total_paid_out_nano(self, pool_id: str) -> int:
+        rows = self._query(
+            "SELECT COALESCE(SUM(nano),0) FROM pool_payouts WHERE pool_id=?", (pool_id,))
+        return int(rows[0][0] or 0) if rows else 0
 
     # -- pool servers (serve-while-train registry) ------------------------
     def upsert_server(self, server: dict[str, Any]) -> None:

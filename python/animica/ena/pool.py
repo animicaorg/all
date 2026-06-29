@@ -1152,6 +1152,44 @@ class PoolService:
             except Exception:  # noqa: BLE001
                 pass
 
+    # -- genome growth (worker-synthesized data -> live training set) ------
+    def promote_genome(self, pool_id: str, *, max_rows: int = 200,
+                       dry_run: bool = False) -> dict[str, Any]:
+        """Grow this pool's LIVE training genome from curated STAGING.
+
+        This is the explicit, gated, human/cron-driven step of the worker-local
+        synthesis flywheel. Miners run ``synthesize_qa`` on their OWN model and
+        submit ``{prompt, response}`` pairs; the coordinator curates them (schema
+        + length + groundedness gate + content-hash dedupe) into a STAGING
+        dataset (see :func:`curation.stage_submission`). This method is the ONLY
+        path that lets staged data enter the pool's live ``dataset_path`` — and
+        only after :func:`curation.promote_staging` re-validates, dedupes vs the
+        live genome, caps the batch at ``max_rows`` and snapshots a ``.bak``
+        backup first. It is never automatic.
+
+        Updates only ``dataset_sha256`` / ``dataset_rows`` on the pool record;
+        ``dataset_id`` is kept STABLE (it tracks the original ingest identity).
+        ``_load_round_records`` reads ``dataset_path`` each round, so the next
+        round shards the grown file. Honesty boundary: this grows the training
+        DATA; the actual model weight updates still require the GPU pool
+        train-loop reading that file each round.
+        """
+        from . import curation
+        with self._lock:
+            pool = self.get(pool_id)
+            summary = curation.promote_staging(
+                self.cfg, pool["dataset_path"],
+                max_rows=int(max_rows), dry_run=bool(dry_run))
+            if not dry_run and int(summary.get("promoted", 0)) > 0:
+                pool["dataset_sha256"] = summary["dataset_sha256"]
+                pool["dataset_rows"] = summary["dataset_rows"]
+                # dataset_id intentionally unchanged (tracks original ingest).
+                pool["updated_at"] = now_ts()
+                self.store.upsert_pool(pool)
+            summary["pool_id"] = pool_id
+            summary["dataset_id"] = pool.get("dataset_id")
+            return summary
+
     # -- payout (proportional, role-split) --------------------------------
     def payout(self, pool_id: str, *, round: Optional[int] = None,
                cap_nano: Optional[int] = None,

@@ -18,6 +18,7 @@ exercisable on a CPU-only box and in tests.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +26,35 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from .models import canonical_json, new_uuid, now_ts, sha3_hex
+
+log = logging.getLogger("animica.ena.serving")
+
+
+def adapter_is_finite(adapter_dir: Any) -> bool:
+    """True iff every tensor in the adapter's safetensors is finite (no NaN/inf).
+
+    Defense-in-depth: a diverged (all-NaN) adapter must never be loaded for
+    serving or eval even if it somehow got promoted past the merge guard. Returns
+    True when it cannot check (no adapter file / no safetensors lib) so we never
+    block a legitimate model in a minimal environment — the upstream merge guard
+    is the primary defense; this is the backstop."""
+    try:
+        from safetensors import safe_open  # type: ignore
+        import numpy as np  # type: ignore
+    except Exception:
+        return True
+    try:
+        d = Path(adapter_dir)
+        f = (d / "adapter_model.safetensors") if d.is_dir() else d
+        if not f.is_file():
+            return True
+        with safe_open(str(f), framework="numpy") as h:
+            for k in h.keys():
+                if not np.isfinite(h.get_tensor(k)).all():
+                    return False
+        return True
+    except Exception:  # noqa: BLE001 - never let the check itself break serving
+        return True
 
 
 def build_serving_receipt(*, pool_id: str, model_id: str, requester: Optional[str],
@@ -121,11 +151,22 @@ class PoolModelRunner:
             model = AutoModelForCausalLM.from_pretrained(self.base_model)
             adapter = self._adapter_dir()
             if adapter is not None:
+                # NEVER load a diverged (NaN/inf) adapter — argmax(NaN) yields
+                # degenerate output served under the fine-tuned model_id. Refuse
+                # to serve at all rather than masquerade a poisoned checkpoint.
+                if not adapter_is_finite(adapter):
+                    log.error("[serving] refusing non-finite adapter %s — going to "
+                              "stub (NaN checkpoint must not be served)", adapter)
+                    self._stub = True
+                    return
                 try:
                     from peft import PeftModel  # type: ignore
                     model = PeftModel.from_pretrained(model, str(adapter))
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    # Surface the failure instead of silently serving the BARE base
+                    # model under the fine-tuned model_id (misleading callers).
+                    log.error("[serving] PeftModel.from_pretrained failed for %s: %s "
+                              "— serving base model", adapter, exc)
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
             model.to(self._device)
             model.eval()

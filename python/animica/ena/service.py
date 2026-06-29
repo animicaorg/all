@@ -14,6 +14,7 @@ GET  /jobs              ?status=&type=
 GET  /jobs/<id>
 POST /jobs              {type, params}
 POST /jobs/<id>/run
+POST /jobs/<id>/submit-result   {result, worker_id}  (worker-local jobs)
 POST /jobs/<id>/verify
 POST /jobs/<id>/receipt
 POST /jobs/<id>/export
@@ -122,6 +123,17 @@ def _make_handler(facade):
                 if path == "/pool/tools":
                     return self._send(200, {"tools": facade.tools.list(
                         status=q.get("status"))})
+                if path == "/pool/synthesis-targets":
+                    # Helix targeting: weakest held-out topics + grounding corpus
+                    # for worker-local synthesis. Model-free; old coordinators 404.
+                    pid = q.get("pool_id")
+                    if not pid:
+                        return self._send(400, {"error": "pool_id required"})
+                    n = q.get("n")
+                    pool = facade.pool.get(pid)
+                    targets = facade.curriculum.synthesis_targets(
+                        pool, max_targets=int(n) if n else 8)
+                    return self._send(200, {"targets": targets})
                 if path == "/pool/leaderboard":
                     pid = q.get("pool_id")
                     if not pid:
@@ -180,6 +192,13 @@ def _make_handler(facade):
                     return self._send(200, {"results": facade.search(
                         body["query"], mode=body.get("mode", "hybrid"),
                         index=body.get("index"))})
+                if path.startswith("/jobs/") and path.endswith("/submit-result"):
+                    # Worker-local jobs (e.g. synthesize_qa): the worker ran the
+                    # model on its own hardware and POSTs the inline result here.
+                    # No model runs on the coordinator.
+                    return self._send(200, facade.jobs.submit_result(
+                        path.split("/")[2], result=body.get("result"),
+                        worker_id=body.get("worker_id")))
                 if path.startswith("/jobs/") and path.endswith("/run"):
                     return self._send(200, facade.jobs.run(path.split("/")[2]))
                 if path.startswith("/jobs/") and path.endswith("/verify"):

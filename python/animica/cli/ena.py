@@ -166,6 +166,68 @@ app.add_typer(agent_app, name="agent")
 agent_app.command("run")(run_task)
 
 
+# -- qDNA: the Quantum-Sealed Genome Ledger ---------------------------------
+genome_app = typer.Typer(
+    help="qDNA — the quantum-sealed, Merkle-anchored genome ledger (verifiable AI lineage).",
+    no_args_is_help=True)
+app.add_typer(genome_app, name="genome")
+
+
+def _genome_ledger(pool: Optional[str], genome_path: Optional[str]):
+    from animica.ena import genome as _g
+    if genome_path:
+        return _g.GenomeLedger.for_genome(genome_path)
+    if pool:
+        rec = _ena().pool.get(pool)
+        return _g.GenomeLedger.for_genome(rec["dataset_path"])
+    raise typer.BadParameter("provide --pool <id> or --genome <dataset.jsonl>")
+
+
+@genome_app.command("root")
+def genome_root(pool: Optional[str] = typer.Option(None, "--pool"),
+                genome_path: Optional[str] = typer.Option(None, "--genome")):
+    """Current genome_root / epoch / gene count (the head of the lineage)."""
+    head = _genome_ledger(pool, genome_path).head()
+    typer.echo(_json.dumps(head or {"epoch": -1, "genome_root": "00" * 32,
+                                    "gene_count": 0, "note": "empty ledger"}, indent=2))
+
+
+@genome_app.command("verify")
+def genome_verify(pool: Optional[str] = typer.Option(None, "--pool"),
+                  genome_path: Optional[str] = typer.Option(None, "--genome")):
+    """Audit the whole ledger: every gene seal + Merkle root + chain. Exit 0/1."""
+    v = _genome_ledger(pool, genome_path).verify()
+    typer.echo(_json.dumps(v, indent=2))
+    raise typer.Exit(0 if v.get("valid") else 1)
+
+
+@genome_app.command("gene")
+def genome_gene(gene_id: str = typer.Argument(...),
+                pool: Optional[str] = typer.Option(None, "--pool"),
+                genome_path: Optional[str] = typer.Option(None, "--genome")):
+    """Show a gene's sealed record + provenance + parents."""
+    g = _genome_ledger(pool, genome_path).get_gene(gene_id)
+    if not g:
+        typer.echo(f"gene not found: {gene_id}"); raise typer.Exit(1)
+    typer.echo(_json.dumps(g, indent=2))
+
+
+@genome_app.command("lineage")
+def genome_lineage(gene_id: str = typer.Argument(...),
+                   pool: Optional[str] = typer.Option(None, "--pool"),
+                   genome_path: Optional[str] = typer.Option(None, "--genome")):
+    """Trace a gene back through its parents to the founders."""
+    typer.echo(_json.dumps(_genome_ledger(pool, genome_path).lineage(gene_id), indent=2))
+
+
+@genome_app.command("anchor")
+def genome_anchor(pool: Optional[str] = typer.Option(None, "--pool"),
+                  genome_path: Optional[str] = typer.Option(None, "--genome")):
+    """Emit the chain-ready commitment of the current head (off-chain JSON)."""
+    env = _genome_ledger(pool, genome_path).anchor_envelope()
+    typer.echo(_json.dumps(env or {"note": "empty ledger"}, indent=2))
+
+
 @app.command("chat")
 def chat(repo: Optional[str] = typer.Option(None, "--repo"),
          model_provider: Optional[str] = typer.Option(None, "--model-provider"),
@@ -606,6 +668,28 @@ def pool_aggregate(pool_id: str = typer.Argument(..., help="pool id"),
 def pool_payout(pool_id: str = typer.Argument(..., help="pool id"),
                 round: Optional[int] = typer.Option(None, "--round")):
     _emit(_guard(_ena().pool.payout, pool_id, round=round), title="payout")
+
+
+@app.command("promote-staging")
+def promote_staging(pool: str = typer.Option(..., "--pool", help="pool id"),
+                    max_rows: int = typer.Option(200, "--max-rows",
+                        help="cap rows promoted into the live genome this cycle"),
+                    dry_run: bool = typer.Option(False, "--dry-run",
+                        help="preview only — gate + dedupe + validate, write nothing")):
+    """Grow a pool's LIVE training genome from curated worker-synthesized STAGING.
+
+    The explicit, gated step of the synthesis flywheel: miners run synthesize_qa
+    on their OWN model and submit {prompt,response} pairs; the coordinator curates
+    them into STAGING (schema + length + groundedness gate + content-hash dedupe).
+    This promotes a bounded, re-validated, genome-deduped batch into the pool's
+    dataset_path (snapshotting a .bak first) and updates dataset_sha256 /
+    dataset_rows while keeping dataset_id stable. Manual by default; a periodic
+    gated cron MAY call it so STAGING does not grow unbounded. NOTE: this grows
+    the training DATA — weight updates still require the GPU pool train-loop
+    reading the grown dataset each round.
+    """
+    _emit(_guard(_ena().pool.promote_genome, pool, max_rows=max_rows,
+                 dry_run=dry_run), title="promote-staging")
 
 
 @pool_app.command("train-loop")

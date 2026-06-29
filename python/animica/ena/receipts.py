@@ -35,6 +35,7 @@ JOB_TYPE_TO_AICF_KIND: dict[str, str] = {
     "dataset_clean": "DATA_CURATION",
     "training_records": "DATA_CURATION",
     "train_prepare": "DATA_CURATION",
+    "synthesize_qa": "AI",  # worker-local LLM data synthesis
     # training run kinds (emitted by the training orchestrator / worker)
     "sft_train": "SFT_TRAIN",
     "dpo_train": "DPO_TRAIN",

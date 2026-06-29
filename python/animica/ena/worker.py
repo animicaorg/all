@@ -33,6 +33,43 @@ from typing import Any, Optional
 from .models import now_ts
 
 
+def _local_model_adapter():
+    """Build a model adapter pointed at THIS worker's local runtime.
+
+    Resolution (all optional, with safe fallbacks):
+      * base url   — LOCAL_INFERENCE_URL or ANIMICA_ENA_MODEL_BASE_URL
+      * model name — LOCAL_INFERENCE_MODEL or ANIMICA_ENA_MODEL_NAME
+      * adapter    — ANIMICA_ENA_MODEL_ADAPTER, else inferred (a ``…/v1`` base is
+                     OpenAI-compatible, otherwise Ollama)
+      * timeout    — ANIMICA_ENA_MODEL_TIMEOUT (default 600s; generous because
+                     it's the miner's own hardware, not a shared coordinator)
+
+    With no local model configured this degrades to the deterministic adapter so
+    the worker never crashes — it just produces zero usable pairs for that job.
+    """
+    import os
+    from .models import ModelProviderConfig
+    from .providers import build_model_adapter
+
+    base = (os.environ.get("LOCAL_INFERENCE_URL")
+            or os.environ.get("ANIMICA_ENA_MODEL_BASE_URL") or "")
+    model = (os.environ.get("LOCAL_INFERENCE_MODEL")
+             or os.environ.get("ANIMICA_ENA_MODEL_NAME") or "")
+    adapter = os.environ.get("ANIMICA_ENA_MODEL_ADAPTER") or ""
+    if not base or not model:
+        cfg = ModelProviderConfig(name="local-miner", provider="deterministic",
+                                  transport="fallback", model="deterministic")
+        return build_model_adapter(cfg)
+    if not adapter:
+        adapter = "openai_compatible" if base.rstrip("/").endswith("/v1") else "ollama"
+    timeout = float(os.environ.get("ANIMICA_ENA_MODEL_TIMEOUT", "600"))
+    cfg = ModelProviderConfig(
+        name="local-miner", provider=adapter, transport="local_runtime",
+        model=model, base_url=base, timeout_seconds=timeout,
+        max_tokens=int(os.environ.get("ANIMICA_ENA_MODEL_MAX_TOKENS", "768")))
+    return build_model_adapter(cfg)
+
+
 @dataclass
 class WorkerStats:
     worker_id: str
@@ -71,6 +108,11 @@ class _RemoteClient:
     def run(self, job_id: str) -> dict:
         return self._call(f"/jobs/{job_id}/run", "POST", {})
 
+    def submit_result(self, job_id: str, result: dict,
+                      worker_id: Optional[str] = None) -> dict:
+        return self._call(f"/jobs/{job_id}/submit-result", "POST",
+                          {"result": result, "worker_id": worker_id})
+
     def verify(self, job_id: str) -> dict:
         return self._call(f"/jobs/{job_id}/verify", "POST", {})
 
@@ -104,7 +146,10 @@ class ENAWorker:
         return self.ena.jobs.claim(self.worker_id, self.types)
 
     def _process(self, job: dict) -> dict:
+        from .jobs import WORKER_LOCAL_JOB_TYPES
         job_id = job["job_id"]
+        if job.get("job_type") in WORKER_LOCAL_JOB_TYPES:
+            return self._process_worker_local(job)
         if self.remote:
             self.remote.run(job_id)
             self.remote.verify(job_id)
@@ -114,6 +159,45 @@ class ENAWorker:
         self.ena.jobs.verify(job_id)
         self.ena.jobs.receipt(job_id)
         return self.ena.jobs.export_onchain(job_id)
+
+    def _process_worker_local(self, job: dict) -> dict:
+        """Run a model-backed job on THIS worker's local model, then return the
+        result to the coordinator (remote) or finalize in-process (local).
+
+        The LLM call happens here — on the miner's own GPU/ollama behind
+        LOCAL_INFERENCE_URL — so it can take as long as the hardware needs
+        without tripping the coordinator's CPU or the worker's HTTP read timeout
+        (we hold no request open during generation). The coordinator only sees a
+        fast ``submit-result`` POST and then verifies/receipts the stored result.
+        """
+        job_id = job["job_id"]
+        if not self.remote:
+            # Single-box / self-hosted: execute against this node's own model, then
+            # land the result via submit_result so the synthesized pairs are curated
+            # into STAGING here too (same DNA-growth path as the remote fleet).
+            done = self.ena.jobs.run(job_id, worker_id=self.worker_id,
+                                     allow_worker_local=True)
+            self.ena.jobs.submit_result(job_id, result=done.get("result"),
+                                        worker_id=self.worker_id)
+            self.ena.jobs.verify(job_id)
+            self.ena.jobs.receipt(job_id)
+            return self.ena.jobs.export_onchain(job_id)
+        # Remote fleet worker: generate locally, submit the result, then let the
+        # coordinator verify/receipt/export over fast calls.
+        from . import synth
+        params = job.get("params") or {}
+        corpus = params.get("corpus") or params.get("source_chunk") or ""
+        model = _local_model_adapter()
+        pairs, meta = synth.synthesize(
+            model, str(corpus),
+            num_pairs=int(params.get("num_pairs", synth.DEFAULT_NUM_PAIRS)),
+            max_tokens=int(params.get("max_tokens", synth.DEFAULT_MAX_TOKENS)),
+            temperature=float(params.get("temperature", synth.DEFAULT_TEMPERATURE)))
+        result = {"pairs": pairs, "pair_count": len(pairs), **meta}
+        self.remote.submit_result(job_id, result, worker_id=self.worker_id)
+        self.remote.verify(job_id)
+        self.remote.receipt(job_id)
+        return self.remote.export(job_id)
 
     # -- loop -------------------------------------------------------------
     def tick(self) -> Optional[dict]:
