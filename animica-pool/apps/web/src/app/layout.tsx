@@ -3,159 +3,151 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
 import { Providers } from "./providers";
+import { isConsoleHost } from "@/lib/host";
 
-const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-sans",
-});
+const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-sans" });
+const mono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--font-mono" });
 
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-mono",
-});
+type Col = { title: string; links: [string, string][] };
+interface SiteConfig {
+  url: string;
+  brand: string; // accent word after "Animica"
+  brandShort: string; // for title template
+  title: string;
+  description: string;
+  nav: [string, string][];
+  tagline: string;
+  cols: Col[];
+  cta: { primary: [string, string]; secondary: [string, string] };
+}
 
-const SITE_URL = "https://pool.animica.org";
-const TITLE = "Animica Pool — mine + AI in one command";
-const DESCRIPTION =
-  "Run mining and AI with a single command (animica up): SHA3 proof-of-work, ENA useful-work, train-together pools, serve-while-train, an OpenAI-compatible API, and Bittensor on qualified GPUs — all paid in ANM.";
-
-export const metadata: Metadata = {
-  metadataBase: new URL(SITE_URL),
-  title: {
-    default: TITLE,
-    template: "%s · Animica Pool",
-  },
-  description: DESCRIPTION,
-  applicationName: "Animica Pool",
-  keywords: [
-    "mining pool",
-    "CPU mining",
-    "Monero mining",
-    "RandomX",
-    "dual mining",
-    "mine Monero",
-    "Animica",
-    "ANM",
-    "crypto mining",
-    "useful work mining",
-    "how to mine Monero",
+const POOL: SiteConfig = {
+  url: "https://pool.animica.org",
+  brand: "Pool",
+  brandShort: "Animica Pool",
+  title: "Animica Pool — mine + AI in one command",
+  description:
+    "Run mining and AI with a single command (animica up): SHA3 proof-of-work, ENA useful-work, train-together pools, serve-while-train, an OpenAI-compatible API, and Bittensor on qualified GPUs — all paid in ANM.",
+  nav: [
+    ["/mine", "Mine"],
+    ["/training-pools", "Training Pools"],
+    ["/about-ena", "ENA"],
+    ["/ai", "AI"],
+    ["/usage", "Usage"],
+    ["/bittensor", "Bittensor"],
+    ["/workers", "Workers"],
+    ["/miner", "Lookup"],
+    ["/credits", "Credits"],
+    ["/stats", "Stats"],
+    ["/download", "Download"],
+    ["/docs", "Docs"],
   ],
-  alternates: { canonical: "/" },
-  robots: { index: true, follow: true },
-  openGraph: {
-    type: "website",
-    url: SITE_URL,
-    siteName: "Animica Pool",
-    title: TITLE,
-    description: DESCRIPTION,
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Animica Pool — dual-mine ANM + Monero with one command" }],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: TITLE,
-    description: DESCRIPTION,
-    images: ["/og.png"],
-  },
+  tagline:
+    "Mine + AI in one command — train-together pools, serve-while-train, one global model. All paid in ANM.",
+  cols: [
+    { title: "Mine", links: [["/mine", "Get started"], ["/workers", "Workers"], ["/download", "Download"], ["/stats", "Stats"]] },
+    { title: "AI", links: [["/ai", "Inference"], ["/training-pools", "Training Pools"], ["/about-ena", "ENA"], ["/bittensor", "Bittensor"]] },
+    { title: "Developers", links: [["/api-keys", "API keys"], ["/usage", "Usage"], ["/webhooks", "Webhooks"], ["/billing", "Billing & limits"], ["/docs", "Docs & SDKs"]] },
+  ],
+  cta: { primary: ["/login", "Sign in"], secondary: ["/dashboard", "Dashboard"] },
 };
 
-const NAV: [string, string][] = [
-  ["/mine", "Mine"],
-  ["/training-pools", "Training Pools"],
-  ["/about-ena", "ENA"],
-  ["/ai", "AI"],
-  ["/bittensor", "Bittensor"],
-  ["/workers", "Workers"],
-  ["/credits", "Credits"],
-  ["/stats", "Stats"],
-  ["/download", "Download"],
-  ["/docs", "Docs"],
-];
-
-const JSON_LD = {
-  "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "Organization",
-      "@id": `${SITE_URL}/#org`,
-      name: "Animica",
-      url: "https://animica.org",
-      logo: `${SITE_URL}/og.png`,
-      sameAs: ["https://pool.animica.org", "https://explorer.animica.org"],
-    },
-    {
-      "@type": "WebSite",
-      "@id": `${SITE_URL}/#website`,
-      url: SITE_URL,
-      name: "Animica Pool",
-      description: DESCRIPTION,
-      publisher: { "@id": `${SITE_URL}/#org` },
-    },
-    {
-      "@type": "SoftwareApplication",
-      name: "Animica CLI miner (dual-mine)",
-      applicationCategory: "UtilitiesApplication",
-      operatingSystem: "Windows, macOS, Linux",
-      description:
-        "One-command CPU miner that dual-mines Animica (ANM, SHA3) and Monero (XMR, RandomX) against the Animica Pool.",
-      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-      downloadUrl: "https://pypi.org/project/animica/",
-    },
+const CONSOLE: SiteConfig = {
+  url: "https://console.animica.org",
+  brand: "AI",
+  brandShort: "Animica AI",
+  title: "Animica AI — the OpenAI-compatible API for your SaaS",
+  description:
+    "A drop-in OpenAI-compatible AI API: real token streaming, per-key spend caps, usage analytics, idempotency, and HMAC-signed webhooks. Get an API key and ship AI features in minutes. Base URL https://api.animica.org/v1.",
+  nav: [
+    ["/dashboard", "Dashboard"],
+    ["/api-keys", "API keys"],
+    ["/usage", "Usage"],
+    ["/webhooks", "Webhooks"],
+    ["/billing", "Billing"],
+    ["/pricing", "Pricing"],
+    ["/docs", "Docs"],
   ],
+  tagline:
+    "The OpenAI-compatible AI API for SaaS — drop-in, with real streaming, usage analytics, spend controls and signed webhooks. Paid in credits.",
+  cols: [
+    { title: "Platform", links: [["/ai", "Models & playground"], ["/pricing", "Pricing"], ["/docs", "Documentation"]] },
+    { title: "Account", links: [["/dashboard", "Dashboard"], ["/api-keys", "API keys"], ["/usage", "Usage"], ["/webhooks", "Webhooks"], ["/billing", "Billing & limits"]] },
+    { title: "Resources", links: [["/docs", "Docs & SDKs"], ["/register", "Get an API key"], ["/login", "Sign in"]] },
+  ],
+  cta: { primary: ["/register", "Get API key"], secondary: ["/login", "Sign in"] },
 };
+
+function site(): SiteConfig {
+  return isConsoleHost() ? CONSOLE : POOL;
+}
+
+export function generateMetadata(): Metadata {
+  const c = site();
+  return {
+    metadataBase: new URL(c.url),
+    title: { default: c.title, template: `%s · ${c.brandShort}` },
+    description: c.description,
+    applicationName: c.brandShort,
+    alternates: { canonical: "/" },
+    robots: { index: true, follow: true },
+    openGraph: {
+      type: "website",
+      url: c.url,
+      siteName: c.brandShort,
+      title: c.title,
+      description: c.description,
+      images: [{ url: "/og.png", width: 1200, height: 630, alt: c.brandShort }],
+    },
+    twitter: { card: "summary_large_image", title: c.title, description: c.description, images: ["/og.png"] },
+  };
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const c = site();
+  const isConsole = c === CONSOLE;
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      { "@type": "Organization", name: "Animica", url: "https://animica.org", logo: `${c.url}/og.png`, sameAs: ["https://animica.org", "https://pool.animica.org"] },
+      { "@type": "WebSite", url: c.url, name: c.brandShort, description: c.description },
+    ],
+  };
+
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`}>
       <body className="min-h-screen font-sans antialiased">
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
-        />
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
         <Providers>
-          {/* Sticky translucent header */}
           <header className="sticky top-0 z-50 border-b border-white/10 bg-ink-900/60 backdrop-blur-xl supports-[backdrop-filter]:bg-ink-900/50">
             <nav className="mx-auto flex max-w-6xl items-center gap-5 px-4 py-3 text-sm">
-              <Link
-                href="/"
-                className="flex items-center gap-2 text-lg font-semibold tracking-tight text-white"
-              >
+              <Link href="/" className="flex items-center gap-2 text-lg font-semibold tracking-tight text-white">
                 <span className="grid h-7 w-7 place-items-center rounded-lg bg-grad-primary text-ink-950 shadow-glow-green">
                   <span className="text-[13px] font-black leading-none">A</span>
                 </span>
-                Animica <span className="grad-text">Pool</span>
+                Animica <span className="grad-text">{c.brand}</span>
               </Link>
               <div className="hidden flex-1 items-center gap-5 lg:flex">
-                {NAV.map(([href, label]) => (
-                  <Link
-                    key={href}
-                    href={href}
-                    className="text-white/65 transition-colors hover:text-white"
-                  >
+                {c.nav.map(([href, label]) => (
+                  <Link key={href} href={href} className="text-white/65 transition-colors hover:text-white">
                     {label}
                   </Link>
                 ))}
               </div>
               <span className="flex-1 lg:hidden" />
               <div className="flex items-center gap-3">
-                <Link href="/dashboard" className="hidden text-white/65 transition-colors hover:text-white sm:inline">
-                  Dashboard
+                <Link href={c.cta.secondary[0]} className="hidden text-white/65 transition-colors hover:text-white sm:inline">
+                  {c.cta.secondary[1]}
                 </Link>
-                <Link href="/login" className="btn-primary">
-                  Sign in
+                <Link href={c.cta.primary[0]} className="btn-primary">
+                  {c.cta.primary[1]}
                 </Link>
               </div>
             </nav>
-            {/* Secondary nav row for small screens so links stay reachable. */}
             <div className="border-t border-white/5 lg:hidden">
               <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 text-xs">
-                {NAV.map(([href, label]) => (
-                  <Link
-                    key={href}
-                    href={href}
-                    className="text-white/60 transition-colors hover:text-white"
-                  >
+                {c.nav.map(([href, label]) => (
+                  <Link key={href} href={href} className="text-white/60 transition-colors hover:text-white">
                     {label}
                   </Link>
                 ))}
@@ -165,7 +157,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           <main className="mx-auto max-w-6xl px-4 py-10 md:py-14">{children}</main>
 
-          {/* Footer */}
           <footer className="mt-16 border-t border-white/10 bg-ink-950/40">
             <div className="mx-auto max-w-6xl px-4 py-10">
               <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
@@ -174,48 +165,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     <span className="grid h-6 w-6 place-items-center rounded-md bg-grad-primary text-ink-950">
                       <span className="text-[11px] font-black leading-none">A</span>
                     </span>
-                    Animica <span className="grad-text">Pool</span>
+                    Animica <span className="grad-text">{c.brand}</span>
                   </Link>
-                  <p className="text-sm text-white/50">
-                    Mine + AI in one command — train-together pools, serve-while-train, one global model. All paid in ANM.
-                  </p>
+                  <p className="text-sm text-white/50">{c.tagline}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-x-12 gap-y-6 sm:grid-cols-3">
-                  <FooterCol
-                    title="Mine"
-                    links={[
-                      ["/mine", "Get started"],
-                      ["/workers", "Workers"],
-                      ["/download", "Download"],
-                      ["/stats", "Stats"],
-                    ]}
-                  />
-                  <FooterCol
-                    title="AI"
-                    links={[
-                      ["/ai", "Inference"],
-                      ["/training-pools", "Training Pools"],
-                      ["/about-ena", "ENA"],
-                      ["/bittensor", "Bittensor"],
-                    ]}
-                  />
-                  <FooterCol
-                    title="Account"
-                    links={[
-                      ["/credits", "Credits"],
-                      ["/dashboard", "Dashboard"],
-                      ["/api-keys", "API keys"],
-                      ["/docs", "Docs"],
-                    ]}
-                  />
+                  {c.cols.map((col) => (
+                    <FooterCol key={col.title} title={col.title} links={col.links} />
+                  ))}
                 </div>
               </div>
               <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-white/5 pt-6 text-xs text-white/40 sm:flex-row sm:items-center">
-                <p>© {new Date().getFullYear()} Animica. Useful-work economy.</p>
+                <p>© {new Date().getFullYear()} Animica.{isConsole ? " AI for builders." : " Useful-work economy."}</p>
                 <div className="flex items-center gap-4">
                   <a href="https://animica.org" className="transition-colors hover:text-white/70">animica.org</a>
-                  <a href="https://explorer.animica.org" className="transition-colors hover:text-white/70">Explorer</a>
-                  <a href="https://pypi.org/project/animica/" className="transition-colors hover:text-white/70">PyPI</a>
+                  {isConsole ? (
+                    <>
+                      <a href="https://api.animica.org/api/docs" className="transition-colors hover:text-white/70">API reference</a>
+                      <a href="https://pool.animica.org" className="transition-colors hover:text-white/70">Mining</a>
+                    </>
+                  ) : (
+                    <>
+                      <a href="https://explorer.animica.org" className="transition-colors hover:text-white/70">Explorer</a>
+                      <a href="https://console.animica.org" className="transition-colors hover:text-white/70">AI API</a>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
