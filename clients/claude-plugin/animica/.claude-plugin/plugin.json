@@ -1,0 +1,23 @@
+{
+  "name": "animica",
+  "version": "5.1.2",
+  "description": "Animica AI tools for agents: ask the ENA open-AI network (OpenAI-compatible inference), generate and verify quantum-random draws from a verifiable randomness beacon, verify qDNA training provenance, estimate serverless compute cost, and read Animica chain and mining-pool stats. READ + COMPUTE only — this plugin never signs, spends, transfers, or accesses private keys.",
+  "author": {
+    "name": "Animica",
+    "url": "https://animica.org"
+  },
+  "homepage": "https://animica.org",
+  "repository": "https://github.com/animicaorg/all",
+  "license": "Apache-2.0",
+  "keywords": [
+    "ai",
+    "inference",
+    "agent",
+    "quantum",
+    "randomness",
+    "verifiable",
+    "mcp",
+    "compute",
+    "blockchain"
+  ]
+}

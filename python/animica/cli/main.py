@@ -51,7 +51,7 @@ import typer
 
 # Import subcommand apps
 from . import (aicf, beacon, bittensor, chain, chat, contract, da, debug, ena, faucet, gui, key,
-               mempool, mining, network, node, p2p, peer, phase2, quantum,
+               mcp, mempool, mining, network, node, p2p, peer, phase2, quantum,
                rpc, script, snapshot, stratum, studio, sync, tx, up, wallet)
 
 app = typer.Typer(
@@ -215,6 +215,7 @@ app.add_typer(quantum.app, name="quantum")
 app.add_typer(beacon.app, name="beacon")
 app.add_typer(bittensor.app, name="bittensor")
 app.add_typer(ena.app, name="ena")
+app.add_typer(mcp.app, name="mcp")
 app.add_typer(up.app, name="up")
 
 

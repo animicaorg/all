@@ -1,5 +1,26 @@
 # Animica MCP server
 
+> ## ⛔ DEPRECATED — do not publish
+>
+> This standalone TypeScript MCP server is **superseded** by the canonical Python
+> MCP server that ships **inside the `animica` wheel** (`pip install "animica[mcp]"`).
+> There is now exactly **one** Animica MCP server. Use it instead:
+>
+> ```bash
+> pip install "animica[mcp]"
+> animica mcp serve                       # stdio  (Claude Code / Anthropic)
+> animica mcp serve --transport http      # streamable-HTTP (OpenAI Apps SDK)
+> ```
+>
+> - Source: `python/animica/mcp/` (server, tools, seams, CLI).
+> - Distribution artifacts: `clients/` (Claude plugin marketplace + OpenAI App / GPT Actions).
+> - Submission notes: `clients/SUBMISSION-NOTES.md`.
+>
+> This directory is retained for history only; **stop publishing the npm package**.
+> The rest of this file is the old documentation.
+
+---
+
 **Give your AI agent an affordable brain — and let it earn by powering the network.**
 
 `animica-mcp` exposes [Animica](https://animica.org)'s OpenAI‑compatible AI services

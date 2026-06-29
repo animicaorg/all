@@ -1,0 +1,7 @@
+{
+  "name": "animica",
+  "transport": "streamable-http",
+  "url": "https://animica-mcp.example.com/mcp",
+  "description": "Animica AI: ask the ENA open-AI network, generate and verify quantum-random draws, verify qDNA training provenance, estimate serverless compute, and read Animica chain/pool stats. READ + COMPUTE only — no signing, spending, or wallet access.",
+  "notes": "Start the server with `animica mcp serve --transport http --host 0.0.0.0 --port 8765` and place TLS / a tunnel in front so the /mcp endpoint is reachable over HTTPS. The same server (stdio) also powers the Claude Code plugin."
+}

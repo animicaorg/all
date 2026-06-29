@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "animica",
+  "description": "Animica plugins for Claude Code — AI inference, verifiable quantum randomness, qDNA provenance, serverless compute, and read-only chain/pool stats.",
+  "owner": {
+    "name": "Animica",
+    "email": "ai@3vdc.com",
+    "url": "https://animica.org"
+  },
+  "plugins": [
+    {
+      "name": "animica",
+      "source": "./animica",
+      "category": "ai",
+      "description": "Ask the Animica ENA open-AI network, generate and verify quantum-random draws, verify qDNA training provenance, estimate serverless compute, and read Animica chain/pool stats. READ + COMPUTE only — no signing, spending, transfers, or private-key access.",
+      "homepage": "https://animica.org",
+      "keywords": ["ai", "inference", "quantum", "randomness", "mcp", "compute"]
+    }
+  ]
+}

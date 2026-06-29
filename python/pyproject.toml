@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "5.1.1"
+version = "5.1.2"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -130,6 +130,17 @@ studio = [
   "cloudpickle>=3.0.0",
   "omni-sdk>=0.1.0",
 ]
+# Model Context Protocol (MCP) server — `animica mcp serve` exposes Animica's
+# READ + COMPUTE tools (ENA inference, verifiable quantum randomness, qDNA
+# verification, Studio compute estimate, chain/pool reads) to MCP clients in BOTH
+# the Anthropic/Claude (stdio) and OpenAI Apps SDK (streamable-HTTP) ecosystems.
+# Kept OUT of the base install: `animica mcp serve` lazily imports the SDK and
+# prints a `pip install "animica[mcp]"` hint if it is absent. httpx is already a
+# base dependency; it is repeated here so `pip install animica[mcp]` is complete.
+mcp = [
+  "mcp>=1.2.0",
+  "httpx>=0.27.0",
+]
 # EVM execution lane (ANIMICA_EVM_EXECUTION=1): embeds py-evm so real Solidity
 # contracts deploy and run on a node-local EVM sequencer (chain id 149). Optional;
 # if absent the lane stays disabled and the rest of the EVM facade is unaffected.
@@ -141,7 +152,7 @@ evm = [
 # platform-specific native wheel and must never break a plain `animica[all]`
 # install. Add it explicitly: `pip install "animica[all,fast]"`.
 all = [
-  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,ai,studio]",
+  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,ai,studio,mcp]",
 ]
 
 [project.urls]
