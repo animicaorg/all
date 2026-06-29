@@ -45,10 +45,37 @@ class Agent:
         return retrieval.search(self.store, query, mode="hybrid", index=tmp_index,
                                 embedder=embedder, limit=6)
 
+    def _gather_from_index(self, query: str, embedding_provider: Optional[str],
+                           index_name: str) -> list[dict[str, Any]]:
+        """Retrieve from a PERSISTED index — the default grounding source when no
+        explicit ``--context`` is passed, so ``ena ask`` answers from the indexed
+        corpus instead of ungrounded (which made the base model hallucinate).
+        Best-effort: returns [] if the index is absent or search fails, preserving
+        the prior ungrounded behavior when nothing is indexed. Disable with
+        ANIMICA_ENA_NO_DEFAULT_GROUNDING=1."""
+        import os
+        if os.environ.get("ANIMICA_ENA_NO_DEFAULT_GROUNDING", "").strip().lower() \
+                in {"1", "true", "yes", "on"}:
+            return []
+        try:
+            from .providers import build_embedding_adapter
+            ecfg = self.cfg.embedding_provider(embedding_provider)
+            embedder = build_embedding_adapter(ecfg)
+            return retrieval.search(self.store, query, mode="hybrid",
+                                    index=index_name, embedder=embedder, limit=6)
+        except Exception:
+            return []
+
     def ask(self, question: str, *, context: Optional[str] = None,
             model_provider: Optional[str] = None, model: Optional[str] = None,
             embedding_provider: Optional[str] = None) -> dict[str, Any]:
         hits = self._gather_context(context, question, embedding_provider)
+        if not hits and not context:
+            # No explicit context: ground on the default persisted index so a plain
+            # `ena ask "..."` is answered from the indexed Animica corpus.
+            import os
+            default_index = os.environ.get("ANIMICA_ENA_DEFAULT_INDEX", "ena-docs")
+            hits = self._gather_from_index(question, embedding_provider, default_index)
         context_block = "\n\n".join(f"[{h['source']}]\n{h['text']}" for h in hits)
         adapter = self._model(model_provider, model)
         prompt = question if not context_block else (
