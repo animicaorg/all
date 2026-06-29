@@ -895,6 +895,122 @@ def scrape(url: str = typer.Argument(...), out: str = typer.Option(..., "--out")
     _emit({"url": url, "out": out, "result": job.get("result")}, title="scrape")
 
 
+# ===========================================================================
+# acquire (5.1.1 SSRF-safe web -> corpus -> synthesize_qa)
+# ===========================================================================
+
+acquire_app = typer.Typer(
+    help="Internet-scale learning (5.1.1): SSRF-safe web fetch -> corpus chunks "
+         "-> INLINE synthesize_qa. Coordinator-side only; web text reaches the "
+         "genome only via synthesis + the curation gate.",
+    no_args_is_help=True)
+app.add_typer(acquire_app, name="acquire")
+
+
+@acquire_app.command("fetch")
+def acquire_fetch(url: str = typer.Argument(..., help="public http(s) URL"),
+                  max_chars: int = typer.Option(1200, "--max-chars"),
+                  show: bool = typer.Option(False, "--show", help="print chunk previews")):
+    """Fetch + extract + chunk a URL through the SSRF guard (preview, no jobs)."""
+    from animica.ena import web
+    e = _ena()
+    try:
+        res, chunks = web.fetch_and_chunk(url, e.cfg.network, max_chars=max_chars)
+    except web.WebFetchError as exc:
+        console.print(f"[red]{exc.render()}[/red]")
+        raise typer.Exit(1)
+    out = {"fetch": res.to_dict(), "chunks": len(chunks)}
+    if _state.json:
+        out["chunk_records"] = chunks
+        return _emit(out)
+    _emit(out, title="acquire fetch")
+    if show:
+        for c in chunks[:5]:
+            console.print(f"[dim]#{c['ordinal']}[/dim] {c['text'][:160]}")
+
+
+@acquire_app.command("feed")
+def acquire_feed(url: str = typer.Argument(..., help="public http(s) URL"),
+                 num_pairs: int = typer.Option(3, "--num-pairs"),
+                 max_chunks: int = typer.Option(8, "--max-chunks",
+                     help="cap synthesize_qa jobs emitted from this page"),
+                 max_chars: int = typer.Option(3000, "--max-chars"),
+                 dedupe: bool = typer.Option(False, "--dedupe/--no-dedupe",
+                     help="skip chunks already shipped (cross-run AcquiredLedger)")):
+    """Fetch a URL (SSRF-guarded) and emit synthesize_qa jobs with INLINE corpus.
+
+    Each emitted job carries one chunk's text in params['corpus']; miners
+    synthesize {prompt,response} pairs on their OWN model, the coordinator gates
+    them into STAGING, and the explicit `ena promote-staging` grows the genome.
+    The web bytes themselves never enter the genome.
+
+    With --dedupe, an AcquiredLedger under the ENA home remembers which corpus
+    chunks were already shipped so re-running this command (or the feeder) does
+    not re-synthesize identical corpus — a pure efficiency/budget win (the
+    curation gate already dedupes the synthesized pairs).
+    """
+    from animica.ena import web
+    e = _ena()
+    try:
+        res, chunks = web.fetch_and_chunk(url, e.cfg.network, max_chars=max_chars)
+    except web.WebFetchError as exc:
+        console.print(f"[red]{exc.render()}[/red]")
+        raise typer.Exit(1)
+    ledger = (web.AcquiredLedger(e.cfg.artifacts_dir() / "acquired_ledger.jsonl")
+              if dedupe else None)
+    emitted: list[dict[str, Any]] = []
+    skipped = 0
+    for c in chunks[:max_chunks]:
+        if ledger is not None and ledger.seen(c["text"]):
+            skipped += 1
+            continue
+        job = _guard(e.jobs.create, "synthesize_qa",
+                     {"corpus": c["text"], "num_pairs": num_pairs,
+                      # provenance (graft 4): URL -> bytes -> round -> gene audit trail
+                      "source": c.get("source", res.final_url),
+                      "content_type": res.content_type,
+                      "source_sha": c.get("source_sha"),
+                      "fetched_at": c.get("fetched_at")})
+        if ledger is not None:  # record only AFTER a successful emit
+            ledger.record(c["text"], c.get("source", res.final_url))
+        emitted.append({"job_id": job["job_id"], "chars": len(c["text"])})
+    _emit({"url": res.final_url, "ip": res.ip, "chunks": len(chunks),
+           "skipped_seen": skipped, "emitted": emitted}, title="acquire feed")
+
+
+@acquire_app.command("check")
+def acquire_check(url: str = typer.Argument(..., help="public http(s) URL to audit")):
+    """Preflight the SSRF policy against a URL — validate + DNS only, no fetch.
+
+    Runs the exact scheme/userinfo/port/domain checks, resolves the host, and
+    runs the per-IP private/reserved guard, then prints {decision, resolved IPs,
+    block reason, pinned ip} WITHOUT fetching a body. An operator audit tool: it
+    opens NO new fetch surface (no body egress) and works even when
+    network.acquire_enabled is false (that flag only gates real fetches).
+    """
+    from animica.ena import web
+    e = _ena()
+    net = e.cfg.network
+    out: dict[str, Any] = {"url": url,
+                           "acquire_enabled": bool(getattr(net, "acquire_enabled", True))}
+    blocked = False
+    try:
+        # Pass the module resolver explicitly so the call uses getaddrinfo at
+        # call time (and stays mockable in tests) rather than a def-time default.
+        target = web.validate_url(url, net, _resolver=web._resolve)
+        out.update(decision="allowed", scheme=target.scheme, host=target.host,
+                   port=target.port, resolved=target.resolved, pinned_ip=target.ip)
+    except web.WebFetchError as exc:
+        blocked = True
+        out["decision"] = "blocked"
+        out["reason"] = exc.message
+        if exc.hint:
+            out["hint"] = exc.hint
+    _emit(out, title="acquire check")
+    if blocked:
+        raise typer.Exit(1)
+
+
 @app.command("stats")
 def stats():
     """Aggregate ENA progress stats (jobs, runs, contributors, models)."""

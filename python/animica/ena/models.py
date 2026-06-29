@@ -155,7 +155,7 @@ class NetworkConfig(Schema):
     allow_domains: list[str] = field(default_factory=list)
     deny_domains: list[str] = field(default_factory=list)
     max_requests: int = 100
-    max_depth: int = 2
+    max_depth: int = 2                  # max redirect hops (each re-validated)
     size_limit_bytes: int = 2_000_000
     request_timeout_seconds: float = 20.0
     retries: int = 2
@@ -165,6 +165,22 @@ class NetworkConfig(Schema):
     respect_robots: bool = True
     allow_browser_automation: bool = False
     allow_login: bool = False
+    # 5.1.1 SSRF-safe web acquisition (see animica.ena.web):
+    # only these content types may become corpus; only these (plus 80/443) ports
+    # may be connected to. Defaults are deliberately text-only + standard ports.
+    content_type_allowlist: list[str] = field(default_factory=lambda: [
+        "text/html", "text/plain", "text/markdown", "text/x-markdown",
+        "application/json", "application/xhtml+xml", "application/ld+json"])
+    extra_allowed_ports: list[int] = field(default_factory=list)
+    # What to do when robots.txt cannot be fetched (transport/SSRF error, not a
+    # clean 404). "allow" (default) = fail-open (5.1.0 behavior); "deny" =
+    # fail-closed for strict operators. A clean "no robots / 404" always allows.
+    robots_on_error: str = "allow"
+    # Master switch: when False, ALL coordinator web egress is refused at the
+    # web.fetch seam (scrape job, feeder web pass, acquire fetch/feed). Default
+    # True preserves current behavior; flip it to hard-disable internet access in
+    # one place. (acquire `check` still audits policy — it performs no body fetch.)
+    acquire_enabled: bool = True
 
 
 # ---------------------------------------------------------------------------

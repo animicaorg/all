@@ -167,7 +167,15 @@ class JobService:
             raise JobError(job["error"])
         try:
             result, artifacts = executor(self, job, job["params"])
-        except JobError:
+        except JobError as exc:
+            # An executor JobError (e.g. an SSRF/policy refusal raised by the
+            # hardened scrape executor) is a clean terminal REJECT, not a stuck
+            # 'running' job. Persist the rejected status + reason BEFORE re-raising
+            # so the queue never leaks a job pinned at STATUS_RUNNING. (graft 1)
+            job["status"] = STATUS_REJECTED
+            job["error"] = getattr(exc, "message", str(exc))
+            job["updated_at"] = now_ts()
+            self.store.upsert_job(job)
             raise
         except Exception as exc:  # noqa: BLE001
             job["status"] = STATUS_REJECTED
@@ -318,20 +326,33 @@ def _exec_extract(self: JobService, job, params):
 
 
 def _exec_scrape(self: JobService, job, params):
+    """Fetch one URL into normalized raw text — through the 5.1.1 SSRF guard.
+
+    Routes the fetch through :func:`animica.ena.web.fetch`, so the hostname is
+    resolved + every IP validated against the private/reserved ranges, the
+    connection is pinned to the validated IP (DNS-rebind defense), redirects are
+    re-validated per hop, and the body is size-capped + content-type-allowlisted.
+    The result is corpus SOURCE only (it still has to pass synthesis + the
+    curation gate before anything can reach the genome).
+    """
+    from . import web
     url = params.get("source") or params.get("url")
     if not url:
         raise JobError("scrape requires --source/--url")
-    import urllib.request
-    req = urllib.request.Request(url, headers={"user-agent": self.cfg.network.user_agent})
-    with urllib.request.urlopen(req, timeout=self.cfg.network.request_timeout_seconds) as resp:
-        body = resp.read().decode("utf-8", "replace")
-    rec = {"url": url, "text": body}
+    try:
+        res = web.fetch(url, self.cfg.network)
+    except web.WebFetchError as exc:
+        raise JobError(exc.message, hint=exc.hint) from exc
+    rec = {"url": res.final_url, "text": res.text}
     art_path = self._artifacts_dir(job["job_id"]) / "raw.jsonl"
     ds.write_jsonl(art_path, [rec])
     art = {"artifact_id": "art-" + new_uuid()[:16], "path": str(art_path),
            "name": "raw.jsonl", "hash": ds.sha256_file(art_path)}
-    return ({"url": url, "bytes": len(body), "rows": 1,
-             "provenance": {"url": url}}, [art])
+    return ({"url": res.final_url, "bytes": res.raw_bytes, "chars": len(res.text),
+             "rows": 1, "content_type": res.content_type, "ip": res.ip,
+             "hops": res.hops,
+             "provenance": {"url": res.final_url, "requested_url": url,
+                            "ip": res.ip, "content_type": res.content_type}}, [art])
 
 
 def _exec_chunk(self: JobService, job, params):

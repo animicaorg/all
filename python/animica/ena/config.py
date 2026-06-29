@@ -231,7 +231,61 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         )
     if env.get("ENA_PUBLIC_URL"):
         demand["public_url"] = env["ENA_PUBLIC_URL"]
+    _apply_network_env(env, raw)
     return raw
+
+
+def _apply_network_env(env: dict, raw: dict[str, Any]) -> None:
+    """Operator overrides for 5.1.1 SSRF-safe web acquisition (animica.ena.web).
+
+    Lets the coordinator's web reach be tuned from the environment without a
+    config file. Lists are comma-separated. Defaults stay safe (public web minus
+    private/reserved ranges, text-only, robots respected).
+    """
+    net = raw.setdefault("network", {})
+
+    def _csv(name: str):
+        val = env.get(name)
+        if val is None:
+            return None
+        return [p.strip() for p in val.split(",") if p.strip()]
+
+    allow = _csv("ENA_ALLOW_DOMAINS")
+    if allow is not None:
+        net["allow_domains"] = allow
+    deny = _csv("ENA_DENY_DOMAINS")
+    if deny is not None:
+        net["deny_domains"] = deny
+    cts = _csv("ENA_WEB_CONTENT_TYPES")
+    if cts is not None:
+        net["content_type_allowlist"] = cts
+    ports = _csv("ENA_WEB_EXTRA_PORTS")
+    if ports is not None:
+        net["extra_allowed_ports"] = [int(p) for p in ports if p.isdigit()]
+    if env.get("ENA_WEB_SIZE_LIMIT"):
+        net["size_limit_bytes"] = int(env["ENA_WEB_SIZE_LIMIT"])
+    if env.get("ENA_WEB_TIMEOUT"):
+        net["request_timeout_seconds"] = float(env["ENA_WEB_TIMEOUT"])
+    if env.get("ENA_WEB_MAX_REDIRECTS"):
+        net["max_depth"] = int(env["ENA_WEB_MAX_REDIRECTS"])
+    if env.get("ENA_WEB_MAX_REQUESTS"):
+        net["max_requests"] = int(env["ENA_WEB_MAX_REQUESTS"])
+    if env.get("ENA_WEB_RATE_PER_MIN"):
+        net["rate_limit_per_domain_per_minute"] = int(env["ENA_WEB_RATE_PER_MIN"])
+    if env.get("ENA_WEB_USER_AGENT"):
+        net["user_agent"] = env["ENA_WEB_USER_AGENT"]
+    if env.get("ENA_RESPECT_ROBOTS") is not None:
+        net["respect_robots"] = (
+            str(env["ENA_RESPECT_ROBOTS"]).strip().lower()
+            in ("1", "true", "yes", "on"))
+    if env.get("ENA_WEB_ROBOTS_ON_ERROR"):
+        mode = str(env["ENA_WEB_ROBOTS_ON_ERROR"]).strip().lower()
+        if mode in ("allow", "deny"):
+            net["robots_on_error"] = mode
+    if env.get("ENA_ACQUIRE_ENABLED") is not None:
+        net["acquire_enabled"] = (
+            str(env["ENA_ACQUIRE_ENABLED"]).strip().lower()
+            in ("1", "true", "yes", "on"))
 
 
 def _env_into(section: dict[str, Any], mapping: dict[str, str]) -> None:
