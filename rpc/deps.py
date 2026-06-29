@@ -612,6 +612,22 @@ def _maybe_bootstrap_genesis(
                     genesis_path=str(genesis_path),
                     created_at=int(time.time()),
                 )
+                # Boot self-heal. `python -m rpc` calls finalize_genesis directly
+                # (not finalize_genesis_if_needed), so the by-height-index repair and
+                # dead-fork force-convergence must be invoked here too — otherwise a
+                # node with the RPC stack but P2P disabled would never self-heal.
+                # Idempotent: the index reconcile is marker-gated and the checkpoint
+                # check is a no-op on canonical nodes; safe to also run via P2P init.
+                # ORDER MATTERS: reconcile the index BEFORE enforcing checkpoints so a
+                # healthy tip node repairs its index first and is NOT rolled back.
+                try:
+                    head_mod._reconcile_height_index(bundle.block_db)
+                except Exception:
+                    pass
+                try:
+                    head_mod._enforce_pinned_checkpoints(bundle.block_db, params)
+                except Exception:
+                    pass
             return
         # Fallback to older bootstrap signatures that accept KV instance
         if hasattr(loader, "bootstrap"):

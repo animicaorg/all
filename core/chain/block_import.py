@@ -590,6 +590,7 @@ class BlockImporter:
         "_created_snapshots",
         "_pending_snapshots",
         "_data_dir",
+        "_pinned_checkpoints",
     )
 
     def __init__(
@@ -998,6 +999,29 @@ class BlockImporter:
 
             # Compute hash
             h = compute_header_hash(header)
+
+            # Pinned checkpoint enforcement FIRST — BEFORE the duplicate early-return
+            # and fork-choice — so a block at a pinned height with the wrong hash
+            # (the orphan that wedged by-height sync) can never re-enter fork choice
+            # and re-take the head, even if it is already stored by-hash. The
+            # canonical block (h == pin) passes whether or not it is already stored,
+            # so normal duplicate handling for it is unaffected. No-op at non-pinned
+            # heights and in normal operation (pinned heights are deep, immutable).
+            cp_height = _height_of(header, hdr_map)
+            cp_pin = self._pinned_checkpoint_hash(cp_height)
+            if cp_pin is not None and h != cp_pin:
+                log.warning(
+                    "rejecting block at pinned checkpoint height",
+                    extra={"height": cp_height, "block_hash": h.hex(), "pinned": cp_pin.hex()},
+                )
+                return ImportResult(
+                    ImportErrorCode.INVALID,
+                    cp_height,
+                    h,
+                    False,
+                    f"checkpoint mismatch at height {cp_height}: "
+                    f"0x{h.hex()} != pinned 0x{cp_pin.hex()}",
+                )
 
             # Duplicate?
             if self.block_db.get_header_by_hash(h) is not None:
@@ -1798,6 +1822,25 @@ class BlockImporter:
             if isinstance(exc, BlockImportError):
                 raise
             raise BlockImportError(f"invalid_state_transition: {exc}") from exc
+
+    def _pinned_checkpoint_hash(self, height: int) -> Optional[bytes]:
+        """Return the pinned canonical hash for ``height`` on this chain, or None.
+
+        Lazily caches the (small) pinned-checkpoint map for the importer's chain so
+        the per-block check in import_block is a dict lookup. Empty when none are
+        pinned or checkpoints are disabled (ANIMICA_DISABLE_PINNED_CHECKPOINTS).
+        """
+        cps = getattr(self, "_pinned_checkpoints", None)
+        if cps is None:
+            try:
+                from core.network_params import get_pinned_checkpoints
+
+                cps = get_pinned_checkpoints(chain_id=int(self.params.chain_id)) or {}
+            except Exception:
+                cps = {}
+            self._pinned_checkpoints = cps
+        val = cps.get(int(height))
+        return bytes(val) if val is not None else None
 
     def _reorg_affected_range(
         self,

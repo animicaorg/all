@@ -160,16 +160,22 @@ def _recover_head_from_canonical(block_db) -> Optional[Tuple[int, bytes]]:
     return None
 
 
-def write_head(block_db, height: int, h: bytes) -> None:
+def write_head(block_db, height: int, h: bytes, *, allow_reorg: bool = False) -> None:
     """
     Update the canonical head pointer. Supports both set_canonical_head(height, h)
     and set_head(height, h) naming variants.
+
+    ``allow_reorg=True`` is required when moving the head to a height that is not
+    strictly greater than the current head (e.g. a checkpoint rollback); without it
+    the DB refuses the move ("refusing to move head without explicit reorg").
     """
     if hasattr(block_db, "set_canonical_head"):
-        block_db.set_canonical_head(height, h)
+        block_db.set_canonical_head(
+            height, h, allow_overwrite=allow_reorg, allow_reorg=allow_reorg
+        )
         return
     if hasattr(block_db, "set_head"):
-        block_db.set_head(height, h)
+        block_db.set_head(height, h, allow_reorg=allow_reorg)
         return
     raise GenesisError("block_db missing head setter")
 
@@ -179,58 +185,113 @@ def validate_head_against_checkpoint(
 ) -> bool:
     """Self-heal a node whose head is on a non-canonical fork.
 
-    If the local block at ``checkpoint_height`` does not match the pinned
-    canonical ``checkpoint_hash``, the node followed a dead/phantom fork at or
-    above a final checkpoint: roll the head back to just below the checkpoint so
-    normal P2P sync re-fetches the true canonical chain from honest peers.
+    Determines the local block at ``checkpoint_height`` by an AUTHORITATIVE walk of
+    the head's parentHash chain — NOT via the by-height index, which may itself be
+    stale/corrupt (an unreconciled or re-corrupted index must never be the basis for
+    a rollback decision: that is how a healthy node would get wrongly rolled back).
+    If that authoritative block does not match the pinned ``checkpoint_hash``, the
+    node's head is genuinely on a dead fork: roll it back to the divergent block's
+    own parent (the shared ancestor at ``checkpoint_height - 1``) and prune the
+    now-orphaned by-height index above it, so re-sync re-fetches the canonical chain.
 
     Brick-safe by construction — returns immediately (NO-OP) when:
       * there is no head, or the head is BELOW the checkpoint (still syncing), or
-      * the by-height index has no entry at the checkpoint height (hole), or
-      * the local hash MATCHES the pinned hash (the canonical case — healthy
-        nodes are never modified).
-    Only a genuine hash mismatch at/above the checkpoint triggers a rollback.
-    Never raises: a self-heal failure must never block node boot. Returns True
-    only if it actually rolled the head back.
+      * the parentHash walk cannot reach the checkpoint height (incomplete data —
+        never roll back on uncertainty), or
+      * the authoritative local hash MATCHES the pinned hash (the canonical case —
+        a node on the right chain is NEVER modified, regardless of index state).
+    Only a genuine authoritative-hash mismatch triggers a rollback. Never raises;
+    returns True only if it actually rolled the head back.
     """
     try:
         head = read_head(block_db)
         if head is None:
             return False
-        if int(head[0]) < int(checkpoint_height):
+        head_height, head_hash = int(head[0]), bytes(head[1])
+        cp = int(checkpoint_height)
+        if head_height < cp:
             return False  # not reached yet — normal during sync, must not interfere
-        get_canon = getattr(block_db, "get_canonical_hash", None)
-        if not callable(get_canon):
-            return False
-        local = get_canon(int(checkpoint_height))
+
+        # Resolve the local block at `cp`. Fast path: when the by-height index has
+        # been deep-reconciled (marker set), it is consistent with the head's parent
+        # chain, so trust get_canonical_hash(cp) directly — O(1), avoids an
+        # O(head - cp) walk on every boot as the chain grows. Fall back to the
+        # authoritative parentHash walk whenever the index is NOT trusted (first boot
+        # before reconcile, or a reconcile that aborted) or the indexed entry looks
+        # insane — so a stale/corrupt index can never drive the rollback decision.
+        local = None
+        parent_of_local = None
+        if _hix_index_trusted(block_db):
+            get_canon = getattr(block_db, "get_canonical_hash", None)
+            cand = get_canon(cp) if callable(get_canon) else None
+            if cand is not None:
+                chdr = block_db.get_header_by_hash(bytes(cand))
+                if chdr is not None and int(chdr.height) == cp:
+                    local = bytes(cand)
+                    parent_of_local = bytes(chdr.parentHash)
         if local is None:
-            return False  # index hole — leave to _reconcile_height_index
+            # Authoritative: walk head -> cp via parentHash, independent of the index.
+            cur = head_hash
+            steps = 0
+            while steps <= (head_height - cp) + 2:
+                steps += 1
+                hdr = block_db.get_header_by_hash(cur)
+                if hdr is None:
+                    return False  # incomplete chain data — do not roll back on uncertainty
+                h = int(hdr.height)
+                if h == cp:
+                    local = cur
+                    parent_of_local = bytes(hdr.parentHash)
+                    break
+                if h < cp:
+                    return False  # overshot (corrupt heights) — bail safe
+                nxt = bytes(hdr.parentHash)
+                if nxt == b"\x00" * len(nxt):
+                    return False
+                cur = nxt
+            if local is None:
+                return False
         if bytes(local) == bytes(checkpoint_hash):
             return False  # CANONICAL — no-op (cannot brick healthy nodes)
+
         import logging
 
         log = logging.getLogger("core.chain.head")
-        target = int(checkpoint_height) - 1
-        target_hash = get_canon(target)
+        target = cp - 1
+        target_hash = parent_of_local
+        if target_hash is None or target_hash == b"\x00" * len(target_hash):
+            # Fall back to the index for the rollback target (best-effort).
+            get_canon = getattr(block_db, "get_canonical_hash", None)
+            target_hash = get_canon(target) if callable(get_canon) else None
         if target_hash is None:
             log.critical(
                 "CHECKPOINT VIOLATION at %d (local=%s != pinned=%s) but no block at "
                 "%d to roll back to — deferring to snapshot.import / operator",
-                int(checkpoint_height), bytes(local).hex(),
-                bytes(checkpoint_hash).hex(), target,
+                cp, bytes(local).hex(), bytes(checkpoint_hash).hex(), target,
             )
             return False
         log.critical(
             "CHECKPOINT VIOLATION: head is on a non-canonical fork (block at %d = %s "
             "!= pinned canonical %s) — rolling head back to %d to resync canonical",
-            int(checkpoint_height), bytes(local).hex(),
-            bytes(checkpoint_hash).hex(), target,
+            cp, bytes(local).hex(), bytes(checkpoint_hash).hex(), target,
         )
-        write_head(block_db, target, bytes(target_hash))
+        write_head(block_db, target, bytes(target_hash), allow_reorg=True)
         set_canon_h = getattr(block_db, "set_canonical_height", None)
         if callable(set_canon_h):
             set_canon_h(target)
+        # Prune the now-orphaned by-height index above the rollback target so the
+        # node never serves (to peers or itself) the dead-fork blocks it abandoned.
         kv = getattr(block_db, "kv", None)
+        if kv is not None and hasattr(kv, "put"):
+            try:
+                from core.db.block_db import k_hix
+
+                deleter = getattr(kv, "delete", None)
+                if callable(deleter):
+                    for hh in range(target + 1, head_height + 1):
+                        deleter(k_hix(hh))
+            except Exception:
+                pass
         if kv is not None and hasattr(kv, "commit"):
             kv.commit()
         return True
@@ -540,30 +601,126 @@ def finalize_genesis_if_needed(
         _reconcile_height_index(block_db)
     except Exception:
         pass
+    # Force convergence for a node wedged on a dead fork. MUST run AFTER the index
+    # heal so a healthy tip node (which only had a stale index entry) is a no-op
+    # here and is never rolled back; only a node whose head is genuinely on the
+    # wrong fork at a pinned height is rolled back to re-sync the canonical chain.
+    try:
+        _enforce_pinned_checkpoints(block_db, params)
+    except Exception:
+        pass
+    # A checkpoint rollback may have moved the head; return the current value.
+    try:
+        cur_head = read_head(block_db)
+        if cur_head is not None:
+            head = cur_head
+    except Exception:
+        pass
     return head
 
 
+# By-height-index reconcile scheme. BUMP to force a one-time full deep re-walk +
+# repair on the next boot after upgrading. The deep walk is O(chain length); the
+# marker makes it run exactly once per scheme bump (afterwards normal head advances
+# keep the index correct — they route through _apply_reorg, which rewrites every
+# attached height including the fork point — so subsequent boots only do a cheap
+# near-tip linkage check). Scheme 1 ships the fix for legacy reorgs that left an
+# orphan-sibling block in the by-height index at a fork-point height (the "nodes
+# stuck on block N" outage), which the old sparse/height-only probe could not see.
+_HIX_RECONCILE_SCHEME = 1
+_HIX_TIP_WINDOW = 1024
+
+
+def _hix_marker_key() -> bytes:
+    from core.db.block_db import PFX_META
+
+    return PFX_META + b"hix_reconciled"
+
+
+def _hix_index_trusted(block_db) -> bool:
+    """True if the by-height index has been deep-reconciled under the current scheme.
+
+    When set, the index is consistent with the head's parentHash chain (the deep
+    walk rewrote every divergent entry, and normal head advances maintain it), so a
+    direct get_canonical_hash(height) is authoritative — letting the checkpoint check
+    avoid an O(head - checkpoint) parentHash walk on every boot. Absent/stale marker
+    => not trusted => callers must fall back to the authoritative walk.
+    """
+    try:
+        kv = getattr(block_db, "kv", None)
+        if kv is None:
+            return False
+        marker = kv.get(_hix_marker_key())
+        return bool(marker) and len(marker) >= 1 and marker[0] == _HIX_RECONCILE_SCHEME
+    except Exception:
+        return False
+
+
+def _hix_tip_linkage_ok(block_db, head_height: int, head_hash: bytes) -> bool:
+    """Cheap near-tip integrity check after the one-time deep reconcile.
+
+    Verifies the by-height index over the last ``_HIX_TIP_WINDOW`` heights forms an
+    unbroken parentHash chain ending exactly at ``head_hash``. Returns False (=>
+    escalate to a full deep reconcile) on any hole or mismatch. O(window),
+    independent of chain length. A break at a fork point surfaces one height ABOVE
+    the orphan (the child's parentHash won't match the orphan), so this window-walk
+    catches near-tip regressions; deep legacy corruption is handled by the one-time
+    full walk gated on the scheme marker.
+    """
+    try:
+        if block_db.get_canonical_hash(head_height) != head_hash:
+            return False
+        lo = max(1, head_height - _HIX_TIP_WINDOW + 1)
+        for h in range(head_height, lo - 1, -1):
+            cur = block_db.get_canonical_hash(h)
+            if cur is None:
+                return False
+            hdr = block_db.get_header_by_hash(bytes(cur))
+            if hdr is None or int(hdr.height) != h:
+                return False
+            prev = block_db.get_canonical_hash(h - 1)
+            if prev is None or bytes(hdr.parentHash) != bytes(prev):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def _reconcile_height_index(block_db) -> None:
-    """Rebuild a holey canonical by-height index (k_hix: height -> hash).
+    """Repair a corrupt canonical by-height index (k_hix: height -> hash).
 
-    The block DATA can be fully intact (every block retrievable by-hash, head
-    chains cleanly to genesis) while the secondary height index has holes — a
-    restored/rolled-back DB, or a crash mid-batch, leaves k_hix(height) entries
-    missing or pointing at orphans. Because peers sync BY HEIGHT, a node serving
-    such an index returns NULL at each hole and cannot serve a contiguous chain,
-    so every peer pins at the last servable height below a hole (the recurring
-    "nodes stuck behind" outage). canonical_height reconciliation above does not
-    touch this index.
+    The block DATA can be fully intact (every block retrievable by-hash, head chains
+    cleanly to genesis) while the secondary height index is wrong: a restored/
+    rolled-back DB, a crash mid-batch, or a LEGACY reorg can leave k_hix(height)
+    missing (a hole) OR pointing at an ORPHAN SIBLING at the correct height (a
+    losing fork block whose header.height equals the queried height but which is NOT
+    on the head's parentHash chain). Because peers sync BY HEIGHT, such an index
+    serves a block whose hash does not match the next block's parentHash, so every
+    by-height peer freezes at the lowest broken height (the "nodes stuck on block N"
+    outage). canonical_height reconciliation above does not touch this index.
 
-    This walks the canonical chain head -> genesis via header.parentHash (the
-    authoritative ordering) and re-writes every k_hix(height)=hash. It only acts
-    when the index is short (cheap entry count < head+1), is LOSSLESS (block data
-    untouched), and ABORTS without writing if any block is missing by-hash (that
-    needs a snapshot restore, not an index rebuild).
+    Detection is LINKAGE-CORRECT, not a sample: it walks the canonical chain head ->
+    genesis via header.parentHash (the authoritative ordering, read from the head
+    pointer which is independent of the possibly-corrupt index) and rewrites EVERY
+    height whose k_hix entry disagrees — including an orphan sibling at the right
+    height, which the previous sparse/height-only probe could not detect. ABORTS
+    without writing if any block is missing by-hash (needs a snapshot restore, not
+    an index rebuild). Lossless: it never touches block data, only the index.
+
+    Cost is bounded by a persisted scheme marker (``_HIX_RECONCILE_SCHEME`` ++
+    head_hash): the O(chain) walk runs once per scheme bump; afterwards boots do
+    only a cheap near-tip linkage check and escalate to a full walk only if it fails.
     """
     from core.db.block_db import k_hix
 
-    head = block_db.get_head()
+    # Resolve the head via read_head (with its canonical-index recovery fallback),
+    # the SAME path the checkpoint enforcement uses. Using the raw META pointer
+    # (block_db.get_head) here would skip the repair on a node whose META head is
+    # absent but whose index is populated (prebuilt-DB import / torn head write),
+    # while the checkpoint would still recover a head from the index — leaving the
+    # two halves disagreeing on the head. Keeping them in lock-step guarantees the
+    # in-place index repair runs whenever the checkpoint can see a head.
+    head = read_head(block_db)
     if head is None:
         return
     head_height, head_hash = int(head[0]), bytes(head[1])
@@ -571,78 +728,133 @@ def _reconcile_height_index(block_db) -> None:
         return
 
     kv = getattr(block_db, "kv", None)
-    if kv is None or not hasattr(kv, "batch"):
+    if kv is None:
         return
 
-    # Cheap, correct corruption probe: sample heights spread across the chain.
-    # For each, the canonical index must resolve to a stored block whose header
-    # height matches. Any miss/mismatch => the index is holey. (A plain entry
-    # count is unreliable: orphan entries left at rolled-back heights can inflate
-    # it above the real canonical coverage and mask the holes.)
-    n = head_height + 1
-    step = max(1, n // 64)
-    probe = list(range(0, n, step))
-    if probe[-1] != head_height:
-        probe.append(head_height)
-    corrupt = False
-    for h in probe:
-        hh = block_db.get_canonical_hash(h)
-        if hh is None:
-            corrupt = True
-            break
-        hdr = block_db.get_header_by_hash(bytes(hh))
-        if hdr is None or int(hdr.height) != h:
-            corrupt = True
-            break
-    if not corrupt:
-        return  # index resolves correctly at every probe; nothing to do
+    marker_key = _hix_marker_key()
+    marker = None
+    try:
+        marker = kv.get(marker_key)
+    except Exception:
+        marker = None
+    deep_done = bool(marker) and len(marker) >= 1 and marker[0] == _HIX_RECONCILE_SCHEME
 
-    # Walk the canonical chain by parentHash, verifying every block exists.
-    chain: dict[int, bytes] = {}
+    if deep_done:
+        # The one-time deep repair already ran under this scheme; normal head
+        # advances keep the index correct, so only verify the near-tip linkage.
+        if _hix_tip_linkage_ok(block_db, head_height, head_hash):
+            return
+        log.warning(
+            "height-index: near-tip linkage check failed at head=%d; escalating "
+            "to a full deep reconcile",
+            head_height,
+        )
+
+    # DEEP reconcile: walk the canonical chain by parentHash, verifying every block
+    # exists, building the authoritative {height: hash}.
+    authoritative: dict[int, bytes] = {}
     cur = head_hash
     steps = 0
     while True:
         steps += 1
         if steps > head_height + 100:
-            log.error("height-index self-heal: walk overran (cycle?); aborting")
+            log.error("height-index reconcile: walk overran (cycle?); aborting")
             return
         hdr = block_db.get_header_by_hash(cur)
         if hdr is None:
             log.error(
-                "height-index self-heal: block missing by-hash at ~height %d "
-                "(%s); chain data incomplete, needs snapshot restore — aborting",
-                head_height - len(chain), cur.hex(),
+                "height-index reconcile: block missing by-hash at ~height %d (%s); "
+                "chain data incomplete, needs snapshot restore — aborting",
+                head_height - len(authoritative), cur.hex(),
             )
             return
         h = int(hdr.height)
-        chain[h] = cur
+        authoritative[h] = cur
         if h == 0:
             break
         parent = bytes(hdr.parentHash)
         if parent == b"\x00" * len(parent):
-            log.error("height-index self-heal: zero parent above genesis; aborting")
+            log.error("height-index reconcile: zero parent above genesis; aborting")
             return
         cur = parent
 
-    if 0 not in chain:
-        log.error("height-index self-heal: walk did not reach genesis; aborting")
+    if 0 not in authoritative:
+        log.error("height-index reconcile: walk did not reach genesis; aborting")
         return
 
-    log.warning(
-        "height-index self-heal: corrupt by-height index detected; rebuilding "
-        "%d-block index (head=%d)", len(chain), head_height,
-    )
-    # Use put()+commit() rather than kv.batch(): boot may already hold an open
-    # implicit transaction on the shared connection (finalize_genesis writes
-    # genesis meta), and a batch's BEGIN IMMEDIATE would raise "transaction
-    # within a transaction". put() runs in the existing transaction; one commit
-    # flushes the whole rebuild atomically. Mirrors the canonical-height heal.
-    for height, block_hash in chain.items():
-        kv.put(k_hix(height), block_hash)
-    commit = getattr(kv, "commit", None)
-    if callable(commit):
-        commit()
-    log.warning("height-index self-heal: rebuilt %d entries", len(chain))
+    # Compare authoritative vs the stored index at EVERY height; collect divergences
+    # (holes AND orphan-sibling mismatches).
+    diffs: list[tuple[int, bytes]] = []
+    for height, want in authoritative.items():
+        have = block_db.get_canonical_hash(height)
+        if have is None or bytes(have) != want:
+            diffs.append((height, want))
+
+    if diffs:
+        log.warning(
+            "height-index reconcile: repairing %d of %d entries (head=%d) — stale/"
+            "missing by-height index (the 'nodes stuck on a block' outage)",
+            len(diffs),
+            len(authoritative),
+            head_height,
+        )
+        # Use put()+commit() rather than kv.batch(): boot may already hold an open
+        # implicit transaction on the shared connection (finalize_genesis writes
+        # genesis meta), and a batch's BEGIN IMMEDIATE would raise "transaction
+        # within a transaction". put() runs in the existing transaction; one commit
+        # flushes the whole rebuild. Mirrors the canonical-height heal.
+        for height, want in diffs:
+            kv.put(k_hix(height), want)
+        commit = getattr(kv, "commit", None)
+        if callable(commit):
+            commit()
+        log.warning("height-index reconcile: repaired %d entries", len(diffs))
+
+    # Write the marker LAST (index first, marker last) so a crash between the
+    # rewrite and the marker just causes a harmless re-run, never a skipped repair.
+    try:
+        kv.put(marker_key, bytes([_HIX_RECONCILE_SCHEME]) + head_hash)
+        commit = getattr(kv, "commit", None)
+        if callable(commit):
+            commit()
+    except Exception:
+        pass
+
+
+def _enforce_pinned_checkpoints(block_db, params) -> None:
+    """Force a node wedged on a dead fork back onto the canonical chain.
+
+    MUST run AFTER ``_reconcile_height_index``. A node that is merely on the correct
+    chain but had a stale *index* entry has, by then, already repaired its index, so
+    its block at every pinned height matches the pin and this is a NO-OP for it. Only
+    a node whose HEAD is genuinely on the wrong fork at a pinned height is rolled back
+    (to just below the lowest violated checkpoint) so by-height/HTTP sync re-requests
+    and re-pulls the corrected canonical block — the by-height (rpc_pull) path only
+    ever asks for local_height+1 and would otherwise never re-fetch the fork height.
+
+    Brick-safe: ``validate_head_against_checkpoint`` is a no-op unless the local
+    block at the pinned height genuinely differs from the pinned hash, and never
+    rolls a node that has not yet reached the checkpoint height. Never raises.
+    """
+    try:
+        from core.network_params import get_pinned_checkpoints
+    except Exception:
+        return
+    try:
+        chain_id = int(getattr(params, "chain_id"))
+    except Exception:
+        return
+    checkpoints = get_pinned_checkpoints(chain_id=chain_id)
+    if not checkpoints:
+        return
+    # Validate from the lowest pinned height up; the first genuine violation rolls
+    # the head back below it, after which re-sync re-pulls everything above.
+    for height in sorted(checkpoints):
+        try:
+            if validate_head_against_checkpoint(block_db, height, checkpoints[height]):
+                break
+        except Exception:
+            continue
 
 
 def _probe_db_writable(block_db) -> bool:

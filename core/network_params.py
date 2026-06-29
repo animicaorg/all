@@ -69,6 +69,29 @@ GENESIS_PATH_BY_NETWORK: dict[tuple[str, int], Path] = {
     ("devnet", 1337): GENESIS_DIR / "devnet.json",
 }
 
+# Pinned canonical checkpoints: (network, chain_id) -> {height: canonical_block_hash}.
+# A node whose local block at a pinned height differs from the pinned hash is on a
+# dead fork; at boot it rolls its head back to just below the lowest violated
+# checkpoint and re-syncs the canonical chain (see core.chain.head
+# .validate_head_against_checkpoint / _enforce_pinned_checkpoints). This is the
+# force-convergence tool for the "nodes stuck on block N" outage: a legacy reorg
+# left an orphan-sibling block in some nodes' by-height index at fork point 28167,
+# and the by-height/HTTP (rpc_pull) sync path only ever requests local_height+1, so
+# a node wedged on the orphan never re-requests 28167 — only a head rollback below
+# it forces the corrected block to be re-pulled. The pinned hash MUST be the
+# canonical block (the one the heaviest chain descends from), never the orphan.
+PINNED_CHECKPOINTS_BY_NETWORK: dict[tuple[str, int], dict[int, bytes]] = {
+    ("mainnet", 1): {
+        # Fork point of the 06-2026 by-height-index corruption. Canonical block B
+        # (head at 31908+ descends from it via 28168.parentHash == B); the orphan
+        # sibling A = 0x0000001a81db6856ff09760994585ce5efd6b17014c63644f7b758a461311b12
+        # is what wedged nodes were stuck on.
+        28167: bytes.fromhex(
+            "00000022379a38be2a2bd6e410a8a720044305483ccf239c4a385b29dfcd08f8"
+        ),
+    },
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,6 +120,31 @@ def get_pinned_genesis_hash(
         if pin_devnet not in {"1", "true", "yes", "on"}:
             return None
     return PINNED_GENESIS_BY_NETWORK.get((params.name, params.chain_id))
+
+
+def get_pinned_checkpoints(
+    *, chain_id: Optional[int] = None, network_name: Optional[str] = None
+) -> dict[int, bytes]:
+    """Return {height: canonical_block_hash} pinned checkpoints for a network.
+
+    Empty dict when none are pinned (the common case). Used at boot to force a
+    node that is wedged on a dead fork back onto the canonical chain.
+
+    Kill-switch: set ANIMICA_DISABLE_PINNED_CHECKPOINTS=1 to disable enforcement
+    entirely (both the boot head-rollback and the import-time rejection), so a bad
+    pin can never wedge a node beyond an operator override.
+    """
+    if os.getenv("ANIMICA_DISABLE_PINNED_CHECKPOINTS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return {}
+    params = get_network_params(chain_id=chain_id, network_name=network_name)
+    if params is None:
+        return {}
+    return dict(PINNED_CHECKPOINTS_BY_NETWORK.get((params.name, params.chain_id), {}))
 
 
 def get_network_genesis_path(
