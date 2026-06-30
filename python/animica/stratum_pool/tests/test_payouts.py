@@ -235,7 +235,7 @@ def test_process_once_rebroadcasts_dropped_submitted_payout(monkeypatch):
                     "tx_hash": "0x" + ("ab" * 32),
                     "address": "anim1miner",
                     "amount": 25,
-                    "raw_tx": "raw:1:anim1poolwallet:anim1miner:25:7:15",
+                    "raw_tx": "raw:1:anim1poolwallet:anim1miner:25:7:300",
                     "retry_count": 0,
                     "timestamp": 0.0,
                     "nonce": 7,
@@ -258,9 +258,9 @@ def test_process_once_rebroadcasts_dropped_submitted_payout(monkeypatch):
 
     assert sent == 0
     assert len(rebroadcast_submit_calls) == 1
-    assert rebroadcast_submit_calls[0] != "raw:1:anim1poolwallet:anim1miner:25:7:15:0"
+    assert rebroadcast_submit_calls[0] != "raw:1:anim1poolwallet:anim1miner:25:7:300:0"
     assert rebroadcast_submit_calls[0].startswith(
-        "raw:1:anim1poolwallet:anim1miner:25:7:15:"
+        "raw:1:anim1poolwallet:anim1miner:25:7:300:"
     )
     assert len(metrics.rebroadcast_calls) == 1
     assert metrics.rebroadcast_calls[0]["tx_hash"] == "0x" + ("ab" * 32)

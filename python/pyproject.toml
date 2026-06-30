@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "5.1.4"
+version = "5.2.0"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -37,6 +37,12 @@ dependencies = [
   "requests>=2.31.0",
   "fastapi>=0.115.0,<0.116.0",
   "uvicorn[standard]>=0.30.0,<1.0.0",
+  # Pin starlette to the band fastapi 0.115.x accepts. WITHOUT this upper bound a
+  # transitive dep (notably sse-starlette 3.x via the `mcp` extra) can pull
+  # starlette>=0.49, which is INCOMPATIBLE with fastapi 0.115 and crashes EVERY
+  # FastAPI service (pool, ENA, gateway) on its next restart with
+  # `Router.__init__() got an unexpected keyword argument 'on_startup'`.
+  "starlette>=0.40,<0.47",
   "prometheus-client>=0.20.0,<1.0.0",
   "huggingface_hub>=0.24.0",
   # NOTE: the heavy GPU/AI stack (torch, transformers, datasets, peft, trl, …) is
@@ -140,6 +146,18 @@ studio = [
 mcp = [
   "mcp>=1.2.0",
   "httpx>=0.27.0",
+  # Cap sse-starlette below 3.x: the 3.x line requires starlette>=0.49 which
+  # conflicts with the base `starlette<0.47` pin (fastapi 0.115). 2.x satisfies
+  # mcp's `sse-starlette>=1.6.1` requirement and works with starlette 0.46.
+  "sse-starlette>=1.6.1,<3",
+]
+# Provider role: run as an Animica AI compute provider — serve an OpenAI-compatible
+# endpoint (`animica ai serve`) and settle earnings on-chain. This is the light
+# provider runtime (gateway + on-chain SDK); GPU compute is added separately with
+# `animica[gpu]`. Use: `pip install "animica[provider]"` (or `"animica[provider,gpu]"`).
+provider = [
+  "animica[backend]",
+  "omni-sdk>=0.1.0",
 ]
 # EVM execution lane (ANIMICA_EVM_EXECUTION=1): embeds py-evm so real Solidity
 # contracts deploy and run on a node-local EVM sequencer (chain id 149). Optional;
@@ -152,7 +170,7 @@ evm = [
 # platform-specific native wheel and must never break a plain `animica[all]`
 # install. Add it explicitly: `pip install "animica[all,fast]"`.
 all = [
-  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,ai,studio,mcp]",
+  "animica[backend,stratum,wallet_qt,operator,bridge,gpu,ai,studio,mcp,provider]",
 ]
 
 [project.urls]

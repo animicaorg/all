@@ -10,8 +10,34 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ## [Unreleased]
 ### Added
+- **`animica ai` command namespace** (pip `animica` 5.2.0): a first-class AI
+  surface — `doctor` (14 readiness checks + fix hints), `setup` (writes
+  `~/.animica/config.toml`), `models`, `chat` (REPL + one-shot), `serve` (an
+  OpenAI-compatible gateway: `/v1/chat/completions` with streaming, `/completions`,
+  `/embeddings`, `/models`, bearer auth, OpenAI error envelope), `embed`, `rag`
+  (local index + grounded answers), `job` (estimate/submit/status/result/list on
+  the AICF marketplace), `provider` (register/status/start), `earnings`,
+  `balance` (`--watch`), and `benchmark`; plus `--no-color` and graceful
+  `--json` everywhere. Base install stays light; `serve` lazily needs `animica[backend]`.
+  Spending is safe by default — `ai job submit` quotes first and never spends
+  without a confirmation or `--yes`, honoring an optional `max_spend_anm` cap. See
+  [docs/ai.md](ai.md).
+- **`animica up` component selection** — `--profile {all,miner,ai,provider}`,
+  repeatable `--only`/`--without`, `--serve-port`, and a richer `--plan` table.
+  Fully additive: existing `animica up` invocations are unchanged.
+- **`animica mcp install <claude|cursor|vscode>`** — wires the Animica MCP server
+  into a client's config (merges, never clobbers; `--print` to preview).
+- New **`animica[provider]`** install extra (gateway + on-chain SDK for providers).
 - Draft **L2 bundle mode** in Studio Web (behind flag).
 - Optional **light client** proof checks in Explorer (feature-gated).
+
+### Fixed (ops)
+- **Stratum pool payouts**: per-payout mempool-aware nonce resolution + a unique
+  per-payout fee so identical (address, amount) payouts no longer collide to the
+  same tx hash and no-op on-chain (the nonce-less execution model meant repeats
+  were silently dropped). Recognizes `nonce_gap` for retry.
+- **Dependency pin**: `starlette<0.47` (and `sse-starlette<3` in the `mcp` extra)
+  to stop a transitive upgrade from breaking every FastAPI service on restart.
 
 ### Changed
 - Increased default RPC request timeout from **10s → 15s** in SDKs.
