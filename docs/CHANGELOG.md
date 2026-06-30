@@ -32,6 +32,15 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 - Optional **light client** proof checks in Explorer (feature-gated).
 
 ### Fixed (ops)
+- **P2P snapshot fast-sync**: snapshot chunks were split at 128 MiB while the P2P
+  wire caps a single message at 8 MiB, so a node could never serve its own snapshot
+  chunks (`GET_SNAPSHOT_CHUNK` → `payload too large` → silently returned *not found*).
+  This broke snapshot-based bootstrap network-wide and left freshly-wiped peers
+  unable to fast-sync, wedged at a low height. Lowered `DEFAULT_CHUNK_SIZE` to 7 MiB
+  (provably wire-safe: the split rotates before the bound and chunks are compressed)
+  and regenerated snapshots. Also fixed the post-create snapshot verifier (a
+  `str`-path `/` `TypeError` plus a tuple-vs-dict return mismatch) and corrected the
+  stale built-in mainnet block-0 checkpoint to the current genesis.
 - **Stratum pool payouts**: per-payout mempool-aware nonce resolution + a unique
   per-payout fee so identical (address, amount) payouts no longer collide to the
   same tx hash and no-op on-chain (the nonce-less execution model meant repeats

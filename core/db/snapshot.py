@@ -50,8 +50,15 @@ _log = logging.getLogger("animica.snapshot")
 # Snapshot format version
 SNAPSHOT_VERSION = 2
 
-# Chunk size for splitting large exports (in bytes, ~128MB chunks)
-DEFAULT_CHUNK_SIZE = 128 * 1024 * 1024
+# Chunk size for splitting large exports (UNCOMPRESSED bytes). This MUST stay below
+# the P2P wire cap p2p.wire.encoding.MAX_PAYLOAD_BYTES (8 MiB), otherwise a chunk can
+# never be served over GET_SNAPSHOT_CHUNK (the whole file is sent in one SnapshotChunk
+# message and encoding rejects it with "payload too large"), which silently breaks
+# P2P snapshot fast-sync for every peer. The split rotates BEFORE exceeding this bound
+# and the chunk files are gzip-compressed, so 7 MiB guarantees compressed-chunk + wire
+# envelope < 8 MiB even for incompressible data. (Was 128 MiB → produced 116 MiB chunks
+# that were unservable; see the snapshot-chunk incident.)
+DEFAULT_CHUNK_SIZE = 7 * 1024 * 1024
 
 
 @dataclass
@@ -546,6 +553,10 @@ def verify_snapshot(snapshot_dir: Path) -> Tuple[bool, List[str]]:
         Tuple of (is_valid, list_of_errors)
     """
     errors = []
+
+    # Callers (e.g. the orchestrator) may pass a str path; coerce so the `/`
+    # path-join below doesn't raise "unsupported operand type(s) for /: 'str' and 'str'".
+    snapshot_dir = Path(snapshot_dir)
 
     # Check manifest exists
     manifest_file = snapshot_dir / "manifest.json"

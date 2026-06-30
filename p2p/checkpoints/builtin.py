@@ -19,7 +19,10 @@ if TYPE_CHECKING:
 
 # Raw checkpoint data (height, hash) as tuples to avoid circular import
 _MAINNET_CHECKPOINTS_RAW = [
-    (0, "0xd91fc1c90835f739ed8032e6c245da6ad88cd8608de9afb41078ca9aaf4b38ad"),
+    # Block 0 = canonical mainnet genesis (post-2026 reset). MUST match
+    # core.network_params.MAINNET_GENESIS_HASH_HEX / the genesis block hash, else this
+    # built-in checkpoint contradicts the real chain and can confuse checkpoint exchange.
+    (0, "0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de"),
     # Cross-verified canonical block (byte-identical on the mainnet seed RPC and
     # the public rpc.animica.org RPC), ~110 blocks below the live tip and well
     # beyond the reorg depth, so it is final/irreversible. Anchors the boot-time

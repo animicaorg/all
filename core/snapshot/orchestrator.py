@@ -296,16 +296,15 @@ class SnapshotOrchestrator:
             if not snapshot_dir.exists():
                 return False, f"Snapshot directory not found: {snapshot_dir}"
             
-            result = await asyncio.to_thread(
+            # core.db.snapshot.verify_snapshot returns a (is_valid, errors) tuple.
+            is_valid, errors = await asyncio.to_thread(
                 verify_snapshot,
-                snapshot_dir=str(snapshot_dir),
+                snapshot_dir=snapshot_dir,
             )
-            
-            if result.get("valid"):
+
+            if is_valid:
                 return True, None
-            else:
-                errors = result.get("errors", ["Unknown error"])
-                return False, "; ".join(errors)
+            return False, "; ".join(errors) if errors else "verification failed"
                 
         except Exception as e:
             return False, str(e)
