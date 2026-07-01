@@ -99,7 +99,33 @@ def getblock(blockhash: str, verbosity: int = 1):
     return F.block_to_btc(blk, head_h, verbosity, next_hash=_next_hash(h))
 
 
-@method("getblockchaininfo", desc="Bitcoin-compat: chain state summary.")
+def _sync_view() -> dict:
+    """Best-effort real sync status so getblockchaininfo can tell the truth.
+
+    An un-synced node must NOT report itself as fully synced — otherwise an
+    exchange trusts a balance of 0 on a node that simply hasn't downloaded the
+    blocks that credited the deposit. Sourced from `system.health` (authoritative
+    `syncing` flag + peer count, a fast sync call) and, best-effort, the p2p
+    `sync.getStatus` snapshot for the network-best header height.
+    """
+    out = {"syncing": None, "peers": None, "network_best": 0}
+    try:
+        hh = F.native("system.health") or {}
+        out["syncing"] = hh.get("syncing")
+        out["peers"] = hh.get("peers_connected")
+    except Exception:
+        pass
+    try:
+        s = F.native("sync.getStatus") or {}
+        out["network_best"] = F.int_from(
+            s.get("network_best_height") or s.get("best_header_height")
+            or s.get("best_block_height"), 0)
+    except Exception:
+        pass
+    return out
+
+
+@method("getblockchaininfo", desc="Bitcoin-compat: chain state summary (reports real sync/IBD state).")
 def getblockchaininfo() -> dict:
     h = _head()
     height = _height(h)
@@ -108,26 +134,55 @@ def getblockchaininfo() -> dict:
         ident = F.native("chain.getChainIdentity") or {}
     except Exception:
         pass
+
+    sv = _sync_view()
+    net_best = F.int_from(sv.get("network_best"), 0)
+    headers = max(height, net_best)
+    behind = max(0, headers - height)
+    syncing = sv.get("syncing")
+    peers = sv.get("peers")
+    # Prefer the node's own authoritative `syncing` flag; fall back to header lag.
+    if syncing is True:
+        ibd = True
+    elif syncing is False:
+        ibd = False
+    else:
+        ibd = behind > 2
+    progress = 1.0 if (not ibd) else (round(min(1.0, height / headers), 8) if headers > 0 else 0.0)
+
+    warnings = []
+    if ibd:
+        warnings.append(
+            "Node is still syncing (initialblockdownload); balances and deposit "
+            "history are INCOMPLETE until sync completes — do not credit yet.")
+    if peers == 0:
+        warnings.append(
+            "No P2P peers connected — the node may be isolated / not on the "
+            "canonical chain; balances cannot be trusted.")
+
     return {
         "chain": F.chain_name_from_id(h.get("chainId")),
         "blocks": height,
-        "headers": height,
+        "headers": headers,
         "bestblockhash": F.hx(h.get("hash")),
         "difficulty": F.theta_to_difficulty(h.get("thetaMicro")),
         "time": F.int_from(h.get("timestamp"), 0),
         "mediantime": F.int_from(h.get("timestamp"), 0),
-        "verificationprogress": 1.0,
-        "initialblockdownload": False,
+        "verificationprogress": progress,
+        "initialblockdownload": ibd,
         "chainwork": F.CHAINWORK,
         "size_on_disk": 0,
         "pruned": False,
-        "warnings": [],
+        "warnings": warnings,
         "softforks": {},
         # Animica extension
         "thetaMicro": F.int_from(h.get("thetaMicro"), 0),
         "chainId": F.int_from(h.get("chainId"), 0),
         "genesisHash": F.hx(ident.get("genesisHash")),
         "consensus": "poies",
+        "syncing": bool(ibd),
+        "network_best_height": net_best or None,
+        "peers": peers,
     }
 
 
