@@ -79,13 +79,22 @@ def _balance_nanos_strict(addr: str) -> int:
         raise rpc_error(RPC_INVALID_ADDRESS_OR_KEY, "address required")
     try:
         from rpc.state_service import get_balance as _strict_get_balance
-        return int(_strict_get_balance(a))
+        local = int(_strict_get_balance(a))
     except Exception as exc:
         # Surface the real reason — never a misleading 0.
         raise rpc_error(
             RPC_WALLET_ERROR,
             "balance unavailable for %s (node could not read account state): %r" % (a, exc),
         )
+    # Read-through to a trusted upstream when the local node is behind, so a
+    # not-yet-synced node returns the authoritative balance instead of a stale 0.
+    try:
+        from rpc.upstream_balance import authoritative
+        h = F.native("chain.getHead") or {}
+        return authoritative(a, "state.getBalance", local, h.get("height"),
+                             h.get("chainId", h.get("chain_id")))
+    except Exception:
+        return local
 
 
 def _try_balance_nanos(addr: str) -> Optional[int]:
