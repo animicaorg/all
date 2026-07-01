@@ -352,6 +352,24 @@ def loads(b: bytes) -> Any:
     return obj
 
 
+def loads_prefix(b) -> Tuple[Any, int]:
+    """
+    Decode exactly ONE canonical CBOR item from the START of `b` and return
+    ``(obj, n_consumed)``.
+
+    Unlike :func:`loads`, this does NOT require the buffer to be fully consumed,
+    so a caller can frame a stream of concatenated CBOR items by each item's own
+    (self-delimiting) length rather than by an out-of-band separator. This is the
+    binary-safe way to read a file of `cbor || sep || cbor || sep …` entries:
+    CBOR is a binary format whose bytes freely include 0x0a ("\\n"), so splitting
+    such a file on newlines corrupts every entry that contains one. Accepts bytes
+    or memoryview. Raises DecodeError on a malformed item.
+    """
+    buf = _Buf(b)
+    obj = _decode(buf)
+    return obj, buf.i
+
+
 # Compatibility aliases expected by callers importing from core.encoding.cbor
 # rather than the package root (core.encoding).
 def cbor_dumps(obj: Any) -> bytes:
@@ -360,6 +378,10 @@ def cbor_dumps(obj: Any) -> bytes:
 
 def cbor_loads(b: bytes) -> Any:
     return loads(b)
+
+
+def cbor_loads_prefix(b) -> Tuple[Any, int]:
+    return loads_prefix(b)
 
 
 # Backwards-compatible aliases used by some callers/tests
@@ -374,10 +396,12 @@ def decode(b: bytes) -> Any:  # pragma: no cover - thin shim
 __all__ = [
     "dumps",
     "loads",
+    "loads_prefix",
     "encode",
     "decode",
     "cbor_dumps",
     "cbor_loads",
+    "cbor_loads_prefix",
     "EncodeError",
     "DecodeError",
 ]

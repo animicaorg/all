@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from ..encoding.cbor import cbor_dumps, cbor_loads
+from ..encoding.cbor import cbor_dumps, cbor_loads, cbor_loads_prefix
 from .block_db import (
     BlockDB,
     PFX_BLK,
@@ -460,6 +460,56 @@ def import_snapshot(
     return manifest
 
 
+# Separator bytes the exporter writes BETWEEN entries. CBOR is a binary format
+# and its bytes freely include 0x0a ("\n"), so entries are NOT newline-delimited
+# records — they are self-delimiting CBOR items that merely happen to be followed
+# by a "\n". We therefore frame by each item's own length (see _iter_chunk_entries)
+# and only skip these bytes between items. An entry never *starts* with one of
+# these (every entry is a CBOR map, major type 5 => first byte 0xa0..0xbb).
+_ENTRY_SEP = (0x0A, 0x0D)
+
+
+def _iter_chunk_entries(f):
+    """Yield decoded CBOR entries from an (already decompressed) chunk file object.
+
+    The exporter writes ``cbor_dumps(entry) || b"\\n"`` per entry. The OLD reader
+    used ``for line in f`` / ``line.strip()`` which splits on 0x0a — but 0x0a
+    occurs inside almost every account key/value, so those entries were shredded
+    and silently dropped (the bug behind "Error importing entry: trailing bytes /
+    truncated / unsupported tag …" and partially-populated state). Here we instead
+    decode ONE self-delimiting CBOR item at a time by its own length, then skip the
+    trailing separator — which parses the very same on-disk chunks correctly, with
+    no re-export needed. On a genuinely corrupt item we resync to the next
+    separator so one bad entry can't abort the whole chunk.
+    """
+    data = f.read()
+    mv = memoryview(data)
+    n = len(data)
+    off = 0
+    while off < n:
+        # Skip separator byte(s) between entries.
+        while off < n and data[off] in _ENTRY_SEP:
+            off += 1
+        if off >= n:
+            break
+        try:
+            entry, consumed = cbor_loads_prefix(mv[off:])
+        except Exception as e:
+            # Framing desync / corrupt entry: jump to the next entry boundary.
+            nxt = data.find(b"\n", off)
+            if nxt == -1:
+                _log.warning(f"Error importing entry: {e}")
+                break
+            _log.warning(f"Error importing entry: {e} (resyncing to next boundary)")
+            off = nxt + 1
+            continue
+        if consumed <= 0:  # defensive: never make no progress
+            off += 1
+            continue
+        off += consumed
+        yield entry
+
+
 def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
     """Import blocks and headers from a chunk file."""
     _log.info(f"Importing blocks from {chunk_file.name}")
@@ -468,16 +518,8 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
     imported_count = 0
 
     with open_fn(chunk_file, "rb") as f:
-        # Read line by line (entries are newline-delimited)
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-
+        for entry in _iter_chunk_entries(f):
             try:
-                # Decode CBOR entry
-                entry = cbor_loads(line)
-
                 entry_type = entry.get("type")
                 height = entry.get("height")
                 data = entry.get("data")
@@ -514,16 +556,8 @@ def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool):
     imported_count = 0
 
     with open_fn(chunk_file, "rb") as f:
-        # Read line by line (entries are newline-delimited)
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-
+        for entry in _iter_chunk_entries(f):
             try:
-                # Decode CBOR entry
-                entry = cbor_loads(line)
-
                 entry_type = entry.get("type")
                 key = entry.get("key")
                 value = entry.get("value")
