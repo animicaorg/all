@@ -1,0 +1,140 @@
+name: Wallet Qt Release
+
+# Cross-platform RELEASE build for the Qt desktop wallet. Unlike
+# wallet-qt-build.yml (a compile-only smoke test), this produces installable,
+# uploadable artifacts on native runners and bundles the animica CLI from the
+# repo's python/ tree (so the wallet ships the current release, e.g. 5.2.6).
+#
+# Runners:
+#   - ubuntu-22.04  → linuxdeployqt requires glibc <= 2.35 (Ubuntu 22.04); newer
+#                     hosts are refused, which is exactly why this can't be built
+#                     on the production box. The 22.04 runner satisfies it.
+#   - macos-latest  → native .app (ad-hoc signed; Developer ID / notarization
+#                     needs Apple creds, out of scope here).
+#   - windows-latest → native installer via Inno Setup.
+#
+# Deploying the resulting artifacts to animica.org/wallet is a SEPARATE, manual
+# step (wallet-qt/scripts/publish-wallet-downloads.sh) — this workflow only
+# builds + uploads.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Build/release label (e.g. v0.2.5). The wallet bundles animica from python/ (5.2.6)."
+        required: true
+        default: "v0.2.5"
+      create_release:
+        description: "Also attach artifacts to a GitHub Release"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'wallet-v*'
+
+jobs:
+  build:
+    name: build-${{ matrix.platform }}
+    permissions:
+      contents: write   # needed only when create_release / tag attaches artifacts
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_VERSION: '6.5.0'
+      WALLET_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # release scripts derive a version from git describe
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: 'qtnetworkauth'
+          cache: true
+
+      - name: Set up Python 3.12 (bundled animica node)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ----------------------------- Linux -----------------------------
+      - name: System dependencies (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libssl-dev \
+            libgl1-mesa-dev fuse libfuse2 file desktop-file-utils
+          curl -fsSL -o /usr/local/bin/linuxdeployqt \
+            https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage
+          chmod +x /usr/local/bin/linuxdeployqt
+
+      - name: Build + package (Linux)
+        if: matrix.platform == 'linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          cd wallet-qt
+          ./scripts/release-linux.sh
+
+      # ----------------------------- macOS -----------------------------
+      - name: System dependencies (macOS)
+        if: matrix.platform == 'macos'
+        run: brew install cmake ninja openssl@3 create-dmg || true
+
+      - name: Build + package (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          cd wallet-qt
+          ./scripts/release-mac.sh --dmg --adhoc-sign
+
+      # ---------------------------- Windows ----------------------------
+      - name: System dependencies (Windows)
+        if: matrix.platform == 'windows'
+        run: choco install innosetup -y --no-progress
+
+      - name: Build + package (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          cd wallet-qt
+          ./scripts/release-windows.ps1
+
+      # --------------------------- Collect -----------------------------
+      - name: Collect artifacts
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p out
+          find dist/wallet-qt wallet-qt/build -type f \
+            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.tar.gz' \
+               -o -name '*.dmg' -o -name '*.zip' -o -name '*Setup*.exe' \
+               -o -name 'SHA256SUMS' \) -exec cp -v {} out/ \; 2>/dev/null || true
+          echo "--- collected ---"; ls -la out || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-${{ matrix.platform }}-${{ env.WALLET_VERSION }}
+          path: out/**
+          if-no-files-found: warn
+
+      - name: Attach to GitHub Release
+        if: ${{ github.event.inputs.create_release == 'true' || startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.WALLET_VERSION }}
+          files: out/**
+          fail_on_unmatched_files: false
