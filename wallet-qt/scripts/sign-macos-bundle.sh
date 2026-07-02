@@ -93,9 +93,14 @@ sign_macho_files() {
     local -a candidates=()
     local -a macho_files=()
 
+    # Sort DEEPEST-FIRST (by path-component count, descending). codesign requires
+    # every nested code object to be signed before the code that contains it, so
+    # the bundled Python venv's deep *.so (pydantic_core, watchfiles, …) must be
+    # signed before the shallow Contents/MacOS/<main-exe>. Plain alphabetical sort
+    # signed MacOS/AnimicaWallet first and failed with "unsigned nested code object".
     while IFS= read -r candidate; do
         candidates+=("$candidate")
-    done < <(find "$APP_BUNDLE/Contents" -type f \( -perm -111 -o -name "*.dylib" -o -name "*.so" \) -print | LC_ALL=C sort)
+    done < <(find "$APP_BUNDLE/Contents" -type f \( -perm -111 -o -name "*.dylib" -o -name "*.so" \) -print | awk -F/ '{print NF"\t"$0}' | LC_ALL=C sort -rn | cut -f2-)
 
     for candidate in "${candidates[@]}"; do
         if is_macho_file "$candidate"; then
