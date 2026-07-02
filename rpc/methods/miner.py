@@ -5178,14 +5178,15 @@ def miner_mine(
         except Exception:
             return False
 
-    mempool_instant_mode = (
-        include_mempool is not False and not instant_block_flag and _mempool_has_pending()
-    )
-    if mempool_instant_mode:
-        log.info(
-            "Enabling instant block mode: pending mempool transactions detected",
-            extra={"trigger": "mempool_non_empty"},
-        )
+    # Mempool traffic must mine a REAL PoW block (which propagates and is
+    # network-canonical), NOT a no-PoW "instant" block. The old implicit
+    # downgrade minted nonce=0 blocks on ANY pending mempool and — via the gate
+    # below (~5199) — bypassed the sync/offline mining safety checks, building a
+    # local, non-propagating "instant tower" that wedged the node's head above
+    # the real chain (the 5.2.7 exchange-node "random reset"). Instant blocks now
+    # require the EXPLICIT instant_block flag (InstantTxService / force-chain),
+    # which still skips PoW by design.
+    mempool_instant_mode = False
     
     if force_empty_flag:
         include_mempool = False
@@ -5281,7 +5282,7 @@ def miner_mine(
     max_failures = int(os.getenv("ANIMICA_MINER_MINE_MAX_FAILURES", "0") or 0)
     failures = 0
     while mined < target:
-        effective_instant_block = bool(instant_block_flag or _mempool_has_pending())
+        effective_instant_block = bool(instant_block_flag)
         min_spacing_s = _min_block_spacing_s()
         if min_spacing_s > 0 and not effective_instant_block:
             head_ts = _head_timestamp_seconds()

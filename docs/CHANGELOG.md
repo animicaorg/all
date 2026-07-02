@@ -8,10 +8,76 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [5.2.7] - 2026-07-02
+### Fixed
+- **Nodes could wedge on a local “instant-block tower” and appear to randomly
+  reset.** No-PoW *instant* blocks (nonce=0) advance the local head but never
+  propagate (peers require valid PoW), so on a networked node they fork the head
+  *above* the real chain. The head then reads higher than the network, the node
+  believes it is ahead, stops syncing down, and the sync watchdog churns — which
+  looks like the head “went backwards / started a new sync and got stuck.” The
+  gap equals `head − canonicalHeight` (the non-instant counter). Two sources of
+  those blocks are now closed:
+  - **Mining:** a non-empty mempool no longer silently downgrades to a no-PoW
+    “instant” block that bypassed the sync/offline mining gate — mempool traffic
+    mines a **real PoW block** (which propagates and is network-canonical). The
+    explicit `instant_block=True` path is unchanged.
+  - **`tx send` force-chain** (`ANIMICA_TX_SEND_FORCE_CHAIN=1`): on a node **with
+    connected peers**, `tx send` no longer mints a local no-PoW block to “persist”
+    the tx (which built the tower one send at a time). The tx is relayed and
+    included in a real block instead; the response reports it as pending in the
+    mempool. Isolated / single-node setups (no peers) keep the immediate-persist
+    behaviour.
+### Notes
+- **Recovery of an already-wedged node** (head far above `canonicalHeight`) is a
+  one-time operation — restore from a current snapshot (or roll the head back to
+  the last non-instant height) and let it re-sync the real chain; upgrading alone
+  stops the tower from growing but does not abandon an existing one.
+- Fully excluding instant blocks from the canonical/fork-choice chain (rather
+  than merely not creating them) is a consensus change and must ship behind a
+  coordinated, versioned fork — it is intentionally **not** done here, because a
+  patch that keyed fork choice on the (grindable) instant-block marker would be
+  chain-split-unsafe.
+
 ## [Unreleased]
 ### Added
+- **`animica ai` command namespace** (pip `animica` 5.2.0): a first-class AI
+  surface — `doctor` (14 readiness checks + fix hints), `setup` (writes
+  `~/.animica/config.toml`), `models`, `chat` (REPL + one-shot), `serve` (an
+  OpenAI-compatible gateway: `/v1/chat/completions` with streaming, `/completions`,
+  `/embeddings`, `/models`, bearer auth, OpenAI error envelope), `embed`, `rag`
+  (local index + grounded answers), `job` (estimate/submit/status/result/list on
+  the AICF marketplace), `provider` (register/status/start), `earnings`,
+  `balance` (`--watch`), and `benchmark`; plus `--no-color` and graceful
+  `--json` everywhere. Base install stays light; `serve` lazily needs `animica[backend]`.
+  Spending is safe by default — `ai job submit` quotes first and never spends
+  without a confirmation or `--yes`, honoring an optional `max_spend_anm` cap. See
+  [docs/ai.md](ai.md).
+- **`animica up` component selection** — `--profile {all,miner,ai,provider}`,
+  repeatable `--only`/`--without`, `--serve-port`, and a richer `--plan` table.
+  Fully additive: existing `animica up` invocations are unchanged.
+- **`animica mcp install <claude|cursor|vscode>`** — wires the Animica MCP server
+  into a client's config (merges, never clobbers; `--print` to preview).
+- New **`animica[provider]`** install extra (gateway + on-chain SDK for providers).
 - Draft **L2 bundle mode** in Studio Web (behind flag).
 - Optional **light client** proof checks in Explorer (feature-gated).
+
+### Fixed (ops)
+- **P2P snapshot fast-sync**: snapshot chunks were split at 128 MiB while the P2P
+  wire caps a single message at 8 MiB, so a node could never serve its own snapshot
+  chunks (`GET_SNAPSHOT_CHUNK` → `payload too large` → silently returned *not found*).
+  This broke snapshot-based bootstrap network-wide and left freshly-wiped peers
+  unable to fast-sync, wedged at a low height. Lowered `DEFAULT_CHUNK_SIZE` to 7 MiB
+  (provably wire-safe: the split rotates before the bound and chunks are compressed)
+  and regenerated snapshots. Also fixed the post-create snapshot verifier (a
+  `str`-path `/` `TypeError` plus a tuple-vs-dict return mismatch) and corrected the
+  stale built-in mainnet block-0 checkpoint to the current genesis.
+- **Stratum pool payouts**: per-payout mempool-aware nonce resolution + a unique
+  per-payout fee so identical (address, amount) payouts no longer collide to the
+  same tx hash and no-op on-chain (the nonce-less execution model meant repeats
+  were silently dropped). Recognizes `nonce_gap` for retry.
+- **Dependency pin**: `starlette<0.47` (and `sse-starlette<3` in the `mcp` extra)
+  to stop a transitive upgrade from breaking every FastAPI service on restart.
 
 ### Changed
 - Increased default RPC request timeout from **10s → 15s** in SDKs.
