@@ -70,7 +70,11 @@ jobs:
           python-version: '3.12'
 
       - name: Host build helpers (icon generation needs Pillow)
-        run: python -m pip install --upgrade pip Pillow
+        shell: bash
+        # scripts/gen-icons.py is invoked as `python3` by release-{linux,mac}.sh,
+        # so Pillow must land in that interpreter (setup-python provides it);
+        # fall back to `python` on runners where `python3` is absent (Windows).
+        run: python3 -m pip install --upgrade pip Pillow || python -m pip install --upgrade pip Pillow
 
       # ----------------------------- Linux -----------------------------
       - name: System dependencies (Linux)
@@ -103,6 +107,12 @@ jobs:
           ./scripts/release-mac.sh --dmg --adhoc-sign
 
       # ---------------------------- Windows ----------------------------
+      - name: Set up MSVC dev environment (Windows)
+        if: matrix.platform == 'windows'
+        # build-windows.ps1 configures with -G "Visual Studio 17 2022"; this makes
+        # the VS 2022 toolchain discoverable to cmake on the runner.
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: System dependencies (Windows)
         if: matrix.platform == 'windows'
         run: choco install innosetup -y --no-progress
