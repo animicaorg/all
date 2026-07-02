@@ -128,6 +128,8 @@ jobs:
 
       - name: Build + package (macOS)
         if: matrix.platform == 'macos'
+        env:
+          WALLET_SKIP_WEBSITE_PUBLISH: '1'   # CI must not run the cross-platform website publish
         run: |
           cd wallet-qt
           ./scripts/release-mac.sh --dmg --adhoc-sign
