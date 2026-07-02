@@ -8,6 +8,38 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [5.2.8] - 2026-07-03
+### Fixed
+- **ENA training pools could wedge on a round for days ("rounds / checkpoints
+  not advancing").** A pool's round counter would freeze (e.g. round 61 for ~6
+  days) because the coordinator's background sweep could never reach the
+  aggregate step, and even when it did, a no-adapter round *held forever*:
+  - **Sweep readiness** (`pool.py` `sweep`): the `ready` gate required either all
+    shards submitted or a submission-time stall — but replicate-mode reshard
+    growth keeps spawning open shards, a single drip trainer keeps the stall
+    timer fresh, and reclaim churn keeps a live claim present, so neither ever
+    fires. Added a **reclaim-churn-immune escape** based on *round age*
+    (`now − min(shard.created_at)`, which reclaim/drip cannot reset) gated by a
+    submission quorum, so a stuck-but-quorate round aggregates. Tunable per pool
+    via `round_quorum_frac` (0.5) and `round_overrun_factor` (2.0).
+  - **No-adapter hold is now bounded** (`_aggregate_locked`): if no trainer
+    uploads a real adapter, holding is capped at the hard round-timeout; past it
+    the round is **reject-and-advanced** (served checkpoint preserved — no
+    regression to base — round counter advances, flywheel keeps turning).
+- **Payout leak closed.** `payout()` blocked unservable rounds via the display
+  list `rejected_rounds`, which is truncated to the last 20 — so advancing a new
+  rejected round silently evicted an old one, making its unpaid contributions
+  payable. Payout safety now uses a separate **durable, uncapped
+  `unservable_rounds` set** (migrating existing entries), independent of the
+  display cap. Also hardened a possible `int(None)` crash when
+  `round_aggregate_timeout_secs` is explicitly null.
+### Notes
+- This fixes the **coordinator deadlock and the payout accounting** only. A
+  pool's *served* checkpoint still advances only when trainers upload real
+  `adapter_model.safetensors` weights that pass the eval gate; a pool whose GPU
+  trainers have left will keep cycling rounds (served checkpoint held at the last
+  finite round) until adapter-uploading trainers rejoin.
+
 ## [5.2.7] - 2026-07-02
 ### Fixed
 - **Nodes could wedge on a local “instant-block tower” and appear to randomly

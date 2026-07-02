@@ -779,6 +779,16 @@ class PoolService:
                          "reason": gate_info.get("reason", "eval_below_threshold"),
                          "checkpoint_hash": candidate.get("checkpoint_hash"),
                          "at": now_ts()})
+        # DURABLE payout block-set: rejected_rounds is display-capped ([-20:]) and
+        # payout() must NOT rely on it alone -- truncation would silently unblock an
+        # old unservable round's unpaid contributions (payout leak). Keep a separate,
+        # uncapped set of unservable round numbers, migrating any still-listed
+        # rejected rounds so nothing already blocked leaks on eviction.
+        unservable = {int(x) for x in (meta.get("unservable_rounds") or [])}
+        unservable.update(int(r.get("round")) for r in rejected
+                          if isinstance(r, dict) and r.get("round") is not None)
+        unservable.add(int(rnd))
+        meta["unservable_rounds"] = sorted(unservable)
         meta["rejected_rounds"] = rejected[-20:]
         pool["metadata"] = meta
         pool["round"] = rnd + 1
@@ -910,7 +920,7 @@ class PoolService:
             reclaim_secs = int(meta.get("shard_reclaim_secs", 1800))
             timeout = int(aggregate_timeout_secs
                           if aggregate_timeout_secs is not None
-                          else meta.get("round_aggregate_timeout_secs", 3600))
+                          else (meta.get("round_aggregate_timeout_secs") or 3600))
             try:
                 shards = list(self.store.list_shards(pid, round=rnd))
             except Exception:
@@ -940,7 +950,22 @@ class PoolService:
             no_live_claims = all(s.get("status") != SHARD_CLAIMED for s in remaining)
             last_progress = max((int(s.get("updated_at") or 0) for s in submitted), default=0)
             stalled = (now - last_progress) > timeout
-            ready = (not remaining) or (stalled and no_live_claims)
+            # Reclaim-churn-immune escape for the "round re-shards / drip-submits
+            # forever" wedge: neither `not remaining` (replicate-mode growth keeps
+            # spawning open shards) nor `stalled` (one drip worker keeps
+            # last_progress fresh; sub-reclaim claims keep no_live_claims False) can
+            # ever fire. Base the escape on ROUND AGE = now - min(created_at), which
+            # reclaim reopens and drip submits CANNOT reset, gated by a submission
+            # quorum so a healthy-but-slow round is never aggregated prematurely.
+            quorum_frac = float(meta.get("round_quorum_frac", 0.5))
+            overrun_factor = float(meta.get("round_overrun_factor", 2.0))
+            round_started = min((int(s.get("created_at") or 0) for s in shards), default=now)
+            round_age = now - round_started
+            quorum_met = len(submitted) >= max(1, int(quorum_frac * len(shards)))
+            round_overrun = round_age > overrun_factor * timeout
+            ready = ((not remaining)
+                     or (stalled and no_live_claims)
+                     or (quorum_met and round_overrun))
             if not ready:
                 if reclaimed:
                     out.append({"pool_id": pid, "round": rnd, "reclaimed": reclaimed,
@@ -1050,12 +1075,30 @@ class PoolService:
                 # runs away — the "stuck on round N for days" failure. HOLD instead:
                 # reopen the round's shards so a healthy trainer can upload real
                 # weights, and do NOT advance.
-                if not info["adapters_uploaded"]:
+                # Holding must be BOUNDED. If no adapter has arrived after the round
+                # has been OPEN past the hard round-timeout (overrun_factor ×
+                # round_aggregate_timeout_secs), holding forever strands the served
+                # checkpoint while the round sits frozen for days (the reported bug:
+                # round 61 held ~6 days). Base the bound on ROUND AGE = now -
+                # min(created_at) so reclaim reopens / drip resubmits can't reset it.
+                # Past the bound, fall through to reject-and-advance: served_checkpoint
+                # is preserved (no regression to base), the round advances, and the
+                # round is recorded in rejected_rounds so its unpaid contributions
+                # stay payout-blocked.
+                _to = int((pool.get("metadata") or {}).get(
+                    "round_aggregate_timeout_secs") or 3600)
+                _of = float((pool.get("metadata") or {}).get("round_overrun_factor", 2.0))
+                _started = min((int(s.get("created_at") or 0) for s in all_shards),
+                               default=now_ts())
+                _round_overrun = (now_ts() - _started) > _of * _to
+                if not info["adapters_uploaded"] and not _round_overrun:
                     reopened = self._hold_round_for_adapters(pool, pool_id, rnd)
                     return {"pool_id": pool_id, "round": rnd, "promoted": False,
                             "reason": "held_awaiting_adapter_upload", "held": True,
                             "reopened_shards": reopened, "gate": info,
                             "next_round": rnd}
+                if not info["adapters_uploaded"]:
+                    info = dict(info, reason="no_adapter_upload_overrun")
                 return self._reject_and_advance(pool, pool_id, rnd, candidate, info,
                                                 eval_score, trainer_topics)
             return {"pool_id": pool_id, "round": rnd, "promoted": False,
@@ -1210,7 +1253,11 @@ class PoolService:
             meta = pool.get("metadata") or {}
             rejected_set = {int(r.get("round")) for r in (meta.get("rejected_rounds") or [])
                             if isinstance(r, dict) and r.get("round") is not None}
-            if rnd in rejected_set:
+            # Durable, uncapped block-set (see _reject_and_advance): the display list
+            # above is truncated to the last 20, so relying on it alone would leak an
+            # evicted round's unpaid contributions.
+            unservable_set = {int(x) for x in (meta.get("unservable_rounds") or [])}
+            if rnd in rejected_set or rnd in unservable_set:
                 return {"pool_id": pool_id, "round": rnd, "entries": [],
                         "reason": "round_rejected_unservable"}
             contribs = [c for c in self.store.list_contributions(pool_id, round=rnd)
