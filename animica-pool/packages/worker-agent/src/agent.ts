@@ -125,8 +125,9 @@ async function main() {
 
 interface Job {
   id: string;
+  kind?: string; // "inference" (chat) | "embedding"
   model?: string;
-  payload?: { messages?: { role: string; content: string }[]; prompt?: string; temperature?: number; maxTokens?: number };
+  payload?: { messages?: { role: string; content: string }[]; prompt?: string; temperature?: number; maxTokens?: number; input?: string | string[] };
 }
 
 // Serve the inference job against a local OpenAI-compatible model server
@@ -135,18 +136,39 @@ interface Job {
 async function serve(job: Job): Promise<{ resultText: string; inputTokens: number; outputTokens: number }> {
   const url = process.env.LOCAL_INFERENCE_URL;
   if (!url) throw new Error("LOCAL_INFERENCE_URL not set — worker cannot serve inference");
-  // Map the platform model name (e.g. anm-fast-8b) → a real local model.
-  // LOCAL_INFERENCE_MODEL_MAP is "k=v,k=v"; LOCAL_INFERENCE_MODEL is fallback.
+  const base = url.replace(/\/$/, "");
+  const headers = { "content-type": "application/json", ...(process.env.LOCAL_INFERENCE_KEY ? { authorization: `Bearer ${process.env.LOCAL_INFERENCE_KEY}` } : {}) };
+  // Map the platform model name (e.g. anm-fast-8b / anm-embed) → a real local model.
+  // LOCAL_INFERENCE_MODEL_MAP is "k=v,k=v"; LOCAL_INFERENCE_MODEL is the chat
+  // fallback and LOCAL_EMBED_MODEL the embedding fallback.
   const map: Record<string, string> = {};
   for (const pair of (process.env.LOCAL_INFERENCE_MODEL_MAP || "").split(",")) {
     const [k, v] = pair.split("=").map((s) => s.trim());
     if (k && v) map[k] = v;
   }
+
+  // Embedding jobs: hit the OpenAI-compatible /embeddings endpoint and return
+  // the vector(s) JSON-encoded in resultText for the pool to parse back.
+  if (job.kind === "embedding") {
+    const model = (job.model && map[job.model]) || process.env.LOCAL_EMBED_MODEL || "nomic-embed-text";
+    const input = job.payload?.input ?? "";
+    const res = await fetch(`${base}/embeddings`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model, input }),
+    });
+    if (!res.ok) throw new Error(`local embed HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
+    const j: any = await res.json();
+    const embeddings = (j?.data ?? []).map((d: any) => d?.embedding).filter(Boolean);
+    if (embeddings.length === 0) throw new Error("local model returned no embeddings");
+    return { resultText: JSON.stringify(embeddings), inputTokens: j?.usage?.prompt_tokens ?? 0, outputTokens: 0 };
+  }
+
   const model = (job.model && map[job.model]) || process.env.LOCAL_INFERENCE_MODEL || job.model || "default";
   const messages = job.payload?.messages ?? [{ role: "user", content: job.payload?.prompt ?? "" }];
-  const res = await fetch(`${url.replace(/\/$/, "")}/chat/completions`, {
+  const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
-    headers: { "content-type": "application/json", ...(process.env.LOCAL_INFERENCE_KEY ? { authorization: `Bearer ${process.env.LOCAL_INFERENCE_KEY}` } : {}) },
+    headers,
     body: JSON.stringify({ model, messages, temperature: job.payload?.temperature ?? 0.7, max_tokens: job.payload?.maxTokens ?? 512, stream: false }),
   });
   if (!res.ok) throw new Error(`local model HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
