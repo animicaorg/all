@@ -106,6 +106,26 @@ jobs:
         if: matrix.platform == 'macos'
         run: brew install cmake ninja openssl@3 create-dmg || true
 
+      - name: Provide AGL.framework stub (macOS)
+        if: matrix.platform == 'macos'
+        # Qt's OpenGL wrap still emits `-framework AGL`, but AGL was removed from
+        # recent macOS SDKs (the runner's default Xcode varies, hence the flaky
+        # "framework 'AGL' not found"). AGL is unused and -dead_strip_dylibs drops
+        # it from the final binary, so an empty stub in the active SDK satisfies ld.
+        run: |
+          set -euo pipefail
+          STUB="$RUNNER_TEMP/agl-stub/AGL.framework/Versions/A"
+          mkdir -p "$STUB"
+          printf 'void _animica_agl_stub(void){}\n' > "$RUNNER_TEMP/agl_stub.c"
+          clang -dynamiclib -o "$STUB/AGL" \
+            -install_name /System/Library/Frameworks/AGL.framework/Versions/A/AGL \
+            "$RUNNER_TEMP/agl_stub.c"
+          ln -sf Versions/A/AGL "$RUNNER_TEMP/agl-stub/AGL.framework/AGL"
+          SDK="$(xcrun --show-sdk-path)"
+          echo "Injecting AGL stub into active SDK: $SDK"
+          sudo cp -R "$RUNNER_TEMP/agl-stub/AGL.framework" "$SDK/System/Library/Frameworks/"
+          ls -la "$SDK/System/Library/Frameworks/AGL.framework"
+
       - name: Build + package (macOS)
         if: matrix.platform == 'macos'
         run: |
