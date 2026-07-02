@@ -43,13 +43,15 @@ jobs:
         include:
           - os: ubuntu-22.04
             platform: linux
-          - os: macos-13   # macos-14/15 SDK dropped AGL.framework, which Qt 6.5 still refs; 13 has it
+            qt: '6.5.0'          # nearly-working here; only needs libxcb-cursor0
+          - os: macos-latest     # arm64, no queue; 6.7 dropped the AGL.framework ref
             platform: macos
-          - os: windows-2022   # release-windows.ps1 uses the "Visual Studio 17 2022" generator
+            qt: '6.7.3'
+          - os: windows-2022     # release-windows.ps1 uses the "Visual Studio 17 2022" generator
             platform: windows
+            qt: '6.7.3'          # post-6.5 windeployqt deploy-script fixes
     runs-on: ${{ matrix.os }}
     env:
-      QT_VERSION: '6.5.0'
       WALLET_VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
     steps:
@@ -58,9 +60,9 @@ jobs:
           fetch-depth: 0   # release scripts derive a version from git describe
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@v3
+        uses: jurplel/install-qt-action@v4
         with:
-          version: ${{ env.QT_VERSION }}
+          version: ${{ matrix.qt }}
           modules: 'qtnetworkauth'
           cache: true
 
@@ -82,7 +84,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libssl-dev \
-            libgl1-mesa-dev fuse libfuse2 file desktop-file-utils
+            libgl1-mesa-dev fuse libfuse2 file desktop-file-utils \
+            libxcb-cursor0 libxcb-cursor-dev libxcb-xinerama0 libxkbcommon-x11-0
           curl -fsSL -o /usr/local/bin/linuxdeployqt \
             https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage
           chmod +x /usr/local/bin/linuxdeployqt
