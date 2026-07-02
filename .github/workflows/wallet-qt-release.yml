@@ -43,7 +43,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             platform: linux
-          - os: macos-latest
+          - os: macos-13   # macos-14/15 SDK dropped AGL.framework, which Qt 6.5 still refs; 13 has it
             platform: macos
           - os: windows-2022   # release-windows.ps1 uses the "Visual Studio 17 2022" generator
             platform: windows
