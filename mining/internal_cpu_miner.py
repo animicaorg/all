@@ -179,17 +179,32 @@ class CpuStratumMiner:
         # hashes the canonical Header digest on-GPU and host-re-verifies every
         # candidate, so a GPU bug can never surface an invalid share.
         self._torch_gpu_device: Optional[str] = None
+        # Auto-detect ALL connected GPUs so a multi-GPU rig mines on every device
+        # (each gets a disjoint nonce sub-band in _mine_continuously). The bare
+        # singular device stays as the first, for the CPU-fallback/back-compat path.
+        self._torch_gpu_devices: list[str] = []
         requested = (device or "auto").strip().lower()
         if requested not in ("cpu", ""):
             try:
-                from .gpu_torch_sha3 import solo_device_available
-                self._torch_gpu_device = solo_device_available(requested)
+                from .gpu_torch_sha3 import (
+                    solo_device_available,
+                    solo_devices_available,
+                )
+                self._torch_gpu_devices = list(solo_devices_available(requested) or [])
+                if self._torch_gpu_devices:
+                    self._torch_gpu_device = self._torch_gpu_devices[0]
+                else:
+                    self._torch_gpu_device = solo_device_available(requested)
+                    if self._torch_gpu_device:
+                        self._torch_gpu_devices = [self._torch_gpu_device]
             except Exception as exc:  # torch missing / CPU-only build
                 log.info("torch GPU scanner unavailable: %s", exc)
             if self._torch_gpu_device is not None:
                 log.info(
-                    "stratum miner: torch GPU header-template scanner active on %s",
-                    self._torch_gpu_device,
+                    "stratum miner: torch GPU header-template scanner active on "
+                    "%d device(s): %s",
+                    len(self._torch_gpu_devices),
+                    ", ".join(self._torch_gpu_devices) or self._torch_gpu_device,
                 )
 
         self._share_target: float = 0.0
@@ -292,6 +307,7 @@ class CpuStratumMiner:
         share_ratio: float,
         start_nonce: int,
         iterations: int,
+        device: Optional[str] = None,
     ) -> Optional[CpuMinerResult]:
         """GPU twin of `_scan_header_template`.
 
@@ -312,7 +328,7 @@ class CpuStratumMiner:
             target_int,
             start_nonce=int(start_nonce),
             iterations=int(iterations),
-            device=self._torch_gpu_device or "cuda",
+            device=device or self._torch_gpu_device or "cuda",
         )
         if nonce is None or digest is None:
             return None
@@ -460,7 +476,16 @@ class CpuStratumMiner:
             return
         share_ratio = float(job.get("shareTarget") or self._share_target or 0.0)
         if share_ratio <= 0.0:
-            share_ratio = 1.0
+            # No share target delivered yet (the brief pre-set_difficulty window,
+            # or a node-RPC template that carries no shareTarget). NEVER fall back
+            # to the full block target Θ (share_ratio=1.0): that makes the miner
+            # only find/submit full-difficulty blocks, so it earns no share credit
+            # ("shares only credited on each full difficulty target"). Use an easy
+            # sub-Θ default until the pool's set_difficulty arrives.
+            share_ratio = float(
+                os.environ.get("ANIMICA_MINER_FALLBACK_SHARE_RATIO", "0.25")
+            )
+        share_ratio = min(max(share_ratio, 1e-9), 1.0)
 
         header_template = self._header_template_from_job(job)
         sign_hex = header.get("signBytes") if isinstance(header, dict) else None
@@ -525,37 +550,62 @@ class CpuStratumMiner:
         try:
             while not self._stop.is_set():
                 if use_gpu_template:
+                    # Fan out across EVERY connected GPU: each device scans a
+                    # disjoint sub-band of the nonce space this tick, so an N-GPU
+                    # rig does ~N× the work and no two GPUs grind the same nonces.
+                    devices = self._torch_gpu_devices or [
+                        self._torch_gpu_device or "cuda"
+                    ]
                     band = _GPU_NONCE_BAND_HI - _GPU_NONCE_BAND_LO
-                    gpu_start = _GPU_NONCE_BAND_LO + (next_start % band)
-                    try:
-                        share = await asyncio.to_thread(
+                    sub = max(1, band // len(devices))
+                    gpu_tasks = []
+                    for di, dev in enumerate(devices):
+                        dev_start = (
+                            _GPU_NONCE_BAND_LO
+                            + di * sub
+                            + ((next_start + windows * gpu_window) % sub)
+                        )
+                        gpu_tasks.append(asyncio.to_thread(
                             self._scan_header_template_gpu,
                             header_template,
                             theta_micro=theta_micro,
                             share_ratio=share_ratio,
-                            start_nonce=gpu_start,
+                            start_nonce=dev_start,
                             iterations=gpu_window,
-                        )
-                    except Exception as exc:
-                        # A GPU failure must never stop mining: drop to the CPU
-                        # process pool for the rest of this run and carry on.
+                            device=dev,
+                        ))
+                    results = await asyncio.gather(
+                        *gpu_tasks, return_exceptions=True
+                    )
+                    windows += 1
+                    all_failed = True
+                    for dev, res in zip(devices, results):
+                        if isinstance(res, BaseException):
+                            log.warning(
+                                "[stratum-miner] torch GPU scan on %s failed: %s",
+                                dev, res)
+                            continue
+                        all_failed = False
+                        if res is not None:
+                            try:
+                                await self._submit_found_share(job, res)
+                            except (OSError, RuntimeError) as exc:
+                                log.warning(
+                                    "[stratum-miner] share submit failed "
+                                    "(connection down): %s", exc)
+                                return
+                    if all_failed:
+                        # Every GPU errored — a GPU failure must never stop mining:
+                        # drop to the CPU process pool for the rest of this run.
                         log.warning(
-                            "[stratum-miner] torch GPU scan failed (%s); "
-                            "falling back to CPU process pool", exc)
+                            "[stratum-miner] all torch GPU scans failed; "
+                            "falling back to CPU process pool")
                         self._torch_gpu_device = None
+                        self._torch_gpu_devices = []
                         use_gpu_template = False
                         use_proc_pool = True
                         proc_pool = self._get_proc_pool()
                         continue
-                    windows += 1
-                    if share is not None:
-                        try:
-                            await self._submit_found_share(job, share)
-                        except (OSError, RuntimeError) as exc:
-                            log.warning(
-                                "[stratum-miner] share submit failed "
-                                "(connection down): %s", exc)
-                            return
                     next_start = (next_start + gpu_window) & 0xFFFFFFFFFFFFFFFF
                     # Yield so the rx loop can service notify / submit responses.
                     await asyncio.sleep(0)

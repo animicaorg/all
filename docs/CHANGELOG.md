@@ -8,6 +8,35 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [5.3.0] - 2026-07-03
+### Fixed
+- **Miner only earned credit at full block difficulty.** Both scan drivers
+  (`mining/internal_cpu_miner.py`, `mining/hash_search.py`) promoted an
+  *undelivered* share target to the FULL block target Θ via
+  `if share_ratio <= 0: share_ratio = 1.0`, so the miner searched at Θ and only
+  found/submitted full-difficulty blocks — earning no per-share credit. Now falls
+  back to an easy sub-Θ ratio (`ANIMICA_MINER_FALLBACK_SHARE_RATIO`, default 0.25)
+  and clamps to (0, 1], so it scans at the pool's real share target. (The pool
+  already credits every accepted PPS share correctly — verified against the live
+  ledger — so this was purely miner-side.)
+- **Multi-GPU rigs only used one GPU.** Device selection collapsed to a single
+  torch device (`cuda` == ordinal 0). Added `solo_devices_available()` to
+  enumerate every connected GPU (`cuda:0..N`, or Metal), and the miner now fans
+  the header-template scan out across **all** detected GPUs each tick over
+  disjoint nonce sub-bands (an N-GPU rig does ~N× the work; no two GPUs grind the
+  same nonces), with graceful CPU fallback only if *every* GPU errors.
+- **Pool silently orphaned slow miners ("timeout issue").** On a send that
+  couldn't drain within the timeout, `mining/stratum_server.py::_drop_session`
+  removed the session but left the TCP socket half-open — the miner got no EOF,
+  never reconnected, and stale-ground a dead job forever. `_drop_session` now
+  aborts/closes the socket so the miner reconnects, and the send-timeout default
+  is raised 15s → 60s (`ANIMICA_STRATUM_SEND_TIMEOUT`).
+- **ENA training worker timed out mid-step.** The worker→coordinator HTTP client
+  used a flat 30s timeout on every call, including `/jobs/{id}/run`, which can
+  block on a real training/generation step for minutes → "timeout on the train
+  loop." The default is now a generous 600s, tunable via
+  `ANIMICA_ENA_WORKER_HTTP_TIMEOUT`.
+
 ## [5.2.8] - 2026-07-03
 ### Fixed
 - **ENA training pools could wedge on a round for days ("rounds / checkpoints

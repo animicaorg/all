@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import errno
 import json
 import logging
@@ -27,6 +28,14 @@ from .stratum_protocol import (InvalidParams, InvalidRequest, Method,
                                res_submit_v1, res_subscribe, res_subscribe_v1,
                                validate_request)
 from .templates import MiningJob, share_target_to_difficulty
+
+# Set on connections that arrive on the dedicated solo stratum port, so the
+# session they allocate is forced to solo accounting (95%-to-finder) regardless
+# of any username/password mode hint. Per-connection (each accept runs in its
+# own task/context), so it never leaks across connections.
+_SOLO_FORCED: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "animica_solo_forced", default=False
+)
 
 try:
     # Prefer our shared logger if present
@@ -82,6 +91,9 @@ class Session:
     worker: Optional[str] = None
     address: Optional[str] = None
     pool_mode: str = "pps"
+    # True when this connection arrived on the dedicated solo stratum port. Such
+    # sessions are pinned to solo accounting and ignore any pool-mode hint.
+    solo_forced: bool = False
     authorized: bool = False
     share_target: float = 0.01
     theta_micro: int = 800_000
@@ -376,7 +388,7 @@ class StratumServer:
         default_share_target: float = 0.01,
         default_theta_micro: int = 800_000,
         keepalive_secs: float = 45.0,
-        send_timeout_secs: float = 15.0,
+        send_timeout_secs: float = 60.0,
         max_cached_jobs: int = 64,
         validator: Optional[ShareValidator] = None,
         submit_hook: Optional[
@@ -428,11 +440,14 @@ class StratumServer:
             ]
         ] = None,
         pool_mode: str = "pps",
+        solo_port: Optional[int] = None,
         session_vardiff_enabled: bool = True,
     ) -> None:
         self._host = host
         self._port = port
+        self._solo_port = int(solo_port) if solo_port else 0
         self._server: Optional[asyncio.AbstractServer] = None
+        self._solo_server: Optional[asyncio.AbstractServer] = None
         self._sessions: Dict[str, Session] = {}
         self._conn_tasks: Dict[asyncio.Task, None] = {}
         self._jobs: Dict[str, StratumJob] = {}
@@ -486,6 +501,26 @@ class StratumServer:
         )
         sockets = ", ".join(str(s.getsockname()) for s in self._server.sockets or [])
         log.info(f"[Stratum] listening on {sockets}")
+        if self._solo_port:
+            self._solo_server = await asyncio.start_server(
+                self._handle_client_solo, self._host, self._solo_port
+            )
+            solo_sockets = ", ".join(
+                str(s.getsockname()) for s in self._solo_server.sockets or []
+            )
+            log.info(f"[Stratum] SOLO listening on {solo_sockets} (95%-to-finder)")
+
+    async def _handle_client_solo(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        # Same connection handler as the main port, but flag this connection so
+        # its session is pinned to solo accounting (the flag is read in
+        # _alloc_session). Each accept runs in its own task/context.
+        token = _SOLO_FORCED.set(True)
+        try:
+            await self._handle_client(reader, writer)
+        finally:
+            _SOLO_FORCED.reset(token)
 
     async def stop(self) -> None:
         for task in list(self._conn_tasks.keys()):
@@ -499,6 +534,10 @@ class StratumServer:
             self._server.close()
             await self._server.wait_closed()
         self._server = None
+        if self._solo_server:
+            self._solo_server.close()
+            await self._solo_server.wait_closed()
+        self._solo_server = None
         log.info("[Stratum] stopped")
 
     # ---------------- job control ----------------
@@ -800,13 +839,15 @@ class StratumServer:
         sid = uuid.uuid4().hex
         # 4 bytes of extranonce1 is common; we allow 8 hex chars (4 bytes)
         extranonce1 = "0x" + secrets.token_hex(4)
+        forced_solo = bool(_SOLO_FORCED.get())
         s = Session(
             session_id=sid,
             writer=writer,
             framing=framing,
             extranonce1=extranonce1,
             extranonce2_size=self._extranonce2_size,
-            pool_mode=self._default_session_pool_mode,
+            pool_mode="solo" if forced_solo else self._default_session_pool_mode,
+            solo_forced=forced_solo,
             share_target=self._default_share_target,
             theta_micro=self._default_theta_micro,
             current_difficulty=share_target_to_difficulty(
@@ -881,12 +922,27 @@ class StratumServer:
         )
 
     async def _drop_session(self, sid: str) -> None:
-        self._sessions.pop(sid, None)
+        session = self._sessions.pop(sid, None)
         task = self._heartbeats.pop(sid, None)
         if task:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+        # Close the socket so the miner gets an EOF and reconnects, instead of
+        # being silently orphaned — dropped from _sessions but left holding a
+        # half-open TCP connection with no more notify/set_difficulty, so it
+        # stale-grinds forever on a dead job. abort() forces an immediate close
+        # (discards any stuck send buffer that caused this drop); close() is the
+        # graceful fallback when the transport isn't exposed.
+        if session is not None:
+            writer = getattr(session, "writer", None)
+            if writer is not None:
+                transport = getattr(writer, "transport", None)
+                if transport is not None:
+                    with suppress(Exception):
+                        transport.abort()
+                with suppress(Exception):
+                    writer.close()
 
     async def _send(self, session: Session, obj: JSON) -> None:
         if session.framing == "lenpref":
@@ -1316,9 +1372,10 @@ class StratumServer:
                     or _parse_pool_mode_hint(identity)
                     or _parse_pool_mode_hint(raw_params)
                 )
-                session.pool_mode = self._resolve_session_pool_mode(
-                    mode_hint, current_mode=session.pool_mode
-                )
+                if not session.solo_forced:
+                    session.pool_mode = self._resolve_session_pool_mode(
+                        mode_hint, current_mode=session.pool_mode
+                    )
                 session.authorized = True
                 await self._send(session, res_authorize_v1(obj.get("id"), True))
                 return
@@ -1419,9 +1476,10 @@ class StratumServer:
                 else parsed_address
             )
             mode_hint = self._mode_hint_from_authorize(params)
-            session.pool_mode = self._resolve_session_pool_mode(
-                mode_hint, current_mode=session.pool_mode
-            )
+            if not session.solo_forced:
+                session.pool_mode = self._resolve_session_pool_mode(
+                    mode_hint, current_mode=session.pool_mode
+                )
             session.authorized = (
                 True  # Add real checks here if desired (e.g., bech32 format)
             )

@@ -22,6 +22,7 @@ covers the CPU-friendly job kinds every contributor can run.
 from __future__ import annotations
 
 import json
+import os
 import signal
 import time
 import urllib.error
@@ -83,9 +84,17 @@ class WorkerStats:
 
 
 class _RemoteClient:
-    def __init__(self, endpoint: str, timeout: float = 30.0) -> None:
+    def __init__(self, endpoint: str, timeout: Optional[float] = None) -> None:
+        # Generous, env-tunable default. The /jobs/{id}/run call can block
+        # server-side on a real training/generation step that runs for minutes,
+        # far longer than a control call — a flat 30s here tripped the train loop
+        # mid-step ("timeout on the train loop"). Control calls (claim/verify/
+        # receipt) return fast, so a high ceiling costs nothing. Override with
+        # ANIMICA_ENA_WORKER_HTTP_TIMEOUT.
+        if timeout is None:
+            timeout = float(os.environ.get("ANIMICA_ENA_WORKER_HTTP_TIMEOUT", "600"))
         self.base = endpoint.rstrip("/")
-        self.timeout = timeout
+        self.timeout = float(timeout)
 
     def _call(self, path: str, method: str = "GET",
               body: Optional[dict] = None) -> Any:
