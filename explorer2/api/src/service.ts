@@ -55,7 +55,14 @@ export interface ChainClient {
 }
 
 const RECENT_BLOCK_WINDOW = 20
-const ADDRESS_SCAN_MAX = 250
+const ADDRESS_SCAN_MAX = Math.max(1, Number(process.env.EXPLORER_ADDRESS_SCAN_MAX) || 250)
+// Wall-clock budget for the synchronous address tx-history scan. Without it a
+// *sparse* address (no txs in the recent window) scans the full ADDRESS_SCAN_MAX
+// blocks live — ~37s for 250 — so the page appears to "hang" and the balance
+// card renders blank ("—"), which reads as a missing/wrong balance. The balance
+// itself is a single fast RPC call fetched up-front, so we cap the history scan
+// and let pagination (nextCursor) fetch deeper history on demand.
+const ADDRESS_SCAN_MS_BUDGET = Math.max(500, Number(process.env.EXPLORER_ADDRESS_SCAN_MS) || 3500)
 const CONTRACT_DEPLOYMENT_SCAN_DEFAULT = 240
 const CONTRACT_DEPLOYMENT_SCAN_MAX = 1000
 const CONTRACT_DEPLOYMENT_LIMIT_MAX = 200
@@ -364,8 +371,16 @@ export class ExplorerService {
     const txs: any[] = []
     let scannedBlocks = 0
     let nextHeight = startHeight
+    // Stop the live scan once the budget is spent so the balance/head always
+    // return promptly; hasMore + nextCursor let the client resume for history.
+    const scanDeadline = Date.now() + ADDRESS_SCAN_MS_BUDGET
 
-    while (nextHeight >= 0 && scannedBlocks < ADDRESS_SCAN_MAX && txs.length < limit) {
+    while (
+      nextHeight >= 0 &&
+      scannedBlocks < ADDRESS_SCAN_MAX &&
+      txs.length < limit &&
+      Date.now() < scanDeadline
+    ) {
       const height = nextHeight
       nextHeight -= 1
       scannedBlocks += 1

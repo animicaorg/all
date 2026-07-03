@@ -8,6 +8,59 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [5.3.2] - 2026-07-03
+### Fixed
+- **Snapshot restore could silently import PARTIAL state and still advance the
+  head — producing permanent, undetectable too-low account balances.**
+  `core/db/snapshot.py::import_snapshot` imported state chunks, `_import_state_chunk`
+  silently `continue`d past any dropped/corrupt entry, and the head was then set to
+  the checkpoint unconditionally — while `manifest.accounts_count` /
+  `code_contracts_count` / `storage_keys_count` were parsed but never checked. A
+  truncated or lossy state restore therefore dropped accounts, advanced the head,
+  and forward block application layered valid deltas onto the incomplete base, so
+  those accounts read too-low forever (this chain commits no state root in its
+  headers, so nothing else catches the divergence). Import now counts imported
+  entries per type, and a new completeness gate (`_verify_state_import_complete`)
+  **aborts before `set_head`** on any dropped entry or any per-type shortfall vs
+  the manifest. Backward compatible: pre-count legacy snapshots still import.
+  This is the class of bug behind an exchange node reporting balances far below
+  the authoritative on-chain values while sitting at the correct head height.
+### Changed
+- **Pool vardiff bootstrap now anchors at `start_difficulty` instead of the
+  min_difficulty floor.** Avoids a burst of floor-difficulty share spam on a fresh
+  pool while it converges (the deadlock-at-block-difficulty fix from 5.3.1 stands).
+
+---
+
+## [5.3.1] - 2026-07-03
+### Fixed
+- **Pool served every miner the full block target as its share target
+  (`shareTarget=1.0`), so miners were credited only when they found a whole
+  block.** The real root cause of the "shares only credited at full difficulty"
+  report was pool-side, not just miner-side: on a fresh pool the global vardiff
+  bootstrapped `_current_share_threshold_micro` from the *template's*
+  block-difficulty share (`_resolve_share_target`,
+  `python/animica/stratum_pool/stratum_server.py`). A block-difficulty share is
+  unsubmittable, so no samples ever reached the vardiff, which only steps *down*
+  on a low-difficulty-reject streak — the target stayed pinned at the block
+  target forever. New pools now bootstrap at an achievable **`start_difficulty`**
+  (default `0.01`, env `ANIMICA_STRATUM_START_DIFFICULTY`, clamped into
+  `[min_difficulty, max_difficulty]`; new field in `stratum_pool/config.py`) and
+  the vardiff ratchets *up* from real accept-rate feedback. A miner's explicitly
+  easier request is still honored. Combined with the 5.3.0 miner-side fallback,
+  miners now submit sub-block shares immediately and earn steady PPS credit.
+- **Explorer address pages hung ~37 s and rendered a blank ("—") balance.**
+  `explorer2/api` ran a synchronous 250-block live scan for tx history before
+  returning, so a sparse address (e.g. an exchange cold wallet) timed out in the
+  browser and the balance never rendered — misread as a missing/wrong balance.
+  The balance itself was always correct (fetched live from `state.getBalance`).
+  The scan now runs under a wall-clock budget (`EXPLORER_ADDRESS_SCAN_MS`,
+  default 3500 ms) so the balance/head return in a couple seconds and deeper
+  history paginates via `nextCursor`. (Explorer is deployed separately from the
+  pip package.)
+
+---
+
 ## [5.3.0] - 2026-07-03
 ### Fixed
 - **Miner only earned credit at full block difficulty.** Both scan drivers

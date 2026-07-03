@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from ..encoding.cbor import cbor_dumps, cbor_loads
+from ..encoding.cbor import cbor_dumps, cbor_loads, cbor_loads_prefix
 from .block_db import (
     BlockDB,
     PFX_BLK,
@@ -50,8 +50,15 @@ _log = logging.getLogger("animica.snapshot")
 # Snapshot format version
 SNAPSHOT_VERSION = 2
 
-# Chunk size for splitting large exports (in bytes, ~128MB chunks)
-DEFAULT_CHUNK_SIZE = 128 * 1024 * 1024
+# Chunk size for splitting large exports (UNCOMPRESSED bytes). This MUST stay below
+# the P2P wire cap p2p.wire.encoding.MAX_PAYLOAD_BYTES (8 MiB), otherwise a chunk can
+# never be served over GET_SNAPSHOT_CHUNK (the whole file is sent in one SnapshotChunk
+# message and encoding rejects it with "payload too large"), which silently breaks
+# P2P snapshot fast-sync for every peer. The split rotates BEFORE exceeding this bound
+# and the chunk files are gzip-compressed, so 7 MiB guarantees compressed-chunk + wire
+# envelope < 8 MiB even for incompressible data. (Was 128 MiB → produced 116 MiB chunks
+# that were unservable; see the snapshot-chunk incident.)
+DEFAULT_CHUNK_SIZE = 7 * 1024 * 1024
 
 
 @dataclass
@@ -336,6 +343,38 @@ def _count_non_instant_canonical(block_db: BlockDB, max_height: int) -> int:
     return count
 
 
+def _verify_state_import_complete(manifest, imported: dict) -> None:
+    """Abort the import if the restored state is not provably complete.
+
+    Compares the per-type counts actually written to state against the counts the
+    manifest recorded at export time. Any dropped entry, or any per-type shortfall,
+    means the trie is missing accounts/code/storage — restoring onto that and
+    advancing the head is exactly what produces silent too-low balances. We only
+    assert a count the manifest actually carries (>0), so pre-count legacy
+    snapshots still import (they simply get no extra guarantee).
+    """
+    problems = []
+    if int(imported.get("dropped", 0) or 0) > 0:
+        problems.append(f"{imported['dropped']} state entries failed to import")
+    checks = (
+        ("account", "accounts_count"),
+        ("code", "code_contracts_count"),
+        ("storage", "storage_keys_count"),
+    )
+    for got_key, manifest_attr in checks:
+        expected = int(getattr(manifest, manifest_attr, 0) or 0)
+        got = int(imported.get(got_key, 0) or 0)
+        if expected and got != expected:
+            problems.append(f"{got_key}: imported {got} != manifest {expected}")
+    if problems:
+        raise ValueError(
+            "Snapshot state restore is INCOMPLETE — refusing to advance the head "
+            "onto partial state (this would produce silent too-low balances). "
+            + "; ".join(problems)
+            + ". Re-export/redownload a complete snapshot and retry."
+        )
+
+
 def import_snapshot(
     block_db: BlockDB,
     state_db: StateDB,
@@ -405,6 +444,7 @@ def import_snapshot(
         )
 
     # Verify and import chunks
+    imported_state = {"account": 0, "code": 0, "storage": 0, "other": 0, "dropped": 0}
     for chunk_info in manifest.chunks:
         chunk_file = snapshot_dir / chunk_info["name"]
         if not chunk_file.exists():
@@ -424,9 +464,21 @@ def import_snapshot(
         if chunk_info["type"] == "blocks":
             _import_blocks_chunk(block_db, chunk_file, manifest.compressed)
         elif chunk_info["type"] == "state":
-            _import_state_chunk(state_db, chunk_file, manifest.compressed)
+            chunk_counts = _import_state_chunk(state_db, chunk_file, manifest.compressed)
+            for k in imported_state:
+                imported_state[k] += int(chunk_counts.get(k, 0))
         else:
             _log.warning(f"Unknown chunk type: {chunk_info['type']}")
+
+    # COMPLETENESS GATE — never advance the head onto a partial state restore.
+    # A truncated/corrupt state chunk (dropped entries, or fewer entries yielded
+    # after a truncation) would leave accounts missing from the trie while the
+    # head still points at the checkpoint; forward block application then layers
+    # valid deltas onto the incomplete base and those accounts read too-low
+    # forever, undetected (this chain commits no state root in its headers, so
+    # nothing else catches it). Refuse to set the head unless the imported
+    # per-type counts match the manifest exactly and nothing was dropped.
+    _verify_state_import_complete(manifest, imported_state)
 
     # Update block DB head to checkpoint
     checkpoint_hash_bytes = _unhex(manifest.checkpoint_hash)
@@ -453,6 +505,56 @@ def import_snapshot(
     return manifest
 
 
+# Separator bytes the exporter writes BETWEEN entries. CBOR is a binary format
+# and its bytes freely include 0x0a ("\n"), so entries are NOT newline-delimited
+# records — they are self-delimiting CBOR items that merely happen to be followed
+# by a "\n". We therefore frame by each item's own length (see _iter_chunk_entries)
+# and only skip these bytes between items. An entry never *starts* with one of
+# these (every entry is a CBOR map, major type 5 => first byte 0xa0..0xbb).
+_ENTRY_SEP = (0x0A, 0x0D)
+
+
+def _iter_chunk_entries(f):
+    """Yield decoded CBOR entries from an (already decompressed) chunk file object.
+
+    The exporter writes ``cbor_dumps(entry) || b"\\n"`` per entry. The OLD reader
+    used ``for line in f`` / ``line.strip()`` which splits on 0x0a — but 0x0a
+    occurs inside almost every account key/value, so those entries were shredded
+    and silently dropped (the bug behind "Error importing entry: trailing bytes /
+    truncated / unsupported tag …" and partially-populated state). Here we instead
+    decode ONE self-delimiting CBOR item at a time by its own length, then skip the
+    trailing separator — which parses the very same on-disk chunks correctly, with
+    no re-export needed. On a genuinely corrupt item we resync to the next
+    separator so one bad entry can't abort the whole chunk.
+    """
+    data = f.read()
+    mv = memoryview(data)
+    n = len(data)
+    off = 0
+    while off < n:
+        # Skip separator byte(s) between entries.
+        while off < n and data[off] in _ENTRY_SEP:
+            off += 1
+        if off >= n:
+            break
+        try:
+            entry, consumed = cbor_loads_prefix(mv[off:])
+        except Exception as e:
+            # Framing desync / corrupt entry: jump to the next entry boundary.
+            nxt = data.find(b"\n", off)
+            if nxt == -1:
+                _log.warning(f"Error importing entry: {e}")
+                break
+            _log.warning(f"Error importing entry: {e} (resyncing to next boundary)")
+            off = nxt + 1
+            continue
+        if consumed <= 0:  # defensive: never make no progress
+            off += 1
+            continue
+        off += consumed
+        yield entry
+
+
 def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
     """Import blocks and headers from a chunk file."""
     _log.info(f"Importing blocks from {chunk_file.name}")
@@ -461,16 +563,8 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
     imported_count = 0
 
     with open_fn(chunk_file, "rb") as f:
-        # Read line by line (entries are newline-delimited)
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-
+        for entry in _iter_chunk_entries(f):
             try:
-                # Decode CBOR entry
-                entry = cbor_loads(line)
-
                 entry_type = entry.get("type")
                 height = entry.get("height")
                 data = entry.get("data")
@@ -499,24 +593,28 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
     _log.info(f"Imported {imported_count} entries from {chunk_file.name}")
 
 
-def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool):
-    """Import state (accounts, code, storage) from a chunk file."""
+def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool) -> dict:
+    """Import state (accounts, code, storage) from a chunk file.
+
+    Returns per-type counts ``{"account","code","storage","other","dropped"}`` so
+    :func:`import_snapshot` can prove the restore is COMPLETE before advancing the
+    head. Previously a per-entry error here just logged a warning and continued,
+    leaving the account missing from state while the head still advanced to the
+    checkpoint — forward block application then layered valid deltas onto the
+    incomplete base and the dropped accounts read too-low forever (the
+    balances-too-low divergence class). We now count drops and per-type totals and
+    let the caller abort on any shortfall. (Note: a truncated chunk can also cause
+    :func:`_iter_chunk_entries` to yield FEWER entries without raising here; that
+    is caught by the caller's per-type count vs. manifest comparison.)
+    """
     _log.info(f"Importing state from {chunk_file.name}")
 
     open_fn = gzip.open if compressed else open
-    imported_count = 0
+    counts = {"account": 0, "code": 0, "storage": 0, "other": 0, "dropped": 0}
 
     with open_fn(chunk_file, "rb") as f:
-        # Read line by line (entries are newline-delimited)
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-
+        for entry in _iter_chunk_entries(f):
             try:
-                # Decode CBOR entry
-                entry = cbor_loads(line)
-
                 entry_type = entry.get("type")
                 key = entry.get("key")
                 value = entry.get("value")
@@ -524,15 +622,23 @@ def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool):
                 # Write directly to underlying KV store
                 state_db.kv.put(key, value)
 
-                imported_count += 1
-                if imported_count % 10000 == 0:
-                    _log.info(f"Imported {imported_count} state entries from {chunk_file.name}")
+                counts[entry_type if entry_type in counts else "other"] += 1
+                total = counts["account"] + counts["code"] + counts["storage"] + counts["other"]
+                if total % 10000 == 0:
+                    _log.info(f"Imported {total} state entries from {chunk_file.name}")
 
             except Exception as e:
                 _log.warning(f"Error importing entry: {e}")
+                counts["dropped"] += 1
                 continue
 
-    _log.info(f"Imported {imported_count} state entries from {chunk_file.name}")
+    total = counts["account"] + counts["code"] + counts["storage"] + counts["other"]
+    _log.info(
+        f"Imported {total} state entries from {chunk_file.name} "
+        f"(accounts={counts['account']} code={counts['code']} "
+        f"storage={counts['storage']} dropped={counts['dropped']})"
+    )
+    return counts
 
 
 def verify_snapshot(snapshot_dir: Path) -> Tuple[bool, List[str]]:
@@ -546,6 +652,10 @@ def verify_snapshot(snapshot_dir: Path) -> Tuple[bool, List[str]]:
         Tuple of (is_valid, list_of_errors)
     """
     errors = []
+
+    # Callers (e.g. the orchestrator) may pass a str path; coerce so the `/`
+    # path-join below doesn't raise "unsupported operand type(s) for /: 'str' and 'str'".
+    snapshot_dir = Path(snapshot_dir)
 
     # Check manifest exists
     manifest_file = snapshot_dir / "manifest.json"

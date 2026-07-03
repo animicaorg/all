@@ -32,6 +32,14 @@ class PoolConfig:
     # old conservative floor can set ANIMICA_STRATUM_MIN_DIFFICULTY.
     min_difficulty: float = 0.00001
     max_difficulty: float = 1.0
+    # Difficulty a fresh pool bootstraps the global vardiff at, BEFORE any shares
+    # have been observed. MUST be achievable: starting at max_difficulty (= θ, the
+    # block-finder share) deadlocks the vardiff — a miner cannot submit a
+    # block-difficulty share, so no samples ever arrive to adjust the target
+    # downward and it stays pinned at the block target. Miners then get credited
+    # ONLY when they find a whole block (the "shares only credited at full
+    # difficulty" report). Start easy; the vardiff ratchets up on accept-rate.
+    start_difficulty: float = 0.01
     poll_interval: float = 1.0
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
@@ -55,6 +63,22 @@ class PoolConfig:
     # credited balance and is paid out by the normal payout scheduler.
     ena_fee_bps: int = 0
     ena_treasury_address: str = ""
+    # True-solo second listener. When solo_port > 0 the pool also binds a solo
+    # stratum port (solo_host:solo_port). Connections on it are forced to solo
+    # accounting: the miner who finds a block keeps (10000 - solo_fee_bps) bps of
+    # the reward and the pool keeps the rest. Everything else (accounts, worker
+    # auth, stats, dashboard, payouts) is shared with the main pool.
+    solo_host: str = "0.0.0.0"
+    solo_port: int = 0
+    solo_fee_bps: int = 500
+    # Credit cap: when enabled, total credited balances may not outpace actual
+    # mined coinbase. To avoid freezing earnings for a pre-existing
+    # credited>mined overhang, the cap measures from a deploy-time baseline
+    # (mined_base/credited_base = totals captured when the cap was switched on),
+    # so only NEW credit is held to NEW mined coinbase. Disabled by default.
+    credit_cap_enabled: bool = False
+    credit_cap_mined_base: int = 0
+    credit_cap_credited_base: int = 0
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -107,6 +131,13 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
     max_difficulty = float(
         overrides.get("max_difficulty") or _env("ANIMICA_STRATUM_MAX_DIFFICULTY", "1.0")
     )
+    start_difficulty = float(
+        overrides.get("start_difficulty")
+        or _env("ANIMICA_STRATUM_START_DIFFICULTY", "0.01")
+    )
+    # Keep the bootstrap difficulty inside the operating band so a new pool
+    # never starts a miner harder than max or easier than the floor.
+    start_difficulty = min(max(start_difficulty, min_difficulty), max_difficulty)
     poll_interval = float(
         overrides.get("poll_interval") or _env("ANIMICA_STRATUM_POLL_INTERVAL", "1.0")
     )
@@ -168,6 +199,31 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         or ""
     ).strip()
 
+    solo_bind = overrides.get("solo_bind") or _env("ANIMICA_STRATUM_SOLO_BIND")
+    if solo_bind:
+        solo_host, solo_port_str = solo_bind.rsplit(":", 1)
+        solo_port = int(solo_port_str)
+    else:
+        solo_host = overrides.get("solo_host") or _env("ANIMICA_STRATUM_SOLO_HOST", "0.0.0.0")
+        solo_port = int(overrides.get("solo_port") or _env("ANIMICA_STRATUM_SOLO_PORT", "0"))
+    solo_fee_bps = int(
+        overrides.get("solo_fee_bps") or _env("ANIMICA_POOL_SOLO_FEE_BPS", "500")
+    )
+    credit_cap_enabled = _as_bool(
+        overrides.get("credit_cap_enabled"),
+        _env("ANIMICA_POOL_CREDIT_CAP_ENABLED", "false"),
+    )
+    credit_cap_mined_base = int(
+        overrides.get("credit_cap_mined_base")
+        or _env("ANIMICA_POOL_CREDIT_CAP_MINED_BASE", "0")
+        or 0
+    )
+    credit_cap_credited_base = int(
+        overrides.get("credit_cap_credited_base")
+        or _env("ANIMICA_POOL_CREDIT_CAP_CREDITED_BASE", "0")
+        or 0
+    )
+
     if not str(host or "").strip():
         raise ValueError("host must be non-empty")
     if port <= 0 or port > 65535:
@@ -215,6 +271,12 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         )
     if ena_fee_bps < 0 or ena_fee_bps > 10_000:
         raise ValueError("ena_fee_bps must be between 0 and 10000 (basis points)")
+    if solo_port and (solo_port <= 0 or solo_port > 65535):
+        raise ValueError("solo_port must be between 1 and 65535")
+    if solo_port and solo_port == port:
+        raise ValueError("solo_port must differ from the main stratum port")
+    if solo_fee_bps < 0 or solo_fee_bps > 10_000:
+        raise ValueError("solo_fee_bps must be between 0 and 10000 (basis points)")
     if ena_fee_bps > 0 and not ena_treasury_address:
         raise ValueError(
             "ena_treasury_address is required when ena_fee_bps > 0 "
@@ -231,6 +293,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         rpc_timeout=rpc_timeout,
         min_difficulty=min_difficulty,
         max_difficulty=max_difficulty,
+        start_difficulty=start_difficulty,
         poll_interval=poll_interval,
         log_level=log_level,
         api_host=api_host,
@@ -246,4 +309,10 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         require_min_version=require_min_version,
         ena_fee_bps=ena_fee_bps,
         ena_treasury_address=ena_treasury_address,
+        solo_host=solo_host,
+        solo_port=solo_port,
+        solo_fee_bps=solo_fee_bps,
+        credit_cap_enabled=credit_cap_enabled,
+        credit_cap_mined_base=credit_cap_mined_base,
+        credit_cap_credited_base=credit_cap_credited_base,
     )
