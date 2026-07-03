@@ -8,6 +8,22 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [5.3.3] - 2026-07-03
+### Changed
+- **ENA AI training stack is now part of the BASE install.** Every ENA training
+  shard was failing with `train_failed: "python_transformers backend needs
+  transformers + datasets (+ torch)"` because the AI stack lived only in the
+  `ai`/`gpu` extras — so a GPU rig that ran a plain `pip install animica` had no
+  torch/transformers/datasets and earned nothing. `torch`, `transformers`,
+  `datasets`, `accelerate`, `peft`, `trl`, `sentence-transformers`,
+  `safetensors`, `sentencepiece`, `protobuf`, `scipy`, `einops`, and
+  Linux-gated `bitsandbytes` (QLoRA) are now base dependencies, so `pip install
+  -U animica` on a rig can train out of the box. **Note:** this makes the base
+  install heavy (torch is ~GB). On Linux the default torch wheel is CUDA-enabled;
+  the `ai`/`gpu` extras remain as aliases.
+
+---
+
 ## [5.3.2] - 2026-07-03
 ### Fixed
 - **Snapshot restore could silently import PARTIAL state and still advance the
