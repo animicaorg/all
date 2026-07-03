@@ -419,7 +419,9 @@ class InferenceEngine:
             device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
             self._tokenizer = AutoTokenizer.from_pretrained(model_id)
             kwargs: dict[str, Any] = {}
-            if device == "cuda":
+            # startswith so an explicit "cuda:0"/"cuda:1" also GPU-loads
+            # (a bare `== "cuda"` left those on CPU).
+            if device.startswith("cuda"):
                 kwargs["torch_dtype"] = torch.float16
                 kwargs["device_map"] = "auto"
             self._model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
@@ -532,8 +534,22 @@ class InferenceEngine:
                         + prompt
                     )
                     inputs = self._tokenizer(framed, return_tensors="pt")
-                if self._device == "cuda":
-                    inputs = {k: v.to("cuda") for k, v in inputs.items()}
+                # Move inputs onto the model's ACTUAL device rather than
+                # guessing from a config string. A hardcoded `== "cuda"`
+                # check missed `cuda:0`, `device_map="auto"` sharded models,
+                # and mps — leaving input_ids on cpu while the weights sat on
+                # cuda:0, which crashes generate() with "Expected all tensors
+                # to be on the same device … index is on cpu, different from
+                # cuda:0" and took down every useful-work miner's PoW loop.
+                try:
+                    _model_device = next(self._model.parameters()).device
+                except (StopIteration, AttributeError):
+                    _model_device = getattr(self._model, "device", None)
+                if _model_device is not None and str(_model_device) != "cpu":
+                    inputs = {
+                        k: (v.to(_model_device) if hasattr(v, "to") else v)
+                        for k, v in inputs.items()
+                    }
                 with torch.inference_mode():
                     output_ids = self._model.generate(
                         **inputs,

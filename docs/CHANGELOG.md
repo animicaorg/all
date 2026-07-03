@@ -8,6 +8,25 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [5.3.4] - 2026-07-03
+### Fixed
+- **CRITICAL — GPU miners' useful-work AI generation crashed and took the PoW
+  loop down with it (mainnet chain halt).** `stratum_pool/aicf_inference.py`
+  loaded the model onto `cuda:0` (via `device_map="auto"` when the resolved
+  device was `"cuda"`) but at generation time only moved `input_ids` to GPU
+  when `self._device == "cuda"` — and `self._device` is usually `None` (device
+  auto-resolves at load), so inputs stayed on **cpu** while weights sat on
+  **cuda:0**. `model.generate()` then raised *"Expected all tensors to be on
+  the same device … index is on cpu, different from cuda:0"*, the useful-work
+  worker errored, and the `animica-cli` miners stopped hashing. On mainnet the
+  whole GPU rig farm decayed from ~2.7 GH/s to 0 over an hour and blocks
+  stalled. Inputs are now placed on the model's **actual** device
+  (`next(model.parameters()).device`), and the load path uses
+  `device.startswith("cuda")` so `cuda:0`/`cuda:N` also GPU-load. Update rigs
+  with `pip install -U animica` and restart mining to restore hashrate.
+
+---
+
 ## [5.3.3] - 2026-07-03
 ### Changed
 - **ENA AI training stack is now part of the BASE install.** Every ENA training
