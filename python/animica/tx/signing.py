@@ -30,6 +30,27 @@ except Exception:  # pragma: no cover
 
 DOMAIN_TX_SIGN_V1 = "animica.tx.v1"
 
+# ── ANM-C01/C02: production transaction signature-scheme allowlist ─────────
+# Only the real FIPS-204 ML-DSA-65 scheme (alg_id 0x1003 / 4099) may authorize a
+# transaction. alg_ids 0x1001 ("dilithium3") and 0x1002 ("sphincs_shake_128s")
+# are FORGEABLE stubs — their verify() recomputes a public commitment
+# shake_256(pubkey[:32] || msg) with no secret key — so accepting them lets
+# anyone forge a signature for any pubkey. Because the state DB keys accounts by
+# sha3_256(pubkey) with the alg_id stripped, a forged 0x1001 tx drains the SAME
+# balance as the victim's real 0x1003 account. This allowlist is enforced
+# node-locally at every tx admission/relay/mining call (always on, no consensus
+# impact). Block-import rejection is additionally gated at the pq_hardening
+# activation height (core.network_params) to grandfather existing history.
+ACCEPTED_TX_SIG_ALG_IDS: frozenset = frozenset({0x1003})
+
+
+def _tx_scheme_accepted(alg_id: int) -> bool:
+    """True iff `alg_id` is an accepted production tx signature scheme."""
+    try:
+        return int(alg_id) in ACCEPTED_TX_SIG_ALG_IDS
+    except (TypeError, ValueError):
+        return False
+
 __all__ = [
     "DOMAIN_TX_SIGN_V1",
     "ChainContext",
@@ -362,6 +383,10 @@ def tx_verify_signature(tx: Any, signature: Signature, pubkey: bytes, ctx: Chain
     info = get_sig(signature.alg_id)
     if info is None:
         return VerifyResult(False, "0x" + sign_hash.hex(), "0x" + preimage.hex(), pub_fp, sig_fingerprint=sig_fp, scheme_id=signature.alg_id, pubkey_len=len(pubkey), sig_len=len(sig_bytes), sign_bytes_len=len(preimage), domain=ctx.domain, chain_id=int(ctx.chain_id), genesis_included=bool(ctx.genesis_hash), reason=f"unsupported_scheme:{signature.alg_id}")
+    # ANM-C01/C02: reject forgeable/deprecated schemes BEFORE dispatch so the
+    # forgeable stub verifier is never reached at admission/relay/mining.
+    if not _tx_scheme_accepted(signature.alg_id):
+        return VerifyResult(False, "0x" + sign_hash.hex(), "0x" + preimage.hex(), pub_fp, sig_fingerprint=sig_fp, scheme_id=signature.alg_id, pubkey_len=len(pubkey), sig_len=len(sig_bytes), sign_bytes_len=len(preimage), domain=ctx.domain, chain_id=int(ctx.chain_id), genesis_included=bool(ctx.genesis_hash), reason=f"scheme_deprecated:{signature.alg_id}")
     if len(pubkey) != info.pubkey_size or len(sig_bytes) != info.signature_size:
         return VerifyResult(False, "0x" + sign_hash.hex(), "0x" + preimage.hex(), pub_fp, sig_fingerprint=sig_fp, scheme_id=signature.alg_id, pubkey_len=len(pubkey), sig_len=len(sig_bytes), sign_bytes_len=len(preimage), domain=ctx.domain, chain_id=int(ctx.chain_id), genesis_included=bool(ctx.genesis_hash), reason=f"invalid_signature_size:expected_pk={info.pubkey_size},expected_sig={info.signature_size}")
     try:

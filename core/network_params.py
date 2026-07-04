@@ -147,6 +147,82 @@ def get_pinned_checkpoints(
     return dict(PINNED_CHECKPOINTS_BY_NETWORK.get((params.name, params.chain_id), {}))
 
 
+# ── Consensus rule-activation heights (forward-only soft tightenings) ──────────
+# (network, chain_id) -> {fork_name: activation_height}. A tightening activates at
+# height >= its activation height and is grandfathered below it, so existing
+# history stays valid: forward-only, never a genesis reset, never rejects a block
+# produced before the height. Mainnet heights sit a safe margin above the head at
+# ship time so all nodes AND the miner upgrade first (a non-upgraded miner that
+# mined a now-invalid block after the height would simply be orphaned by upgraded
+# nodes). Per-fork env override: ANIMICA_FORK_<UPPER>_HEIGHT (retune before ship).
+#
+#   pq_hardening: at/after this height, block import verifies every transaction
+#     signature (mandatory) and accepts ONLY the non-forgeable production scheme
+#     ml_dsa_65 (0x1003), closing the ANM-C01/C02 forgeable-stub fund-drain. The
+#     node-local mempool/relay/mining rejection of forgeable schemes is always-on
+#     and independent of this height (animica.tx.signing.ACCEPTED_TX_SIG_ALG_IDS).
+FORK_PQ_HARDENING = "pq_hardening"
+
+ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
+    # Mainnet head was ~36,388 when 6.0.0 was cut; 37,000 leaves margin for the
+    # pool + all nodes to upgrade. Retune with ANIMICA_FORK_PQ_HARDENING_HEIGHT.
+    ("mainnet", 1): {
+        FORK_PQ_HARDENING: 37_000,
+    },
+    # Testnet + devnet enforce from genesis (no legacy history to grandfather).
+    ("testnet", 2): {
+        FORK_PQ_HARDENING: 0,
+    },
+    ("devnet", 1337): {
+        FORK_PQ_HARDENING: 0,
+    },
+}
+
+
+def get_activation_height(
+    fork: str, *, chain_id: Optional[int] = None, network_name: Optional[str] = None
+) -> Optional[int]:
+    """Return the activation height for a consensus `fork` on a network, or None.
+
+    An env override ``ANIMICA_FORK_<FORK>_HEIGHT`` (integer, accepts 0x…) takes
+    precedence so operators can retune the height before shipping.
+    """
+    env = os.getenv(f"ANIMICA_FORK_{fork.upper()}_HEIGHT", "").strip()
+    if env:
+        try:
+            return int(env, 0)
+        except ValueError:
+            logger.warning(
+                "ignoring non-integer ANIMICA_FORK_%s_HEIGHT=%r", fork.upper(), env
+            )
+    params = get_network_params(chain_id=chain_id, network_name=network_name)
+    if params is None:
+        return None
+    return ACTIVATION_HEIGHTS_BY_NETWORK.get((params.name, params.chain_id), {}).get(fork)
+
+
+def is_fork_active(
+    fork: str,
+    height: int,
+    *,
+    chain_id: Optional[int] = None,
+    network_name: Optional[str] = None,
+) -> bool:
+    """True iff consensus `fork` is active at `height` on the given network.
+
+    Forward-only: returns False below the activation height (grandfathered) and
+    for unknown networks/forks, so a new rule never retroactively rejects an
+    unrecognized chain's history.
+    """
+    h = get_activation_height(fork, chain_id=chain_id, network_name=network_name)
+    if h is None:
+        return False
+    try:
+        return int(height) >= int(h)
+    except (TypeError, ValueError):
+        return False
+
+
 def get_network_genesis_path(
     *, chain_id: Optional[int] = None, network_name: Optional[str] = None
 ) -> Optional[Path]:
