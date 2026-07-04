@@ -163,18 +163,30 @@ def get_pinned_checkpoints(
 #     and independent of this height (animica.tx.signing.ACCEPTED_TX_SIG_ALG_IDS).
 FORK_PQ_HARDENING = "pq_hardening"
 
+#   root_commitment: at/after this height, block import verifies the header's
+#     committed txsRoot against the block's transactions (and, once the miner seals
+#     them, stateRoot/receiptsRoot), closing the ANM-C03 silent-divergence hole
+#     where a PoW-valid header could carry a different tx set or an invalid state
+#     transition undetected. Self-gating (only enforces a root the header commits
+#     non-zero) + grandfathered below H; the post-execution stateRoot check honours
+#     ANIMICA_ROOT_COMMITMENT_SHADOW=1 (observe-only) for pre-activation validation.
+FORK_ROOT_COMMITMENT = "root_commitment"
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet head was ~36,388 when 6.0.0 was cut; 37,000 leaves margin for the
     # pool + all nodes to upgrade. Retune with ANIMICA_FORK_PQ_HARDENING_HEIGHT.
     ("mainnet", 1): {
         FORK_PQ_HARDENING: 37_000,
+        FORK_ROOT_COMMITMENT: 37_000,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {
         FORK_PQ_HARDENING: 0,
+        FORK_ROOT_COMMITMENT: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
+        FORK_ROOT_COMMITMENT: 0,
     },
 }
 

@@ -71,7 +71,7 @@ from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from core.utils.tx import normalize_tx_envelope
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
-from core.network_params import FORK_PQ_HARDENING, is_fork_active
+from core.network_params import FORK_PQ_HARDENING, FORK_ROOT_COMMITMENT, is_fork_active
 from execution.runtime.env import make_block_env
 from execution.runtime.executor import apply_block
 from execution.state.apply_balance import (
@@ -463,6 +463,36 @@ def _verify_block_tx_signatures_gated(
         )
         return None
     return reason
+
+
+def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Optional[str]:
+    """ANM-C03 forward-only gate: verify the header's committed txsRoot against the
+    block's actual transactions once root_commitment is active for the chain.
+
+    Grandfathered below the activation height. Self-gating: only enforces when the
+    header commits a non-zero txsRoot, so a block that predates root sealing is
+    never false-rejected. The miner already seals txsRoot today, so this closes the
+    'same PoW header, different tx set -> silent divergence' hole (ANM-C03) with no
+    false-rejection of legitimately mined blocks.
+    """
+    if not is_fork_active(FORK_ROOT_COMMITMENT, height, chain_id=chain_id):
+        return None
+    header = getattr(block, "header", None)
+    committed = getattr(header, "txsRoot", None)
+    if not committed or bytes(committed) == b"\x00" * 32:
+        return None
+    try:
+        from core.chain.state_commit import compute_block_txs_root
+
+        computed = compute_block_txs_root(block)
+    except Exception as e:  # pragma: no cover - defensive
+        return f"txs_root_compute_failed:{e}"
+    if bytes(computed) != bytes(committed):
+        return (
+            f"txs_root_mismatch:computed={bytes(computed).hex()[:16]},"
+            f"header={bytes(committed).hex()[:16]}"
+        )
+    return None
 
 
 def _is_coinbase_tx(tx: Any) -> bool:
@@ -1349,6 +1379,17 @@ class BlockImporter:
             if sig_error is not None:
                 return ImportResult(
                     ImportErrorCode.INVALID, height, h, False, f"tx_signature: {sig_error}"
+                )
+
+            # ANM-C03: forward-only gated verification of the header's committed
+            # txsRoot vs the block's transactions (closes the "same PoW header,
+            # different tx set -> silent divergence" hole). Grandfathered below H.
+            root_error = _verify_block_txs_root_gated(
+                block, height, int(self.params.chain_id)
+            )
+            if root_error is not None:
+                return ImportResult(
+                    ImportErrorCode.INVALID, height, h, False, f"root_commitment: {root_error}"
                 )
 
             # Persist header & block
