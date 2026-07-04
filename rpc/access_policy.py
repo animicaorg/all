@@ -72,6 +72,14 @@ class AccessPolicy:
     admin_token: str | None = None
     admin_allowlist: list[ipaddress._BaseNetwork] = field(default_factory=list)
     bootstrap_rate_limit_rpm: int = 0
+    # 6.0.0 (ANM-M02): when True AND the server is bound to a non-loopback
+    # address, admin/debug/dangerous methods are refused from non-loopback
+    # clients (local clients / valid admin token still allowed). Safe default
+    # False preserves current behavior; server.py emits a loud startup warning.
+    restrict_sensitive: bool = False
+    # The host the RPC server is bound to (e.g. "127.0.0.1" or "0.0.0.0"). Used
+    # only to decide whether the sensitive-method gate is active.
+    bind_host: str | None = None
     admin_methods: set[str] = field(default_factory=lambda: {
         "p2p.addPeer",
         "p2p.addPeers",
@@ -84,6 +92,16 @@ class AccessPolicy:
         "wallet.send",
         "wallet_createAddress",
         "wallet_send",
+    })
+    # Additional sensitive method names (beyond admin_methods and the debug.*
+    # namespace) that the ANM-M02 gate should refuse from non-loopback clients.
+    sensitive_methods: set[str] = field(default_factory=lambda: {
+        "debug.traceTx",
+        "debug.txStatus",
+        "debug.mempoolTxTrace",
+        "debug.verifyUsefulWorkProof",
+        "tx.explainReject",
+        "debug.explainReject",
     })
     bootstrap_methods: set[str] = field(default_factory=lambda: {
         "bootstrap.getManifest",
@@ -149,12 +167,55 @@ class AccessPolicy:
         except Exception:
             rate_limit = 0
 
+        restrict_sensitive = (
+            _is_truthy(os.getenv("ANIMICA_RPC_RESTRICT_SENSITIVE"))
+            or bool(getattr(cfg, "restrict_sensitive", False))
+            or bool(getattr(getattr(cfg, "access", None), "restrict_sensitive", False))
+        )
+        bind_host = (
+            getattr(cfg, "host", None)
+            or getattr(getattr(cfg, "access", None), "host", None)
+        )
+
         return cls(
             mode=mode,
             admin_token=str(token) if token else None,
             admin_allowlist=_parse_allowlist(allowlist_raw),
             bootstrap_rate_limit_rpm=max(0, rate_limit),
+            restrict_sensitive=restrict_sensitive,
+            bind_host=str(bind_host) if bind_host else None,
         )
+
+    @property
+    def server_bound_public(self) -> bool:
+        """True when the RPC server is bound to a non-loopback interface.
+
+        ``0.0.0.0`` / ``::`` (unspecified = all interfaces) and any concrete
+        non-loopback address count as public. Loopback / ``localhost`` / unset
+        count as private.
+        """
+        host = self.bind_host
+        if not host:
+            return False
+        h = str(host).strip().strip("[]")
+        if not h or h.lower() == "localhost":
+            return False
+        try:
+            ip = ipaddress.ip_address(h)
+        except Exception:
+            # A hostname other than localhost — treat as public to be safe.
+            return True
+        if ip.is_unspecified:
+            return True
+        return not ip.is_loopback
+
+    def _is_sensitive(self, method: str) -> bool:
+        if not method:
+            return False
+        if method in self.admin_methods or method in self.sensitive_methods:
+            return True
+        low = method.lower()
+        return low.startswith("debug.") or low.startswith("debug_")
 
     def _is_local_client(self, client_ip: str | None) -> bool:
         if not client_ip:
@@ -202,6 +263,24 @@ class AccessPolicy:
 
     def authorize(self, method: str, ctx: t.Any) -> None:
         client_ip = _extract_ip(ctx)
+
+        # ANM-M02: fail-closed for sensitive/admin/debug methods when explicitly
+        # enabled AND the server is bound to a public (non-loopback) address.
+        # Local clients and valid admin tokens are still allowed. This runs
+        # ahead of the mode checks so it also covers LOCAL_DEV. Off by default so
+        # existing deployments keep working (server.py warns loudly instead).
+        if (
+            self.restrict_sensitive
+            and self.server_bound_public
+            and self._is_sensitive(method)
+        ):
+            if self._peer_injection_authorized(ctx, client_ip):
+                return
+            raise errors.RpcMethodRestricted(
+                detail="Sensitive method restricted on public bind",
+                method=method,
+                required="localhost or valid admin token",
+            )
 
         if self.mode == AccessMode.LOCAL_DEV:
             return

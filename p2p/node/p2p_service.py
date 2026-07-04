@@ -229,6 +229,12 @@ class _PeerState:
     broadcast: PeerBroadcastScore = field(default_factory=PeerBroadcastScore)
     negotiated_caps: set[str] = field(default_factory=set)
     accepts_inbound: Optional[bool] = None
+    # ANM-H03/H04 per-peer inbound message-rate limiter state
+    rl_tokens: float = 0.0
+    rl_last_mono: float = 0.0
+    rl_primed: bool = False
+    rl_strikes: int = 0
+    rl_last_warn_s: float = 0.0
 
 
 class _NullTxRelay:
@@ -1572,6 +1578,49 @@ class P2PService:
         self._misbehavior_score_cap = int(
             os.environ.get("ANIMICA_P2P_SCORE_CAP", "2000") or 2000
         )
+
+        # ── ANM-H03/H04: per-peer inbound message-rate limiting (DoS cap) ──────
+        # Sheds, then disconnects, peers that flood us with messages. The token
+        # bucket is intentionally generous (≈100x real peer traffic, even during
+        # aggressive block/header sync), so legitimate peers are never affected —
+        # only genuine floods trip the guard. Enabled by default with a sane cap;
+        # fully tunable and disengageable via env (set rate/burst <= 0 or the
+        # ENABLED flag to 0 to turn off).
+        self._peer_msg_rate_enabled = _env_flag(
+            "ANIMICA_P2P_PEER_MSG_RATE_ENABLED", default=True
+        )
+        self._peer_msg_rate_per_s = float(
+            os.environ.get("ANIMICA_P2P_PEER_MSG_RATE_PER_S", "1000") or 1000.0
+        )
+        self._peer_msg_rate_burst = float(
+            os.environ.get("ANIMICA_P2P_PEER_MSG_RATE_BURST", "2000") or 2000.0
+        )
+        self._peer_msg_rate_max_strikes = int(
+            os.environ.get("ANIMICA_P2P_PEER_MSG_RATE_MAX_STRIKES", "20") or 20
+        )
+        self._peer_msg_rate_ban_ttl = float(
+            os.environ.get("ANIMICA_P2P_PEER_MSG_RATE_BAN_TTL_S", "300") or 300.0
+        )
+        if self._peer_msg_rate_per_s <= 0 or self._peer_msg_rate_burst <= 0:
+            # Non-positive settings disable enforcement rather than wedge peers.
+            self._peer_msg_rate_enabled = False
+        if self._peer_msg_rate_enabled:
+            log.info(
+                "Per-peer inbound message rate limiting enabled",
+                extra={
+                    "rate_per_s": self._peer_msg_rate_per_s,
+                    "burst": self._peer_msg_rate_burst,
+                    "max_strikes": self._peer_msg_rate_max_strikes,
+                    "ban_ttl_s": self._peer_msg_rate_ban_ttl,
+                },
+            )
+        else:
+            log.warning(
+                "Per-peer inbound message rate limiting DISABLED "
+                "(ANIMICA_P2P_PEER_MSG_RATE_* off) — node has no per-peer "
+                "message flood protection"
+            )
+
         self._score_points = {
             "malformed_message": int(
                 os.environ.get("ANIMICA_P2P_SCORE_MALFORMED", "50") or 50
@@ -6916,6 +6965,62 @@ class P2PService:
             log.info("Dropping peer %s due to hello timeout", peer.remote)
             await self._drop_peer(peer, reason="hello_timeout")
 
+    def _inbound_rate_check(self, peer: _PeerState) -> str:
+        """Per-peer inbound message-rate guard (ANM-H03/H04 DoS cap).
+
+        Returns one of:
+          "ok"   — within budget, process the message normally
+          "shed" — momentarily over budget: drop THIS message but keep the peer
+          "ban"  — sustained flood: caller should penalize + disconnect
+
+        Exempt, docker-local (and thereby trusted-local) peers are never
+        throttled. Uses a per-peer token bucket sized generously enough that a
+        legitimate peer — even mid block/header sync — never trips it.
+        """
+        if not self._peer_msg_rate_enabled:
+            return "ok"
+        host = self._extract_host(peer.remote) or ""
+        if self._is_peer_exempt(peer.remote) or (host and self._is_docker_local(host)):
+            return "ok"
+        now = time.monotonic()
+        if not peer.rl_primed:
+            peer.rl_primed = True
+            peer.rl_last_mono = now
+            peer.rl_tokens = self._peer_msg_rate_burst
+        else:
+            dt = now - peer.rl_last_mono
+            if dt > 0:
+                peer.rl_tokens = min(
+                    self._peer_msg_rate_burst,
+                    peer.rl_tokens + dt * self._peer_msg_rate_per_s,
+                )
+                peer.rl_last_mono = now
+        if peer.rl_tokens >= 1.0:
+            peer.rl_tokens -= 1.0
+            # Forgive accrued strikes once comfortably back under budget so a
+            # brief burst never leaves a long-lived peer one strike from a ban.
+            if peer.rl_strikes and peer.rl_tokens > (self._peer_msg_rate_burst * 0.5):
+                peer.rl_strikes = max(0, peer.rl_strikes - 1)
+            return "ok"
+        # Over budget.
+        peer.rl_strikes += 1
+        wnow = time.time()
+        if wnow - peer.rl_last_warn_s > 5.0:
+            peer.rl_last_warn_s = wnow
+            log.warning(
+                "Peer exceeded inbound message rate",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id or "unknown",
+                    "strikes": peer.rl_strikes,
+                    "rate_per_s": self._peer_msg_rate_per_s,
+                    "burst": self._peer_msg_rate_burst,
+                },
+            )
+        if peer.rl_strikes >= self._peer_msg_rate_max_strikes:
+            return "ban"
+        return "shed"
+
     async def _peer_loop(self, peer: _PeerState) -> None:
         # Send HELLO immediately (both sides do this; handler is symmetric).
         try:
@@ -6948,6 +7053,20 @@ class P2PService:
                     break
                 self._peer_registry.mark_seen(peer.session_id)
                 peer.last_msg_at = time.time()
+                # ANM-H03/H04: shed / disconnect peers that flood us with
+                # messages before spending CPU on decode + dispatch.
+                verdict = self._inbound_rate_check(peer)
+                if verdict == "ban":
+                    self._penalize_peer(
+                        peer,
+                        "msg_rate_flood",
+                        points=self._score_points["malformed_message"],
+                        ban_ttl=self._peer_msg_rate_ban_ttl,
+                    )
+                    disconnect_reason = "msg_rate_flood"
+                    break
+                if verdict == "shed":
+                    continue
                 try:
                     frame = unpack_frame(data, aead=None)
                 except Exception:
