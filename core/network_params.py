@@ -173,11 +173,20 @@ FORK_PQ_HARDENING = "pq_hardening"
 FORK_ROOT_COMMITMENT = "root_commitment"
 
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
-    # Mainnet head was ~36,388 when 6.0.0 was cut; 37,000 leaves margin for the
-    # pool + all nodes to upgrade. Retune with ANIMICA_FORK_PQ_HARDENING_HEIGHT.
+    # Mainnet consensus activation. 6.0.0 rolls out node-by-node; a consensus rule
+    # must NOT activate until the network is substantially upgraded, or an early
+    # upgraded node becomes a lone enforcer and risks forking off the (un-upgraded)
+    # majority. The original 37,000 assumed the whole network would upgrade within
+    # ~4h of head ~36,388, which did not happen — so it is deferred to 100,000
+    # (~29 days of runway at ~30s blocks) to allow the pip 6.0.0 rollout + pool/
+    # operator coordination. This height is P2P-transparent: it is NOT folded into
+    # the network params-hash (mainnet's fingerprint is pinned), so upgraded and
+    # legacy nodes still peer normally during the runway. Set the FINAL coordinated
+    # height (here or via ANIMICA_FORK_PQ_HARDENING_HEIGHT / _ROOT_COMMITMENT_HEIGHT)
+    # once network-wide 6.0.0 adoption is confirmed.
     ("mainnet", 1): {
-        FORK_PQ_HARDENING: 37_000,
-        FORK_ROOT_COMMITMENT: 37_000,
+        FORK_PQ_HARDENING: 100_000,
+        FORK_ROOT_COMMITMENT: 100_000,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {
