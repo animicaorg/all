@@ -38,8 +38,44 @@ Public API:
 These are re-exported from core.encoding.__init__.
 """
 
+import logging
+import os
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Iterable, List, Tuple
+
+_log = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ANM-M05: strict minimal-length enforcement on decode (RFC 8949 §4.2.1
+# "Deterministic Encoding"). The canonical ENCODER in this module already emits
+# ONLY minimal-length additional-info encodings (see ``_ai_bytes``), so nothing
+# this system PRODUCES is ever non-minimal and ``dumps(loads(x)) == x`` holds
+# for every ``x`` produced by ``dumps``. When this flag is enabled the decoder
+# REJECTS non-minimal integer/length encodings (additional-info 24 with a value
+# < 24, 25 with a value < 256, 26 with a value < 65536, 27 with a value < 2**32),
+# which closes the txid-malleability gap (ANM-M05 / ANM-H09).
+#
+# It defaults OFF because ``loads`` sits on the block-import (core/chain/
+# block_import.py) and on-disk state/block/snapshot/tx-index read paths, so
+# turning it on is consensus- and DB-read-affecting: it must be enabled
+# FORWARD-ONLY after an operator confirms every stored and in-flight byte is
+# minimally encoded. A loud warning is emitted when it is enabled.
+STRICT_MINIMAL = _env_flag("ANIMICA_CBOR_STRICT_MINIMAL", default=False)
+
+if STRICT_MINIMAL:  # pragma: no cover - depends on operator env
+    _log.warning(
+        "core.encoding.cbor: ANIMICA_CBOR_STRICT_MINIMAL is ENABLED — the CBOR "
+        "decoder will REJECT non-minimal integer/length encodings. This is "
+        "stricter than the network default and is consensus/DB-read affecting; "
+        "ensure all stored and peer-supplied bytes are minimally encoded."
+    )
 
 # ------------------------
 # Low-level encode helpers
@@ -242,13 +278,32 @@ def _read_ai(buf: _Buf) -> Tuple[int, int]:
     if ai < 24:
         return major, ai
     if ai == 24:
-        return major, int.from_bytes(buf.get(1), "big")
+        v = int.from_bytes(buf.get(1), "big")
+        # ANM-M05: additional-info 24 must carry a value >= 24 (values < 24 must
+        # be inlined into the initial byte). Applied to major type 7 too, where
+        # our subset only permits false/true/null (ai < 24) anyway.
+        if STRICT_MINIMAL and v < 24:
+            raise DecodeError("non-minimal integer/length encoding (ai=24, value<24)")
+        return major, v
     if ai == 25:
-        return major, int.from_bytes(buf.get(2), "big")
+        v = int.from_bytes(buf.get(2), "big")
+        if STRICT_MINIMAL and v < 0x100:
+            raise DecodeError("non-minimal integer/length encoding (ai=25, value<256)")
+        return major, v
     if ai == 26:
-        return major, int.from_bytes(buf.get(4), "big")
+        v = int.from_bytes(buf.get(4), "big")
+        if STRICT_MINIMAL and v < 0x10000:
+            raise DecodeError(
+                "non-minimal integer/length encoding (ai=26, value<65536)"
+            )
+        return major, v
     if ai == 27:
-        return major, int.from_bytes(buf.get(8), "big")
+        v = int.from_bytes(buf.get(8), "big")
+        if STRICT_MINIMAL and v < 0x100000000:
+            raise DecodeError(
+                "non-minimal integer/length encoding (ai=27, value<2**32)"
+            )
+        return major, v
     raise DecodeError("indefinite lengths are not allowed (deterministic only)")
 
 
