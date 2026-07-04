@@ -241,7 +241,10 @@ def apply_block(
                     LogEvent(
                         address=b"\x00" * 20,
                         topics=[b"executor.error"],
-                        data=str(exc).encode(),
+                        # ANM-L02: deterministic error code, not freeform exception
+                        # text (which varies by Python version/platform/locale and
+                        # would split honest nodes once the logs root is committed).
+                        data=b"err:" + type(exc).__name__.encode("ascii", "replace"),
                     )
                 ],
                 state_root=_state_root(state),
