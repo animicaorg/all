@@ -174,9 +174,12 @@ def assert_required_pq_for_chain(
 
     status = get_signature_policy_status()
     scheme_map = {int(s.get("schemeId", -1)): s for s in status.get("schemes", [])}
+    # ANM-C01: mainnet must require the real FIPS-204 scheme (ml_dsa_65 / 11),
+    # NOT the forgeable commitment stubs 1 & 2. This dict was hardcoded to
+    # {dilithium3, sphincs} which forced the forgeable schemes to stay enabled at
+    # startup (the root of C01). The node fails closed if ml_dsa_65 is unavailable.
     required = {
-        SCHEME_DILITHIUM3: "dilithium3",
-        SCHEME_SPHINCS_SHAKE_128S: "sphincs_shake_128s",
+        SCHEME_ML_DSA_65: "ml_dsa_65",
     }
     missing: list[str] = []
     for sid, name in required.items():
