@@ -71,6 +71,7 @@ from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from core.utils.tx import normalize_tx_envelope
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
+from core.network_params import FORK_PQ_HARDENING, is_fork_active
 from execution.runtime.env import make_block_env
 from execution.runtime.executor import apply_block
 from execution.state.apply_balance import (
@@ -381,6 +382,89 @@ def _validate_coinbase_outputs_nonzero(block: Block) -> None:
         to_addr = getattr(payload, "to", None) if payload is not None else None
         if to_addr is not None and _is_zero_address(to_addr):
             raise BlockImportError("invalid coinbase: zero-address output is forbidden")
+
+
+def _pq_hardening_shadow() -> bool:
+    """ANIMICA_PQ_HARDENING_SHADOW=1 -> observe-only: log a would-be rejection but
+    do not reject. A safety valve for rolling out the block-import signature gate
+    under the 'never halt the chain' constraint: run it in shadow first, confirm
+    zero false rejections against live blocks, then unset it to enforce.
+    """
+    return os.getenv("ANIMICA_PQ_HARDENING_SHADOW", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _scan_block_tx_signatures(block: Block, chain_id: int) -> Optional[str]:
+    """Verify each non-coinbase tx signature; return a reason on the first failure.
+
+    Reuses the exact decode+verify path the P2P peer-gate runs on every gossiped
+    tx (rpc.methods.tx._decode_tx + _verify_pq_signature), so a legitimately
+    signed block cannot be false-rejected: those very txs already pass gossip.
+    Fail-closed: an unavailable PQ verify backend or an un-encodable tx rejects
+    rather than admits unverified.
+    """
+    try:
+        from rpc.methods import tx as tx_methods
+    except Exception as e:  # pragma: no cover - rpc always present in a running node
+        return f"pq_verify_unavailable:{e}"
+    # Fail-closed: a missing PQ verify backend must reject, never silently skip.
+    if (
+        getattr(tx_methods, "_pq_verify", None) is None
+        and getattr(tx_methods, "_pq_verify_tx", None) is None
+    ):
+        return "pq_verify_backend_missing"
+    for idx, tx in enumerate(getattr(block, "txs", ()) or ()):
+        if _is_coinbase_tx(tx):
+            continue
+        try:
+            if isinstance(tx, (bytes, bytearray)):
+                raw_cbor = bytes(tx)
+            elif hasattr(tx, "to_cbor"):
+                raw_cbor = tx.to_cbor()
+            else:
+                nb = getattr(tx_methods, "normalize_tx_bytes", None)
+                raw_cbor = nb(tx) if nb is not None else None
+            if raw_cbor is None:
+                return f"tx_encode_failed[{idx}]"
+            tx_like, obj = tx_methods._decode_tx(raw_cbor)
+            tx_methods._verify_pq_signature(tx_like, obj, chain_id=int(chain_id))
+        except Exception as e:
+            return f"tx_sig_invalid[{idx}]:{type(e).__name__}:{e}"
+    return None
+
+
+def _verify_block_tx_signatures_gated(
+    block: Block, height: int, chain_id: int
+) -> Optional[str]:
+    """ANM-M07 / ANM-C01 forward-only gate: verify every non-coinbase tx signature
+    at block import once pq_hardening is active for the chain.
+
+    Returns a rejection reason (str) or None to accept. Grandfathered below the
+    activation height (existing history is never re-validated).
+
+    This closes the hostile-miner drain vector that bypasses the mempool: the
+    executor derives the debited account from the tx's signature pubkey but never
+    checks the signature, so without import-time verification a miner could spend
+    from any account whose pubkey is public by attaching a garbage signature.
+    """
+    if not is_fork_active(FORK_PQ_HARDENING, height, chain_id=chain_id):
+        return None
+    reason = _scan_block_tx_signatures(block, chain_id)
+    if reason is None:
+        return None
+    if _pq_hardening_shadow():
+        log.error(
+            "pq_hardening SHADOW: block would be rejected (observe-only)",
+            extra={"height": height, "reason": reason},
+        )
+        return None
+    return reason
+
+
 def _is_coinbase_tx(tx: Any) -> bool:
     unsigned = _tx_unsigned(tx)
     if unsigned is None:
@@ -1252,6 +1336,20 @@ class BlockImporter:
             )
             if pow_error is not None:
                 return ImportResult(ImportErrorCode.INVALID, height, h, False, pow_error)
+
+            # ANM-M07 / ANM-C01: forward-only gated block-import signature check.
+            # At/after the pq_hardening activation height, every non-coinbase tx
+            # signature is verified here (fail-closed) so a hostile miner cannot
+            # bypass mempool verification and spend from accounts it does not own.
+            # Grandfathered below the height; reuses the proven P2P verify path so
+            # legit blocks are never false-rejected.
+            sig_error = _verify_block_tx_signatures_gated(
+                block, height, int(self.params.chain_id)
+            )
+            if sig_error is not None:
+                return ImportResult(
+                    ImportErrorCode.INVALID, height, h, False, f"tx_signature: {sig_error}"
+                )
 
             # Persist header & block
             self._store_header(height, h, header)
