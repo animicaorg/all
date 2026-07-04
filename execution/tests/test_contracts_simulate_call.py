@@ -149,7 +149,13 @@ def _package_blob(manifest: dict[str, Any], code_bytes: bytes) -> bytes:
     return cbor2.dumps({"manifest": manifest, "code": bytes(code_bytes)}, canonical=True)
 
 
-def test_apply_deploy_apply_call_and_simulate_get_counter_flow() -> None:
+def test_apply_deploy_apply_call_and_simulate_get_counter_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ANM-C05/C06: raw contract exec() is disabled by default in 6.0.0.
+    # This test exercises the controlled deploy/call/simulate path, so opt in
+    # to the dev/test-only unsafe-exec flag (never enabled on real nodes).
+    monkeypatch.setenv("ANIMICA_VM_ALLOW_UNSAFE_EXEC", "1")
     sender = b"\x11" * 32
     state = _State()
     state.set_balance(sender, 1_000_000)
@@ -201,7 +207,13 @@ def test_apply_deploy_apply_call_and_simulate_get_counter_flow() -> None:
     assert decode_return(abi_entries, "get", raw_get) == 1
 
 
-def test_simulate_call_is_read_only_and_does_not_mutate_state() -> None:
+def test_simulate_call_is_read_only_and_does_not_mutate_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ANM-C05/C06: raw contract exec() is disabled by default in 6.0.0.
+    # simulate_call runs the contract method, so opt in to the dev/test-only
+    # unsafe-exec flag (never enabled on real nodes).
+    monkeypatch.setenv("ANIMICA_VM_ALLOW_UNSAFE_EXEC", "1")
     sender = b"\x22" * 32
     contract_addr = b"\x33" * 32
     state = _State()

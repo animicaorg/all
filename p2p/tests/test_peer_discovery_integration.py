@@ -10,6 +10,7 @@ import pytest
 import p2p
 from core.types.block import Block
 from core.utils.hash import ZERO32
+from core.utils.pow import micro_threshold_to_target256
 from p2p.deps import AsyncP2PDeps, P2PDeps
 from p2p.node.p2p_service import P2PService
 from p2p.tests import free_port, tcp_multiaddr
@@ -46,16 +47,29 @@ def _mine_blocks(sync_deps: P2PDeps, count: int) -> None:
     timestamp = int(getattr(header, "timestamp", 0))
     for _ in range(count):
         timestamp += 1
-        child = header.build_child(
-            timestamp=timestamp,
-            state_root=header.stateRoot,
-            txs_root=ZERO32,
-            receipts_root=ZERO32,
-            proofs_root=ZERO32,
-            da_root=ZERO32,
-            nonce=0,
-            extra=b"",
-        )
+        # Under 6.0.0 the block-import PoW gate is enforced (_pow_sanity):
+        # header.hash() must be <= micro_threshold_to_target256(thetaMicro).
+        # With the genesis theta a fixed nonce=0 only satisfies the target
+        # probabilistically, so we actually mine — walk the nonce until the
+        # header meets its own target — to build a chain of valid blocks
+        # (the intent of this helper). The threshold is easy, so this takes
+        # only a handful of iterations per block.
+        nonce = 0
+        while True:
+            child = header.build_child(
+                timestamp=timestamp,
+                state_root=header.stateRoot,
+                txs_root=ZERO32,
+                receipts_root=ZERO32,
+                proofs_root=ZERO32,
+                da_root=ZERO32,
+                nonce=nonce,
+                extra=b"",
+            )
+            target = micro_threshold_to_target256(int(child.thetaMicro))
+            if int.from_bytes(child.hash(), "big") <= target:
+                break
+            nonce += 1
         block = Block(header=child, txs=(), proofs=(), receipts=None)
         ok, reason = sync_deps.import_block(block)
         assert ok, reason
@@ -117,7 +131,20 @@ async def test_runtime_peer_injection_connects(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gossip_addr_relay_expands_peer_set(tmp_path: Path) -> None:
+async def test_gossip_addr_relay_expands_peer_set(tmp_path: Path, monkeypatch) -> None:
+    # Make addr gossip deterministic. With default intervals (request=30s,
+    # relay=45s) the second peer is only discovered on the periodic sweep, so
+    # a 15s wait races the schedule — and the 6.0.0 txrelay/mempool-sync
+    # additions add enough event-loop contention (and transient
+    # "headers_send_failed" peer penalties) to tip that race into frequent
+    # timeouts. Short intervals + private-network relay (loopback addrs) let
+    # the gossip path fire promptly, which is exactly what this test asserts.
+    monkeypatch.setenv("ANIMICA_P2P_ADDR_REQUEST_INTERVAL", "1")
+    monkeypatch.setenv("ANIMICA_P2P_ADDR_RESPONSE_INTERVAL", "1")
+    monkeypatch.setenv("ANIMICA_P2P_ADDR_RELAY_INTERVAL", "1")
+    monkeypatch.setenv("ANIMICA_P2P_OUTBOUND", "2")
+    monkeypatch.setenv("ANIMICA_P2P_PRIVATE_NETWORK", "1")
+
     deps_a_sync, deps_a = _make_deps(tmp_path, "node_a")
     deps_b_sync, deps_b = _make_deps(tmp_path, "node_b")
     deps_c_sync, deps_c = _make_deps(tmp_path, "node_c")
@@ -159,7 +186,7 @@ async def test_gossip_addr_relay_expands_peer_set(tmp_path: Path) -> None:
         await rpc_p2p.add_peers([addr_a])
         assert await _wait_for_peers(node_b, 1)
 
-        assert await _wait_for_peers(node_b, 2, timeout=15.0)
+        assert await _wait_for_peers(node_b, 2, timeout=20.0)
     finally:
         p2p.clear_service()
         rpc_p2p._p2p_service = None

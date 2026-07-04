@@ -11,8 +11,11 @@ def test_assert_required_pq_for_chain_passes_when_required_enabled(monkeypatch):
         "get_signature_policy_status",
         lambda: {
             "schemes": [
+                # ANM-C01: mainnet now requires the real FIPS-204 scheme
+                # ml_dsa_65 (scheme id 11), not the forgeable stubs 1 & 2.
                 {"schemeId": 1, "enabledEffective": True},
                 {"schemeId": 2, "enabledEffective": True},
+                {"schemeId": crypto.SCHEME_ML_DSA_65, "enabledEffective": True},
             ]
         },
     )

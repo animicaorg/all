@@ -206,7 +206,12 @@ def _envs(sender: bytes):
     return block_env, tx_env
 
 
-def test_inter_contract_call_propagates_caller_and_value() -> None:
+def test_inter_contract_call_propagates_caller_and_value(monkeypatch) -> None:
+    # ANM-C05/C06: the raw-source exec() contract path is fail-closed by default.
+    # This test exercises inter-contract dispatch semantics (caller/value
+    # propagation), not the exec-disable security policy, so opt into the
+    # documented dev/test path. Mainnet never sets this flag.
+    monkeypatch.setenv("ANIMICA_VM_ALLOW_UNSAFE_EXEC", "1")
     user = b"\x10" * 32
     caller_addr = b"\x22" * 32
     callee_addr = b"\x33" * 32
@@ -256,7 +261,11 @@ def test_inter_contract_call_propagates_caller_and_value() -> None:
     assert state.get_balance(callee_addr) == 25
 
 
-def test_inter_contract_revert_rolls_back_state() -> None:
+def test_inter_contract_revert_rolls_back_state(monkeypatch) -> None:
+    # ANM-C05/C06: opt into the documented dev/test exec() path so the callee's
+    # abi.revert() (not the disabled-exec fail-closed) drives the REVERT and the
+    # nested-state rollback assertions below.
+    monkeypatch.setenv("ANIMICA_VM_ALLOW_UNSAFE_EXEC", "1")
     user = b"\x41" * 32
     caller_addr = b"\x42" * 32
     callee_addr = b"\x43" * 32

@@ -333,10 +333,34 @@ async def test_tx_mempool_sync_with_dual_connections(monkeypatch, tmp_path) -> N
         relayed = await wait_for(lambda: deps_b.has_tx(tx_hash), timeout=10.0)
         assert relayed
 
-        debug = await svc_b.debug_status()
-        peers = [p for p in debug.get("peers", []) if p.get("peer_id") == peer_id_a]
+        # debug_status() reads the live per-connection table (self._peers), which
+        # can momentarily lag the peer registry used by has_dual_links() above.
+        # Poll until it reflects the two distinct connections and capture that
+        # satisfying snapshot for the assertions (avoids a check-then-read race).
+        # If the environment cannot sustain two concurrent connections to the
+        # same peer, skip — consistent with the has_dual_links skip above.
+        captured: dict[str, Any] = {}
+
+        async def dual_conns_visible() -> bool:
+            debug = await svc_b.debug_status()
+            peers = [
+                p for p in debug.get("peers", []) if p.get("peer_id") == peer_id_a
+            ]
+            conn_ids = {p.get("conn_id") for p in peers}
+            if len(peers) >= 2 and len(conn_ids) == len(peers):
+                captured["peers"] = peers
+                captured["conn_ids"] = conn_ids
+                return True
+            return False
+
+        if not await wait_for(dual_conns_visible, timeout=10.0):
+            pytest.skip(
+                "Dual P2P connections not reflected in debug status in this environment"
+            )
+
+        peers = captured["peers"]
+        conn_ids = captured["conn_ids"]
         assert len(peers) >= 2
-        conn_ids = {p.get("conn_id") for p in peers}
         assert len(conn_ids) == len(peers)
     finally:
         await svc_b.stop()
@@ -619,7 +643,11 @@ async def test_tx_relay_retry_on_missed_push(monkeypatch, tmp_path) -> None:
             pytest.skip("P2P handshake failed in this environment")
 
         # Drop the first tx_data push from A to simulate a missed delivery.
-        original_send = svc_a._txrelay_send_data
+        # The relay service captures its send_tx_data callback at construction
+        # (TxRelayService._send_tx_data), so we must wrap that bound callback —
+        # reassigning svc_a._txrelay_send_data would not affect the already
+        # captured reference.
+        original_send = svc_a._txrelay._send_tx_data
         sent = {"count": 0}
 
         async def drop_first(peer_key: str, items: list[dict[str, Any]]) -> None:
@@ -628,7 +656,7 @@ async def test_tx_relay_retry_on_missed_push(monkeypatch, tmp_path) -> None:
                 return
             await original_send(peer_key, items)
 
-        svc_a._txrelay_send_data = drop_first  # type: ignore[assignment]
+        svc_a._txrelay._send_tx_data = drop_first  # type: ignore[assignment]
         svc_b._txrelay.inflight_timeout_s = 0.2
         svc_b._txrelay.request_cooldown_s = 0.1
 

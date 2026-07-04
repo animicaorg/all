@@ -8,6 +8,73 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [6.0.0] - 2026-07-04
+Security & consensus hardening release. Closes the findings in the internal
+Security & Consensus Findings Report. **Every consensus change is forward-only and
+height-gated** (mainnet activation H=37000, tunable via `ANIMICA_FORK_*_HEIGHT`),
+grandfathering all existing history — **no genesis reset, no hard fork**, and no
+legitimately-mined historical block is rejected. Node-local hardening (RPC, P2P,
+snapshot, wallet, mempool) is always-on and independent of the activation height.
+
+### Migration
+- **Nodes and the pool/miner must upgrade before H=37000.** At that height,
+  upgraded nodes begin enforcing mandatory transaction-signature verification
+  (ml_dsa_65 / alg 0x1003 only), txsRoot/proofsRoot commitment, and deterministic
+  emission. A node that upgrades while the network does not — or that still accepts
+  stub-scheme (0x1001/0x1002) transactions — will orphan non-compliant blocks.
+- **RPC:** sensitive methods can now require a bearer token
+  (`ANIMICA_RPC_AUTH_TOKEN`) and be denylisted (`ANIMICA_RPC_RESTRICT_SENSITIVE`);
+  CORS-credentials no longer defaults open.
+- **Wallet:** `wallets.json` is encrypted at rest when a passphrase is provided
+  (`animica wallet create --password`, `ANIMICA_WALLET_PASSPHRASE[_FILE]`, or
+  `animica wallet encrypt`); plaintext stores still load (with a warning).
+- **Mempool** now enforces a min-fee floor, per-sender caps, funded-sender and
+  mandatory signature verification on mainnet (all env-tunable).
+
+### Fixed — Critical
+- **Forgeable post-quantum signature schemes (ANM-C01).** Schemes 1 (dilithium3)
+  and 2 (sphincs) verified via a public hash with no secret, so anyone with a
+  public key could forge a valid signature and — because accounts are keyed by
+  `sha3_256(pubkey)` with the alg id stripped — drain the victim's real account.
+  Only the FIPS-204 scheme ml_dsa_65 (0x1003) is now accepted; the stubs are
+  rejected at both signature stacks.
+- **Block import applied balances with no signature verification (ANM-C02).** A
+  hostile miner could include unsigned/forged transfers. Import now verifies every
+  transaction signature (height-gated, fail-closed).
+- **Contract `exec()` remote code execution + unbounded-loop DoS (ANM-C05/C06).**
+  The raw-`exec()` contract path is fail-closed by default; contracts REVERT.
+- **Header roots never validated on import (ANM-C03).** A PoW-valid header could
+  carry a different transaction or proof set and diverge nodes silently. txsRoot
+  and proofsRoot are now verified on import (self-gating, grandfathered); the
+  post-execution state root is computed and shadow-logged for a later enforcement.
+- **Plaintext wallet private keys (ANM-C07).** At-rest AES-256-GCM encryption.
+- **Unauthenticated RPC + snapshot import path traversal / silent divergence
+  (ANM-C08/C10/C11).** Opt-in RPC auth; snapshot path validation, caps, and a
+  completeness gate before head is set.
+
+### Fixed — High / Medium / Low (selected)
+- Deterministic difficulty (θ) warmup independent of node uptime (ANM-H01).
+- Exact-integer block emission — proven value-preserving — removing the float
+  determinism hazard; reward computation fails closed (ANM-H08/M04).
+- Mempool: fee floor, per-sender caps, nonce-aware eviction, mandatory
+  signatures, block-mineability bounds (ANM-H07/H10/M08/M09).
+- Canonical transaction id + strict-minimal CBOR (gated) closing txid
+  malleability (ANM-H09/M10/M05/L07).
+- P2P: bounded decompression + per-peer rate limiting; refuse insecure AEAD
+  downgrade (ANM-H03/H04/L01).
+- Deterministic error codes in consensus-hashed logs (ANM-L02); secure wallet
+  scheme defaults + mainnet insecure-keygen guard (ANM-M07); genesis alloc-cap
+  enforced for new networks (ANM-M04).
+
+### Known limitations (tracked, not shipped in 6.0.0)
+- Full PoIES useful-work verification (ANM-C04) requires building the proof
+  verifier package and activating PoIES as a coordinated protocol upgrade; only
+  the proofsRoot commitment is enforced here.
+- P2P handshake authentication (ANM-C09/C10) is deferred to an opt-in negotiated
+  migration to avoid orphaning current peers.
+
+---
+
 ## [5.3.4] - 2026-07-03
 ### Fixed
 - **CRITICAL — GPU miners' useful-work AI generation crashed and took the PoW

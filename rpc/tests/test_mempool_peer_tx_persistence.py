@@ -3,8 +3,27 @@ Test that transactions from peers are persisted to pending.jsonl
 """
 from pathlib import Path
 
+import pytest
+
 from core.types.tx import Tx
 from rpc.mempool_service import MempoolService
+
+
+@pytest.fixture(autouse=True)
+def _mempool_persistence_test_env(monkeypatch):
+    """Scope these persistence tests to their original intent.
+
+    These tests verify mempool PERSISTENCE and REPLAY of (intentionally
+    unsigned) fixture transactions, not the ANM-H10 in-mempool signature
+    admission policy (which is a mainnet security invariant covered by
+    dedicated tests). The production code exposes ``ANIMICA_MEMPOOL_VERIFY_SIGS``
+    precisely as an emergency/test kill-switch for that invariant, so we opt the
+    unsigned fixture txs out of signature verification here without weakening any
+    production/security code. All other admission checks (fee floor, gas bounds,
+    funded-sender) still pass: the fixture offers a 1 gwei fee, uses exactly the
+    intrinsic gas limit, and runs with ``state_db=None``.
+    """
+    monkeypatch.setenv("ANIMICA_MEMPOOL_VERIFY_SIGS", "0")
 
 
 def _build_transfer_tx(nonce: int = 0) -> tuple[Tx, bytes]:

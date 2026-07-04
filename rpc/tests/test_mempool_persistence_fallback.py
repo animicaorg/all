@@ -38,6 +38,10 @@ def test_mempool_falls_back_to_memory_on_erofs(monkeypatch: pytest.MonkeyPatch, 
 
     monkeypatch.setattr(Path, "mkdir", failing_mkdir)
     monkeypatch.setenv("ANIMICA_MEMPOOL_REQUIRE_PERSIST", "0")
+    # This test exercises the EROFS persistence fallback, not signature
+    # admission policy (ANM-H10). Use the intended test kill-switch so the
+    # unsigned fixture tx is admitted and we can observe the fallback state.
+    monkeypatch.setenv("ANIMICA_MEMPOOL_VERIFY_SIGS", "0")
 
     service = MempoolService.create(
         chain_id=1,
@@ -70,6 +74,10 @@ def test_mempool_require_persist_raises_on_erofs(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(Path, "mkdir", failing_mkdir)
     monkeypatch.setenv("ANIMICA_MEMPOOL_REQUIRE_PERSIST", "1")
+    # This test exercises the require-persist EROFS path, not signature
+    # admission policy (ANM-H10). Use the intended test kill-switch so the
+    # unsigned fixture tx reaches persistence and raises PersistenceFailed.
+    monkeypatch.setenv("ANIMICA_MEMPOOL_VERIFY_SIGS", "0")
 
     service = MempoolService.create(
         chain_id=1,

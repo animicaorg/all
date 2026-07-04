@@ -152,6 +152,10 @@ def _as_hex32(value: bytes) -> str:
 
 
 def test_state_call_supports_canonical_and_alias_methods(monkeypatch: pytest.MonkeyPatch) -> None:
+    # ANM-C05/C06: the raw exec() simulation path is fail-closed by default.
+    # state_call simulation is a read-only, non-consensus dev path, so opt into
+    # the explicit developer flag for this controlled unit test.
+    monkeypatch.setenv("ANIMICA_VM_ALLOW_UNSAFE_EXEC", "1")
     state = _State()
     contract_addr = b"\x11" * 32
     manifest = _counter_manifest()
@@ -178,6 +182,10 @@ def test_state_call_supports_canonical_and_alias_methods(monkeypatch: pytest.Mon
 
 
 def test_state_call_is_read_only_and_does_not_mutate_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    # ANM-C05/C06: the raw exec() simulation path is fail-closed by default.
+    # state_call simulation is a read-only, non-consensus dev path, so opt into
+    # the explicit developer flag for this controlled unit test.
+    monkeypatch.setenv("ANIMICA_VM_ALLOW_UNSAFE_EXEC", "1")
     state = _State()
     contract_addr = b"\x22" * 32
     sender = b"\x99" * 32
