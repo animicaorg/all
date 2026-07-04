@@ -67,3 +67,27 @@ def test_txs_root_import_gate_grandfathers_and_catches():
     assert bi._verify_block_txs_root_gated(blk0, 37000, 1) is None
     # Unknown chain -> never enforced (forward-safe).
     assert bi._verify_block_txs_root_gated(blk, 10**9, 999) is None
+
+
+def test_proofs_root_import_gate():
+    """ANM-C04 slice: proofsRoot commitment is verified on the same gate."""
+    import types
+
+    from core.chain import block_import as bi
+
+    # Commits proofsRoot 0x22.. but proofs_root() computes 0x33.. -> mismatch at H.
+    blk = types.SimpleNamespace(
+        header=types.SimpleNamespace(txsRoot=ZERO32, proofsRoot=b"\x22" * 32),
+        txs=[],
+        proofs_root=lambda: b"\x33" * 32,
+    )
+    assert bi._verify_block_txs_root_gated(blk, 36999, 1) is None  # grandfathered
+    assert (bi._verify_block_txs_root_gated(blk, 37000, 1) or "").startswith("proofs_root_mismatch")
+
+    # Matching proofsRoot -> accepted.
+    blk_ok = types.SimpleNamespace(
+        header=types.SimpleNamespace(txsRoot=ZERO32, proofsRoot=b"\x44" * 32),
+        txs=[],
+        proofs_root=lambda: b"\x44" * 32,
+    )
+    assert bi._verify_block_txs_root_gated(blk_ok, 37000, 1) is None

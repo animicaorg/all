@@ -466,32 +466,51 @@ def _verify_block_tx_signatures_gated(
 
 
 def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Optional[str]:
-    """ANM-C03 forward-only gate: verify the header's committed txsRoot against the
-    block's actual transactions once root_commitment is active for the chain.
+    """ANM-C03/C04 forward-only gate: verify the header's committed txsRoot AND
+    proofsRoot against the block's actual transactions/proofs once root_commitment
+    is active for the chain.
 
-    Grandfathered below the activation height. Self-gating: only enforces when the
-    header commits a non-zero txsRoot, so a block that predates root sealing is
-    never false-rejected. The miner already seals txsRoot today, so this closes the
-    'same PoW header, different tx set -> silent divergence' hole (ANM-C03) with no
-    false-rejection of legitimately mined blocks.
+    Grandfathered below the activation height. Self-gating per root: only enforces a
+    root the header commits non-zero, so a block that predates root sealing is never
+    false-rejected. The miner already seals both roots today.
+
+    - txsRoot closes the 'same PoW header, different tx set -> silent divergence'
+      hole (ANM-C03).
+    - proofsRoot closes proof-swapping: the block's proofs must match what the PoW
+      header committed. This is ANM-C04's *implementable* slice; full PoIES
+      useful-work *validity* verification (validate_block) needs the proofs/ verifier
+      package, which does not exist in-tree — see SECURITY_6.0.0_STATUS.md.
     """
     if not is_fork_active(FORK_ROOT_COMMITMENT, height, chain_id=chain_id):
         return None
     header = getattr(block, "header", None)
-    committed = getattr(header, "txsRoot", None)
-    if not committed or bytes(committed) == b"\x00" * 32:
-        return None
-    try:
-        from core.chain.state_commit import compute_block_txs_root
 
-        computed = compute_block_txs_root(block)
-    except Exception as e:  # pragma: no cover - defensive
-        return f"txs_root_compute_failed:{e}"
-    if bytes(computed) != bytes(committed):
-        return (
-            f"txs_root_mismatch:computed={bytes(computed).hex()[:16]},"
-            f"header={bytes(committed).hex()[:16]}"
-        )
+    committed_tx = getattr(header, "txsRoot", None)
+    if committed_tx and bytes(committed_tx) != b"\x00" * 32:
+        try:
+            from core.chain.state_commit import compute_block_txs_root
+
+            computed_tx = compute_block_txs_root(block)
+        except Exception as e:  # pragma: no cover - defensive
+            return f"txs_root_compute_failed:{e}"
+        if bytes(computed_tx) != bytes(committed_tx):
+            return (
+                f"txs_root_mismatch:computed={bytes(computed_tx).hex()[:16]},"
+                f"header={bytes(committed_tx).hex()[:16]}"
+            )
+
+    committed_pr = getattr(header, "proofsRoot", None)
+    proofs_root_fn = getattr(block, "proofs_root", None)
+    if committed_pr and bytes(committed_pr) != b"\x00" * 32 and callable(proofs_root_fn):
+        try:
+            computed_pr = proofs_root_fn()
+        except Exception as e:  # pragma: no cover - defensive
+            return f"proofs_root_compute_failed:{e}"
+        if bytes(computed_pr) != bytes(committed_pr):
+            return (
+                f"proofs_root_mismatch:computed={bytes(computed_pr).hex()[:16]},"
+                f"header={bytes(committed_pr).hex()[:16]}"
+            )
     return None
 
 
@@ -2617,6 +2636,29 @@ class BlockImporter:
                         (committed_b.hex()[:16] if committed_b else "none"),
                         match,
                     )
+                    # Also surface the txs/proofs roots (enforced at H by the gate;
+                    # logging them pre-H lets operators confirm zero mismatches on a
+                    # live node before FORK_ROOT_COMMITMENT activates).
+                    for _name, _fn in (
+                        ("txs", getattr(block, "txs_root", None)),
+                        ("proofs", getattr(block, "proofs_root", None)),
+                    ):
+                        if not callable(_fn):
+                            continue
+                        _comp = bytes(_fn())
+                        _hdr = bytes(getattr(block.header, _name + "Root", b"") or b"")
+                        if _hdr and _hdr != b"\x00" * 32:
+                            _st = "match" if _hdr == _comp else "MISMATCH"
+                        else:
+                            _st = "uncommitted"
+                        log.info(
+                            "root_commitment SHADOW: height=%d %s_root computed=%s header=%s %s",
+                            height,
+                            _name,
+                            _comp.hex()[:16],
+                            (_hdr.hex()[:16] if _hdr else "none"),
+                            _st,
+                        )
                 except Exception as e:  # pragma: no cover - never break apply
                     log.debug("root_commitment SHADOW: compute failed: %s", e)
 
