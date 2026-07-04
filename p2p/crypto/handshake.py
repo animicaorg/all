@@ -305,10 +305,25 @@ class _TcpAead:
                 self.impl = AESGCM(key)
             else:
                 self.impl = ChaCha20Poly1305(key)
-        except Exception:  # pragma: no cover - minimal environments
-            # Fallback: lightweight pure-Python stream "AEAD" suitable for tests/dev only.
-            # It provides confidentiality + an integrity tag, but is not intended
-            # to be a production-grade AEAD replacement.
+        except Exception as _crypto_exc:  # pragma: no cover - minimal environments
+            # ANM-L01: do NOT silently downgrade to the hand-rolled pure-Python
+            # stream "AEAD" (dev/test only — not a production-grade AEAD). Refuse
+            # unless an operator explicitly opts in, so a minimal/broken production
+            # environment fails loudly instead of running weak crypto.
+            import os as _os
+
+            if _os.getenv("ANIMICA_ALLOW_PURE_AEAD") != "1":
+                raise HandshakeError(
+                    "no production AEAD backend available (install 'cryptography'); "
+                    "refusing the insecure pure-Python fallback "
+                    "(set ANIMICA_ALLOW_PURE_AEAD=1 for dev/test only)"
+                ) from _crypto_exc
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "ANM-L01: using INSECURE pure-Python AEAD fallback "
+                "(ANIMICA_ALLOW_PURE_AEAD=1) — not for production"
+            )
             self._pure = True
             self.impl = None
 
