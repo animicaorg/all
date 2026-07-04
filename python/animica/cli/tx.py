@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -138,15 +139,57 @@ def _load_wallet_entry(address: str) -> dict[str, Any]:
 
     for w in entries:
         if str(w.get("address")) == address:
-            return w
+            return _unlock_entry_secret(w, address)
     raise RuntimeError(f"Address not found in {wallet_path}: {address}")
+
+
+def _unlock_entry_secret(entry: dict[str, Any], address: str) -> dict[str, Any]:
+    """Return a wallet entry with a usable plaintext ``secret_key_hex`` (ANM-C07).
+
+    Plaintext entries pass through unchanged. Encrypted entries are decrypted in
+    memory using a passphrase from the environment or, if a TTY is attached, an
+    interactive prompt. The persisted store is never mutated by this helper.
+    """
+    # Lazy import: animica.wallet.at_rest pulls in animica.wallet.payment, which
+    # imports this module — importing it at module load would be circular.
+    from animica.wallet import at_rest
+
+    has_plain = bool(entry.get("secret_key_hex") or entry.get("secretKeyHex"))
+    env = entry.get("secret_key_enc")
+    if has_plain or not at_rest.is_encrypted_secret(env):
+        return entry
+
+    secret = at_rest.resolve_passphrase(None)
+    if not secret and sys.stdin.isatty():
+        import getpass
+
+        try:
+            secret = getpass.getpass(
+                "Wallet passphrase (to unlock the encrypted secret key): "
+            ) or None
+        except Exception:
+            secret = None
+    if not secret:
+        raise RuntimeError(
+            "Wallet secret is encrypted at rest (ANM-C07); set "
+            "ANIMICA_WALLET_PASSPHRASE (or ANIMICA_WALLET_PASSPHRASE_FILE) to "
+            "unlock and sign."
+        )
+    try:
+        unlocked = dict(entry)
+        unlocked["secret_key_hex"] = at_rest.decrypt_secret_hex(env, secret, address=address)
+        return unlocked
+    except at_rest.WalletEncryptionError as exc:
+        raise RuntimeError(
+            f"Failed to decrypt wallet secret (wrong passphrase or corrupt data): {exc}"
+        ) from exc
 
 
 def _wallet_store_path() -> Path:
     return Path.home() / ".animica" / "wallets.json"
 
 
-def _load_wallet_store(path: Path) -> dict[str, Any]:
+def _load_wallet_store(path: Path, *, passphrase: Optional[str] = None) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Wallet store not found at {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -154,12 +197,37 @@ def _load_wallet_store(path: Path) -> dict[str, Any]:
         raise RuntimeError(f"Unexpected wallets.json format at {path}")
     if "wallets" not in data:
         raise RuntimeError(f"Malformed wallet store at {path}")
+    # ANM-C07: transparently decrypt at-rest secrets when a passphrase is
+    # available (arg or ANIMICA_WALLET_PASSPHRASE[_FILE]). Without one, encrypted
+    # entries stay sealed and the signer path raises a clear, actionable error.
+    from animica.wallet import at_rest  # lazy: avoid circular import
+
+    if at_rest.store_is_encrypted(data):
+        secret = at_rest.resolve_passphrase(passphrase)
+        if secret:
+            data = at_rest.decrypt_store_secrets(data, secret)
     return data
 
 
 def _save_wallet_store(path: Path, store: dict[str, Any]) -> None:
+    from animica.wallet import at_rest  # lazy: avoid circular import
+
     ensure_file_dir(path, sensitive=True)
-    path.write_text(json.dumps(store, indent=2), encoding="utf-8")
+    to_write = store
+    # ANM-C07: never re-persist a transiently-decrypted plaintext secret next to
+    # its encrypted envelope. If an entry has a valid envelope, strip any
+    # in-memory plaintext before writing so the on-disk store stays encrypted.
+    if at_rest.store_is_encrypted(store):
+        to_write = dict(store)
+        wallets = []
+        for w in store.get("wallets", []):
+            if isinstance(w, dict) and at_rest.is_encrypted_secret(w.get("secret_key_enc")):
+                w = dict(w)
+                w.pop("secret_key_hex", None)
+                w.pop("secretKeyHex", None)
+            wallets.append(w)
+        to_write["wallets"] = wallets
+    path.write_text(json.dumps(to_write, indent=2), encoding="utf-8")
     secure_file(path)
 
 
@@ -1595,10 +1663,22 @@ def send(
                 f"provide signing keys using --secret-key-hex, --public-key-hex, and --alg-id options."
             )
         
-        used_alg_id = int(w.get("alg_id") or w.get("algId") or 0x1001)
+        # ANM-M07: default a missing alg_id to ml_dsa_65 (0x1003, real FIPS 204),
+        # never the forgeable dilithium3 stub (0x1001).
+        used_alg_id = int(w.get("alg_id") or w.get("algId") or 0x1003)
         pk_hex = str(w.get("public_key_hex") or w.get("publicKeyHex") or "")
         sk_hex = str(w.get("secret_key_hex") or w.get("secretKeyHex") or "")
 
+        if not sk_hex:
+            from animica.wallet import at_rest  # lazy: avoid circular import
+
+            if at_rest.is_encrypted_secret(w.get("secret_key_enc")):
+                # Should have been unlocked by _load_wallet_entry; this is a
+                # defensive backstop with an actionable message.
+                raise RuntimeError(
+                    "wallet secret is encrypted at rest; set "
+                    "ANIMICA_WALLET_PASSPHRASE to unlock and sign"
+                )
         if not pk_hex or not sk_hex:
             raise RuntimeError("wallet entry missing public_key_hex or secret_key_hex")
 
