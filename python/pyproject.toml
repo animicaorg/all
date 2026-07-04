@@ -34,6 +34,10 @@ dependencies = [
   "web3>=7.14.0,<8.0.0",
   "pyyaml>=6.0.1",
   "cbor2>=5.6.0",
+  # ANM-L01: production AEAD backend for the P2P transport (ChaCha20-Poly1305 /
+  # AES-GCM). Without it the handshake falls back to the insecure pure-Python AEAD
+  # (allowed with a warning by default; ANIMICA_STRICT_AEAD=1 refuses instead).
+  "cryptography>=42.0.0",
   "requests>=2.31.0",
   "fastapi>=0.115.0,<0.116.0",
   "uvicorn[standard]>=0.30.0,<1.0.0",

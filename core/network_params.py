@@ -251,12 +251,46 @@ def get_expected_genesis_hash(chain_id: int) -> Optional[bytes]:
     return params.expected_genesis_block_hash
 
 
+# ANM-6.0.0 P2P deploy blocker: compute_network_params_hash() below hashes the RAW
+# BYTES of this module (+ params.py / consensus/types.py). That made the P2P
+# fingerprint drift on ANY edit to this file — even a comment or a *dormant* forward
+# fork (e.g. adding FORK_ROOT_COMMITMENT with activation H=37000) — which fragmented an
+# upgraded node from every peer still on the prior release: the handshake rejects on
+# network_params_mismatch, and also on consensus_mismatch because
+# core/chain/identity.py::_consensus_id_fingerprint folds this same hash into the
+# consensus-id. So the forward-only / height-gated strategy did NOT survive at the P2P
+# layer. To let upgraded and legacy nodes COEXIST during the rollout runway before a
+# fork activates, the fingerprint for a live network is PINNED to its canonical value,
+# decoupling P2P identity from source edits — the intended "future forks do not change
+# the P2P identity" behavior. Update a pin ONLY for a deliberate, coordinated
+# network-identity change (cf. PINNED_GENESIS_BY_NETWORK).
+PINNED_NETWORK_PARAMS_HASH_BY_CHAIN: dict[int, bytes] = {
+    # mainnet (chain 1): the value the live network produces (verified against the
+    # running node). Every peer computes this, so an upgraded node MUST reproduce it
+    # byte-for-byte or it is rejected on handshake.
+    1: bytes.fromhex(
+        "41f0acb8b3ac98ddee524a7bb1752f6af25dc596c71003fd3df4a69d899730b1"
+    ),
+}
+
+
 def compute_network_params_hash(chain_id: Optional[int] = None) -> bytes:
     """
     Compute a fingerprint that captures network parameters and consensus constants.
 
     This is used for P2P compatibility checks to avoid syncing incompatible chains.
+
+    For known live networks the value is PINNED (see PINNED_NETWORK_PARAMS_HASH_BY_CHAIN)
+    so it stays stable across releases and source edits. Without the pin, adding a
+    dormant forward fork (or any edit to this module) would change the fingerprint and
+    fragment upgraded nodes from legacy peers on network_params_mismatch /
+    consensus_mismatch. Un-pinned (dev / ephemeral) chains fall back to hashing the
+    source identity below.
     """
+    if chain_id is not None:
+        pinned = PINNED_NETWORK_PARAMS_HASH_BY_CHAIN.get(int(chain_id))
+        if pinned is not None:
+            return bytes(pinned)
     files = [
         Path(__file__).resolve(),
         BASE_DIR / "types" / "params.py",
