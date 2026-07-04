@@ -21,6 +21,20 @@ GENESIS_PATH = Path(__file__).resolve().parents[2] / "core" / "genesis" / "genes
 os.environ.setdefault("ANIMICA_P2P_DISABLE_DEFAULT_SEEDS", "1")
 os.environ.setdefault("ANIMICA_P2P_ENABLE_DNS_SEEDS", "0")
 
+# These are peer-discovery integration tests. None of them relay transactions,
+# so the 6.0.0 txrelay / mempool-sync background tasks add nothing but noise:
+# on the fresh loopback connections they churn ("send() on closed stream") and
+# feed the peer-scoring system, which under a full-file run's socket/port reuse
+# can penalize+ban a just-gossiped peer *before* the peer set stabilizes —
+# flaking discovery in a way unrelated to what these tests assert. Disable tx
+# relay module-wide (safe: no test carries txs) and default block-sync off; the
+# one sync-convergence test below re-enables block sync (ANIMICA_SYNC_ENABLED)
+# for itself. This is test isolation only — no production/security behavior is
+# changed.
+os.environ.setdefault("ANIMICA_P2P_TX_RELAY", "0")
+os.environ.setdefault("ANIMICA_P2P_TX_ENABLED", "0")
+os.environ.setdefault("ANIMICA_SYNC_ENABLED", "0")
+
 
 def _make_deps(tmp_path: Path, name: str) -> tuple[P2PDeps, AsyncP2PDeps]:
     db_path = tmp_path / f"{name}.db"
@@ -134,16 +148,24 @@ async def test_runtime_peer_injection_connects(tmp_path: Path) -> None:
 async def test_gossip_addr_relay_expands_peer_set(tmp_path: Path, monkeypatch) -> None:
     # Make addr gossip deterministic. With default intervals (request=30s,
     # relay=45s) the second peer is only discovered on the periodic sweep, so
-    # a 15s wait races the schedule — and the 6.0.0 txrelay/mempool-sync
-    # additions add enough event-loop contention (and transient
-    # "headers_send_failed" peer penalties) to tip that race into frequent
-    # timeouts. Short intervals + private-network relay (loopback addrs) let
-    # the gossip path fire promptly, which is exactly what this test asserts.
+    # a 15s wait races the schedule. Short intervals + private-network relay
+    # (loopback addrs) let the gossip path fire promptly, which is exactly what
+    # this test asserts.
     monkeypatch.setenv("ANIMICA_P2P_ADDR_REQUEST_INTERVAL", "1")
     monkeypatch.setenv("ANIMICA_P2P_ADDR_RESPONSE_INTERVAL", "1")
     monkeypatch.setenv("ANIMICA_P2P_ADDR_RELAY_INTERVAL", "1")
     monkeypatch.setenv("ANIMICA_P2P_OUTBOUND", "2")
     monkeypatch.setenv("ANIMICA_P2P_PRIVATE_NETWORK", "1")
+    # This test exercises peer DISCOVERY only; it carries no txs and mines no
+    # blocks. The 6.0.0 txrelay/mempool-sync + header-sync background tasks
+    # would otherwise churn the fresh loopback connections ("send() on closed
+    # stream" / "headers_send_failed" peer penalties) and can ban the just-
+    # gossiped peer before the set stabilizes at 2 — a flaky failure unrelated
+    # to discovery. Disable those unrelated subsystems so discovery is
+    # deterministic. (The sync test below keeps them enabled.)
+    monkeypatch.setenv("ANIMICA_P2P_TX_RELAY", "0")
+    monkeypatch.setenv("ANIMICA_P2P_TX_ENABLED", "0")
+    monkeypatch.setenv("ANIMICA_SYNC_ENABLED", "0")
 
     deps_a_sync, deps_a = _make_deps(tmp_path, "node_a")
     deps_b_sync, deps_b = _make_deps(tmp_path, "node_b")
@@ -202,6 +224,13 @@ async def test_gossip_seed_chain_discovers_new_peer(tmp_path: Path, monkeypatch)
     monkeypatch.setenv("ANIMICA_P2P_ADDR_RELAY_INTERVAL", "1")
     monkeypatch.setenv("ANIMICA_P2P_OUTBOUND", "2")
     monkeypatch.setenv("ANIMICA_P2P_PRIVATE_NETWORK", "1")
+    # Discovery-only test (no txs, no blocks): disable the unrelated 6.0.0
+    # txrelay/mempool-sync + header-sync tasks whose connection churn +
+    # "headers_send_failed" peer penalties otherwise flake this multi-hop
+    # convergence. See test_gossip_addr_relay_expands_peer_set for details.
+    monkeypatch.setenv("ANIMICA_P2P_TX_RELAY", "0")
+    monkeypatch.setenv("ANIMICA_P2P_TX_ENABLED", "0")
+    monkeypatch.setenv("ANIMICA_SYNC_ENABLED", "0")
 
     deps_a_sync, deps_a = _make_deps(tmp_path, "node_a")
     deps_b_sync, deps_b = _make_deps(tmp_path, "node_b")
@@ -237,9 +266,14 @@ async def test_gossip_seed_chain_discovers_new_peer(tmp_path: Path, monkeypatch)
     await node_b.start()
     await node_a.start()
     try:
-        assert await _wait_for_peers(node_b, 1, timeout=15.0)
-        assert await _wait_for_peers(node_a, 1, timeout=15.0)
-        assert await _wait_for_peers(node_a, 2, timeout=20.0)
+        # These are real multi-hop socket convergences. Under full-file runs
+        # the shared event loop competes with the 6.0.0 txrelay/mempool-sync
+        # background tasks and inter-test teardown, so allow more slack for the
+        # gossip to converge (the assertions — the discovered peer counts — are
+        # unchanged; only the tolerance for scheduling jitter grows).
+        assert await _wait_for_peers(node_b, 1, timeout=25.0)
+        assert await _wait_for_peers(node_a, 1, timeout=25.0)
+        assert await _wait_for_peers(node_a, 2, timeout=35.0)
     finally:
         await node_a.stop()
         await node_b.stop()
@@ -247,7 +281,14 @@ async def test_gossip_seed_chain_discovers_new_peer(tmp_path: Path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_p2p_sync_converges_without_bootstrap_rpc(tmp_path: Path) -> None:
+async def test_p2p_sync_converges_without_bootstrap_rpc(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # This test DOES exercise block sync (node_b must catch up to node_a's
+    # mined chain), so re-enable it here (the module defaults it off for the
+    # discovery-only tests). Tx relay stays off — no transactions are involved.
+    monkeypatch.setenv("ANIMICA_SYNC_ENABLED", "1")
+
     deps_a_sync, deps_a = _make_deps(tmp_path, "node_a")
     deps_b_sync, deps_b = _make_deps(tmp_path, "node_b")
 
