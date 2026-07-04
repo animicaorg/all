@@ -2460,6 +2460,21 @@ class BlockImporter:
                     canonical_height=max(1, height) if not _is_instant_block(block.header) else None,
                 )
             except Exception as e:
+                # ANM-H08: a reward-computation error must NOT silently zero the
+                # reward — that diverges this node from peers whose computation
+                # succeeds (silent consensus split). At/after FORK_PQ_HARDENING,
+                # fail closed: re-raise so the block is not committed with a wrong
+                # reward (a broken/misconfigured node halts loudly instead of
+                # diverging). Grandfathered below H (legacy log + empty reward). With
+                # the static emission schedule this never fires on a correct node, so
+                # the healthy network is unaffected.
+                if is_fork_active(FORK_PQ_HARDENING, height, chain_id=chain_id):
+                    log.error(
+                        "H08: block reward computation failed — failing closed at height %d: %s",
+                        height,
+                        e,
+                    )
+                    raise
                 log.warning(f"Failed to compute block reward: {e}")
                 reward_outputs = []
             
