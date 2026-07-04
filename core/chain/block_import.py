@@ -495,6 +495,17 @@ def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Op
     return None
 
 
+def _root_commitment_shadow() -> bool:
+    """ANM-C03: opt-in post-execution state-root observability. When
+    ANIMICA_ROOT_COMMITMENT_SHADOW=1, block import computes the full state root
+    after applying each block and logs it (vs any committed header.stateRoot)
+    WITHOUT rejecting — the validation window that must confirm every node agrees
+    on the root before the miner seals stateRoot and enforcement is turned on at
+    FORK_ROOT_COMMITMENT. Off by default: computing the root every block is costly.
+    """
+    return os.getenv("ANIMICA_ROOT_COMMITMENT_SHADOW") == "1"
+
+
 def _is_coinbase_tx(tx: Any) -> bool:
     unsigned = _tx_unsigned(tx)
     if unsigned is None:
@@ -2567,6 +2578,32 @@ class BlockImporter:
                     "metric block_coinbase_credit_total=%d",
                     _BLOCK_COINBASE_CREDIT_TOTAL,
                 )
+
+            # ANM-C03 (shadow): post-execution state-root observability. Opt-in,
+            # log-only — never rejects. The full post-block state (txs + rewards +
+            # AICF) is finalized above, so this observes the canonical root that a
+            # future miner-seal must commit. Exceptions are swallowed: observability
+            # must never break block apply.
+            if _root_commitment_shadow():
+                try:
+                    from core.chain.state_commit import compute_state_root
+
+                    observed = compute_state_root(self.state_db)
+                    committed = getattr(block.header, "stateRoot", None)
+                    committed_b = bytes(committed) if committed else b""
+                    if committed_b and committed_b != b"\x00" * 32:
+                        match = "match" if committed_b == observed else "MISMATCH"
+                    else:
+                        match = "uncommitted"
+                    log.info(
+                        "root_commitment SHADOW: height=%d observed_state_root=%s committed=%s %s",
+                        height,
+                        observed.hex()[:16],
+                        (committed_b.hex()[:16] if committed_b else "none"),
+                        match,
+                    )
+                except Exception as e:  # pragma: no cover - never break apply
+                    log.debug("root_commitment SHADOW: compute failed: %s", e)
 
             return True
         except Exception as exc:
