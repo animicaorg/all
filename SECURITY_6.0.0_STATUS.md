@@ -26,7 +26,7 @@ Legend: ✅ done (committed, tested) · 🟡 partial/staged · ⏳ in-flight (wo
 | C01 | Forgeable signature schemes (1/2 verify via public hash, no secret) | ✅ | Allowlist `{0x1003}` in `signing.py::tx_verify_signature` **+** coretx stack (`_CHAIN_REQUIRED_SCHEMES`→`{1:(11,)}`, `assert_required_pq_for_chain` requires 11, stub specs `enabled_by_default=False`). *Adapted:* report's "bind scheme into account key" would re-derive every address (hard fork) → instead reject forgeable schemes forward-only. |
 | C02 | Block import applies balances with **no** signature verification | ✅ | Gated `_verify_block_tx_signatures_gated` (reuses proven P2P verify path; fail-closed + shadow). |
 | C03 | Header state/txs roots never validated on import | 🟡 | **txsRoot enforced** (gated, self-gating, grandfathered — closes tx-set-swap divergence). **stateRoot** computation built + tested (`state_commit.py`) + opt-in shadow observability (`ANIMICA_ROOT_COMMITMENT_SHADOW`). Enforce = staged (needs miner-seal, below). |
-| C04 | PoIES useful-work verification (`validate_block`) never called on import | 📋 | See **Remaining**. block_import *intentionally* omits PoIES scoring; enforcing retroactively could reject current blocks (halt) → shadow-gated rollout required. |
+| C04 | PoIES useful-work verification (`validate_block`) never called on import | 🟡 | **proofsRoot commitment enforced** (gated + self-gating + shadow-logged) → closes proof-swapping. Full useful-work *validity* verification is **blocked at the code level**: `validate_block` is non-functional scaffolding — the `proofs/` verifier package is **absent from the tree**, there are **zero** concrete verifiers/scorers, and the ProofType enums are off-by-one across the two stacks. Wiring `validate_block` with an empty registry would reject every proof-carrying block (**halt**). Full enforcement requires building `proofs/` = a protocol upgrade. See Remaining. |
 | C05 | Contract source `exec()` with full builtins = RCE | ✅ | `vm_py/runtime/loader.run_call` fail-closed unless `ANIMICA_VM_ALLOW_UNSAFE_EXEC=1`; `contracts.py` catches→REVERT (mainnet stays no-op). |
 | C06 | No gas metering on the exec path = unbounded-loop DoS | ✅ | Same guard as C05 (the exec path is the DoS path). |
 | C07 | `wallets.json` stores plaintext `secret_key_hex` | ✅ | At-rest encryption (`wallet/at_rest.py`: argon2id→scrypt→PBKDF2 + AES-256-GCM); encrypt-on-write, decrypt-on-sign, `wallet encrypt/decrypt` migration. Plaintext still works w/ warning. |
@@ -35,13 +35,13 @@ Legend: ✅ done (committed, tested) · 🟡 partial/staged · ⏳ in-flight (wo
 | C10 | Snapshot import: path traversal / RCE-adjacent | ✅ | Path-traversal reject + size/count caps + optional manifest-digest pin. |
 | C11 | Snapshot restore sets head without completeness check → silent divergence | ✅ | Completeness gate before `set_head`. |
 
-**9/11 closed. C04 remaining (rollout), C09 deferred (opt-in migration).**
+**9/11 fully closed; C04 partial (proofsRoot enforced; full PoIES verify needs the absent `proofs/` package = protocol upgrade); C09 deferred (opt-in migration).**
 
 ## HIGH (10)
 
 | ID | Finding | Status | Fix |
 |----|---------|--------|-----|
-| H01 | θ (difficulty) computation non-deterministic (float, warmup samples, skips non-tip) | 📋 | Remaining — shadow-gated determinism tightening. |
+| H01 | θ warmup gate keyed on runtime sample count (resets on restart → divergence) | ✅ | Deterministic height-based warmup; shadow-logs runtime-vs-deterministic divergence; opt-in enforce (`ANIMICA_THETA_DETERMINISTIC=1`). M01 (fork-block θ skip) still open. |
 | H02 | Snapshot manifest counts unverified | ✅ | Part of C11 completeness gate. |
 | H03 | P2P decompression unbounded (zip-bomb) | ✅ | Bounded plaintext cap (`ANIMICA_P2P_MAX_FRAME_PLAINTEXT_BYTES`). |
 | H04 | No per-peer rate limiting | ✅ | Per-peer rate limit + ban. |
@@ -107,13 +107,16 @@ operator-enforce later**:
   execution at template time), then a shadow window (`ANIMICA_ROOT_COMMITMENT_SHADOW=1`)
   confirming every node agrees, *then* flip enforcement. Computation + shadow hook
   already shipped.
-- **C04 PoIES enforce** — `validate_block` needs a Scorer + VerifierRegistry +
-  nullifier store + policy snapshot injected into the import path (deliberately
-  omitted for performance) and itself uses `math.log`. Enforcing retroactively
-  could reject current blocks. Requires: (a) live PoIES policy/verifier config,
-  (b) a shadow window, (c) a decision on whether unmet-useful-work blocks are even
-  possible on mainnet today (if PoIES is dormant, "enforcement" is a design change
-  that brushes the no-fork line).
+- **C04 full PoIES enforce** — BLOCKED at the code level, not just rollout. The
+  proofsRoot commitment (proofs match what the header committed) is now enforced +
+  shadowed. But verifying the proofs actually *do valid useful work* means calling
+  `validate_block`, which needs a VerifierRegistry of concrete proof verifiers —
+  and the `proofs/` package **does not exist in the tree**: zero verifiers, no
+  scorer impl (only a float preview estimator + test fakes), ProofType enums
+  off-by-one between `core.types.proof` and `consensus.types`. `validate_block` has
+  never had a real caller. Closing this = **building the `proofs/` verifier package
+  and activating PoIES**, a protocol upgrade (miners must emit verifiable proofs) —
+  it cannot be a forward-only soft gate. Recommend scoping as its own project.
 - **H01 / M01 θ determinism** — replace float/warmup-sampled θ with a deterministic
   integer path; ship shadow-default (log divergence, never reject) for a validation
   window.
