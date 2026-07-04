@@ -3410,7 +3410,35 @@ class BlockImporter:
         claimed_theta = _weight_micro_of(header, payload, self.params)
         if int(claimed_theta) != int(expected_theta):
             warmup_blocks = max(1, int(self.params.retarget.window))
-            if self._difficulty_samples < warmup_blocks:
+            # ANM-H01: the difficulty warmup gate must be a DETERMINISTIC function of
+            # chain height, not the node-local runtime sample count. _difficulty_samples
+            # resets to 0 on restart, so a restarted node re-enters "warmup" and SKIPS
+            # theta enforcement for `window` blocks, diverging from long-running peers
+            # that enforce. Compare both verdicts and log divergence (shadow);
+            # enforcement uses the legacy runtime verdict until ANIMICA_THETA_DETERMINISTIC=1
+            # flips it to the height-based one. Opt-in (not height-auto) because a latent
+            # float theta discrepancy would otherwise turn enforcement into a false-reject
+            # — validate via the shadow log on a live node first.
+            height = int(getattr(header, "height", 0) or 0)
+            runtime_in_warmup = self._difficulty_samples < warmup_blocks
+            det_in_warmup = height < warmup_blocks
+            if runtime_in_warmup != det_in_warmup:
+                log.warning(
+                    "H01: theta warmup verdict divergence (restart non-determinism)",
+                    extra={
+                        "runtime_in_warmup": runtime_in_warmup,
+                        "deterministic_in_warmup": det_in_warmup,
+                        "height": height,
+                        "samples": self._difficulty_samples,
+                        "warmup_blocks": warmup_blocks,
+                    },
+                )
+            in_warmup = (
+                det_in_warmup
+                if os.getenv("ANIMICA_THETA_DETERMINISTIC") == "1"
+                else runtime_in_warmup
+            )
+            if in_warmup:
                 log.warning(
                     "theta mismatch during difficulty warmup",
                     extra={
