@@ -789,8 +789,15 @@ def _validate_chain_id(obj: dict) -> int:
 
 def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     if _pq_verify is None:
-        if _PQ_VERIFY_OPTIONAL:
-            log.warning("PQ verification unavailable; skipping due to optional flags")
+        # ANM-H10: the optional-verify escape hatch must NEVER bypass signature
+        # verification on mainnet (chain_id=1). Fail closed there if the PQ
+        # backend is unavailable; only honor the dev flag on non-mainnet chains.
+        if _PQ_VERIFY_OPTIONAL and int(chain_id) != 1:
+            log.warning(
+                "PQ verification unavailable; skipping due to optional flags "
+                "(chain_id=%s, non-mainnet)",
+                chain_id,
+            )
             return
         raise rpc_errors.InternalError(
             "PQ verification unavailable",

@@ -38,6 +38,9 @@ def _new_service(tmp_path) -> MempoolService:
         data_dir=str(tmp_path),
         persist_enabled=True,
         persist_ttl_s=600,
+        # Unsigned fixtures exercise persistence, not signature policy
+        # (ANM-H10); opt out of the mandatory in-mempool signature check.
+        verify_signatures=False,
     )
 
 
