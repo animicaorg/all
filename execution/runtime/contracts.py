@@ -1246,7 +1246,10 @@ def apply_deploy(
         LogEvent(
             address=locals().get("contract_addr", b"\x00" * ADDRESS_LEN),
             topics=[b"vm.disabled", b"deploy"],
-            data=str(exc).encode("utf-8", errors="replace")
+            # ANM-L02: never hash freeform exception-message text (varies by
+            # Python version/platform/locale) into consensus logs. Use the
+            # deterministic exception class name as a fixed error code.
+            data=(b"err:" + type(exc).__name__.encode("ascii", "replace"))
             if "exc" in locals()
             else b"",
         )
@@ -1357,7 +1360,10 @@ def apply_call(
         LogEvent(
             address=to if any(to) else b"\x00" * ADDRESS_LEN,
             topics=[b"vm.disabled", b"call"],
-            data=str(exc).encode("utf-8", errors="replace")
+            # ANM-L02: never hash freeform exception-message text (varies by
+            # Python version/platform/locale) into consensus logs. Use the
+            # deterministic exception class name as a fixed error code.
+            data=(b"err:" + type(exc).__name__.encode("ascii", "replace"))
             if "exc" in locals()
             else b"",
         )

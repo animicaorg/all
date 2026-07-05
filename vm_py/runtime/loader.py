@@ -31,6 +31,7 @@ Optional fields we accept but do not require:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -527,6 +528,21 @@ def run_call(
     Execute a contract call directly from resolved source (pyexec fallback path).
     Returns {"result": ..., "meta": {...}}.
     """
+    # ANM-C05/C06: this path exec()s raw contract source with full CPython
+    # builtins, no AST validation and no gas metering — an unsandboxed RCE plus
+    # unbounded-loop DoS on every validating node. It must NEVER run in consensus.
+    # Fail closed: refuse unless an operator explicitly opts into the unsafe
+    # developer path. Consensus/production contract execution must route through
+    # the validated + metered Engine instead of this loader. When this raises,
+    # execution.runtime.contracts catches it and deterministically REVERTs, so
+    # mainnet (which never sets this flag) stays a no-op.
+    if os.getenv("ANIMICA_VM_ALLOW_UNSAFE_EXEC") != "1":
+        raise ValidationError(
+            "loader.run_call raw exec() path is disabled (ANM-C05/C06): "
+            "unsandboxed, unmetered contract execution is forbidden. Use the "
+            "validated/metered engine; set ANIMICA_VM_ALLOW_UNSAFE_EXEC=1 only for "
+            "isolated local development, never on a shared or value-bearing node."
+        )
     call_args = list(args or [])
     man, manifest_path = manifest_utils.load_manifest_input(manifest)
     resolved = manifest_utils.resolve_contract_source(man, manifest_path=manifest_path)

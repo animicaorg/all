@@ -130,7 +130,7 @@ class StratumPoolServer:
         self._server = StratumServer(
             host=config.host,
             port=config.port,
-            default_share_target=1.0,
+            default_share_target=float(getattr(config, "start_difficulty", 0.01) or 0.01),
             default_theta_micro=0,
             max_cached_jobs=128,
             validator=self._validator,
@@ -140,6 +140,7 @@ class StratumPoolServer:
             on_xmr_result=self._handle_xmr_result,
             cryptonote_handler=self._handle_cryptonote_takeover,
             pool_mode=config.pool_mode,
+            solo_port=config.solo_port,
         )
         # XMR (Monero RandomX) dual-mining infrastructure. Initialised
         # lazily in start() once the pool config has been validated.
@@ -326,11 +327,25 @@ class StratumPoolServer:
         requested_threshold = self._ratio_to_threshold_micro(theta_micro, requested)
         if requested_threshold <= 0:
             requested_threshold = lower
-        current_threshold = (
-            int(self._current_share_threshold_micro)
-            if self._current_share_threshold_micro is not None
-            else requested_threshold
-        )
+        if self._current_share_threshold_micro is not None:
+            current_threshold = int(self._current_share_threshold_micro)
+        else:
+            # Bootstrap the very first target at an achievable start_difficulty so
+            # miners submit shares immediately and the vardiff has real samples to
+            # tune from — in BOTH directions. Two failure modes this avoids:
+            #  * Starting at the template's block-difficulty share (requested ≈ θ)
+            #    pins the vardiff at the block target forever: a block-difficulty
+            #    share is unsubmittable, so no samples ever arrive to step it down
+            #    and miners are credited only when they find a whole block.
+            #  * Starting at the min_difficulty floor (the requested default when
+            #    the template carries no share target) opens the pool at the
+            #    absolute floor and floods until the vardiff climbs. We therefore
+            #    ignore the requested/floor default here and anchor at
+            #    start_difficulty; per-miner vardiff diverges from there.
+            start_threshold = self._ratio_to_threshold_micro(
+                theta_micro, float(getattr(self._config, "start_difficulty", 0.01))
+            )
+            current_threshold = start_threshold if start_threshold > 0 else lower
         clamped_threshold = min(max(current_threshold, lower), upper)
         if clamped_threshold != current_threshold:
             self._log.warning(

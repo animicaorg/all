@@ -258,26 +258,98 @@ class Pool:
             eff = getattr(meta, "fee_per_gas_wei", 0)
         return int(eff) >= int(th.admit_floor_wei)
 
+    def _sender_nonce_of(self, entry: Any) -> Tuple[Optional[str], Optional[int]]:
+        """Return (sender, nonce) for an index entry, or (None, None) if unknown."""
+        meta = getattr(entry, "meta", None)
+        sender = getattr(meta, "sender", None)
+        nonce = getattr(meta, "nonce", None)
+        try:
+            nonce_int = int(nonce) if nonce is not None else None
+        except (TypeError, ValueError):
+            nonce_int = None
+        sender_key = str(sender) if sender is not None else None
+        return sender_key, nonce_int
+
+    def _evict_nonce_aware(
+        self,
+        ordered_hashes: List[bytes],
+        should_continue: Callable[[], bool],
+        *,
+        hard_limit: Optional[int] = None,
+    ) -> int:
+        """
+        Evict from ``ordered_hashes`` (worst-first) while never stranding a
+        sender by removing a non-tail nonce (ANM-M08).
+
+        A tx is only evicted when it is the *current highest* pending nonce for
+        its sender, so lower/middle nonces remain fillable. Txs with an unknown
+        sender/nonce carry no ordering constraint and are always evictable.
+        Repeated passes let the next-highest nonce become evictable after its
+        successor is dropped.
+        """
+        # Snapshot the nonces currently present per sender (across the whole
+        # pool, not just the candidate list) so we protect a low-fee middle
+        # nonce even when its higher sibling is not itself a candidate.
+        present: Dict[str, set] = {}
+        for h, entry in self.index.all_items():
+            sender, nonce = self._sender_nonce_of(entry)
+            if sender is None or nonce is None:
+                continue
+            present.setdefault(sender, set()).add(nonce)
+
+        removed = 0
+        remaining = list(ordered_hashes)
+        made_progress = True
+        while should_continue() and remaining and made_progress:
+            made_progress = False
+            # Highest present nonce per sender for this pass.
+            sender_max = {s: max(ns) for s, ns in present.items() if ns}
+            deferred: List[bytes] = []
+            for h in remaining:
+                if not should_continue():
+                    remaining = []
+                    break
+                entry = self.index.get(h)
+                if entry is None:
+                    continue  # already removed elsewhere
+                sender, nonce = self._sender_nonce_of(entry)
+                if sender is not None and nonce is not None:
+                    top = sender_max.get(sender)
+                    if top is not None and nonce != top:
+                        # A higher nonce for this sender is still present;
+                        # evicting this one would strand it. Defer.
+                        deferred.append(h)
+                        continue
+                    ns = present.get(sender)
+                    if ns is not None:
+                        ns.discard(nonce)
+                self._remove(h)
+                removed += 1
+                made_progress = True
+                if hard_limit is not None and removed >= hard_limit:
+                    return removed
+            remaining = deferred
+        return removed
+
     def _eviction_pressure(self) -> None:
-        """Evict under watermark & hard caps."""
+        """Evict under watermark & hard caps (ANM-M08: nonce-aware)."""
         # Watermark-based pass: evict those falling below 'evict_below_wei'
         th = self.wm.thresholds(pool_size=len(self.index), capacity=self.cfg.max_txs)
         if th.evict_below_wei > 0:
-            victims: List[bytes] = []
-            # Scan a limited sample: worst N in sender-held + ready sets.
-            # Strategy: look at ready heap *approximate* tail by re-scoring a small sample.
+            # Scan a limited sample: worst N by fee.
             sample: List[Tuple[int, bytes]] = []  # (fee_wei, hash)
             for h, entry in list(self.index.all_items())[:2048]:
                 meta = entry.meta
                 eff = getattr(meta, "effective_fee_wei", 0)
                 sample.append((int(eff), h))
             sample.sort(key=lambda x: x[0])
+            victims: List[bytes] = []
             for fee, h in sample:
                 if fee >= th.evict_below_wei:
                     break
                 victims.append(h)
-            for h in victims[:1024]:
-                self._remove(h)
+            if victims:
+                self._evict_nonce_aware(victims, lambda: True, hard_limit=1024)
 
         # Hard caps: drop worst scores until within (txs, bytes)
         def over_caps() -> bool:
@@ -286,7 +358,7 @@ class Pool:
             )
 
         if over_caps():
-            # Build a poor-man's "worst first" list without materializing all scores.
+            # Build a "worst first" list by score (ascending).
             scored: List[Tuple[float, bytes]] = []
             for h, entry in self.index.all_items():
                 try:
@@ -295,10 +367,7 @@ class Pool:
                     s = 0.0
                 scored.append((float(s), h))
             scored.sort(key=lambda t: t[0])  # ascending: worst first
-            i = 0
-            while over_caps() and i < len(scored):
-                self._remove(scored[i][1])
-                i += 1
+            self._evict_nonce_aware([h for _, h in scored], over_caps)
 
     def _enqueue_ready_if_contiguous(self, ptx: Any, meta: TxMeta) -> None:
         """All admitted txs are ready in nonce-less mode; enqueue immediately."""

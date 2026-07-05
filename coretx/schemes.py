@@ -28,7 +28,14 @@ _SCHEME_NAME_TO_ID = {
     "ml-dsa": 11,
 }
 
-_CHAIN_REQUIRED_SCHEMES: dict[int, tuple[int, ...]] = {1: (1, 2)}
+# ANM-C01: mainnet MUST require the real FIPS-204 scheme (ml_dsa_65 / id 11) and
+# MUST NOT require the forgeable commitment-style stubs (ids 1 & 2). This was
+# {1: (1, 2)}, which forced the forgeable schemes to stay enabled at startup via
+# assert_required_pq_for_chain. Schemes 1-4 are now disabled by default (see
+# CANONICAL_SCHEME_SPECS) so verify_signature rejects them; only 11 is accepted.
+# Forward-only: historical blocks are grandfathered by the pq_hardening height
+# gate (core.network_params), so existing history is never re-validated.
+_CHAIN_REQUIRED_SCHEMES: dict[int, tuple[int, ...]] = {1: (11,)}
 
 
 def required_schemes_for_chain(chain_id: int) -> tuple[int, ...]:
@@ -80,7 +87,7 @@ CANONICAL_SCHEME_SPECS: tuple[SchemeSpec, ...] = (
         name="dilithium3",
         pubkey_lengths=(1952,),
         signature_lengths=(3293,),
-        enabled_by_default=True,
+        enabled_by_default=False,  # ANM-C01: forgeable commitment stub — disabled
     ),
     SchemeSpec(
         scheme_id=2,
@@ -94,21 +101,21 @@ CANONICAL_SCHEME_SPECS: tuple[SchemeSpec, ...] = (
         # are valid in this network.
         pubkey_lengths=(32, 64),
         signature_lengths=(7856,),
-        enabled_by_default=True,
+        enabled_by_default=False,  # ANM-C01/L06: forgeable stub — disabled
     ),
     SchemeSpec(
         scheme_id=3,
         name="sphincs_shake_128f",
         pubkey_lengths=(32,),
         signature_lengths=(17088,),
-        enabled_by_default=True,
+        enabled_by_default=False,  # ANM-C01: pure-fallback stub — disabled
     ),
     SchemeSpec(
         scheme_id=4,
         name="sphincs_shake_256s",
         pubkey_lengths=(64,),
         signature_lengths=(29792,),
-        enabled_by_default=True,
+        enabled_by_default=False,  # ANM-C01: pure-fallback stub — disabled
     ),
     # ── v2 schemes (real PQ crypto) ─────────────────────────────────────
     # 2026-05-30: scheme_id=1 ("dilithium3") and scheme_id=2 ("sphincs_

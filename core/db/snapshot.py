@@ -61,6 +61,101 @@ SNAPSHOT_VERSION = 2
 DEFAULT_CHUNK_SIZE = 7 * 1024 * 1024
 
 
+# ---------------------------------------------------------------------------
+# Snapshot import hardening (node-local; ANM-C11 / H02 / H05 / H06 / M03)
+# ---------------------------------------------------------------------------
+# These controls make ``import_snapshot`` fail-closed against a partial / bloated /
+# untrusted snapshot WITHOUT changing behaviour for a well-formed legit snapshot:
+#   * resource caps (chunk count, on-disk chunk size, decompressed size) prevent
+#     a hostile manifest/chunk from OOM-ing or wedging the node;
+#   * chunk-name path-safety prevents a manifest from escaping the snapshot dir;
+#   * a strong manifest digest (merkle-style hash over the ordered chunk set) can
+#     be PINNED (and optionally PQ-signature-verified) via env — off by default so
+#     the current unsigned mainnet snapshot still imports, loud-warns when absent;
+#   * a STRICT completeness gate refuses to advance the head unless every declared
+#     block/header/account/code/storage entry actually imported (the direct fix for
+#     the silent state-divergence / too-low-balance incident).
+# Defaults are generous: a real snapshot chunks state at DEFAULT_CHUNK_SIZE (7 MiB)
+# so even a multi-TB chain stays far below these bounds.
+
+# Max number of chunks a manifest may declare.
+MAX_MANIFEST_CHUNKS = 200_000
+# Max on-disk (compressed) size of a single chunk file, checked before it is read.
+MAX_CHUNK_FILE_BYTES = 64 * 1024 * 1024
+# Max decompressed bytes read from a single chunk (gzip-bomb guard).
+MAX_CHUNK_DECOMPRESSED_BYTES = 128 * 1024 * 1024
+
+# Env knobs (all optional; safe defaults preserve current external behaviour):
+#   ANIMICA_SNAPSHOT_MAX_CHUNKS                    -> MAX_MANIFEST_CHUNKS
+#   ANIMICA_SNAPSHOT_MAX_CHUNK_BYTES              -> MAX_CHUNK_FILE_BYTES
+#   ANIMICA_SNAPSHOT_MAX_CHUNK_DECOMPRESSED_BYTES -> MAX_CHUNK_DECOMPRESSED_BYTES
+#   ANIMICA_SNAPSHOT_MANIFEST_DIGEST              -> pinned expected manifest digest
+#   ANIMICA_SNAPSHOT_TRUSTED_PUBKEYS              -> CSV of hex PQ pubkeys (signature)
+#   ANIMICA_SNAPSHOT_REQUIRE_SIGNATURE            -> require a valid signature
+#   ANIMICA_SNAPSHOT_ALLOW_INCOMPLETE             -> downgrade completeness abort to a
+#                                                    LOUD warning (emergency recovery)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        val = int(str(raw).strip())
+    except ValueError:
+        _log.warning("Invalid %s=%r (not an int); using default %d", name, raw, default)
+        return default
+    if val <= 0:
+        _log.warning("Non-positive %s=%r; using default %d", name, raw, default)
+        return default
+    return val
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_csv_env(name: str) -> List[str]:
+    raw = os.environ.get(name) or ""
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _max_manifest_chunks() -> int:
+    return _env_int("ANIMICA_SNAPSHOT_MAX_CHUNKS", MAX_MANIFEST_CHUNKS)
+
+
+def _max_chunk_file_bytes() -> int:
+    return _env_int("ANIMICA_SNAPSHOT_MAX_CHUNK_BYTES", MAX_CHUNK_FILE_BYTES)
+
+
+def _max_chunk_decompressed_bytes() -> int:
+    return _env_int(
+        "ANIMICA_SNAPSHOT_MAX_CHUNK_DECOMPRESSED_BYTES", MAX_CHUNK_DECOMPRESSED_BYTES
+    )
+
+
+def _safe_chunk_name(name: Any) -> str:
+    """Return ``name`` iff it is a plain filename inside the snapshot dir.
+
+    Manifests are attacker-influenced (they arrive over P2P / RPC / disk). A name
+    like ``../../etc/passwd`` or an absolute path would make ``snapshot_dir / name``
+    resolve OUTSIDE the snapshot — an arbitrary-file read (downloadChunk) or an
+    import that ingests unrelated files. Only accept a single path component with
+    no separators, no ``..``, and no NUL.
+    """
+    raw = str(name)
+    if (
+        not raw
+        or raw in (".", "..")
+        or "/" in raw
+        or "\\" in raw
+        or "\x00" in raw
+        or raw != os.path.basename(raw)
+    ):
+        raise ValueError(f"Unsafe snapshot chunk name (possible path traversal): {name!r}")
+    return raw
+
+
 @dataclass
 class SnapshotManifest:
     """Metadata for a chain snapshot."""
@@ -343,6 +438,225 @@ def _count_non_instant_canonical(block_db: BlockDB, max_height: int) -> int:
     return count
 
 
+def _raise_or_warn_incomplete(kind: str, problems: List[str]) -> None:
+    """Fail-closed on an incomplete restore (or loud-warn if the operator opted out).
+
+    A truncated/dropped restore that still advances the head is the exact mechanism
+    behind the silent state-divergence incident (accounts missing from the trie read
+    too-low forever because this chain commits no state root in headers). Default is
+    to abort. ``ANIMICA_SNAPSHOT_ALLOW_INCOMPLETE=1`` is an explicit, LOUD escape
+    hatch for emergency operator recovery only.
+    """
+    if not problems:
+        return
+    msg = (
+        f"Snapshot {kind} restore is INCOMPLETE — refusing to advance the head onto "
+        f"partial data (missing entries read too-low / absent forever, undetected). "
+        + "; ".join(problems)
+        + ". Re-export/redownload a complete snapshot and retry."
+    )
+    if _env_flag("ANIMICA_SNAPSHOT_ALLOW_INCOMPLETE"):
+        _log.error(
+            "ANIMICA_SNAPSHOT_ALLOW_INCOMPLETE is set — importing a PROVABLY INCOMPLETE "
+            "snapshot ANYWAY; this node may serve too-low balances / diverged state. %s",
+            msg,
+        )
+        return
+    raise ValueError(msg)
+
+
+def _verify_state_import_complete(manifest, imported: dict) -> None:
+    """Abort the import if the restored state is not provably complete.
+
+    Compares the per-type counts actually written to state against the counts the
+    manifest recorded at export time. Any dropped entry, or any per-type shortfall,
+    means the trie is missing accounts/code/storage — restoring onto that and
+    advancing the head is exactly what produces silent too-low balances. We only
+    assert a count the manifest actually carries (>0), so pre-count legacy
+    snapshots still import (they simply get no extra guarantee).
+    """
+    problems: List[str] = []
+    if int(imported.get("dropped", 0) or 0) > 0:
+        problems.append(f"{imported['dropped']} state entries failed to import")
+    checks = (
+        ("account", "accounts_count"),
+        ("code", "code_contracts_count"),
+        ("storage", "storage_keys_count"),
+    )
+    for got_key, manifest_attr in checks:
+        expected = int(getattr(manifest, manifest_attr, 0) or 0)
+        got = int(imported.get(got_key, 0) or 0)
+        if expected and got != expected:
+            problems.append(f"{got_key}: imported {got} != manifest {expected}")
+    _raise_or_warn_incomplete("state", problems)
+
+
+def _verify_blocks_import_complete(manifest, imported: dict) -> None:
+    """Abort the import if the restored blocks/headers are not provably complete.
+
+    Symmetric with :func:`_verify_state_import_complete` but for the block chunks.
+    Previously ``_import_blocks_chunk`` swallowed per-entry errors and a truncated
+    blocks chunk could yield FEWER entries silently, yet the head was still set to
+    the checkpoint — leaving the node claiming a height whose blocks it does not
+    actually hold. We now count drops + compare header/block counts to the manifest.
+    """
+    problems: List[str] = []
+    if int(imported.get("dropped", 0) or 0) > 0:
+        problems.append(f"{imported['dropped']} block/header entries failed to import")
+    for got_key, manifest_attr in (("header", "headers_count"), ("block", "blocks_count")):
+        expected = int(getattr(manifest, manifest_attr, 0) or 0)
+        got = int(imported.get(got_key, 0) or 0)
+        if expected and got != expected:
+            problems.append(f"{got_key}: imported {got} != manifest {expected}")
+    _raise_or_warn_incomplete("blocks", problems)
+
+
+def _decode_bytes_field(value: Any) -> bytes:
+    """Decode a hex (optionally 0x-prefixed) or base64 byte field."""
+    s = str(value).strip()
+    if s.startswith("0x") or s.startswith("0X"):
+        return bytes.fromhex(s[2:])
+    try:
+        return bytes.fromhex(s)
+    except ValueError:
+        import base64
+
+        return base64.b64decode(s)
+
+
+def _compute_manifest_digest(manifest: "SnapshotManifest") -> str:
+    """Strong content digest binding the ORDERED chunk set + head identity + counts.
+
+    This is the value a pin / signature commits to: adding, removing, reordering, or
+    mutating any chunk's declared name/type/size/hash — OR altering any declared
+    count (which the completeness gate relies on) — changes the digest. Domain-tagged
+    and field-length-delimited so distinct manifests cannot collide.
+    """
+    h = hashlib.sha256()
+
+    def upd(part: Any) -> None:
+        h.update(str(part).encode("utf-8"))
+        h.update(b"\x1f")
+
+    upd("animica-snapshot-manifest-v1")
+    upd(manifest.version)
+    upd(manifest.chain_id)
+    upd(manifest.network or "")
+    upd(manifest.checkpoint_height)
+    upd(manifest.checkpoint_hash or "")
+    upd(manifest.blocks_count)
+    upd(manifest.headers_count)
+    upd(manifest.accounts_count)
+    upd(manifest.storage_keys_count)
+    upd(manifest.code_contracts_count)
+    upd(len(manifest.chunks))
+    for chunk in manifest.chunks:
+        upd(chunk.get("index"))
+        upd(chunk.get("type"))
+        upd(chunk.get("name"))
+        upd(chunk.get("size"))
+        upd(chunk.get("sha256") or chunk.get("hash") or "")
+    return "0x" + h.hexdigest()
+
+
+def _verify_manifest_signature(
+    manifest: "SnapshotManifest",
+    manifest_data: dict,
+    digest: str,
+    trusted: List[str],
+    require_sig: bool,
+) -> None:
+    """Verify a PQ signature over the manifest digest against trusted pubkeys.
+
+    Only invoked when the operator configures ``ANIMICA_SNAPSHOT_TRUSTED_PUBKEYS`` or
+    ``ANIMICA_SNAPSHOT_REQUIRE_SIGNATURE`` — off by default so the current unsigned
+    snapshot still imports. When enabled it is fail-closed: a missing/undecodable/
+    mismatched signature aborts the import.
+    """
+    if require_sig and not trusted:
+        raise ValueError(
+            "ANIMICA_SNAPSHOT_REQUIRE_SIGNATURE is set but no "
+            "ANIMICA_SNAPSHOT_TRUSTED_PUBKEYS are configured — refusing import"
+        )
+    sig_obj = manifest_data.get("signature")
+    if not isinstance(sig_obj, dict):
+        raise ValueError("Snapshot manifest signature required but missing")
+    alg_id = sig_obj.get("alg_id")
+    if alg_id is None:
+        alg_id = sig_obj.get("alg")
+    sig_raw = sig_obj.get("sig") or sig_obj.get("signature")
+    if alg_id is None or not sig_raw:
+        raise ValueError("Snapshot manifest signature missing alg_id or sig")
+    try:
+        alg_id_int = int(alg_id)
+    except (TypeError, ValueError):
+        raise ValueError(f"Snapshot manifest signature has non-integer alg_id: {alg_id!r}")
+    try:
+        sig_bytes = _decode_bytes_field(sig_raw)
+    except Exception as exc:
+        raise ValueError(f"Snapshot manifest signature is not decodable: {exc}")
+
+    try:
+        from pq.py.verify import verify as pq_verify
+    except Exception as exc:
+        raise ValueError(
+            f"Snapshot signature verification requested but PQ backend unavailable: {exc}"
+        )
+
+    message = digest.encode("utf-8")
+    for pk_hex in trusted:
+        try:
+            pubkey = _decode_bytes_field(pk_hex)
+        except Exception:
+            continue
+        try:
+            if pq_verify(alg_id_int, pubkey, sig_bytes, message):
+                _log.info(
+                    "Snapshot manifest signature verified against a trusted pubkey "
+                    "(alg_id=%s, digest=%s)",
+                    alg_id_int,
+                    digest,
+                )
+                return
+        except Exception as exc:  # noqa: BLE001 - never trust the verifier to not raise
+            _log.debug("Snapshot signature verify error: %s", exc)
+            continue
+    raise ValueError("Snapshot manifest signature did not match any trusted pubkey")
+
+
+def _verify_manifest_integrity(manifest: "SnapshotManifest", manifest_data: dict) -> str:
+    """Verify manifest integrity (digest pin + optional PQ signature). Returns digest.
+
+    Both controls are OFF by default (loud-warns when no pin is configured) so the
+    current unsigned mainnet snapshot still imports; per-chunk sha256 hashes and the
+    structural completeness gate are ALWAYS enforced regardless.
+    """
+    digest = _compute_manifest_digest(manifest)
+
+    pinned = (os.environ.get("ANIMICA_SNAPSHOT_MANIFEST_DIGEST") or "").strip().lower()
+    if pinned:
+        want = pinned if pinned.startswith("0x") else ("0x" + pinned)
+        if digest.lower() != want:
+            raise ValueError(
+                f"Snapshot manifest digest mismatch: expected {want}, got {digest} "
+                "— refusing to import an untrusted/altered manifest"
+            )
+        _log.info("Snapshot manifest digest matches pinned value %s", digest)
+    else:
+        _log.warning(
+            "No ANIMICA_SNAPSHOT_MANIFEST_DIGEST pin configured — importing snapshot "
+            "manifest WITHOUT an integrity pin (per-chunk hashes + structural "
+            "completeness still enforced). Set a pin for defence-in-depth."
+        )
+
+    trusted = _parse_csv_env("ANIMICA_SNAPSHOT_TRUSTED_PUBKEYS")
+    require_sig = _env_flag("ANIMICA_SNAPSHOT_REQUIRE_SIGNATURE")
+    if trusted or require_sig:
+        _verify_manifest_signature(manifest, manifest_data, digest, trusted, require_sig)
+
+    return digest
+
+
 def import_snapshot(
     block_db: BlockDB,
     state_db: StateDB,
@@ -411,11 +725,42 @@ def import_snapshot(
             f"Snapshot network mismatch: expected {expected_network}, got {manifest.network}"
         )
 
+    # RESOURCE CAPS (ANM-H06) — bound the manifest before touching any chunk so a
+    # hostile/corrupt manifest that declares an absurd number of chunks can't wedge
+    # or OOM the node.
+    max_chunks = _max_manifest_chunks()
+    n_chunks = len(manifest.chunks)
+    if n_chunks > max_chunks:
+        raise ValueError(
+            f"Snapshot manifest declares {n_chunks} chunks which exceeds the cap "
+            f"{max_chunks} (ANIMICA_SNAPSHOT_MAX_CHUNKS) — refusing import"
+        )
+
+    # MANIFEST INTEGRITY (ANM-C11) — verify a pinned digest and/or PQ signature when
+    # configured. Off by default (loud-warns) so the current unsigned snapshot still
+    # imports; per-chunk hashes + completeness below are always enforced.
+    _verify_manifest_integrity(manifest, manifest_data)
+
+    max_chunk_file = _max_chunk_file_bytes()
+    max_decompressed = _max_chunk_decompressed_bytes()
+
     # Verify and import chunks
+    imported_state = {"account": 0, "code": 0, "storage": 0, "other": 0, "dropped": 0}
+    imported_blocks = {"header": 0, "block": 0, "other": 0, "dropped": 0}
     for chunk_info in manifest.chunks:
-        chunk_file = snapshot_dir / chunk_info["name"]
+        # Path-safety (ANM-M03): reject a manifest chunk name that escapes the dir.
+        safe_name = _safe_chunk_name(chunk_info["name"])
+        chunk_file = snapshot_dir / safe_name
         if not chunk_file.exists():
-            raise ValueError(f"Chunk file not found: {chunk_info['name']}")
+            raise ValueError(f"Chunk file not found: {safe_name}")
+
+        # On-disk size cap (ANM-H02) — checked before the file is read.
+        file_size = chunk_file.stat().st_size
+        if file_size > max_chunk_file:
+            raise ValueError(
+                f"Chunk {safe_name} on-disk size {file_size} exceeds cap "
+                f"{max_chunk_file} (ANIMICA_SNAPSHOT_MAX_CHUNK_BYTES) — refusing import"
+            )
 
         # Verify hash if requested
         if verify_hashes:
@@ -423,17 +768,38 @@ def import_snapshot(
             expected_hash = chunk_info.get("sha256") or chunk_info.get("hash")
             if actual_hash != expected_hash:
                 raise ValueError(
-                    f"Chunk {chunk_info['name']} hash mismatch: "
+                    f"Chunk {safe_name} hash mismatch: "
                     f"expected {expected_hash}, got {actual_hash}"
                 )
 
         # Import chunk based on type
         if chunk_info["type"] == "blocks":
-            _import_blocks_chunk(block_db, chunk_file, manifest.compressed)
+            chunk_counts = _import_blocks_chunk(
+                block_db, chunk_file, manifest.compressed, max_decompressed
+            )
+            for k in imported_blocks:
+                imported_blocks[k] += int(chunk_counts.get(k, 0))
         elif chunk_info["type"] == "state":
-            _import_state_chunk(state_db, chunk_file, manifest.compressed)
+            chunk_counts = _import_state_chunk(
+                state_db, chunk_file, manifest.compressed, max_decompressed
+            )
+            for k in imported_state:
+                imported_state[k] += int(chunk_counts.get(k, 0))
         else:
             _log.warning(f"Unknown chunk type: {chunk_info['type']}")
+
+    # COMPLETENESS GATE — never advance the head onto a partial blocks restore.
+    _verify_blocks_import_complete(manifest, imported_blocks)
+
+    # COMPLETENESS GATE — never advance the head onto a partial state restore.
+    # A truncated/corrupt state chunk (dropped entries, or fewer entries yielded
+    # after a truncation) would leave accounts missing from the trie while the
+    # head still points at the checkpoint; forward block application then layers
+    # valid deltas onto the incomplete base and those accounts read too-low
+    # forever, undetected (this chain commits no state root in its headers, so
+    # nothing else catches it). Refuse to set the head unless the imported
+    # per-type counts match the manifest exactly and nothing was dropped.
+    _verify_state_import_complete(manifest, imported_state)
 
     # Update block DB head to checkpoint
     checkpoint_hash_bytes = _unhex(manifest.checkpoint_hash)
@@ -469,7 +835,27 @@ def import_snapshot(
 _ENTRY_SEP = (0x0A, 0x0D)
 
 
-def _iter_chunk_entries(f):
+def _read_all_bounded(f, max_bytes: Optional[int]) -> bytes:
+    """Read a decompressed stream but abort past ``max_bytes`` (gzip-bomb guard).
+
+    ``gzip.open(...).read(n)`` only inflates ``n`` bytes, so reading ``max_bytes+1``
+    caps memory: a chunk that decompresses beyond the bound never gets fully
+    inflated into RAM. ``max_bytes<=0``/``None`` disables the cap (callers pass a
+    positive cap in the import path).
+    """
+    if max_bytes is None or max_bytes <= 0:
+        return f.read()
+    data = f.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(
+            f"Snapshot chunk exceeds the decompressed-size cap ({max_bytes} bytes; "
+            "ANIMICA_SNAPSHOT_MAX_CHUNK_DECOMPRESSED_BYTES) — possible decompression "
+            "bomb; aborting import"
+        )
+    return data
+
+
+def _iter_chunk_entries(f, max_bytes: Optional[int] = None):
     """Yield decoded CBOR entries from an (already decompressed) chunk file object.
 
     The exporter writes ``cbor_dumps(entry) || b"\\n"`` per entry. The OLD reader
@@ -481,8 +867,11 @@ def _iter_chunk_entries(f):
     trailing separator — which parses the very same on-disk chunks correctly, with
     no re-export needed. On a genuinely corrupt item we resync to the next
     separator so one bad entry can't abort the whole chunk.
+
+    ``max_bytes`` bounds how much decompressed data is read into memory at once,
+    guarding against a gzip bomb (see :func:`_read_all_bounded`).
     """
-    data = f.read()
+    data = _read_all_bounded(f, max_bytes)
     mv = memoryview(data)
     n = len(data)
     off = 0
@@ -510,15 +899,28 @@ def _iter_chunk_entries(f):
         yield entry
 
 
-def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
-    """Import blocks and headers from a chunk file."""
+def _import_blocks_chunk(
+    block_db: BlockDB,
+    chunk_file: Path,
+    compressed: bool,
+    max_decompressed: Optional[int] = None,
+) -> dict:
+    """Import blocks and headers from a chunk file.
+
+    Returns per-type counts ``{"header","block","other","dropped"}`` so
+    :func:`import_snapshot` can prove the blocks restore is COMPLETE before advancing
+    the head. Previously a per-entry error here was swallowed with a bare ``continue``
+    and the head still advanced to the checkpoint even though blocks were missing;
+    now the caller aborts on any drop or count shortfall.
+    """
     _log.info(f"Importing blocks from {chunk_file.name}")
 
     open_fn = gzip.open if compressed else open
+    counts = {"header": 0, "block": 0, "other": 0, "dropped": 0}
     imported_count = 0
 
     with open_fn(chunk_file, "rb") as f:
-        for entry in _iter_chunk_entries(f):
+        for entry in _iter_chunk_entries(f, max_decompressed):
             try:
                 entry_type = entry.get("type")
                 height = entry.get("height")
@@ -531,11 +933,15 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
                     block_hash = block_db.put_header(header_obj)
                     # Update height index
                     block_db.set_canonical(height, block_hash)
+                    counts["header"] += 1
                 elif entry_type == "block":
                     # Reconstruct block from dict and store
                     from core.types.block import Block
                     block_obj = Block.from_obj(data)
                     block_db.put_block(block_obj)
+                    counts["block"] += 1
+                else:
+                    counts["other"] += 1
 
                 imported_count += 1
                 if imported_count % 1000 == 0:
@@ -543,20 +949,42 @@ def _import_blocks_chunk(block_db: BlockDB, chunk_file: Path, compressed: bool):
 
             except Exception as e:
                 _log.warning(f"Error importing entry: {e}")
+                counts["dropped"] += 1
                 continue
 
-    _log.info(f"Imported {imported_count} entries from {chunk_file.name}")
+    _log.info(
+        f"Imported {imported_count} entries from {chunk_file.name} "
+        f"(headers={counts['header']} blocks={counts['block']} dropped={counts['dropped']})"
+    )
+    return counts
 
 
-def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool):
-    """Import state (accounts, code, storage) from a chunk file."""
+def _import_state_chunk(
+    state_db: StateDB,
+    chunk_file: Path,
+    compressed: bool,
+    max_decompressed: Optional[int] = None,
+) -> dict:
+    """Import state (accounts, code, storage) from a chunk file.
+
+    Returns per-type counts ``{"account","code","storage","other","dropped"}`` so
+    :func:`import_snapshot` can prove the restore is COMPLETE before advancing the
+    head. Previously a per-entry error here just logged a warning and continued,
+    leaving the account missing from state while the head still advanced to the
+    checkpoint — forward block application then layered valid deltas onto the
+    incomplete base and the dropped accounts read too-low forever (the
+    balances-too-low divergence class). We now count drops and per-type totals and
+    let the caller abort on any shortfall. (Note: a truncated chunk can also cause
+    :func:`_iter_chunk_entries` to yield FEWER entries without raising here; that
+    is caught by the caller's per-type count vs. manifest comparison.)
+    """
     _log.info(f"Importing state from {chunk_file.name}")
 
     open_fn = gzip.open if compressed else open
-    imported_count = 0
+    counts = {"account": 0, "code": 0, "storage": 0, "other": 0, "dropped": 0}
 
     with open_fn(chunk_file, "rb") as f:
-        for entry in _iter_chunk_entries(f):
+        for entry in _iter_chunk_entries(f, max_decompressed):
             try:
                 entry_type = entry.get("type")
                 key = entry.get("key")
@@ -565,15 +993,23 @@ def _import_state_chunk(state_db: StateDB, chunk_file: Path, compressed: bool):
                 # Write directly to underlying KV store
                 state_db.kv.put(key, value)
 
-                imported_count += 1
-                if imported_count % 10000 == 0:
-                    _log.info(f"Imported {imported_count} state entries from {chunk_file.name}")
+                counts[entry_type if entry_type in counts else "other"] += 1
+                total = counts["account"] + counts["code"] + counts["storage"] + counts["other"]
+                if total % 10000 == 0:
+                    _log.info(f"Imported {total} state entries from {chunk_file.name}")
 
             except Exception as e:
                 _log.warning(f"Error importing entry: {e}")
+                counts["dropped"] += 1
                 continue
 
-    _log.info(f"Imported {imported_count} state entries from {chunk_file.name}")
+    total = counts["account"] + counts["code"] + counts["storage"] + counts["other"]
+    _log.info(
+        f"Imported {total} state entries from {chunk_file.name} "
+        f"(accounts={counts['account']} code={counts['code']} "
+        f"storage={counts['storage']} dropped={counts['dropped']})"
+    )
+    return counts
 
 
 def verify_snapshot(snapshot_dir: Path) -> Tuple[bool, List[str]]:
@@ -615,10 +1051,21 @@ def verify_snapshot(snapshot_dir: Path) -> Tuple[bool, List[str]]:
 
     # Verify chunks exist and match hashes
     chunks = manifest_data.get("chunks", [])
+    max_chunks = _max_manifest_chunks()
+    if len(chunks) > max_chunks:
+        errors.append(
+            f"Manifest declares {len(chunks)} chunks which exceeds the cap {max_chunks}"
+        )
     for chunk_info in chunks:
-        chunk_file = snapshot_dir / chunk_info["name"]
+        # Path-safety: a traversal name must never be joined/opened.
+        try:
+            safe_name = _safe_chunk_name(chunk_info["name"])
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        chunk_file = snapshot_dir / safe_name
         if not chunk_file.exists():
-            errors.append(f"Chunk file not found: {chunk_info['name']}")
+            errors.append(f"Chunk file not found: {safe_name}")
             continue
 
         # Verify hash
@@ -626,7 +1073,7 @@ def verify_snapshot(snapshot_dir: Path) -> Tuple[bool, List[str]]:
         expected_hash = chunk_info.get("sha256") or chunk_info.get("hash")
         if actual_hash != expected_hash:
             errors.append(
-                f"Chunk {chunk_info['name']} hash mismatch: "
+                f"Chunk {safe_name} hash mismatch: "
                 f"expected {expected_hash}, got {actual_hash}"
             )
 
@@ -640,4 +1087,9 @@ __all__ = [
     "verify_snapshot",
     "SNAPSHOT_VERSION",
     "DEFAULT_CHUNK_SIZE",
+    "MAX_MANIFEST_CHUNKS",
+    "MAX_CHUNK_FILE_BYTES",
+    "MAX_CHUNK_DECOMPRESSED_BYTES",
+    "_safe_chunk_name",
+    "_compute_manifest_digest",
 ]

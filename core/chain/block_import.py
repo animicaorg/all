@@ -71,6 +71,7 @@ from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from core.utils.tx import normalize_tx_envelope
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
+from core.network_params import FORK_PQ_HARDENING, FORK_ROOT_COMMITMENT, is_fork_active
 from execution.runtime.env import make_block_env
 from execution.runtime.executor import apply_block
 from execution.state.apply_balance import (
@@ -381,6 +382,149 @@ def _validate_coinbase_outputs_nonzero(block: Block) -> None:
         to_addr = getattr(payload, "to", None) if payload is not None else None
         if to_addr is not None and _is_zero_address(to_addr):
             raise BlockImportError("invalid coinbase: zero-address output is forbidden")
+
+
+def _pq_hardening_shadow() -> bool:
+    """ANIMICA_PQ_HARDENING_SHADOW=1 -> observe-only: log a would-be rejection but
+    do not reject. A safety valve for rolling out the block-import signature gate
+    under the 'never halt the chain' constraint: run it in shadow first, confirm
+    zero false rejections against live blocks, then unset it to enforce.
+    """
+    return os.getenv("ANIMICA_PQ_HARDENING_SHADOW", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _scan_block_tx_signatures(block: Block, chain_id: int) -> Optional[str]:
+    """Verify each non-coinbase tx signature; return a reason on the first failure.
+
+    Reuses the exact decode+verify path the P2P peer-gate runs on every gossiped
+    tx (rpc.methods.tx._decode_tx + _verify_pq_signature), so a legitimately
+    signed block cannot be false-rejected: those very txs already pass gossip.
+    Fail-closed: an unavailable PQ verify backend or an un-encodable tx rejects
+    rather than admits unverified.
+    """
+    try:
+        from rpc.methods import tx as tx_methods
+    except Exception as e:  # pragma: no cover - rpc always present in a running node
+        return f"pq_verify_unavailable:{e}"
+    # Fail-closed: a missing PQ verify backend must reject, never silently skip.
+    if (
+        getattr(tx_methods, "_pq_verify", None) is None
+        and getattr(tx_methods, "_pq_verify_tx", None) is None
+    ):
+        return "pq_verify_backend_missing"
+    for idx, tx in enumerate(getattr(block, "txs", ()) or ()):
+        if _is_coinbase_tx(tx):
+            continue
+        try:
+            if isinstance(tx, (bytes, bytearray)):
+                raw_cbor = bytes(tx)
+            elif hasattr(tx, "to_cbor"):
+                raw_cbor = tx.to_cbor()
+            else:
+                nb = getattr(tx_methods, "normalize_tx_bytes", None)
+                raw_cbor = nb(tx) if nb is not None else None
+            if raw_cbor is None:
+                return f"tx_encode_failed[{idx}]"
+            tx_like, obj = tx_methods._decode_tx(raw_cbor)
+            tx_methods._verify_pq_signature(tx_like, obj, chain_id=int(chain_id))
+        except Exception as e:
+            return f"tx_sig_invalid[{idx}]:{type(e).__name__}:{e}"
+    return None
+
+
+def _verify_block_tx_signatures_gated(
+    block: Block, height: int, chain_id: int
+) -> Optional[str]:
+    """ANM-M07 / ANM-C01 forward-only gate: verify every non-coinbase tx signature
+    at block import once pq_hardening is active for the chain.
+
+    Returns a rejection reason (str) or None to accept. Grandfathered below the
+    activation height (existing history is never re-validated).
+
+    This closes the hostile-miner drain vector that bypasses the mempool: the
+    executor derives the debited account from the tx's signature pubkey but never
+    checks the signature, so without import-time verification a miner could spend
+    from any account whose pubkey is public by attaching a garbage signature.
+    """
+    if not is_fork_active(FORK_PQ_HARDENING, height, chain_id=chain_id):
+        return None
+    reason = _scan_block_tx_signatures(block, chain_id)
+    if reason is None:
+        return None
+    if _pq_hardening_shadow():
+        log.error(
+            "pq_hardening SHADOW: block would be rejected (observe-only)",
+            extra={"height": height, "reason": reason},
+        )
+        return None
+    return reason
+
+
+def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Optional[str]:
+    """ANM-C03/C04 forward-only gate: verify the header's committed txsRoot AND
+    proofsRoot against the block's actual transactions/proofs once root_commitment
+    is active for the chain.
+
+    Grandfathered below the activation height. Self-gating per root: only enforces a
+    root the header commits non-zero, so a block that predates root sealing is never
+    false-rejected. The miner already seals both roots today.
+
+    - txsRoot closes the 'same PoW header, different tx set -> silent divergence'
+      hole (ANM-C03).
+    - proofsRoot closes proof-swapping: the block's proofs must match what the PoW
+      header committed. This is ANM-C04's *implementable* slice; full PoIES
+      useful-work *validity* verification (validate_block) needs the proofs/ verifier
+      package, which does not exist in-tree — see SECURITY_6.0.0_STATUS.md.
+    """
+    if not is_fork_active(FORK_ROOT_COMMITMENT, height, chain_id=chain_id):
+        return None
+    header = getattr(block, "header", None)
+
+    committed_tx = getattr(header, "txsRoot", None)
+    if committed_tx and bytes(committed_tx) != b"\x00" * 32:
+        try:
+            from core.chain.state_commit import compute_block_txs_root
+
+            computed_tx = compute_block_txs_root(block)
+        except Exception as e:  # pragma: no cover - defensive
+            return f"txs_root_compute_failed:{e}"
+        if bytes(computed_tx) != bytes(committed_tx):
+            return (
+                f"txs_root_mismatch:computed={bytes(computed_tx).hex()[:16]},"
+                f"header={bytes(committed_tx).hex()[:16]}"
+            )
+
+    committed_pr = getattr(header, "proofsRoot", None)
+    proofs_root_fn = getattr(block, "proofs_root", None)
+    if committed_pr and bytes(committed_pr) != b"\x00" * 32 and callable(proofs_root_fn):
+        try:
+            computed_pr = proofs_root_fn()
+        except Exception as e:  # pragma: no cover - defensive
+            return f"proofs_root_compute_failed:{e}"
+        if bytes(computed_pr) != bytes(committed_pr):
+            return (
+                f"proofs_root_mismatch:computed={bytes(computed_pr).hex()[:16]},"
+                f"header={bytes(committed_pr).hex()[:16]}"
+            )
+    return None
+
+
+def _root_commitment_shadow() -> bool:
+    """ANM-C03: opt-in post-execution state-root observability. When
+    ANIMICA_ROOT_COMMITMENT_SHADOW=1, block import computes the full state root
+    after applying each block and logs it (vs any committed header.stateRoot)
+    WITHOUT rejecting — the validation window that must confirm every node agrees
+    on the root before the miner seals stateRoot and enforcement is turned on at
+    FORK_ROOT_COMMITMENT. Off by default: computing the root every block is costly.
+    """
+    return os.getenv("ANIMICA_ROOT_COMMITMENT_SHADOW") == "1"
+
+
 def _is_coinbase_tx(tx: Any) -> bool:
     unsigned = _tx_unsigned(tx)
     if unsigned is None:
@@ -1252,6 +1396,31 @@ class BlockImporter:
             )
             if pow_error is not None:
                 return ImportResult(ImportErrorCode.INVALID, height, h, False, pow_error)
+
+            # ANM-M07 / ANM-C01: forward-only gated block-import signature check.
+            # At/after the pq_hardening activation height, every non-coinbase tx
+            # signature is verified here (fail-closed) so a hostile miner cannot
+            # bypass mempool verification and spend from accounts it does not own.
+            # Grandfathered below the height; reuses the proven P2P verify path so
+            # legit blocks are never false-rejected.
+            sig_error = _verify_block_tx_signatures_gated(
+                block, height, int(self.params.chain_id)
+            )
+            if sig_error is not None:
+                return ImportResult(
+                    ImportErrorCode.INVALID, height, h, False, f"tx_signature: {sig_error}"
+                )
+
+            # ANM-C03: forward-only gated verification of the header's committed
+            # txsRoot vs the block's transactions (closes the "same PoW header,
+            # different tx set -> silent divergence" hole). Grandfathered below H.
+            root_error = _verify_block_txs_root_gated(
+                block, height, int(self.params.chain_id)
+            )
+            if root_error is not None:
+                return ImportResult(
+                    ImportErrorCode.INVALID, height, h, False, f"root_commitment: {root_error}"
+                )
 
             # Persist header & block
             self._store_header(height, h, header)
@@ -2310,6 +2479,21 @@ class BlockImporter:
                     canonical_height=max(1, height) if not _is_instant_block(block.header) else None,
                 )
             except Exception as e:
+                # ANM-H08: a reward-computation error must NOT silently zero the
+                # reward — that diverges this node from peers whose computation
+                # succeeds (silent consensus split). At/after FORK_PQ_HARDENING,
+                # fail closed: re-raise so the block is not committed with a wrong
+                # reward (a broken/misconfigured node halts loudly instead of
+                # diverging). Grandfathered below H (legacy log + empty reward). With
+                # the static emission schedule this never fires on a correct node, so
+                # the healthy network is unaffected.
+                if is_fork_active(FORK_PQ_HARDENING, height, chain_id=chain_id):
+                    log.error(
+                        "H08: block reward computation failed — failing closed at height %d: %s",
+                        height,
+                        e,
+                    )
+                    raise
                 log.warning(f"Failed to compute block reward: {e}")
                 reward_outputs = []
             
@@ -2428,6 +2612,55 @@ class BlockImporter:
                     "metric block_coinbase_credit_total=%d",
                     _BLOCK_COINBASE_CREDIT_TOTAL,
                 )
+
+            # ANM-C03 (shadow): post-execution state-root observability. Opt-in,
+            # log-only — never rejects. The full post-block state (txs + rewards +
+            # AICF) is finalized above, so this observes the canonical root that a
+            # future miner-seal must commit. Exceptions are swallowed: observability
+            # must never break block apply.
+            if _root_commitment_shadow():
+                try:
+                    from core.chain.state_commit import compute_state_root
+
+                    observed = compute_state_root(self.state_db)
+                    committed = getattr(block.header, "stateRoot", None)
+                    committed_b = bytes(committed) if committed else b""
+                    if committed_b and committed_b != b"\x00" * 32:
+                        match = "match" if committed_b == observed else "MISMATCH"
+                    else:
+                        match = "uncommitted"
+                    log.info(
+                        "root_commitment SHADOW: height=%d observed_state_root=%s committed=%s %s",
+                        height,
+                        observed.hex()[:16],
+                        (committed_b.hex()[:16] if committed_b else "none"),
+                        match,
+                    )
+                    # Also surface the txs/proofs roots (enforced at H by the gate;
+                    # logging them pre-H lets operators confirm zero mismatches on a
+                    # live node before FORK_ROOT_COMMITMENT activates).
+                    for _name, _fn in (
+                        ("txs", getattr(block, "txs_root", None)),
+                        ("proofs", getattr(block, "proofs_root", None)),
+                    ):
+                        if not callable(_fn):
+                            continue
+                        _comp = bytes(_fn())
+                        _hdr = bytes(getattr(block.header, _name + "Root", b"") or b"")
+                        if _hdr and _hdr != b"\x00" * 32:
+                            _st = "match" if _hdr == _comp else "MISMATCH"
+                        else:
+                            _st = "uncommitted"
+                        log.info(
+                            "root_commitment SHADOW: height=%d %s_root computed=%s header=%s %s",
+                            height,
+                            _name,
+                            _comp.hex()[:16],
+                            (_hdr.hex()[:16] if _hdr else "none"),
+                            _st,
+                        )
+                except Exception as e:  # pragma: no cover - never break apply
+                    log.debug("root_commitment SHADOW: compute failed: %s", e)
 
             return True
         except Exception as exc:
@@ -3219,7 +3452,35 @@ class BlockImporter:
         claimed_theta = _weight_micro_of(header, payload, self.params)
         if int(claimed_theta) != int(expected_theta):
             warmup_blocks = max(1, int(self.params.retarget.window))
-            if self._difficulty_samples < warmup_blocks:
+            # ANM-H01: the difficulty warmup gate must be a DETERMINISTIC function of
+            # chain height, not the node-local runtime sample count. _difficulty_samples
+            # resets to 0 on restart, so a restarted node re-enters "warmup" and SKIPS
+            # theta enforcement for `window` blocks, diverging from long-running peers
+            # that enforce. Compare both verdicts and log divergence (shadow);
+            # enforcement uses the legacy runtime verdict until ANIMICA_THETA_DETERMINISTIC=1
+            # flips it to the height-based one. Opt-in (not height-auto) because a latent
+            # float theta discrepancy would otherwise turn enforcement into a false-reject
+            # — validate via the shadow log on a live node first.
+            height = int(getattr(header, "height", 0) or 0)
+            runtime_in_warmup = self._difficulty_samples < warmup_blocks
+            det_in_warmup = height < warmup_blocks
+            if runtime_in_warmup != det_in_warmup:
+                log.warning(
+                    "H01: theta warmup verdict divergence (restart non-determinism)",
+                    extra={
+                        "runtime_in_warmup": runtime_in_warmup,
+                        "deterministic_in_warmup": det_in_warmup,
+                        "height": height,
+                        "samples": self._difficulty_samples,
+                        "warmup_blocks": warmup_blocks,
+                    },
+                )
+            in_warmup = (
+                det_in_warmup
+                if os.getenv("ANIMICA_THETA_DETERMINISTIC") == "1"
+                else runtime_in_warmup
+            )
+            if in_warmup:
                 log.warning(
                     "theta mismatch during difficulty warmup",
                     extra={

@@ -33,6 +33,9 @@ from animica.wallet.serialization import (
     merge_imported_wallets,
     parse_wallets_text,
 )
+# At-rest secret encryption (ANM-C07). Additive/opt-in: default on-disk format
+# is unchanged and plaintext wallets keep loading/saving exactly as before.
+from animica.wallet import at_rest
 from .timeouts import DEFAULT_RPC_TIMEOUT, RPC_TIMEOUT_ENV, resolve_timeout
 
 try:
@@ -261,8 +264,50 @@ def _try_recover_from_backup(
     return None
 
 
-def _save_store(wallet_file: Path, store: Dict[str, Any]) -> None:
+# ANM-C07: emit the "stored unencrypted" reminder at most once per process so a
+# create followed by set-default/show doesn't spam the operator.
+_PLAINTEXT_WARN_EMITTED = False
+
+
+def _store_has_plaintext_secret(store: Dict[str, Any]) -> bool:
+    """True if any wallet entry still carries a non-empty plaintext secret."""
+    for w in (store.get("wallets") or []):
+        if not isinstance(w, dict):
+            continue
+        s = w.get("secret_key_hex") or w.get("secretKeyHex")
+        if isinstance(s, str) and s.strip() and s.strip() != "0x":
+            return True
+    return False
+
+
+def _current_chain_id() -> Optional[int]:
+    try:
+        return int(load_network_config().chain_id)
+    except Exception:
+        return None
+
+
+def _insecure_fallback_blocked() -> bool:
+    """ANM-M07: insecure/stub PQ keygen must never run on mainnet (chain_id=1).
+
+    Fail-closed: if the network can't be determined we treat it as mainnet so an
+    ambiguous environment can never downgrade to a forgeable stub key.
+    """
+    cid = _current_chain_id()
+    return cid is None or cid == 1
+
+
+def _save_store(wallet_file: Path, store: Dict[str, Any], *, passphrase: Optional[str] = None) -> None:
     """Persist the wallet store with atomic-rename + dated backups.
+
+    ANM-C07: when a passphrase is available (explicit ``passphrase`` arg, else
+    ``ANIMICA_WALLET_PASSPHRASE`` / ``ANIMICA_WALLET_PASSPHRASE_FILE``) every
+    plaintext ``secret_key_hex`` is first moved into an encrypted
+    ``secret_key_enc`` envelope so nothing plaintext is ever serialized. When no
+    passphrase is set the on-disk format is unchanged (plaintext), but a single
+    clear warning is emitted so the operator knows the secret is unprotected.
+    When the resulting store is encrypted we also skip the ``.bak.*`` copy so a
+    plaintext snapshot of a pre-migration file can't linger on disk.
 
     The naive `write_text` path used previously could destroy the store
     in two ways:
@@ -291,18 +336,47 @@ def _save_store(wallet_file: Path, store: Dict[str, Any]) -> None:
     parent directory this is always true.
     """
     ensure_file_dir(wallet_file, sensitive=True)
-    serialized = canonical_json_dumps(export_canonical_store(store))
+
+    # ANM-C07 encrypt-on-write (opt-in). Resolve a passphrase from the explicit
+    # arg or the environment; if present, seal any plaintext secret into an
+    # encrypted envelope BEFORE serialization so plaintext never touches disk.
+    secret = at_rest.resolve_passphrase(passphrase)
+    store_to_write = store
+    if secret:
+        try:
+            store_to_write = at_rest.encrypt_store_secrets(store, secret)
+        except at_rest.WalletEncryptionError as exc:
+            # Never fall back to writing plaintext on an encryption failure.
+            raise RuntimeError(f"failed to encrypt wallet secrets at rest: {exc}") from exc
+
+    encrypted = at_rest.store_is_encrypted(store_to_write)
+    if not encrypted and _store_has_plaintext_secret(store_to_write):
+        global _PLAINTEXT_WARN_EMITTED
+        if not _PLAINTEXT_WARN_EMITTED:
+            _PLAINTEXT_WARN_EMITTED = True
+            typer.echo(
+                "Warning: wallet secret key is stored UNENCRYPTED at rest. Set "
+                "ANIMICA_WALLET_PASSPHRASE (or pass --password) and run "
+                "`animica wallet encrypt` to protect it.",
+                err=True,
+            )
+
+    # export_canonical_store strips any plaintext for entries that already carry
+    # a valid encrypted envelope, so an encrypted store never re-materializes.
+    serialized = canonical_json_dumps(export_canonical_store(store_to_write))
 
     parent = wallet_file.parent
     suffix = wallet_file.suffix or ".json"
     # Backup the previous file before overwrite — only if it has content.
     # Empty / missing files are skipped: there's nothing to lose, and a
-    # backup of "" would just clutter the directory.
+    # backup of "" would just clutter the directory. When we're writing an
+    # encrypted store we skip backups entirely: the current file may still be
+    # plaintext, and a `.bak.*` copy of it would defeat at-rest encryption.
     try:
         existing_size = wallet_file.stat().st_size if wallet_file.exists() else 0
     except OSError:
         existing_size = 0
-    if existing_size > 0:
+    if existing_size > 0 and not encrypted:
         try:
             keep = int(os.environ.get("ANIMICA_WALLET_BACKUP_KEEP", "20"))
         except ValueError:
@@ -656,7 +730,25 @@ def _generate_entry(
     alg_info: Any,
     allow_default_fallback: bool,
 ) -> WalletEntry:
-    if allow_fallback:
+    # ANM-M07: insecure / stub PQ keygen must NEVER run on mainnet (chain_id=1).
+    mainnet_blocked = _insecure_fallback_blocked()
+    if mainnet_blocked:
+        # Fail-closed even if the unsafe flags were pre-set in the environment
+        # (e.g. inherited from a shell or an RPC-reachable caller): refuse to
+        # proceed rather than risk fabricating a forgeable stub-scheme key.
+        for _unsafe in ("ANIMICA_UNSAFE_PQ_FAKE", "ANIMICA_ALLOW_PQ_PURE_FALLBACK"):
+            _val = os.environ.get(_unsafe, "").strip().lower()
+            if _val and _val not in {"0", "false", "no", "off"}:
+                raise RuntimeError(
+                    f"Refusing wallet keygen: {_unsafe} is set, but insecure/stub "
+                    "post-quantum keygen is forbidden on mainnet (chain_id=1). "
+                    "Unset it and use real post-quantum keys (ml_dsa_65)."
+                )
+    # Insecure fallbacks are only ever enabled off-mainnet with an explicit
+    # dev opt-in. On mainnet we still attempt real keygen below; we simply never
+    # poison it with the unsafe env, and fail closed if real keygen is missing.
+    insecure_ok = bool(allow_fallback) and not mainnet_blocked
+    if insecure_ok:
         os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
         os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
 
@@ -701,6 +793,15 @@ def _generate_entry(
             secret = _normalize_dilithium3_secret_key(secret, resolved_alg_name)
 
         except NotImplementedError as e:
+            # ANM-M07: on mainnet (chain_id=1) never fabricate a stub-scheme key.
+            # Both the Dilithium3 auto-retry (0x1001 stub) and the pure-Python
+            # fallback below are forbidden here — fail closed instead.
+            if mainnet_blocked:
+                raise RuntimeError(
+                    "Post-quantum keygen unavailable and insecure fallback is "
+                    "disabled on mainnet (chain_id=1); refusing to create a "
+                    "stub-scheme wallet. Install native ml_dsa_65 support and retry."
+                ) from e
             # If default algorithm is not available (e.g., SPHINCS without liboqs),
             # try Dilithium3 which has pure-Python fallback support
             if allow_default_fallback and resolved_alg_id != DILITHIUM3_ID:
@@ -876,6 +977,16 @@ def create(
         "--allow-insecure-fallback",
         help="Use pure-Python PQ fallbacks when native libs are unavailable (dev/test only)",
     ),
+    password: Optional[str] = typer.Option(
+        None,
+        "--password",
+        "--passphrase",
+        help=(
+            "Encrypt the new wallet's secret key at rest (ANM-C07). May also be "
+            "supplied via ANIMICA_WALLET_PASSPHRASE / ANIMICA_WALLET_PASSPHRASE_FILE. "
+            "Without a passphrase the secret is stored unencrypted (a warning is shown)."
+        ),
+    ),
 ) -> None:
     if not allow_insecure_fallback:
         from animica.cli.pq_utils import check_pq_signing_available, get_pq_missing_error_message
@@ -910,12 +1021,150 @@ def create(
         raise typer.Exit(code=1)
 
     store.setdefault("wallets", []).append(entry.to_dict())
-    _save_store(path, store)
+    _save_store(path, store, passphrase=password)
 
     typer.echo("=== Wallet created ===")
     typer.echo(f"Label:   {entry.label}")
     typer.echo(f"Address: {entry.address}")
     typer.echo(f"Alg:     {entry.alg_name} (0x{entry.alg_id:04x})")
+    typer.echo(f"Store:   {path}")
+    if at_rest.resolve_passphrase(password):
+        typer.echo("Secret:  encrypted at rest (secret_key_enc)")
+
+
+@app.command("encrypt")
+def encrypt_store_cmd(
+    password: Optional[str] = typer.Option(
+        None,
+        "--password",
+        "--passphrase",
+        help="Passphrase to encrypt secrets with (or set ANIMICA_WALLET_PASSPHRASE).",
+    ),
+) -> None:
+    """Migrate a plaintext wallet store to at-rest encrypted form (ANM-C07).
+
+    Rewrites every plaintext ``secret_key_hex`` into an encrypted
+    ``secret_key_enc`` envelope. Already-encrypted entries are left untouched.
+    Prints no secret material. Opt-in and idempotent.
+    """
+    secret = at_rest.resolve_passphrase(password)
+    if not secret:
+        typer.echo(
+            "A passphrase is required. Pass --password or set "
+            "ANIMICA_WALLET_PASSPHRASE / ANIMICA_WALLET_PASSPHRASE_FILE.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    ctx_wallet_file = _current_wallet_file()
+    path = _wallet_file_path(ctx_wallet_file)
+    store = _load_store(path)
+
+    plaintext_before = sum(
+        1
+        for w in (store.get("wallets") or [])
+        if isinstance(w, dict)
+        and not at_rest.is_encrypted_secret(w.get("secret_key_enc"))
+        and isinstance(w.get("secret_key_hex") or w.get("secretKeyHex"), str)
+        and (w.get("secret_key_hex") or w.get("secretKeyHex")).strip() not in ("", "0x")
+    )
+    if plaintext_before == 0:
+        typer.echo("No plaintext secrets to encrypt (store already encrypted or empty).")
+        return
+
+    try:
+        encrypted_store = at_rest.encrypt_store_secrets(store, secret)
+    except at_rest.WalletEncryptionError as exc:
+        typer.echo(f"Encryption failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    # _save_store re-resolves the passphrase and re-runs encryption idempotently;
+    # it also skips plaintext .bak.* copies because the store is now encrypted.
+    _save_store(path, encrypted_store, passphrase=secret)
+    typer.echo(f"Encrypted {plaintext_before} wallet secret(s) at rest.")
+    typer.echo(f"Store:   {path}")
+    typer.echo(
+        "Keep your passphrase safe — it cannot be recovered and is required to sign."
+    )
+
+
+@app.command("decrypt")
+def decrypt_store_cmd(
+    password: Optional[str] = typer.Option(
+        None,
+        "--password",
+        "--passphrase",
+        help="Passphrase to decrypt secrets with (or set ANIMICA_WALLET_PASSPHRASE).",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm rewriting the store back to UNENCRYPTED plaintext.",
+    ),
+) -> None:
+    """Rewrite an encrypted wallet store back to plaintext (ANM-C07, opt-in).
+
+    Requires the passphrase. This deliberately re-materializes plaintext secret
+    keys on disk, so it is gated behind --yes. Prints no secret material.
+    """
+    secret = at_rest.resolve_passphrase(password)
+    if not secret:
+        typer.echo(
+            "A passphrase is required. Pass --password or set "
+            "ANIMICA_WALLET_PASSPHRASE / ANIMICA_WALLET_PASSPHRASE_FILE.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if not yes:
+        typer.echo(
+            "Refusing to write plaintext secrets without --yes. This removes "
+            "at-rest encryption from the store.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    ctx_wallet_file = _current_wallet_file()
+    path = _wallet_file_path(ctx_wallet_file)
+    # Parse the raw store WITHOUT env-driven auto-decrypt so we control the
+    # passphrase used and keep the envelopes intact until we decrypt explicitly.
+    try:
+        parsed = parse_wallets_text(path.read_text(encoding="utf-8"), source=str(path))
+    except (OSError, WalletParseError) as exc:
+        typer.echo(f"Failed to read wallet store: {exc}", err=True)
+        raise typer.Exit(code=1)
+    store = parsed.store
+
+    if not at_rest.store_is_encrypted(store):
+        typer.echo("Store has no encrypted secrets; nothing to decrypt.")
+        return
+
+    try:
+        decrypted = at_rest.decrypt_store_secrets(store, secret, strict=True)
+    except at_rest.WalletEncryptionError as exc:
+        typer.echo(f"Decryption failed (wrong passphrase?): {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    # Strip the envelope so the store is genuinely plaintext again.
+    count = 0
+    for w in decrypted.get("wallets", []):
+        if isinstance(w, dict) and at_rest.is_encrypted_secret(w.get("secret_key_enc")):
+            w.pop("secret_key_enc", None)
+            count += 1
+
+    # Save as plaintext. Temporarily clear the passphrase env so _save_store's
+    # own resolve_passphrase() can't silently re-encrypt what we just decrypted.
+    saved_env = {
+        k: os.environ.pop(k, None)
+        for k in (at_rest.PASSPHRASE_ENV, at_rest.PASSPHRASE_FILE_ENV)
+    }
+    try:
+        _save_store(path, decrypted, passphrase="")
+    finally:
+        for k, v in saved_env.items():
+            if v is not None:
+                os.environ[k] = v
+    typer.echo(f"Decrypted {count} wallet secret(s) back to plaintext.")
     typer.echo(f"Store:   {path}")
 
 
@@ -1177,7 +1426,7 @@ def new_alias(label: str = typer.Option(..., "--label")) -> None:
     # Call the real command function directly, so pass concrete values for every
     # parameter — otherwise the unsupplied typer.Option defaults leak through as
     # OptionInfo objects (e.g. `alg` -> "Unknown signature algorithm: <OptionInfo>").
-    create(label=label, alg=None, allow_insecure_fallback=True)
+    create(label=label, alg=None, allow_insecure_fallback=True, password=None)
 
 
 if __name__ == "__main__":  # pragma: no cover

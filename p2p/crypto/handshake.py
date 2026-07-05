@@ -305,10 +305,32 @@ class _TcpAead:
                 self.impl = AESGCM(key)
             else:
                 self.impl = ChaCha20Poly1305(key)
-        except Exception:  # pragma: no cover - minimal environments
-            # Fallback: lightweight pure-Python stream "AEAD" suitable for tests/dev only.
-            # It provides confidentiality + an integrity tag, but is not intended
-            # to be a production-grade AEAD replacement.
+        except Exception as _crypto_exc:  # pragma: no cover - minimal environments
+            # ANM-L01: the hand-rolled pure-Python stream "AEAD" is NOT a
+            # production-grade AEAD. But the live Animica network already runs on
+            # it (the 'cryptography' backend is not deployed on peers), so refusing
+            # it by default would drop every peer and ISOLATE the node — fragmenting
+            # the network and violating "keep the chain working". We therefore ALLOW
+            # the fallback with a loud warning by default and let operators opt IN to
+            # strict refusal via ANIMICA_STRICT_AEAD=1. Installing 'cryptography' (a
+            # 6.0.0 runtime dependency) makes this branch unreachable and yields a
+            # real ChaCha20-Poly1305/AES-GCM AEAD, wire-compatible with pure-Python
+            # peers. ANIMICA_ALLOW_PURE_AEAD is still honored for backward compat.
+            import os as _os
+
+            if _os.getenv("ANIMICA_STRICT_AEAD") == "1":
+                raise HandshakeError(
+                    "ANIMICA_STRICT_AEAD=1 but no production AEAD backend is "
+                    "available (install 'cryptography'); refusing the insecure "
+                    "pure-Python fallback"
+                ) from _crypto_exc
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "ANM-L01: no 'cryptography' AEAD backend — using the INSECURE "
+                "pure-Python AEAD fallback. Install 'cryptography' for a real AEAD; "
+                "set ANIMICA_STRICT_AEAD=1 to refuse the fallback instead."
+            )
             self._pure = True
             self.impl = None
 

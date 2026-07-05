@@ -14,19 +14,53 @@ Domain separation ensures:
 from __future__ import annotations
 
 import hashlib
+import logging
+import os
 from typing import Any, Dict
 
-try:
-    from core.encoding.cbor import dumps as cbor_dumps, loads as cbor_loads
-except ImportError:
-    # Fallback to cbor2 if core encoding not available
-    # Note: cbor2.dumps doesn't have sort_keys, but it's deterministic by default
-    import cbor2
-    def cbor_dumps(obj):  # type: ignore
-        return cbor2.dumps(obj)
-    cbor_loads = cbor2.loads  # type: ignore
+# ANM-L07: fail CLOSED if the strict canonical codec is unavailable.
+# This module previously fell back to bare ``cbor2.dumps``/``cbor2.loads`` when
+# ``core.encoding.cbor`` could not be imported. That codec runs in a lenient,
+# non-deterministic mode (no canonical map ordering, accepts non-minimal
+# encodings), which would silently degrade the determinism of sign-bytes and
+# txids. ``core.encoding.cbor`` is stdlib-only, so this import never fails in
+# practice; if it ever did we must NOT continue with a lenient codec — let the
+# ImportError propagate instead of degrading to cbor2.
+from core.encoding.cbor import dumps as cbor_dumps, loads as cbor_loads
 
 from .types import TxBody, TxAuth, TxEnvelope, TxId, TxKind
+
+_log = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ANM-M05 / ANM-H09: reject non-canonical tx envelopes at decode time. When
+# enabled, ``decode_tx_envelope`` requires the input bytes to be byte-identical
+# to the canonical re-encoding of the decoded envelope. That rejects non-minimal
+# integer/length encodings, extra/unknown map keys, and reordered keys — every
+# one of which otherwise yields a distinct raw-bytes txid (ANM-H09) that
+# disagrees with the canonical txid, enabling PTL dedup bypass and cross-
+# subsystem id disagreement.
+#
+# This gate affects mempool/RPC ADMISSION only (decode_tx_envelope is not on the
+# block-import path), so it does not change block validity. To preserve current
+# external submission behavior on the live chain it defaults OFF and emits a
+# loud warning when enabled; enable it once submitting clients are known to emit
+# canonical CBOR.
+STRICT_CANONICAL = _env_flag("ANIMICA_TX_STRICT_CANONICAL", default=False)
+
+if STRICT_CANONICAL:  # pragma: no cover - depends on operator env
+    _log.warning(
+        "coretx.canonical: ANIMICA_TX_STRICT_CANONICAL is ENABLED — "
+        "decode_tx_envelope will REJECT non-canonical (non-minimal, extra-key, "
+        "or reordered) transaction envelopes at admission."
+    )
 
 __all__ = [
     "DOMAIN_TX_SIGN",
@@ -231,11 +265,16 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
         ValueError: If decoding fails or data is malformed
         TypeError: If decoded data has wrong types
     """
+    # Keep the untouched input bytes: the ``data`` name is reused below for the
+    # body's ``data`` field, so capture the wire bytes now for the canonical
+    # identity check (ANM-M05).
+    _raw_input = data
+
     try:
         raw = cbor_loads(data)
     except Exception as e:
         raise ValueError(f"CBOR decode failed: {e}") from e
-    
+
     if not isinstance(raw, dict):
         raise TypeError(f"Expected dict, got {type(raw)}")
     
@@ -312,6 +351,23 @@ def decode_tx_envelope(data: bytes) -> TxEnvelope:
     # Compute txid
     envelope = TxEnvelope(body=body, auth=auth, txid=TxId(bytes32=b"\x00" * 32))
     txid = compute_txid(envelope)
-    
+
+    envelope_final = TxEnvelope(body=body, auth=auth, txid=txid)
+
+    # ANM-M05 / ANM-H09: reject non-canonical wire encodings. The canonical
+    # re-encode of the decoded envelope must be byte-identical to the input;
+    # otherwise the input carried non-minimal integer/length encodings, extra
+    # or unknown map keys, or a non-deterministic key order — all of which make
+    # the raw-bytes txid diverge from the canonical txid. Gated OFF by default
+    # to preserve current submission behavior on the live chain.
+    if STRICT_CANONICAL:
+        canon = encode_tx_envelope(envelope_final)
+        if canon != _raw_input:
+            raise ValueError(
+                "non-canonical tx envelope encoding: raw bytes differ from the "
+                "canonical re-encode (non-minimal ints/lengths, extra/unknown "
+                "map keys, or non-deterministic key order)"
+            )
+
     # Return envelope with correct txid
-    return TxEnvelope(body=body, auth=auth, txid=txid)
+    return envelope_final

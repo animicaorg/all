@@ -789,8 +789,15 @@ def _validate_chain_id(obj: dict) -> int:
 
 def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     if _pq_verify is None:
-        if _PQ_VERIFY_OPTIONAL:
-            log.warning("PQ verification unavailable; skipping due to optional flags")
+        # ANM-H10: the optional-verify escape hatch must NEVER bypass signature
+        # verification on mainnet (chain_id=1). Fail closed there if the PQ
+        # backend is unavailable; only honor the dev flag on non-mainnet chains.
+        if _PQ_VERIFY_OPTIONAL and int(chain_id) != 1:
+            log.warning(
+                "PQ verification unavailable; skipping due to optional flags "
+                "(chain_id=%s, non-mainnet)",
+                chain_id,
+            )
             return
         raise rpc_errors.InternalError(
             "PQ verification unavailable",
@@ -1303,6 +1310,30 @@ def _instant_receipt(tx_hash_hex: str) -> dict | None:
         return None
 
 
+def _node_has_connected_peers() -> bool:
+    """True only when this node has at least one connected P2P peer.
+
+    Used to decide whether the tx-send force-chain path may mint a local instant
+    (no-PoW) block. Returns False when the peer count cannot be determined, so
+    the caller keeps its legacy behaviour on isolated/single-node setups; it only
+    reports True when peers are positively confirmed.
+    """
+    try:
+        ctx = deps.get_ctx()
+    except Exception:
+        return False
+    svc = getattr(ctx, "p2p_service", None) or getattr(ctx, "core_p2p_service", None)
+    if svc is None:
+        return False
+    try:
+        pc = getattr(svc, "peer_count", None)
+        if callable(pc):
+            return int(pc()) > 0
+    except Exception:
+        return False
+    return False
+
+
 def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
     if not _TX_SEND_FORCE_CHAIN:
         return False, None
@@ -1310,6 +1341,24 @@ def _ensure_tx_persisted_to_chain(tx_hash_hex: str) -> tuple[bool, str | None]:
     view, *_ = _lookup_persisted_tx(tx_hash_hex)
     if view is not None:
         return True, None
+
+    # Never mint a local no-PoW instant block on a NETWORKED node. Such a block
+    # carries no valid PoW, so peers reject it — it never propagates and instead
+    # forks the local head above the real chain (an "instant tower") that grows
+    # with every tx send until the node believes it is ahead of the network,
+    # stops syncing down, and the watchdog churns ("random reset"). With peers
+    # present the tx is already relayed and will be included in a real block, so
+    # the local instant block is both unnecessary and harmful. Isolated / single-
+    # node setups (no peers) keep the legacy immediate-persist behaviour.
+    if _node_has_connected_peers():
+        log.warning(
+            "tx-send force-chain: peers connected; NOT minting a local instant "
+            "block for %s (it would create a non-propagating fork). The tx stays "
+            "in the mempool for inclusion in a real block. Set "
+            "ANIMICA_TX_SEND_FORCE_CHAIN=0 to disable force-chain entirely.",
+            tx_hash_hex,
+        )
+        return False, "networked_relayed_pending_real_block"
 
     min_spacing_s = miner_methods._min_block_spacing_s()
     if min_spacing_s > 0:

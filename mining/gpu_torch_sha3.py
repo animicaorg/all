@@ -194,6 +194,24 @@ def solo_device_available(device: str) -> Optional[str]:
     return None
 
 
+def solo_devices_available(device: str) -> list:
+    """Return EVERY concrete torch device string for the requested GPU backend
+    so a multi-GPU rig mines on all of them — e.g. ['cuda:0','cuda:1',...] for a
+    box with N CUDA GPUs. Empty list => no usable GPU (caller uses the CPU miner).
+    ``solo_device_available`` (singular) still returns just the first for callers
+    that only drive one device."""
+    req = (device or "").strip().lower()
+    if req in ("cuda", "rocm", "gpu", "auto"):
+        if torch.cuda.is_available():
+            n = int(torch.cuda.device_count() or 0)
+            if n > 0:
+                return [f"cuda:{i}" for i in range(n)]
+    if req in ("mps", "metal", "auto"):
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            return ["mps"]
+    return []
+
+
 def scan_solo(
     header,
     target_int: int,

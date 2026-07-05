@@ -18,6 +18,7 @@ from rpc import deps
 from rpc import errors as rpc_errors
 from rpc import version as rpc_version
 from rpc.access_policy import AccessPolicy, set_active_policy
+from rpc.middleware.bearer_auth import BearerAuthMiddleware
 
 # Optional helpers (feature-detected)
 _jsonrpc_mod = importlib.import_module("rpc.jsonrpc")
@@ -191,6 +192,40 @@ def _mount_metrics(app: FastAPI) -> None:
         )
 
 
+def _emit_startup_security_warnings(
+    cfg: t.Any, policy: AccessPolicy, *, cors_wildcard: bool
+) -> None:
+    """Emit one prominent warning per boot for permitted-but-insecure defaults.
+
+    These are intentionally warnings (not errors): the safe defaults preserve
+    the current external behavior of the live deployment. Operators harden by
+    setting the referenced environment variables.
+    """
+    host = getattr(cfg, "host", None) or "127.0.0.1"
+    public = policy.server_bound_public
+    auth_token = getattr(cfg, "auth_token", None)
+
+    if not auth_token:
+        log.warning(
+            "SECURITY: RPC bearer auth is DISABLED (ANIMICA_RPC_AUTH_TOKEN unset); "
+            "the JSON-RPC endpoint accepts UNAUTHENTICATED requests%s. Set "
+            "ANIMICA_RPC_AUTH_TOKEN to require an 'Authorization: Bearer <token>'.",
+            " on a PUBLIC (non-loopback) bind" if public else "",
+        )
+    if public and not getattr(policy, "restrict_sensitive", False):
+        log.warning(
+            "SECURITY: RPC bound to public address %r but admin/debug/dangerous "
+            "methods are NOT restricted. Set ANIMICA_RPC_RESTRICT_SENSITIVE=1 to "
+            "refuse sensitive methods from non-loopback clients.",
+            host,
+        )
+    if cors_wildcard:
+        log.warning(
+            "SECURITY: CORS allow_origins includes '*' — any website may call this "
+            "RPC. Set ANIMICA_RPC_CORS_ORIGINS to an explicit allowlist."
+        )
+
+
 # -----------------------------------------------------------------------------
 # App factory
 # -----------------------------------------------------------------------------
@@ -205,7 +240,8 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
     """
     # Load config
     cfg = cfg or rpc_config.load_config()
-    set_active_policy(AccessPolicy.from_config(cfg))
+    policy = AccessPolicy.from_config(cfg)
+    set_active_policy(policy)
 
     # Basic logging if caller hasn't configured it
     if not logging.getLogger().handlers:
@@ -291,14 +327,39 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
 
         return await http_exception_handler(request, exc)
 
-    # CORS (strict allowlist)
+    # CORS (ANM-M06): make origins + credentials configurable and NEVER emit a
+    # wildcard origin together with Access-Control-Allow-Credentials. Credentials
+    # default to False (see rpc.config.CorsConfig); if a wildcard origin is
+    # configured we force credentials off so browsers can't send authenticated
+    # cross-origin requests from arbitrary sites.
+    cors_origins = list(cfg.cors_allow_origins or [])
+    cors_wildcard = "*" in cors_origins
+    cors_credentials = bool(getattr(cfg, "cors_allow_credentials", False))
+    if cors_wildcard and cors_credentials:
+        log.warning(
+            "SECURITY: CORS allow_origins contains '*' together with credentials; "
+            "disabling Access-Control-Allow-Credentials. Configure an explicit "
+            "ANIMICA_RPC_CORS_ORIGINS allowlist to use credentialed CORS."
+        )
+        cors_credentials = False
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cfg.cors_allow_origins or [],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=cors_credentials,
         allow_methods=["POST", "GET", "OPTIONS"],
         allow_headers=["*"],
         max_age=3600,
+    )
+
+    # Bearer-token auth (ANM-C08): fail-closed when ANIMICA_RPC_AUTH_TOKEN is
+    # set, otherwise a pass-through (with a loud startup warning below).
+    app.add_middleware(BearerAuthMiddleware, token=getattr(cfg, "auth_token", None))
+
+    # One prominent startup warning per boot for any insecure-but-permitted
+    # defaults (unauthenticated RPC, public bind without sensitive-method
+    # restriction, wildcard CORS).
+    _emit_startup_security_warnings(
+        cfg, policy, cors_wildcard=cors_wildcard
     )
 
     # --- Lifecycle wiring (DBs, heads, pools) ---

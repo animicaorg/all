@@ -12,7 +12,10 @@ from typing import Dict, Optional, Tuple
 
 from . import pure_python_fallbacks as _custom_fallbacks
 
-os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+# ANM-L03: do NOT self-enable the insecure pure-Python PQ fallback at import.
+# SPHINCS+ (scheme id 2) is a forgeable stub, disabled by default in
+# coretx.schemes.CANONICAL_SCHEME_SPECS. Using the pure fallback now requires an
+# explicit ANIMICA_ALLOW_PQ_PURE_FALLBACK=1 (dev/test only), never on mainnet.
 
 _sizes: Dict[str, int] = {
     "pk": _custom_fallbacks.SPHINCS_SHAKE_128S.pk,

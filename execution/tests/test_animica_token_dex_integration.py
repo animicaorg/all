@@ -167,7 +167,13 @@ def _view(
     return decode_return(abi_entries, fn, raw)
 
 
-def test_router_pair_lp_and_remove_flow_uses_user_as_owner() -> None:
+def test_router_pair_lp_and_remove_flow_uses_user_as_owner(monkeypatch) -> None:
+    # ANM-C05/C06: the raw-exec contract path is fail-closed by default and
+    # REVERTs unless an operator explicitly opts into the unsafe developer path.
+    # This integration test drives real contract source through that path, so it
+    # opts in for the duration of the test (never set on consensus/mainnet nodes).
+    monkeypatch.setenv("ANIMICA_VM_ALLOW_UNSAFE_EXEC", "1")
+
     user = b"\x10" * 32
     token_a = b"\xa1" * 32
     token_b = b"\xb2" * 32

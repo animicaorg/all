@@ -13,7 +13,7 @@ type MinerStats = {
   address: string;
   worker_name?: string;
   hashrate_timeseries?: Ts[];
-  last_share?: { time?: number | null; difficulty?: number | null; status?: string | null };
+  last_share?: { time?: number | string | null; difficulty?: number | null; status?: string | null };
   shares_accepted?: number;
   shares_rejected?: number;
   blocks_found?: number;
@@ -21,7 +21,7 @@ type MinerStats = {
   credit_total?: string;
   credit_pps?: string;
   credit_solo?: string;
-  connected_since?: number | null;
+  connected_since?: number | string | null;
 };
 
 function fmtHashrate(hps: number): string {
@@ -36,9 +36,22 @@ function fmtAnm(nano?: string): string {
   if (!Number.isFinite(n) || n <= 0) return "0";
   return (n / 1e9).toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
-function fmtTime(ts?: number | null): string {
-  if (!ts) return "—";
-  return new Date(ts * 1000).toISOString().replace("T", " ").replace(".000Z", " UTC");
+function fmtTime(ts?: number | string | null): string {
+  // Accepts a Unix timestamp (seconds), a numeric string, OR an ISO-8601 string
+  // (the API returns connected_since as ISO, e.g. "2026-06-30T16:01:22.7+00:00").
+  // The old version did `new Date(ts * 1000).toISOString()`, which on an ISO
+  // string coerced to NaN → Invalid Date → toISOString() THREW, crashing the
+  // whole lookup page ("Application error"). Parse defensively and guard NaN.
+  if (ts == null || ts === "") return "—";
+  let d: Date;
+  if (typeof ts === "number") {
+    d = new Date(ts * 1000); // unix seconds
+  } else {
+    const n = Number(ts);
+    d = Number.isFinite(n) ? new Date(n * 1000) : new Date(ts); // numeric string vs ISO
+  }
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
 function latestHps(s: MinerStats): number {
   const ts = s.hashrate_timeseries || [];

@@ -494,6 +494,44 @@ def _tx_gas_limit(tx: Any) -> int:
         return 0
 
 
+def _tx_offered_fee_wei(tx: Any, fee: Any) -> int:
+    """
+    Effective per-gas fee offered by a tx, in wei (ANM-H07 fee floor input).
+
+    Prefers the canonical EffectiveFee reader (correct for Tx objects), and
+    falls back to reading the fee straight out of a dict envelope body when
+    EffectiveFee cannot (it only understands attribute-style objects). This
+    keeps the fee floor from misfiring on dict-shaped submissions.
+    """
+    try:
+        offered = int(fee.effective_gas_price(None))
+    except Exception:
+        offered = 0
+    if offered > 0:
+        return offered
+
+    body = _tx_body(tx)
+    if isinstance(body, dict):
+        candidate = (
+            body.get("gasPrice")
+            or body.get("gas_price")
+            or body.get("maxFee")
+            or body.get("max_fee")
+            or body.get("maxFeePerGas")
+            or body.get("max_fee_per_gas")
+        )
+        if candidate is None:
+            gas = body.get("gas")
+            if isinstance(gas, dict):
+                candidate = gas.get("price")
+        try:
+            if candidate is not None:
+                return int(candidate)
+        except (TypeError, ValueError):
+            return offered
+    return offered
+
+
 def _tx_chain_id(tx: Any) -> Optional[int]:
     chain_id = None
 
@@ -762,10 +800,16 @@ class MempoolService:
         data_dir: str | Path | None = None,
         persist_enabled: bool = True,
         persist_ttl_s: int = 0,
+        per_sender_max_txs: int = 0,
+        verify_signatures: bool | None = None,
     ) -> None:
         self.pool = pool
         self.chain_id = int(chain_id)
         self.min_gas_price_wei = int(min_gas_price_wei)
+        self._init_admission_policy(
+            per_sender_max_txs=per_sender_max_txs,
+            verify_signatures=verify_signatures,
+        )
         self.state_db = state_db
         self.tx_index = tx_index
         self._persist_enabled = bool(persist_enabled)
@@ -804,6 +848,161 @@ class MempoolService:
         self._instant_block_loop: Optional["asyncio.AbstractEventLoop"] = None
         if self._persist_enabled:
             self._load_persisted()
+
+    # ------------------------------------------------------------------
+    # Admission-policy hardening (ANM-H07 / ANM-H10 / ANM-M09).
+    #
+    # These are LOCAL mempool admission/relay knobs only. They do NOT touch
+    # block validity (core/chain/block_import.py is unchanged): a block that
+    # already contains such a tx is still accepted by the importer, so there
+    # is no consensus/split risk. Stricter enforcement is scoped to mainnet
+    # (chain_id=1) and/or gated behind env with safe defaults so existing
+    # non-mainnet flows keep their current behavior.
+    # ------------------------------------------------------------------
+    def _init_admission_policy(
+        self, *, per_sender_max_txs: int, verify_signatures: bool | None
+    ) -> None:
+        def _env_flag(name: str, default: bool) -> bool:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+        def _env_int(name: str, default: int) -> int:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return default
+
+        is_mainnet = int(self.chain_id) == 1
+
+        # ANM-H07: real minimum-fee floor. The genesis params ship
+        # min_gas_price=0 which disables the fee gate entirely, so an unset
+        # floor is defaulted to 1 wei on mainnet. The live wallet already
+        # attaches maxFee>=1, so this rejects only truly-free (fee==0) spam.
+        # Set MEMPOOL_MIN_FEE_WEI=0 to opt out.
+        if self.min_gas_price_wei <= 0 and is_mainnet:
+            floor_default = _env_int("MEMPOOL_MIN_FEE_WEI", 1)
+            if floor_default > 0:
+                self.min_gas_price_wei = int(floor_default)
+                log.warning(
+                    "Mempool min-fee floor not configured; defaulting to %d wei "
+                    "for chain_id=1 (set min_gas_price or MEMPOOL_MIN_FEE_WEI=0 "
+                    "to override)",
+                    floor_default,
+                )
+
+        # ANM-H07: per-sender pending cap (0 disables). Wired from
+        # mempool.config.Limits.per_sender_max_txs; env override wins.
+        cap = _env_int("MEMPOOL_PER_SENDER_MAX_TXS", int(per_sender_max_txs or 0))
+        self._per_sender_max_txs = cap if cap > 0 else 0
+
+        # ANM-H07: reject completely-unfunded senders (on-chain balance <= 0)
+        # when state is readable. Such txs can never pay a fee and are pure
+        # relay spam. Only bites when a real integer balance is obtained.
+        self._require_funded_sender = _env_flag("MEMPOOL_REQUIRE_FUNDED_SENDER", True)
+
+        # ANM-M09: intrinsic-gas lower bound + block-gas upper bound at
+        # admission (parity with block admission). Default on; the bounds are
+        # chosen so no tx the live wallet/miner produce is rejected.
+        self._enforce_gas_bounds = _env_flag("MEMPOOL_ENFORCE_GAS_BOUNDS", True)
+        # Generous upper bound (~10x the largest configured VM gas tier) so a
+        # legitimate high-gas contract tx is never rejected, while the absurd
+        # gas_limit=10**18 spam of the finding is. Operators may tighten it.
+        block_gas = _env_int("MEMPOOL_MAX_GAS_LIMIT", 1_000_000_000)
+        self._block_gas_limit = block_gas if block_gas > 0 else 0
+
+        # ANM-H10: mandatory in-mempool signature verification. This is a
+        # chain-security invariant and must not be delegated to (or skippable
+        # by) callers. Enforced for mainnet by default; the kill-switch exists
+        # only for emergencies/tests and defaults to the secure setting.
+        if verify_signatures is None:
+            verify_signatures = _env_flag("ANIMICA_MEMPOOL_VERIFY_SIGS", True)
+        self._verify_sigs = bool(verify_signatures) and is_mainnet
+
+    def _intrinsic_gas_floor(self, tx: Any, decoded_tx_obj: Any | None) -> int:
+        """
+        Best-effort intrinsic-gas floor for a tx (ANM-M09).
+
+        Returns a value that is guaranteed to be <= the real intrinsic gas the
+        executor would charge, so the lower-bound check never over-rejects a
+        block-valid tx. In practice this resolves to the base tx cost (21000)
+        for the common case, and higher when a decoded Tx object exposes its
+        calldata/access-list.
+        """
+        try:
+            from mempool.accounting import intrinsic_gas as _intrinsic_gas
+            from mempool.accounting import AccountingConfig as _AccCfg
+        except Exception:
+            return 21_000
+        cfg = _AccCfg(enforce_intrinsic_leq_limit=False)
+        best = 0
+        for candidate in (decoded_tx_obj, tx):
+            if candidate is None:
+                continue
+            try:
+                g = int(_intrinsic_gas(candidate, cfg=cfg))
+            except Exception:
+                continue
+            if g > best:
+                best = g
+        # base_tx (21000) is the minimum intrinsic for any non-coinbase tx.
+        return best if best > 0 else 21_000
+
+    def _verify_tx_signature(
+        self, raw_bytes: bytes, tx_hash_hex: str, sender_hex: str | None
+    ) -> None:
+        """
+        ANM-H10: mandatory signature verification performed INSIDE admission.
+
+        Re-decodes the canonical bytes and runs the same PQ verification the
+        RPC/P2P callers run, so a forged/unsigned tx is rejected regardless of
+        which caller submitted it and regardless of ANIMICA_PQ_VERIFY_OPTIONAL.
+        Fails closed on mainnet if the verification backend is unavailable.
+        """
+        try:
+            from rpc.methods import tx as tx_methods
+        except Exception as exc:
+            self._record_rejection(
+                tx_hash_hex, "verify_unavailable", {"error": str(exc)}
+            )
+            raise AdmissionError(
+                "signature verification backend unavailable",
+                context={"tx_hash": tx_hash_hex, "reason": "invalid_signature"},
+            ) from exc
+
+        try:
+            tx_like, obj = tx_methods._decode_tx(raw_bytes)
+        except Exception as exc:
+            self._record_rejection(
+                tx_hash_hex,
+                "invalid_signature",
+                {"step": "verify_decode", "error": str(exc)},
+            )
+            raise AdmissionError(
+                "tx could not be decoded for signature verification",
+                context={"tx_hash": tx_hash_hex, "reason": "invalid_signature"},
+            ) from exc
+
+        try:
+            tx_methods._verify_pq_signature(tx_like, obj, chain_id=int(self.chain_id))
+        except Exception as exc:
+            self._record_rejection(
+                tx_hash_hex,
+                "invalid_signature",
+                {"error": str(exc), "sender": sender_hex},
+            )
+            raise AdmissionError(
+                "invalid signature",
+                context={
+                    "tx_hash": tx_hash_hex,
+                    "sender": sender_hex,
+                    "reason": "invalid_signature",
+                },
+            ) from exc
 
     def _disable_persistence_fallback(self, *, reason: str, exc: Exception, path_attempted: str | None = None) -> None:
         errno_value = getattr(exc, "errno", None)
@@ -1074,6 +1273,8 @@ class MempoolService:
             data_dir=data_dir,
             persist_enabled=persist_enabled,
             persist_ttl_s=persist_ttl_s,
+            # ANM-H07: wire the (previously unused) per-sender pending cap.
+            per_sender_max_txs=int(getattr(mp_cfg.limits, "per_sender_max_txs", 0) or 0),
         )
 
     def _persist_snapshot(self) -> None:
@@ -1461,6 +1662,14 @@ class MempoolService:
                 context={"tx_hash": tx_hash_hex, "error": str(exc)},
             ) from exc
 
+        # ANM-H10: mandatory in-mempool signature verification. Runs regardless
+        # of caller so a forged/unsigned tx cannot enter the pool even via a
+        # relay/caller path that forgot to verify. Skipped only when restoring
+        # already-verified persisted entries. Scoped to mainnet in
+        # _init_admission_policy (self._verify_sigs), fail-closed there.
+        if self._verify_sigs and not self._restoring:
+            self._verify_tx_signature(raw_bytes, tx_hash_hex, sender_hex)
+
         replay_in_index = False
         replay_source = "tx_index"
         if self.tx_index is not None and hasattr(self.tx_index, "exists"):
@@ -1736,8 +1945,48 @@ class MempoolService:
                     context={"tx_hash": tx_hash_hex},
                 )
 
+            # ANM-M09: apply the intrinsic-gas lower bound and block-gas upper
+            # bound at admission so the mempool never admits/relays a tx that
+            # can never be mined (gas_limit below intrinsic, or above the block
+            # gas cap). LOCAL admission policy only; block validity unchanged.
+            if self._enforce_gas_bounds:
+                intrinsic = self._intrinsic_gas_floor(tx, decoded_tx_obj)
+                if int(gas_limit) < int(intrinsic):
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "intrinsic_gas_too_low",
+                        {"gas_limit": int(gas_limit), "intrinsic_gas": int(intrinsic)},
+                    )
+                    raise AdmissionError(
+                        "gas_limit below intrinsic gas",
+                        context={
+                            "tx_hash": tx_hash_hex,
+                            "gas_limit": int(gas_limit),
+                            "intrinsic_gas": int(intrinsic),
+                            "reason": "intrinsic_gas_too_low",
+                        },
+                    )
+                if self._block_gas_limit and int(gas_limit) > int(self._block_gas_limit):
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "exceeds_block_gas",
+                        {
+                            "gas_limit": int(gas_limit),
+                            "block_gas_limit": int(self._block_gas_limit),
+                        },
+                    )
+                    raise AdmissionError(
+                        "gas_limit exceeds block gas limit",
+                        context={
+                            "tx_hash": tx_hash_hex,
+                            "gas_limit": int(gas_limit),
+                            "block_gas_limit": int(self._block_gas_limit),
+                            "reason": "exceeds_block_gas",
+                        },
+                    )
+
             fee = EffectiveFee.from_tx(tx)
-            offered = int(fee.effective_gas_price(None))
+            offered = _tx_offered_fee_wei(tx, fee)
             if self.min_gas_price_wei and offered < self.min_gas_price_wei:
                 self._record_rejection(
                     tx_hash_hex,
@@ -1751,12 +2000,72 @@ class MempoolService:
                     sender=sender_hex,
                 )
 
+            # ANM-H07: per-sender pending cap. Bound the number of distinct
+            # pending nonces a single sender may occupy so an attacker cannot
+            # flood the pool from one (even unfunded) account. A same-nonce
+            # replacement (RBF) does not consume a new slot, so it is exempt.
+            if self._per_sender_max_txs and self._per_sender_max_txs > 0:
+                try:
+                    sender_pending = list(self.pool.index.get_by_sender(sender_hex))
+                except Exception:
+                    sender_pending = []
+                existing_nonces: set[int] = set()
+                for e in sender_pending:
+                    en = getattr(getattr(e, "meta", None), "nonce", None)
+                    if en is not None:
+                        try:
+                            existing_nonces.add(int(en))
+                        except (TypeError, ValueError):
+                            pass
+                is_replacement = nonce is not None and int(nonce) in existing_nonces
+                if not is_replacement and len(sender_pending) >= self._per_sender_max_txs:
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "too_many_pending_from_sender",
+                        {
+                            "sender": sender_hex,
+                            "pending": len(sender_pending),
+                            "limit": self._per_sender_max_txs,
+                        },
+                    )
+                    raise AdmissionError(
+                        "too many pending transactions from sender",
+                        context={
+                            "tx_hash": tx_hash_hex,
+                            "sender": sender_hex,
+                            "pending": len(sender_pending),
+                            "limit": self._per_sender_max_txs,
+                            "reason": "too_many_pending_from_sender",
+                        },
+                    )
+
             # Pending debit accounting (per-sender)
             if self.state_db is not None and hasattr(self.state_db, "get_balance"):
                 try:
                     balance = int(self.state_db.get_balance(sender))
                 except Exception:
                     balance = None
+
+                # ANM-H07: reject completely-unfunded senders. An account with
+                # zero on-chain balance can never pay a fee, so its txs are pure
+                # relay spam. Only enforced when a real integer balance was read.
+                if (
+                    self._require_funded_sender
+                    and balance is not None
+                    and int(balance) <= 0
+                ):
+                    self._record_rejection(
+                        tx_hash_hex,
+                        "insufficient_funds_pending",
+                        {"required": 1, "available": 0, "unfunded_sender": True},
+                    )
+                    raise InsufficientFundsPending(
+                        sender=sender_hex,
+                        tx_hash=tx_hash_hex,
+                        required=1,
+                        available=0,
+                    )
+
                 if balance is not None:
                     try:
                         new_spend = int(estimate_max_spend(tx).total_max_spend)

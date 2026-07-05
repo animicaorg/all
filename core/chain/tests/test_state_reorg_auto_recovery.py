@@ -119,6 +119,13 @@ def _transfer_tx(*, chain_id: int, sender: bytes, to: bytes, nonce: int, amount:
 
 
 def test_reorg_state_failure_auto_recovers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # This test exercises reorg state-failure auto-recovery, not signature/root
+    # policy. Push the height-gated PQ-hardening and root-commitment checks past
+    # the test's block heights so the unsigned devnet fixture blocks import.
+    # Dedicated tests cover the sig/root gates.
+    monkeypatch.setenv("ANIMICA_FORK_PQ_HARDENING_HEIGHT", "999999999")
+    monkeypatch.setenv("ANIMICA_FORK_ROOT_COMMITMENT_HEIGHT", "999999999")
+
     params = _params()
     bdb, state_db = _db_bundle(tmp_path)
     importer = BlockImporter(params=params, block_db=bdb, state_db=state_db)

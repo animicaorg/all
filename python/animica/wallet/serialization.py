@@ -14,6 +14,15 @@ try:
 except Exception:  # pragma: no cover
     validate_address = None
 
+# At-rest secret encryption (ANM-C07). Additive/opt-in: default behavior is
+# unchanged and plaintext wallets keep loading/saving exactly as before.
+from .at_rest import (
+    decrypt_store_secrets,
+    is_encrypted_secret,
+    resolve_passphrase,
+    store_is_encrypted,
+)
+
 
 class WalletParseError(ValueError):
     pass
@@ -121,6 +130,12 @@ def _wallet_from_legacy(raw: Dict[str, Any], warnings: List[str], idx: int) -> D
     if isinstance(secret_raw, str) and secret_raw.strip() and secret_raw.strip() != "0x":
         wallet["secret_key_hex"] = _normalize_hex(secret_raw, field=f"wallet[{idx}].secret_key_hex")
 
+    # At-rest encryption (ANM-C07): preserve the encrypted secret envelope so
+    # it round-trips through parse -> canonical save. Never contains plaintext.
+    secret_enc = raw.get("secret_key_enc")
+    if is_encrypted_secret(secret_enc):
+        wallet["secret_key_enc"] = dict(secret_enc)
+
     if isinstance(raw.get("private_key_enc"), str) and raw.get("private_key_enc").strip():
         wallet["private_key_enc"] = raw.get("private_key_enc").strip()
     if isinstance(raw.get("keystore"), dict):
@@ -203,7 +218,17 @@ def canonical_json_dumps(store: Dict[str, Any]) -> str:
     return text + "\n"
 
 
-def load_store_canonical(path: Path) -> WalletImportResult:
+def load_store_canonical(path: Path, *, passphrase: Optional[str] = None) -> WalletImportResult:
+    """Load and canonicalize the wallet store from ``path``.
+
+    Backward compatible: plaintext stores load exactly as before. For stores
+    that opted into at-rest encryption (ANM-C07), if a passphrase is available
+    (the explicit ``passphrase`` arg, else ``ANIMICA_WALLET_PASSPHRASE`` /
+    ``ANIMICA_WALLET_PASSPHRASE_FILE``) the encrypted secrets are transparently
+    decrypted *in memory* so downstream signing keeps working. Without a
+    passphrase, encrypted entries stay sealed (address/pubkey still load) so
+    read-only operations continue to function — fail-closed, non-fatal.
+    """
     if not path.exists():
         now = _utc_now_iso()
         return WalletImportResult(
@@ -222,7 +247,18 @@ def load_store_canonical(path: Path) -> WalletImportResult:
     size = path.stat().st_size
     if size > MAX_WALLETS_FILE_SIZE:
         raise WalletParseError(f"Refusing to load {path}: file too large ({size} bytes)")
-    return parse_wallets_text(path.read_text(encoding="utf-8"), source=str(path))
+    result = parse_wallets_text(path.read_text(encoding="utf-8"), source=str(path))
+
+    if store_is_encrypted(result.store):
+        secret = resolve_passphrase(passphrase)
+        if secret:
+            result.store = decrypt_store_secrets(result.store, secret)
+        else:
+            result.warnings.append(
+                "Wallet store is encrypted at rest; set ANIMICA_WALLET_PASSPHRASE "
+                "to unlock secret keys (read-only operations still work)."
+            )
+    return result
 
 
 def _next_label(label: str, taken: set[str]) -> str:
@@ -273,5 +309,13 @@ def export_canonical_store(store: Dict[str, Any]) -> Dict[str, Any]:
     out["created_at"] = _as_iso(out.get("created_at"))
     out["updated_at"] = _utc_now_iso()
     wallets = [dict(w) for w in out.get("wallets", []) if isinstance(w, dict)]
+    # ANM-C07: if an entry has a valid encrypted secret envelope, the canonical
+    # on-disk form must NOT carry plaintext. A transparent-decrypt read
+    # (load_store_canonical) populates secret_key_hex in memory; stripping it
+    # here guarantees a subsequent save never re-materializes the plaintext.
+    for w in wallets:
+        if is_encrypted_secret(w.get("secret_key_enc")):
+            w.pop("secret_key_hex", None)
+            w.pop("secretKeyHex", None)
     out["wallets"] = sorted(wallets, key=lambda w: str(w.get("label", "")).lower())
     return out

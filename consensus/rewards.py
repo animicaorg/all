@@ -425,11 +425,29 @@ def _subsidy_total_for_height(height: int, schedule: Dict[str, Any]) -> int:
     if epoch >= max_halvings:
         epoch = max_halvings - 1
 
-    decay_factor = (100.0 - decay_pct) / 100.0
-    current_subsidy = int(start * (decay_factor**epoch))
+    current_subsidy = _integer_subsidy(start, decay_pct, epoch)
     if current_subsidy < tail:
         current_subsidy = tail
     return current_subsidy
+
+
+def _integer_subsidy(start: int, decay_pct: float, epoch: int) -> int:
+    """ANM-H08/M04: exact integer block subsidy (no float exponentiation).
+
+    For a whole-percent decay this reproduces int(start * ((100-decay)/100)**epoch)
+    EXACTLY — verified equal for decay=50 (the mainnet/testnet value) across every
+    epoch — so it changes NO reward value while removing the cross-platform float
+    determinism hazard. A non-whole-percent decay (not used by any shipped chain)
+    falls back to the exact legacy float expression so its values are unchanged too.
+    """
+    d = int(decay_pct)
+    if float(d) == float(decay_pct):
+        num = 100 - d
+        if num <= 0:
+            return 0
+        e = int(epoch)
+        return (int(start) * (num ** e)) // (100 ** e)
+    return int(start * (((100.0 - decay_pct) / 100.0) ** epoch))
 
 
 def _split_subsidy_total(total: int, schedule: Dict[str, Any]) -> Tuple[int, int, int]:
@@ -497,20 +515,19 @@ def _total_subsidy_through_height(height: int, schedule: Dict[str, Any]) -> int:
     tail = schedule["tail_nANM_per_block"]
     max_halvings = schedule["max_halvings"]
 
-    decay_factor = (100.0 - decay_pct) / 100.0
     max_epoch = max_halvings - 1
     full_epochs = min((height - 1) // epoch_length, max_epoch)
 
     total = 0
     for epoch in range(0, full_epochs):
-        subsidy = int(start * (decay_factor**epoch))
+        subsidy = _integer_subsidy(start, decay_pct, epoch)
         if subsidy < tail:
             subsidy = tail
         total += subsidy * epoch_length
 
     remaining = height - (full_epochs * epoch_length)
     if remaining > 0:
-        subsidy = int(start * (decay_factor**full_epochs))
+        subsidy = _integer_subsidy(start, decay_pct, full_epochs)
         if subsidy < tail:
             subsidy = tail
         total += subsidy * remaining

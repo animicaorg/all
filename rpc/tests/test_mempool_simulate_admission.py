@@ -141,6 +141,11 @@ def test_submit_atomic_stale_recent_cache_is_not_false_replay() -> None:
         state_db=None,
         tx_index=None,
         persist_enabled=False,
+        # This test exercises the stale-recent-cache replay path, not the
+        # ANM-H10 signature gate. Unsigned fixtures would otherwise be
+        # rejected as invalid_signature before the replay logic runs, so
+        # disable the sig check via the production kill-switch.
+        verify_signatures=False,
     )
     tx, raw, txh, sender_hex = _replay_candidate_envelope()
     svc._recent_txids[txh] = 1_000_000
@@ -161,6 +166,9 @@ def test_submit_atomic_replay_from_tx_index_is_typed() -> None:
         state_db=None,
         tx_index=_SeenTxIndex(),
         persist_enabled=False,
+        # Exercises the tx_index replay path, not the ANM-H10 signature gate;
+        # disable the sig check so the unsigned fixture reaches replay logic.
+        verify_signatures=False,
     )
     tx, raw, txh, sender_hex = _replay_candidate_envelope()
 
@@ -214,6 +222,10 @@ def test_submit_atomic_replay_from_legacy_unsigned_tx_index_is_typed() -> None:
         state_db=None,
         tx_index=tx_index,
         persist_enabled=False,
+        # Exercises the legacy unsigned-hash replay path, not the ANM-H10
+        # signature gate; disable the sig check so the unsigned fixture
+        # reaches the replay logic.
+        verify_signatures=False,
     )
 
     ok, reject, got_hash = svc.submit_atomic(tx=tx, raw=raw, tx_hash_hex=txh)
@@ -243,6 +255,10 @@ def test_submit_atomic_stale_recent_cache_ignores_replay_constructor(
         state_db=None,
         tx_index=None,
         persist_enabled=False,
+        # Exercises the stale-recent-cache path (must not touch the Replay
+        # constructor), not the ANM-H10 signature gate; disable the sig
+        # check so the unsigned fixture reaches the recent-cache logic.
+        verify_signatures=False,
     )
     tx, raw, txh, sender_hex = _replay_candidate_envelope()
     svc._recent_txids[txh] = 1_000_000

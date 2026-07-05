@@ -8,6 +8,265 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [6.0.1] - 2026-07-05
+Sets the mainnet consensus-activation height to the coordinated value **40,000** (6.0.0
+shipped a placeholder 100,000). At this height upgraded nodes begin enforcing the 6.0.0
+consensus rules (ml_dsa_65 signature verification, txsRoot/proofsRoot commitment,
+deterministic emission). **Every node must run 6.0.1 (or set
+`ANIMICA_FORK_PQ_HARDENING_HEIGHT` / `ANIMICA_FORK_ROOT_COMMITMENT_HEIGHT=40000`) before
+height 40,000** — the activation height is a network-wide consensus parameter and must be
+identical everywhere. Normal empty/coinbase-only zero-root blocks pass the gates at
+activation, so honest miners are not forked; only rule-violating blocks are rejected. The
+change is P2P-transparent (the mainnet params-hash is pinned), so 6.0.1, 6.0.0, and legacy
+nodes all continue to peer during the runway.
+
+## [6.0.0] - 2026-07-04
+Security & consensus hardening release. Closes the findings in the internal
+Security & Consensus Findings Report. **Every consensus change is forward-only and
+height-gated** (mainnet activation H=37000, tunable via `ANIMICA_FORK_*_HEIGHT`),
+grandfathering all existing history — **no genesis reset, no hard fork**, and no
+legitimately-mined historical block is rejected. Node-local hardening (RPC, P2P,
+snapshot, wallet, mempool) is always-on and independent of the activation height.
+
+### Migration
+- **Nodes and the pool/miner must upgrade before H=37000.** At that height,
+  upgraded nodes begin enforcing mandatory transaction-signature verification
+  (ml_dsa_65 / alg 0x1003 only), txsRoot/proofsRoot commitment, and deterministic
+  emission. A node that upgrades while the network does not — or that still accepts
+  stub-scheme (0x1001/0x1002) transactions — will orphan non-compliant blocks.
+- **RPC:** sensitive methods can now require a bearer token
+  (`ANIMICA_RPC_AUTH_TOKEN`) and be denylisted (`ANIMICA_RPC_RESTRICT_SENSITIVE`);
+  CORS-credentials no longer defaults open.
+- **Wallet:** `wallets.json` is encrypted at rest when a passphrase is provided
+  (`animica wallet create --password`, `ANIMICA_WALLET_PASSPHRASE[_FILE]`, or
+  `animica wallet encrypt`); plaintext stores still load (with a warning).
+- **Mempool** now enforces a min-fee floor, per-sender caps, funded-sender and
+  mandatory signature verification on mainnet (all env-tunable).
+
+### Fixed — Critical
+- **Forgeable post-quantum signature schemes (ANM-C01).** Schemes 1 (dilithium3)
+  and 2 (sphincs) verified via a public hash with no secret, so anyone with a
+  public key could forge a valid signature and — because accounts are keyed by
+  `sha3_256(pubkey)` with the alg id stripped — drain the victim's real account.
+  Only the FIPS-204 scheme ml_dsa_65 (0x1003) is now accepted; the stubs are
+  rejected at both signature stacks.
+- **Block import applied balances with no signature verification (ANM-C02).** A
+  hostile miner could include unsigned/forged transfers. Import now verifies every
+  transaction signature (height-gated, fail-closed).
+- **Contract `exec()` remote code execution + unbounded-loop DoS (ANM-C05/C06).**
+  The raw-`exec()` contract path is fail-closed by default; contracts REVERT.
+- **Header roots never validated on import (ANM-C03).** A PoW-valid header could
+  carry a different transaction or proof set and diverge nodes silently. txsRoot
+  and proofsRoot are now verified on import (self-gating, grandfathered); the
+  post-execution state root is computed and shadow-logged for a later enforcement.
+- **Plaintext wallet private keys (ANM-C07).** At-rest AES-256-GCM encryption.
+- **Unauthenticated RPC + snapshot import path traversal / silent divergence
+  (ANM-C08/C10/C11).** Opt-in RPC auth; snapshot path validation, caps, and a
+  completeness gate before head is set.
+
+### Fixed — High / Medium / Low (selected)
+- Deterministic difficulty (θ) warmup independent of node uptime (ANM-H01).
+- Exact-integer block emission — proven value-preserving — removing the float
+  determinism hazard; reward computation fails closed (ANM-H08/M04).
+- Mempool: fee floor, per-sender caps, nonce-aware eviction, mandatory
+  signatures, block-mineability bounds (ANM-H07/H10/M08/M09).
+- Canonical transaction id + strict-minimal CBOR (gated) closing txid
+  malleability (ANM-H09/M10/M05/L07).
+- P2P: bounded decompression + per-peer rate limiting; refuse insecure AEAD
+  downgrade (ANM-H03/H04/L01).
+- Deterministic error codes in consensus-hashed logs (ANM-L02); secure wallet
+  scheme defaults + mainnet insecure-keygen guard (ANM-M07); genesis alloc-cap
+  enforced for new networks (ANM-M04).
+
+### Known limitations (tracked, not shipped in 6.0.0)
+- Full PoIES useful-work verification (ANM-C04) requires building the proof
+  verifier package and activating PoIES as a coordinated protocol upgrade; only
+  the proofsRoot commitment is enforced here.
+- P2P handshake authentication (ANM-C09/C10) is deferred to an opt-in negotiated
+  migration to avoid orphaning current peers.
+
+---
+
+## [5.3.4] - 2026-07-03
+### Fixed
+- **CRITICAL — GPU miners' useful-work AI generation crashed and took the PoW
+  loop down with it (mainnet chain halt).** `stratum_pool/aicf_inference.py`
+  loaded the model onto `cuda:0` (via `device_map="auto"` when the resolved
+  device was `"cuda"`) but at generation time only moved `input_ids` to GPU
+  when `self._device == "cuda"` — and `self._device` is usually `None` (device
+  auto-resolves at load), so inputs stayed on **cpu** while weights sat on
+  **cuda:0**. `model.generate()` then raised *"Expected all tensors to be on
+  the same device … index is on cpu, different from cuda:0"*, the useful-work
+  worker errored, and the `animica-cli` miners stopped hashing. On mainnet the
+  whole GPU rig farm decayed from ~2.7 GH/s to 0 over an hour and blocks
+  stalled. Inputs are now placed on the model's **actual** device
+  (`next(model.parameters()).device`), and the load path uses
+  `device.startswith("cuda")` so `cuda:0`/`cuda:N` also GPU-load. Update rigs
+  with `pip install -U animica` and restart mining to restore hashrate.
+
+---
+
+## [5.3.3] - 2026-07-03
+### Changed
+- **ENA AI training stack is now part of the BASE install.** Every ENA training
+  shard was failing with `train_failed: "python_transformers backend needs
+  transformers + datasets (+ torch)"` because the AI stack lived only in the
+  `ai`/`gpu` extras — so a GPU rig that ran a plain `pip install animica` had no
+  torch/transformers/datasets and earned nothing. `torch`, `transformers`,
+  `datasets`, `accelerate`, `peft`, `trl`, `sentence-transformers`,
+  `safetensors`, `sentencepiece`, `protobuf`, `scipy`, `einops`, and
+  Linux-gated `bitsandbytes` (QLoRA) are now base dependencies, so `pip install
+  -U animica` on a rig can train out of the box. **Note:** this makes the base
+  install heavy (torch is ~GB). On Linux the default torch wheel is CUDA-enabled;
+  the `ai`/`gpu` extras remain as aliases.
+
+---
+
+## [5.3.2] - 2026-07-03
+### Fixed
+- **Snapshot restore could silently import PARTIAL state and still advance the
+  head — producing permanent, undetectable too-low account balances.**
+  `core/db/snapshot.py::import_snapshot` imported state chunks, `_import_state_chunk`
+  silently `continue`d past any dropped/corrupt entry, and the head was then set to
+  the checkpoint unconditionally — while `manifest.accounts_count` /
+  `code_contracts_count` / `storage_keys_count` were parsed but never checked. A
+  truncated or lossy state restore therefore dropped accounts, advanced the head,
+  and forward block application layered valid deltas onto the incomplete base, so
+  those accounts read too-low forever (this chain commits no state root in its
+  headers, so nothing else catches the divergence). Import now counts imported
+  entries per type, and a new completeness gate (`_verify_state_import_complete`)
+  **aborts before `set_head`** on any dropped entry or any per-type shortfall vs
+  the manifest. Backward compatible: pre-count legacy snapshots still import.
+  This is the class of bug behind an exchange node reporting balances far below
+  the authoritative on-chain values while sitting at the correct head height.
+### Changed
+- **Pool vardiff bootstrap now anchors at `start_difficulty` instead of the
+  min_difficulty floor.** Avoids a burst of floor-difficulty share spam on a fresh
+  pool while it converges (the deadlock-at-block-difficulty fix from 5.3.1 stands).
+
+---
+
+## [5.3.1] - 2026-07-03
+### Fixed
+- **Pool served every miner the full block target as its share target
+  (`shareTarget=1.0`), so miners were credited only when they found a whole
+  block.** The real root cause of the "shares only credited at full difficulty"
+  report was pool-side, not just miner-side: on a fresh pool the global vardiff
+  bootstrapped `_current_share_threshold_micro` from the *template's*
+  block-difficulty share (`_resolve_share_target`,
+  `python/animica/stratum_pool/stratum_server.py`). A block-difficulty share is
+  unsubmittable, so no samples ever reached the vardiff, which only steps *down*
+  on a low-difficulty-reject streak — the target stayed pinned at the block
+  target forever. New pools now bootstrap at an achievable **`start_difficulty`**
+  (default `0.01`, env `ANIMICA_STRATUM_START_DIFFICULTY`, clamped into
+  `[min_difficulty, max_difficulty]`; new field in `stratum_pool/config.py`) and
+  the vardiff ratchets *up* from real accept-rate feedback. A miner's explicitly
+  easier request is still honored. Combined with the 5.3.0 miner-side fallback,
+  miners now submit sub-block shares immediately and earn steady PPS credit.
+- **Explorer address pages hung ~37 s and rendered a blank ("—") balance.**
+  `explorer2/api` ran a synchronous 250-block live scan for tx history before
+  returning, so a sparse address (e.g. an exchange cold wallet) timed out in the
+  browser and the balance never rendered — misread as a missing/wrong balance.
+  The balance itself was always correct (fetched live from `state.getBalance`).
+  The scan now runs under a wall-clock budget (`EXPLORER_ADDRESS_SCAN_MS`,
+  default 3500 ms) so the balance/head return in a couple seconds and deeper
+  history paginates via `nextCursor`. (Explorer is deployed separately from the
+  pip package.)
+
+---
+
+## [5.3.0] - 2026-07-03
+### Fixed
+- **Miner only earned credit at full block difficulty.** Both scan drivers
+  (`mining/internal_cpu_miner.py`, `mining/hash_search.py`) promoted an
+  *undelivered* share target to the FULL block target Θ via
+  `if share_ratio <= 0: share_ratio = 1.0`, so the miner searched at Θ and only
+  found/submitted full-difficulty blocks — earning no per-share credit. Now falls
+  back to an easy sub-Θ ratio (`ANIMICA_MINER_FALLBACK_SHARE_RATIO`, default 0.25)
+  and clamps to (0, 1], so it scans at the pool's real share target. (The pool
+  already credits every accepted PPS share correctly — verified against the live
+  ledger — so this was purely miner-side.)
+- **Multi-GPU rigs only used one GPU.** Device selection collapsed to a single
+  torch device (`cuda` == ordinal 0). Added `solo_devices_available()` to
+  enumerate every connected GPU (`cuda:0..N`, or Metal), and the miner now fans
+  the header-template scan out across **all** detected GPUs each tick over
+  disjoint nonce sub-bands (an N-GPU rig does ~N× the work; no two GPUs grind the
+  same nonces), with graceful CPU fallback only if *every* GPU errors.
+- **Pool silently orphaned slow miners ("timeout issue").** On a send that
+  couldn't drain within the timeout, `mining/stratum_server.py::_drop_session`
+  removed the session but left the TCP socket half-open — the miner got no EOF,
+  never reconnected, and stale-ground a dead job forever. `_drop_session` now
+  aborts/closes the socket so the miner reconnects, and the send-timeout default
+  is raised 15s → 60s (`ANIMICA_STRATUM_SEND_TIMEOUT`).
+- **ENA training worker timed out mid-step.** The worker→coordinator HTTP client
+  used a flat 30s timeout on every call, including `/jobs/{id}/run`, which can
+  block on a real training/generation step for minutes → "timeout on the train
+  loop." The default is now a generous 600s, tunable via
+  `ANIMICA_ENA_WORKER_HTTP_TIMEOUT`.
+
+## [5.2.8] - 2026-07-03
+### Fixed
+- **ENA training pools could wedge on a round for days ("rounds / checkpoints
+  not advancing").** A pool's round counter would freeze (e.g. round 61 for ~6
+  days) because the coordinator's background sweep could never reach the
+  aggregate step, and even when it did, a no-adapter round *held forever*:
+  - **Sweep readiness** (`pool.py` `sweep`): the `ready` gate required either all
+    shards submitted or a submission-time stall — but replicate-mode reshard
+    growth keeps spawning open shards, a single drip trainer keeps the stall
+    timer fresh, and reclaim churn keeps a live claim present, so neither ever
+    fires. Added a **reclaim-churn-immune escape** based on *round age*
+    (`now − min(shard.created_at)`, which reclaim/drip cannot reset) gated by a
+    submission quorum, so a stuck-but-quorate round aggregates. Tunable per pool
+    via `round_quorum_frac` (0.5) and `round_overrun_factor` (2.0).
+  - **No-adapter hold is now bounded** (`_aggregate_locked`): if no trainer
+    uploads a real adapter, holding is capped at the hard round-timeout; past it
+    the round is **reject-and-advanced** (served checkpoint preserved — no
+    regression to base — round counter advances, flywheel keeps turning).
+- **Payout leak closed.** `payout()` blocked unservable rounds via the display
+  list `rejected_rounds`, which is truncated to the last 20 — so advancing a new
+  rejected round silently evicted an old one, making its unpaid contributions
+  payable. Payout safety now uses a separate **durable, uncapped
+  `unservable_rounds` set** (migrating existing entries), independent of the
+  display cap. Also hardened a possible `int(None)` crash when
+  `round_aggregate_timeout_secs` is explicitly null.
+### Notes
+- This fixes the **coordinator deadlock and the payout accounting** only. A
+  pool's *served* checkpoint still advances only when trainers upload real
+  `adapter_model.safetensors` weights that pass the eval gate; a pool whose GPU
+  trainers have left will keep cycling rounds (served checkpoint held at the last
+  finite round) until adapter-uploading trainers rejoin.
+
+## [5.2.7] - 2026-07-02
+### Fixed
+- **Nodes could wedge on a local “instant-block tower” and appear to randomly
+  reset.** No-PoW *instant* blocks (nonce=0) advance the local head but never
+  propagate (peers require valid PoW), so on a networked node they fork the head
+  *above* the real chain. The head then reads higher than the network, the node
+  believes it is ahead, stops syncing down, and the sync watchdog churns — which
+  looks like the head “went backwards / started a new sync and got stuck.” The
+  gap equals `head − canonicalHeight` (the non-instant counter). Two sources of
+  those blocks are now closed:
+  - **Mining:** a non-empty mempool no longer silently downgrades to a no-PoW
+    “instant” block that bypassed the sync/offline mining gate — mempool traffic
+    mines a **real PoW block** (which propagates and is network-canonical). The
+    explicit `instant_block=True` path is unchanged.
+  - **`tx send` force-chain** (`ANIMICA_TX_SEND_FORCE_CHAIN=1`): on a node **with
+    connected peers**, `tx send` no longer mints a local no-PoW block to “persist”
+    the tx (which built the tower one send at a time). The tx is relayed and
+    included in a real block instead; the response reports it as pending in the
+    mempool. Isolated / single-node setups (no peers) keep the immediate-persist
+    behaviour.
+### Notes
+- **Recovery of an already-wedged node** (head far above `canonicalHeight`) is a
+  one-time operation — restore from a current snapshot (or roll the head back to
+  the last non-instant height) and let it re-sync the real chain; upgrading alone
+  stops the tower from growing but does not abandon an existing one.
+- Fully excluding instant blocks from the canonical/fork-choice chain (rather
+  than merely not creating them) is a consensus change and must ship behind a
+  coordinated, versioned fork — it is intentionally **not** done here, because a
+  patch that keyed fork choice on the (grindable) instant-block marker would be
+  chain-split-unsafe.
+
 ## [Unreleased]
 ### Added
 - **`animica ai` command namespace** (pip `animica` 5.2.0): a first-class AI

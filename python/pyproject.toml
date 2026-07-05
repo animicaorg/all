@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "5.2.6"
+version = "6.0.1"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -34,6 +34,10 @@ dependencies = [
   "web3>=7.14.0,<8.0.0",
   "pyyaml>=6.0.1",
   "cbor2>=5.6.0",
+  # ANM-L01: production AEAD backend for the P2P transport (ChaCha20-Poly1305 /
+  # AES-GCM). Without it the handshake falls back to the insecure pure-Python AEAD
+  # (allowed with a warning by default; ANIMICA_STRICT_AEAD=1 refuses instead).
+  "cryptography>=42.0.0",
   "requests>=2.31.0",
   "fastapi>=0.115.0,<0.116.0",
   "uvicorn[standard]>=0.30.0,<1.0.0",
@@ -45,10 +49,29 @@ dependencies = [
   "starlette>=0.40,<0.47",
   "prometheus-client>=0.20.0,<1.0.0",
   "huggingface_hub>=0.24.0",
-  # NOTE: the heavy GPU/AI stack (torch, transformers, datasets, peft, trl, …) is
-  # NOT in the base install — it lives in the `ai` / `gpu` extras so a plain
-  # `pip install animica` stays light (node, wallet, miner, RPC, contracts). ENA
-  # AI train/serve needs `pip install "animica[ai]"` (CPU) or `animica[gpu]` (CUDA).
+  # ENA AI training/serving stack — INCLUDED IN THE BASE INSTALL (2026-07-03) so a
+  # GPU rig that runs `pip install animica` can train immediately. The
+  # python_transformers backend needs torch+transformers+datasets, and LoRA/QLoRA
+  # needs peft+accelerate(+bitsandbytes); without them every ENA shard fails with
+  # "python_transformers backend needs transformers + datasets (+ torch)". torch's
+  # default PyPI wheel is CUDA-enabled on Linux and MPS on Apple Silicon; AMD users
+  # install a ROCm torch from AMD's index. This makes the base install heavy
+  # (torch is ~GB); the `ai`/`gpu` extras below remain as explicit aliases and are
+  # now redundant with the base. bitsandbytes (QLoRA) is Linux-only, so it is
+  # environment-gated and simply skipped elsewhere.
+  "torch>=2.2.0",
+  "accelerate>=1.3.0,<2.0.0",
+  "transformers>=4.44.0,<5.0.0",
+  "datasets>=2.20.0,<4.0.0",
+  "sentence-transformers>=2.7.0,<6.0.0",
+  "peft>=0.11.0,<1.0.0",
+  "trl>=0.12.0,<1.0.0",
+  "sentencepiece>=0.2.0",
+  "protobuf>=4.23.0",
+  "safetensors>=0.4.0",
+  "scipy>=1.11.0",
+  "einops>=0.7.0",
+  "bitsandbytes>=0.43.0 ; platform_system == 'Linux'",
   # Native SHA3-256 CPU-miner fast path — shipped BY DEFAULT so `pip install
   # animica` + `animica up` (and the miner archives) get native hashrate with no
   # extra step. Its build is tolerant: on a platform with no prebuilt wheel and

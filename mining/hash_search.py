@@ -400,7 +400,13 @@ async def scan_forever(
 
             share_ratio = float(current_tpl.get("shareTarget") or 0.0)
             if share_ratio <= 0.0:
-                share_ratio = 1.0
+                # Never promote an undelivered share target to the full block
+                # target Θ (=1.0): that makes the scanner emit only full-difficulty
+                # blocks, so miners earn no share credit. Use an easy sub-Θ default.
+                share_ratio = float(
+                    os.environ.get("ANIMICA_MINER_FALLBACK_SHARE_RATIO", "0.25")
+                )
+            share_ratio = min(max(share_ratio, 1e-9), 1.0)
             t_share_micro = max(1, int(theta_micro * share_ratio))
 
             found = dev.scan(
