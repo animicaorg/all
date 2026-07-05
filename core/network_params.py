@@ -173,20 +173,20 @@ FORK_PQ_HARDENING = "pq_hardening"
 FORK_ROOT_COMMITMENT = "root_commitment"
 
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
-    # Mainnet consensus activation. 6.0.0 rolls out node-by-node; a consensus rule
-    # must NOT activate until the network is substantially upgraded, or an early
-    # upgraded node becomes a lone enforcer and risks forking off the (un-upgraded)
-    # majority. The original 37,000 assumed the whole network would upgrade within
-    # ~4h of head ~36,388, which did not happen — so it is deferred to 100,000
-    # (~29 days of runway at ~30s blocks) to allow the pip 6.0.0 rollout + pool/
-    # operator coordination. This height is P2P-transparent: it is NOT folded into
-    # the network params-hash (mainnet's fingerprint is pinned), so upgraded and
-    # legacy nodes still peer normally during the runway. Set the FINAL coordinated
-    # height (here or via ANIMICA_FORK_PQ_HARDENING_HEIGHT / _ROOT_COMMITMENT_HEIGHT)
-    # once network-wide 6.0.0 adoption is confirmed.
+    # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
+    # This MUST match on every node — the live node and every operator's pip install
+    # — or nodes that enforce diverge from nodes that don't the moment a rule-violating
+    # block appears. It is shipped in pip 6.0.1 (6.0.0 carried a placeholder 100,000);
+    # operators must run 6.0.1 (or set ANIMICA_FORK_PQ_HARDENING_HEIGHT /
+    # _ROOT_COMMITMENT_HEIGHT=40000) before this height. Normal empty/coinbase-only
+    # zero-root blocks pass the gates at activation (C02 skips coinbase, C03 self-gates
+    # on zero roots, emission is value-preserving), so activation does not fork honest
+    # miners; only rule-violating blocks are rejected — the point. P2P-transparent: the
+    # height is NOT folded into the pinned mainnet params-hash, so upgraded and legacy
+    # nodes still peer during the runway.
     ("mainnet", 1): {
-        FORK_PQ_HARDENING: 100_000,
-        FORK_ROOT_COMMITMENT: 100_000,
+        FORK_PQ_HARDENING: 40_000,
+        FORK_ROOT_COMMITMENT: 40_000,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {

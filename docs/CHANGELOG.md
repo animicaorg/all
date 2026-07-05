@@ -8,6 +8,18 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [6.0.1] - 2026-07-05
+Sets the mainnet consensus-activation height to the coordinated value **40,000** (6.0.0
+shipped a placeholder 100,000). At this height upgraded nodes begin enforcing the 6.0.0
+consensus rules (ml_dsa_65 signature verification, txsRoot/proofsRoot commitment,
+deterministic emission). **Every node must run 6.0.1 (or set
+`ANIMICA_FORK_PQ_HARDENING_HEIGHT` / `ANIMICA_FORK_ROOT_COMMITMENT_HEIGHT=40000`) before
+height 40,000** — the activation height is a network-wide consensus parameter and must be
+identical everywhere. Normal empty/coinbase-only zero-root blocks pass the gates at
+activation, so honest miners are not forked; only rule-violating blocks are rejected. The
+change is P2P-transparent (the mainnet params-hash is pinned), so 6.0.1, 6.0.0, and legacy
+nodes all continue to peer during the runway.
+
 ## [6.0.0] - 2026-07-04
 Security & consensus hardening release. Closes the findings in the internal
 Security & Consensus Findings Report. **Every consensus change is forward-only and
