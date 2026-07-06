@@ -8,6 +8,33 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [6.0.2] - 2026-07-07
+Node liveness + trainer stability fixes. **No consensus change** — nothing here touches
+block, state, or transaction validation, so it is fully compatible with 6.0.0/6.0.1 and
+needs no coordinated upgrade.
+
+- **P2P: fix an event-loop wedge that could stall block production.** Two independent DoS
+  vectors let peer traffic starve the node's single async event loop (silently — the node
+  keeps a stale head while `getblock*`/`getbalance` time out):
+  - **GET_HEADERS anchor scan was O(chain height).** `_locate_anchor` walked *every* block
+    height from the head down to genesis doing one synchronous DB read each, so a peer
+    sending a header locator full of unknown/foreign-chain hashes forced tens of thousands
+    of blocking reads per request (worsening as the chain grows). It now walks the peer's
+    (bounded) locator instead — at most one lookup + one canonical check per entry — with
+    identical semantics.
+  - **Peer banning was disabled.** Provably-incompatible peers (`wrong_genesis`/`wrong_chain`)
+    were penalised and dropped but never banned, so they reconnected in a hot loop and
+    re-ran the CPU-heavy pure-Python AEAD handshake forever. Banning is now enabled
+    (env-gated, default on: `ANIMICA_P2P_BAN_ENABLED=0` to disable), and the TCP transport
+    now rejects flooding hosts with a pre-handshake sliding-window rate limit (global +
+    per-host; tunable via `ANIMICA_P2P_INBOUND_CONN_GLOBAL_PER_MIN` /
+    `ANIMICA_P2P_INBOUND_CONN_PER_MIN`) so a connection flood can't saturate the loop.
+- **ENA training: fix `CUDA error: an illegal memory access` on GPU train shards.** SFT now
+  (1) resizes token embeddings to cover the tokenizer so an out-of-range id can't index off
+  the embedding table, (2) clamps `max_seq_len` to the model's `max_position_embeddings` so
+  a long row can't overrun the position table, and (3) drops any row carrying an out-of-vocab
+  token id as a final guard.
+
 ## [6.0.1] - 2026-07-05
 Sets the mainnet consensus-activation height to the coordinated value **40,000** (6.0.0
 shipped a placeholder 100,000). At this height upgraded nodes begin enforcing the 6.0.0

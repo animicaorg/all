@@ -394,6 +394,22 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any],
         # half-precision weights (skip for fp32/CPU where it would be slower/unsafe)
         model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(base_model, **model_kwargs)
+    # GPU-safety: a top cause of "CUDA error: an illegal memory access" during
+    # training is an embedding gather with a token id >= the embedding rows
+    # (added/special tokens whose ids exceed the base model's vocab). Make sure
+    # the model can embed EVERY id the tokenizer can emit. Done before LoRA/peft
+    # wrapping so the (frozen) base embeddings are the right size. Skipped for
+    # k-bit quantized weights, which can't be resized in place.
+    if quant not in ("4bit", "8bit"):
+        try:
+            emb = model.get_input_embeddings()
+            cur_rows = int(emb.weight.shape[0]) if emb is not None else None
+            if cur_rows is not None and len(tok) > cur_rows:
+                model.resize_token_embeddings(len(tok))
+                log.info("[train] resized embeddings %d -> %d to cover tokenizer",
+                         cur_rows, len(tok))
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("[train] resize_token_embeddings skipped: %s", exc)
     if gc_on:
         model.config.use_cache = False  # incompatible with gradient checkpointing
 
@@ -510,6 +526,17 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
 
     rows = list(ds.read_jsonl(train_path))
     max_len = int(hp.get("max_seq_len", 1024))
+    # Never let a sequence exceed the model's positional range: position ids past
+    # max_position_embeddings index off the end of the position table and trigger
+    # a CUDA "illegal memory access". Clamp to the model's real context window.
+    model_ctx = getattr(getattr(model, "config", None), "max_position_embeddings", None)
+    if isinstance(model_ctx, int) and 0 < model_ctx < 10_000_000:
+        max_len = min(max_len, model_ctx)
+    try:
+        _emb = model.get_input_embeddings()
+        _vocab_rows = int(_emb.weight.shape[0]) if _emb is not None else None
+    except Exception:
+        _vocab_rows = None
     # Build (input_ids, labels) with the PROMPT masked to -100 so the loss is taken
     # on the RESPONSE only (completion-style SFT). Use the model's chat template for
     # instruct bases (Qwen-Instruct etc.) so prompts are wrapped exactly as the
@@ -519,6 +546,16 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     has_chat = bool(getattr(tok, "chat_template", None))
     encoded = [e for e in (encode_sft_row(tok, r, max_len, has_chat)
                            for r in rows) if e is not None]
+    # Belt-and-suspenders on top of resize_token_embeddings: never feed the GPU a
+    # token id it can't embed. Drop (don't clamp — clamping corrupts the sample)
+    # any row carrying an out-of-vocab id so one bad row can't crash the kernel.
+    if _vocab_rows:
+        _before = len(encoded)
+        encoded = [e for e in encoded
+                   if e["input_ids"] and max(e["input_ids"]) < _vocab_rows]
+        if len(encoded) != _before:
+            log.warning("[train] dropped %d row(s) with out-of-vocab token ids "
+                        "(>= %d)", _before - len(encoded), _vocab_rows)
     if not encoded:
         raise TrainingError("no usable training rows in train split")
     warm_started = bool(manifest.get("init_adapter"))

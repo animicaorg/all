@@ -1657,7 +1657,22 @@ class P2PService:
                 float(os.environ.get("ANIMICA_P2P_BAN_MAX_S", "86400") or 86400),
             ),
         ]
-        self._ban_enabled = False
+        # ANM-L07 (event-loop wedge fix): peer banning MUST be enabled so that
+        # provably-incompatible peers — wrong_genesis / wrong_chain (1000 pts →
+        # 24h ban tier) — stop reconnecting. While banning was off, such a peer
+        # was penalised and dropped but never banned, so it reconnected in a hot
+        # loop and re-ran the CPU-heavy pure-Python AEAD handshake every time.
+        # That saturates the single asyncio event loop and halts block
+        # production. Banning is a LOCAL networking policy only — it does not
+        # touch block/state/consensus validation, so enabling it is not a
+        # consensus change and cannot fork or diverge the chain. Env-gated
+        # (default ON) so an operator can still disable it with
+        # ANIMICA_P2P_BAN_ENABLED=0. Seed / exempt / docker-local peers are
+        # already skipped inside _ban_peer / _penalize_peer.
+        self._ban_enabled = (
+            str(os.environ.get("ANIMICA_P2P_BAN_ENABLED", "1")).strip().lower()
+            not in ("0", "false", "no", "off", "")
+        )
         self._banlist_path = Path.home() / ".animica" / "banlist.json"
         self._banlist: dict[str, dict[str, Any]] = {}
         self._banlist_event = asyncio.Event()
@@ -15265,20 +15280,42 @@ class P2PService:
                     break
                 cursor = parent
         head_height = max(db_head_height, max(chain_headers.keys(), default=db_head_height))
-        locset = {bytes(h) for h in locator if isinstance(h, (bytes, bytearray))}
 
+        # ANM-L08 (event-loop DoS fix): resolve the anchor by walking the peer's
+        # locator (bounded — a header locator is a few dozen hashes) instead of
+        # scanning EVERY height from the head down to genesis. The previous code
+        # did one synchronous SQLite read per height, so a peer sending a locator
+        # full of unknown/foreign-chain hashes forced an O(chain-height) walk —
+        # tens of thousands of blocking DB reads on the single event loop per
+        # GET_HEADERS request — silently pegging the loop and stalling block
+        # production + RPC (and growing worse as the chain lengthens). We now do
+        # at most one header lookup + one canonical check per locator entry, and
+        # pick the highest-height locator hash that is on our canonical chain —
+        # identical semantics, bounded cost.
+        above_db_by_hash = {bytes(ch.hash): int(h) for h, ch in chain_headers.items()}
+        max_scan = int(os.environ.get("ANIMICA_P2P_MAX_LOCATOR_SCAN", "512") or 512)
         anchor_height = 0
         anchor_hash: Optional[bytes] = None
-        for h in range(head_height, -1, -1):
-            hh = None
-            if h <= db_head_height:
-                hh = bdb.get_canonical_hash(h)
-            if hh is None and h in chain_headers:
-                hh = chain_headers[h].hash
-            if hh and bytes(hh) in locset:
-                anchor_height = h
-                anchor_hash = bytes(hh)
+        best = -1
+        checked = 0
+        for h in locator:
+            if not isinstance(h, (bytes, bytearray)):
+                continue
+            checked += 1
+            if checked > max_scan:
                 break
+            hb = bytes(h)
+            hh = above_db_by_hash.get(hb)
+            if hh is None:
+                hdr = bdb.get_header_by_hash(hb)
+                if hdr is not None:
+                    cand = int(getattr(hdr, "height", -1))
+                    if 0 <= cand <= db_head_height and bdb.get_canonical_hash(cand) == hb:
+                        hh = cand
+            if hh is not None and hh > best:
+                best = hh
+                anchor_height = hh
+                anchor_hash = hb
         if anchor_hash is None:
             genesis = bdb.get_canonical_hash(0) or bdb.get_genesis_hash() or self._genesis_hash()
             if genesis:

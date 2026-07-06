@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "6.0.1"
+version = "6.0.2"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }

@@ -194,6 +194,10 @@ class TcpConn(Conn):
 
 
 import contextlib
+import ipaddress
+import os
+import time
+from collections import deque
 from urllib.parse import urlparse
 
 
@@ -217,6 +221,28 @@ class TcpTransport(Transport):
         self._listen_cfg: Optional[ListenConfig] = None
         self._handshake_prologue = handshake_prologue or b"animica/tcp/1"
         self._chain_id = chain_id
+        # ── ANM-L07: pre-handshake inbound connection rate limit ──────────────
+        # The AEAD handshake (perform_handshake_tcp) is CPU-heavy on the pure-
+        # Python fallback and runs on the single event loop. A peer that
+        # reconnects in a hot loop (e.g. an incompatible / different-genesis node)
+        # can force an unbounded stream of handshakes and starve the loop, which
+        # halts block production and RPC. We cap NEW inbound connections in a
+        # sliding window and drop over-limit sockets BEFORE the handshake. The
+        # GLOBAL cap is load-bearing: behind Docker/NAT every external peer is
+        # SNAT'd to the bridge gateway, so a per-host cap alone can't tell them
+        # apart. Loopback / link-local peers are exempt.
+        self._inbound_conn_times: dict[str, deque] = {}
+        self._inbound_rate_max = int(
+            os.environ.get("ANIMICA_P2P_INBOUND_CONN_PER_MIN", "10") or 10
+        )
+        self._inbound_rate_window_s = float(
+            os.environ.get("ANIMICA_P2P_INBOUND_CONN_WINDOW_S", "60") or 60
+        )
+        self._inbound_rate_last_prune = 0.0
+        self._inbound_global_times: deque = deque()
+        self._inbound_global_max = int(
+            os.environ.get("ANIMICA_P2P_INBOUND_CONN_GLOBAL_PER_MIN", "40") or 40
+        )
 
     # ---------- helpers ----------
 
@@ -235,6 +261,58 @@ class TcpTransport(Transport):
             return (host, int(port_s))
         raise ValueError(f"unsupported tcp addr format: {addr}")
 
+    @staticmethod
+    def _is_rate_exempt_host(host: str) -> bool:
+        """Only loopback / link-local peers skip the rate limit.
+
+        Private ranges are NOT exempt: behind Docker/NAT every external peer is
+        SNAT'd to the bridge gateway (a private IP), so exempting private hosts
+        would disable the limiter exactly when it's needed most.
+        """
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return bool(ip.is_loopback or ip.is_link_local)
+
+    def _inbound_allowed(self, host: str) -> bool:
+        """Pre-handshake inbound-connection gate.
+
+        Returns False (→ caller drops the socket before the AEAD handshake) when
+        either the GLOBAL new-inbound-handshake budget or the per-host budget for
+        this window is exhausted. Loopback / link-local peers always pass.
+        """
+        if self._is_rate_exempt_host(host):
+            return True
+        now = time.monotonic()
+        window = self._inbound_rate_window_s
+
+        if self._inbound_global_max > 0:
+            g = self._inbound_global_times
+            while g and now - g[0] > window:
+                g.popleft()
+            if len(g) >= self._inbound_global_max:
+                return False
+
+        if self._inbound_rate_max > 0:
+            dq = self._inbound_conn_times.get(host)
+            if dq is None:
+                dq = deque()
+                self._inbound_conn_times[host] = dq
+            while dq and now - dq[0] > window:
+                dq.popleft()
+            if now - self._inbound_rate_last_prune > window:
+                self._inbound_rate_last_prune = now
+                for h in [h for h, d in self._inbound_conn_times.items() if not d]:
+                    self._inbound_conn_times.pop(h, None)
+            if len(dq) >= self._inbound_rate_max:
+                return False
+            dq.append(now)
+
+        if self._inbound_global_max > 0:
+            self._inbound_global_times.append(now)
+        return True
+
     # ---------- Transport API ----------
 
     async def listen(self, config: ListenConfig) -> None:
@@ -248,6 +326,23 @@ class TcpTransport(Transport):
             reader: asyncio.StreamReader, writer: asyncio.StreamWriter
         ):
             trace_id = uuid.uuid4().hex
+            # ANM-L07: reject flooding hosts BEFORE the CPU-heavy AEAD handshake.
+            peer_host = None
+            try:
+                peer = writer.get_extra_info("peername")
+                if isinstance(peer, (tuple, list)) and len(peer) >= 1:
+                    peer_host = str(peer[0])
+            except Exception:
+                peer_host = None
+            if peer_host is not None and not self._inbound_allowed(peer_host):
+                inc_handshake_failure("inbound_rate_limited")
+                log.info(
+                    "P2P_INBOUND_RATE_LIMITED",
+                    extra={"conn_trace_id": trace_id, "peer_host": peer_host},
+                )
+                with contextlib.suppress(Exception):
+                    writer.close()
+                return
             # Handshake as responder (inbound)
             try:
                 tx_aead, rx_aead, info = await perform_handshake_tcp(
