@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "6.0.2"
+version = "6.0.3"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -62,7 +62,13 @@ dependencies = [
   "torch>=2.2.0",
   "accelerate>=1.3.0,<2.0.0",
   "transformers>=4.44.0,<5.0.0",
-  "datasets>=2.20.0,<4.0.0",
+  # datasets>=3.0 is REQUIRED: the <3 line ships datasets/utils/_dill.py with a
+  # Pickler._batch_setitems(self, items) signature that crashes on Python 3.13+
+  # ("_batch_setitems() takes 2 positional arguments but 3 were given") because
+  # the stdlib pickle._Pickler now calls _batch_setitems(items, obj). dill is
+  # datasets' pickling backend; pin a floor whose Pickler matches the new pickle.
+  "datasets>=3.0.0,<6.0.0",
+  "dill>=0.3.8",
   "sentence-transformers>=2.7.0,<6.0.0",
   "peft>=0.11.0,<1.0.0",
   "trl>=0.12.0,<1.0.0",
@@ -136,7 +142,7 @@ ai = [
   "torch>=2.2.0",
   "accelerate>=1.3.0,<2.0.0",
   "transformers>=4.44.0,<5.0.0",
-  "datasets>=2.20.0,<4.0.0",
+  "datasets>=3.0.0,<6.0.0",  # <3 crashes on py3.13+ (_batch_setitems arg count)
   "sentence-transformers>=2.7.0,<6.0.0",
   "peft>=0.11.0,<1.0.0",
   "trl>=0.12.0,<1.0.0",  # DPOTrainer(processing_class=) needs >=0.12

@@ -952,8 +952,13 @@ class P2PService:
         self.peerstore = pstore.open_peerstore(peerstore_path, json_fallback=fallback_json)
 
         # Transport (TCP only for now)
+        # Trusted seeds bypass the transport's inbound-connection rate gate. The
+        # verifier-seed hosts/IPs are computed later in __init__ and folded in via
+        # add_trusted_hosts() once available.
         self._transport = TcpTransport(
-            handshake_prologue=b"animica/tcp/1", chain_id=self.chain_id
+            handshake_prologue=b"animica/tcp/1",
+            chain_id=self.chain_id,
+            trusted_hosts=set(self._trusted_seed_hosts),
         )
 
         self._running = False
@@ -997,6 +1002,7 @@ class P2PService:
             trusted_reconnect_grace_s=float(
                 os.environ.get("ANIMICA_P2P_TRUSTED_RECONNECT_GRACE", "180.0") or 180.0
             ),
+            trusted_hosts=set(self._trusted_seed_hosts),
         )
         self._hello_timeout_grace_s = float(
             os.environ.get("ANIMICA_P2P_HELLO_TIMEOUT_GRACE", "5.0") or 5.0
@@ -1531,6 +1537,11 @@ class P2PService:
                 "verifier_hosts": sorted(self._verifier_seed_hosts),
             }
         )
+        # Exempt our own verifier seeds from the transport inbound-rate gate and
+        # the registry per-IP inbound-count cap too.
+        _verifier_trusted = set(self._verifier_seed_hosts) | set(self._verifier_seed_ips)
+        self._transport.add_trusted_hosts(_verifier_trusted)
+        self._peer_registry.add_trusted_hosts(_verifier_trusted)
         
         self._seeding_mode = True
         self._feeler_interval = float(

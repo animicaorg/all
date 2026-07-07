@@ -8,6 +8,44 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [6.0.3] - 2026-07-07
+P2P peering + ENA trainer reliability fixes. **No consensus change** — nothing here touches
+block, state, or transaction validation, so it is fully compatible with 6.0.0/6.0.1/6.0.2
+and needs no coordinated upgrade.
+
+- **P2P: nodes behind Docker/NAT no longer blackhole inbound peers.** When a node runs
+  behind `docker-proxy` (or any SNAT), every external peer arrives under a single private
+  bridge-gateway IP. The per-IP inbound-connection cap and the per-IP handshake-rate limiter
+  then throttled *the entire internet* as one host and, once exhausted, closed the socket
+  before writing any handshake byte — so a dialing peer saw `HandshakeError: 0 bytes read on
+  a total of 18 expected bytes` and never connected (symptom: "live peers stay 0").
+  - New `_is_nat_collapsed_host()` exempts private, non-loopback/link-local sources from the
+    **per-IP** connection and handshake-rate caps (they fall through to the global cap only);
+    genuine distinct public IPs stay rate-limited as before.
+  - Configured seed/verifier hosts are now plumbed into the transport and peer registry as
+    **trusted hosts** and are cap-exempt.
+  - The global inbound cap default is raised (`ANIMICA_P2P_INBOUND_CONN_GLOBAL_PER_MIN`
+    40 → 300) so a healthy seed can sustain real peer volume.
+  - On rejection the node now sends a best-effort **handshake reject frame**
+    (`ANIMICA/TCP/RJ/V0`), and the dialer reports a clear reason ("peer rejected connection:
+    inbound_capped" / "peer closed before handshake (connection refused or inbound-capped)")
+    instead of an opaque byte count. Fully backward-compatible with older peers.
+- **ENA: fix the trainer crash on newer Python / HuggingFace `datasets`.** `Dataset.from_list`
+  fingerprint-hashing raised `Pickler._batch_setitems() takes 2 positional arguments but 3
+  were given` on Python 3.13+ with an old `datasets` (its `_dill.Pickler` used the pre-3.13
+  signature). Fixed by raising the `datasets` floor to `>=3.0.0` (and pinning `dill>=0.3.8`)
+  **and** installing an idempotent runtime compat-shim in `_require_transformers()` so already
+  provisioned environments with a transitively-pinned old `datasets` also work.
+- **ENA: graceful CUDA-fault handling.** `trainer.train()` is now wrapped so a
+  `CUDA error: an illegal memory access`/device-side assert synchronizes, clears the cache,
+  and fails just that round (`TrainingError`) instead of killing the whole worker. Opt-in
+  `ANIMICA_ENA_CUDA_DEBUG=1` sets `CUDA_LAUNCH_BLOCKING`/`TORCH_USE_CUDA_DSA` for accurate
+  diagnosis.
+- **ENA: worker survives transient coordinator/RPC 503s.** The remote client now retries
+  only transient failures (429/502/503/504, connection/timeout) with bounded jittered
+  backoff (`ANIMICA_ENA_WORKER_HTTP_RETRIES`, `ANIMICA_ENA_WORKER_HTTP_BACKOFF`), failing
+  fast on real 4xx.
+
 ## [6.0.2] - 2026-07-07
 Node liveness + trainer stability fixes. **No consensus change** — nothing here touches
 block, state, or transaction validation, so it is fully compatible with 6.0.0/6.0.1 and

@@ -339,7 +339,74 @@ def _require_transformers():
             "python_transformers backend needs transformers + datasets (+ torch)",
             hint="pip install 'animica[gpu]'  (adds torch/transformers/datasets); "
                  "for LoRA/QLoRA add peft/bitsandbytes, for DPO add trl") from exc
+    # RUNTIME COMPAT SHIM (belt-and-suspenders for transitive datasets/dill pins the
+    # pyproject floor can't reach in an already-provisioned env): old datasets ships
+    # datasets/utils/_dill.py Pickler._batch_setitems(self, items), but the stdlib
+    # pickle._Pickler on Python 3.13+ calls _batch_setitems(items, obj) with an
+    # extra positional arg → "takes 2 positional arguments but 3 were given". If the
+    # loaded Pickler._batch_setitems has no *args parameter, wrap it to swallow the
+    # extra positionals. Idempotent (marked _anm_compat) and fully guarded so a
+    # missing/renamed module can NEVER break import.
+    try:
+        import inspect as _insp
+        from datasets.utils import _dill as _ds_dill  # type: ignore
+        _P = _ds_dill.Pickler
+        if getattr(_P._batch_setitems, "_anm_compat", False) is False and not any(
+                p.kind == p.VAR_POSITIONAL
+                for p in _insp.signature(_P._batch_setitems).parameters.values()):
+            _orig_bsi = _P._batch_setitems
+
+            def _bsi_compat(self, items, *a, **k):
+                return _orig_bsi(self, items)
+
+            _bsi_compat._anm_compat = True
+            _P._batch_setitems = _bsi_compat
+    except Exception:  # noqa: BLE001 - shim is best-effort, never fatal
+        pass
     return transformers, hf_datasets
+
+
+def _maybe_enable_cuda_diag() -> None:
+    """Opt-in CUDA debugging. When ANIMICA_ENA_CUDA_DEBUG is truthy, force
+    synchronous kernel launches (CUDA_LAUNCH_BLOCKING) and device-side assertions
+    (TORCH_USE_CUDA_DSA) so an "illegal memory access" surfaces at the REAL
+    offending op instead of a later, unrelated CUDA call. Must run BEFORE the first
+    CUDA op to take effect; setdefault never clobbers an operator's own value."""
+    if str(os.environ.get("ANIMICA_ENA_CUDA_DEBUG", "")).strip().lower() in (
+            "1", "true", "yes", "on"):
+        os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "1")
+        os.environ.setdefault("TORCH_USE_CUDA_DSA", "1")
+
+
+def _train_guarded(trainer, method: str):
+    """Run ``trainer.train()`` behind a CUDA-fault guard. On a CUDA/CUBLAS/
+    device-side fault we best-effort synchronize + empty the allocator cache (so a
+    wedged context is cleaned up) and re-raise as :class:`TrainingError`, so
+    :func:`run` marks the round ``failed`` cleanly instead of leaking a raw
+    RuntimeError. Non-CUDA RuntimeErrors propagate unchanged."""
+    try:
+        return trainer.train()
+    except RuntimeError as exc:
+        msg = str(exc)
+        if any(s in msg for s in ("CUDA error", "illegal memory access",
+                                  "device-side assert", "CUBLAS")):
+            try:
+                import torch  # type: ignore
+                try:
+                    torch.cuda.synchronize()
+                except Exception:  # noqa: BLE001 - best-effort cleanup
+                    pass
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:  # noqa: BLE001 - best-effort cleanup
+                    pass
+            except Exception:  # noqa: BLE001 - torch not importable
+                pass
+            raise TrainingError(
+                f"{method} training hit a CUDA fault: {msg[:200]}",
+                hint="retry on a healthy GPU; set ANIMICA_ENA_CUDA_DEBUG=1 for a "
+                     "synchronous CUDA_LAUNCH_BLOCKING trace") from exc
+        raise
 
 
 def _run_python_transformers(rec: dict[str, Any], manifest: dict[str, Any],
@@ -507,6 +574,7 @@ def encode_sft_row(tok, r: dict[str, Any], max_len: int, has_chat: bool):
 
 def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
              hp: dict[str, Any], method: str) -> dict[str, Any]:
+    _maybe_enable_cuda_diag()  # must precede any CUDA/model load to take effect
     transformers, hf_datasets = _require_transformers()
     base_model = manifest.get("base_model")
     train_path = (manifest.get("train") or {}).get("path") or manifest.get("train_dataset")
@@ -583,7 +651,7 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
         logging_steps=10, save_strategy="no", report_to=[])
     trainer = transformers.Trainer(model=model, args=args, train_dataset=dset,
                                    data_collator=collator)
-    train_result = trainer.train()
+    train_result = _train_guarded(trainer, "sft")
     _assert_finite_after_train(train_result, model, method="sft")
     trainer.save_model(out_dir)
     tok.save_pretrained(out_dir)
@@ -606,6 +674,7 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
 
 def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
              hp: dict[str, Any]) -> dict[str, Any]:
+    _maybe_enable_cuda_diag()  # must precede any CUDA/model load to take effect
     _require_transformers()
     try:
         from trl import DPOConfig, DPOTrainer  # type: ignore
@@ -642,7 +711,7 @@ def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
         beta=float(hp.get("dpo_beta", 0.1)), logging_steps=10, report_to=[])
     trainer = DPOTrainer(model=model, args=args, train_dataset=pref,
                          processing_class=tok)
-    result = trainer.train()
+    result = _train_guarded(trainer, "dpo")
     _assert_finite_after_train(result, model, method="dpo")
     trainer.save_model(out_dir)
     rec["metrics"] = {"method": "dpo", "peft": peft_enabled,

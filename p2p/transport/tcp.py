@@ -18,6 +18,8 @@ from typing import AsyncIterator, Optional, Tuple
 #   open(ciphertext: bytes, aad: bytes, nonce: int) -> bytes
 from p2p.crypto.handshake import \
     perform_handshake_tcp  # type: ignore[attr-defined]
+from p2p.crypto.handshake import \
+    send_handshake_reject  # type: ignore[attr-defined]
 
 from .base import (MAX_FRAME_DEFAULT, CloseCode, Conn, ConnInfo,
                    HandshakeError, ListenConfig, Stream, StreamClosed,
@@ -214,13 +216,20 @@ class TcpTransport(Transport):
     name = "tcp"
 
     def __init__(
-        self, *, handshake_prologue: bytes | None = None, chain_id: int | None = None
+        self,
+        *,
+        handshake_prologue: bytes | None = None,
+        chain_id: int | None = None,
+        trusted_hosts: set[str] | None = None,
     ):
         self._server: Optional[asyncio.AbstractServer] = None
         self._incoming: "asyncio.Queue[TcpConn]" = asyncio.Queue()
         self._listen_cfg: Optional[ListenConfig] = None
         self._handshake_prologue = handshake_prologue or b"animica/tcp/1"
         self._chain_id = chain_id
+        # Hosts that always bypass the inbound-connection rate gate (our own
+        # trusted seeds / verifier seeds). Matched against the raw peer IP/host.
+        self._trusted_hosts: set[str] = set(trusted_hosts or ())
         # ── ANM-L07: pre-handshake inbound connection rate limit ──────────────
         # The AEAD handshake (perform_handshake_tcp) is CPU-heavy on the pure-
         # Python fallback and runs on the single event loop. A peer that
@@ -241,8 +250,17 @@ class TcpTransport(Transport):
         self._inbound_rate_last_prune = 0.0
         self._inbound_global_times: deque = deque()
         self._inbound_global_max = int(
-            os.environ.get("ANIMICA_P2P_INBOUND_CONN_GLOBAL_PER_MIN", "40") or 40
+            os.environ.get("ANIMICA_P2P_INBOUND_CONN_GLOBAL_PER_MIN", "300") or 300
         )
+
+    def add_trusted_hosts(self, hosts: "set[str] | None") -> None:
+        """Extend the inbound rate-gate bypass set.
+
+        Used to plumb in host/IP sets (e.g. verifier seeds) that the service
+        computes AFTER the transport is constructed.
+        """
+        if hosts:
+            self._trusted_hosts |= set(hosts)
 
     # ---------- helpers ----------
 
@@ -275,13 +293,35 @@ class TcpTransport(Transport):
             return False
         return bool(ip.is_loopback or ip.is_link_local)
 
+    @staticmethod
+    def _is_nat_collapsed_host(host: str) -> bool:
+        """True for a PRIVATE peer address that is NOT loopback / link-local.
+
+        Behind docker-proxy / SNAT every EXTERNAL inbound peer appears to come
+        from the bridge gateway (a private IP such as 172.18.0.1). That single
+        apparent host collapses the whole internet into one bucket, so the
+        PER-HOST connection-rate budget must NOT be applied to it — doing so
+        throttles every remote peer as one and starves the seed of inbound
+        connections. The GLOBAL cap still governs such hosts.
+        """
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return bool(ip.is_private and not (ip.is_loopback or ip.is_link_local))
+
     def _inbound_allowed(self, host: str) -> bool:
         """Pre-handshake inbound-connection gate.
 
         Returns False (→ caller drops the socket before the AEAD handshake) when
         either the GLOBAL new-inbound-handshake budget or the per-host budget for
-        this window is exhausted. Loopback / link-local peers always pass.
+        this window is exhausted. Loopback / link-local peers always pass. Hosts
+        that appear NAT-collapsed (a private gateway IP behind docker-proxy) skip
+        the PER-HOST budget and are governed by the GLOBAL cap only, so a single
+        SNAT'd gateway can't be mistaken for one abusive peer.
         """
+        if host in self._trusted_hosts:
+            return True
         if self._is_rate_exempt_host(host):
             return True
         now = time.monotonic()
@@ -294,7 +334,7 @@ class TcpTransport(Transport):
             if len(g) >= self._inbound_global_max:
                 return False
 
-        if self._inbound_rate_max > 0:
+        if self._inbound_rate_max > 0 and not self._is_nat_collapsed_host(host):
             dq = self._inbound_conn_times.get(host)
             if dq is None:
                 dq = deque()
@@ -340,6 +380,10 @@ class TcpTransport(Transport):
                     "P2P_INBOUND_RATE_LIMITED",
                     extra={"conn_trace_id": trace_id, "peer_host": peer_host},
                 )
+                # Tell the dialer WHY before closing so it doesn't just see an
+                # opaque EOF ("0 bytes read on a total of 18 expected").
+                with contextlib.suppress(Exception):
+                    await send_handshake_reject(writer, "inbound_capped")
                 with contextlib.suppress(Exception):
                     writer.close()
                 return
