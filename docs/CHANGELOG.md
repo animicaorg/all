@@ -8,6 +8,28 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [6.0.4] - 2026-07-07
+ENA GPU-trainer reliability (QLoRA). **No consensus change** — fully compatible with 6.0.x,
+no coordinated upgrade. Fixes three distinct trainer failures GPU operators hit:
+
+- **`CUDA error: CUBLAS_STATUS_NOT_SUPPORTED` in the bitsandbytes 4-bit matmul.** Some
+  GPU/bitsandbytes/CUDA combinations can't run the 4-bit (QLoRA) kernel. The trainer now
+  **auto-falls back to non-quantized LoRA (fp16)** and retries the round once when it sees a
+  quant-unsupported error (`CUBLAS_STATUS_NOT_SUPPORTED` / "no kernel image is available" /
+  cublasLt), instead of failing the shard. Set `ANIMICA_ENA_NO_QUANT_FALLBACK=1` to disable
+  the retry, or `ANIMICA_ENA_DISABLE_QUANT=1` to skip 4-bit up front. The fallback is
+  deliberately **not** taken on `illegal memory access` (that corrupts the CUDA context, so
+  an in-process retry can't recover — it's prevented, below). Upgrading `bitsandbytes` on the
+  worker usually clears the underlying incompatibility.
+- **`CUDA error: an illegal memory access` in DPO.** SFT already clamped sequences to the
+  model's `max_position_embeddings`; DPO did not, so position ids could run off the end of
+  the position table. DPO now applies the same clamp and passes `max_length` /
+  `max_prompt_length` to `DPOConfig`.
+- **"The attention mask is not set … because pad token is …".** Only the tokenizer's
+  `pad_token` was set; the model didn't know its `pad_token_id`. Now `model.config.pad_token_id`
+  and `generation_config.pad_token_id` are set so the attention mask is inferred and padding
+  is masked correctly at train + eval.
+
 ## [6.0.3] - 2026-07-07
 P2P peering + ENA trainer reliability fixes. **No consensus change** — nothing here touches
 block, state, or transaction validation, so it is fully compatible with 6.0.0/6.0.1/6.0.2

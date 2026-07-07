@@ -409,6 +409,42 @@ def _train_guarded(trainer, method: str):
         raise
 
 
+# Signatures that specifically mean "this GPU/bitsandbytes build can't run the
+# 4-bit/8-bit quant matmul". Kept narrow on purpose: broad tokens like bare "8bit"
+# (matches the paged_adamw_8bit optimizer name) or "not implemented for" (matches
+# generic dtype errors like "not implemented for 'Half'") would misfire the fallback
+# and mask an unrelated failure.
+_QUANT_UNSUPPORTED_MARKERS = ("cublas_status_not_supported", "no kernel image is available", "cublaslt", "not supported on this")
+
+
+def _is_quant_unsupported(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(k.lower() in m for k in _QUANT_UNSUPPORTED_MARKERS) and "illegal memory access" not in m
+
+
+def _run_with_quant_fallback(impl, method, rec, manifest, out_dir, hp):
+    try:
+        return impl(rec, manifest, out_dir, hp)
+    except (TrainingError, RuntimeError) as exc:
+        msg = str(exc)
+        if (hp.get("quant") in ("4bit", "8bit")
+                and _is_quant_unsupported(msg)
+                and os.environ.get("ANIMICA_ENA_NO_QUANT_FALLBACK", "").lower() not in ("1", "true", "yes", "on")):
+            log.warning("[train] %s: %s-bit quant unsupported by this GPU/bitsandbytes "
+                        "(%s) — retrying WITHOUT quantization (LoRA, fp16). Upgrade "
+                        "bitsandbytes to keep QLoRA's memory savings.",
+                        method, hp.get("quant"), msg.strip().splitlines()[0][:180])
+            try:
+                import torch as _t
+                if _t.cuda.is_available():
+                    _t.cuda.synchronize(); _t.cuda.empty_cache()
+            except Exception:
+                pass
+            hp2 = dict(hp); hp2["quant"] = None; hp2.setdefault("torch_dtype", "float16")
+            return impl(rec, manifest, out_dir, hp2)
+        raise
+
+
 def _run_python_transformers(rec: dict[str, Any], manifest: dict[str, Any],
                              out_dir: str) -> dict[str, Any]:
     hp = manifest.get("hyperparameters") or {}
@@ -442,6 +478,8 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any],
 
     model_kwargs: dict[str, Any] = {"low_cpu_mem_usage": True}
     quant = hp.get("quant")
+    if quant in ("4bit", "8bit") and os.environ.get("ANIMICA_ENA_DISABLE_QUANT", "").lower() in ("1", "true", "yes", "on"):
+        quant = None
     if quant in ("4bit", "8bit"):
         try:
             import bitsandbytes  # type: ignore  # noqa: F401
@@ -461,6 +499,14 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any],
         # half-precision weights (skip for fp32/CPU where it would be slower/unsafe)
         model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(base_model, **model_kwargs)
+    try:
+        if getattr(model.config, "pad_token_id", None) is None and tok.pad_token_id is not None:
+            model.config.pad_token_id = tok.pad_token_id
+        _gen = getattr(model, "generation_config", None)
+        if _gen is not None and getattr(_gen, "pad_token_id", None) is None:
+            _gen.pad_token_id = tok.pad_token_id
+    except Exception:  # pragma: no cover - defensive
+        pass
     # GPU-safety: a top cause of "CUDA error: an illegal memory access" during
     # training is an embedding gather with a token id >= the embedding rows
     # (added/special tokens whose ids exceed the base model's vocab). Make sure
@@ -572,7 +618,7 @@ def encode_sft_row(tok, r: dict[str, Any], max_len: int, has_chat: bool):
     return {"input_ids": f_ids, "attention_mask": [1] * len(f_ids), "labels": labels}
 
 
-def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
+def _run_sft_impl(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
              hp: dict[str, Any], method: str) -> dict[str, Any]:
     _maybe_enable_cuda_diag()  # must precede any CUDA/model load to take effect
     transformers, hf_datasets = _require_transformers()
@@ -672,7 +718,13 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     return rec
 
 
-def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
+def _run_sft(rec, manifest, out_dir, hp, method):
+    return _run_with_quant_fallback(
+        lambda r, m, o, h: _run_sft_impl(r, m, o, h, method),
+        "sft", rec, manifest, out_dir, hp)
+
+
+def _run_dpo_impl(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
              hp: dict[str, Any]) -> dict[str, Any]:
     _maybe_enable_cuda_diag()  # must precede any CUDA/model load to take effect
     _require_transformers()
@@ -693,6 +745,10 @@ def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     profile = _detect_memory_profile()
     hp = _auto_memory_hparams(hp, profile)
     tok, model, peft_enabled = _load_tokenizer_and_model(base_model, hp)
+    max_len = int(hp.get("max_seq_len", 1024))
+    _model_ctx = getattr(getattr(model, "config", None), "max_position_embeddings", None)
+    if isinstance(_model_ctx, int) and 0 < _model_ctx < 10_000_000:
+        max_len = min(max_len, _model_ctx)
     pref = hf_datasets.Dataset.from_list(
         [{"prompt": str(r["prompt"]), "chosen": str(r["chosen"]),
           "rejected": str(r["rejected"])} for r in rows])
@@ -708,7 +764,8 @@ def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
         gradient_checkpointing=bool(hp.get("gradient_checkpointing")),
         gradient_checkpointing_kwargs={"use_reentrant": False},
         bf16=bf16, fp16=fp16, optim=optim,
-        beta=float(hp.get("dpo_beta", 0.1)), logging_steps=10, report_to=[])
+        beta=float(hp.get("dpo_beta", 0.1)), logging_steps=10, report_to=[],
+        max_length=max_len, max_prompt_length=max(16, max_len // 2))
     trainer = DPOTrainer(model=model, args=args, train_dataset=pref,
                          processing_class=tok)
     result = _train_guarded(trainer, "dpo")
@@ -718,6 +775,10 @@ def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
                       "train_loss": float(getattr(result, "training_loss", 0.0)),
                       "pairs": len(rows)}
     return rec
+
+
+def _run_dpo(rec, manifest, out_dir, hp):
+    return _run_with_quant_fallback(_run_dpo_impl, "dpo", rec, manifest, out_dir, hp)
 
 
 def _collect_checkpoints(out_dir: str) -> list[str]:
