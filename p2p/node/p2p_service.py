@@ -14656,6 +14656,37 @@ class P2PService:
         self._sync_inflight_block_requests.clear()
         return True
 
+    def _select_sync_target_peer(self) -> Optional[_PeerState]:
+        """Pick the peer to (re)sync toward for a forced canonical reorg.
+
+        Returns the connected peer with the highest fresh head. Prefers the
+        normal sync-eligible best peer; if every ahead peer is currently
+        filtered out (penalized / in sync backoff / cooldown), fall back to the
+        highest-head hello-done peer so an operator-forced reorg can still make
+        progress against a peer the routine sync loop would skip. Returns None
+        when no connected peer reports a fresh head (``force-canonical`` then
+        reports ``no_peer``).
+
+        NOTE: this was referenced by ``force_canonical_reorg`` but never defined
+        (introduced in 59e50aa4), so ``debug force-canonical`` raised
+        ``AttributeError: 'P2PService' object has no attribute
+        '_select_sync_target_peer'`` on 6.0.3/6.0.4.
+        """
+        best_peer, _height, _head_hash = self._best_peer_head()
+        if best_peer is not None:
+            return best_peer
+        now = time.time()
+        fallback: Optional[_PeerState] = None
+        fallback_height = 0
+        for peer in self._peers.values():
+            if not peer.hello_done.is_set():
+                continue
+            height, _hh = self._fresh_peer_head(peer, now=now)
+            if height > fallback_height:
+                fallback_height = height
+                fallback = peer
+        return fallback
+
     def force_canonical_reorg(self, *, force: bool = False) -> dict[str, Any]:
         if not force:
             return {"success": False, "error": "--force required"}

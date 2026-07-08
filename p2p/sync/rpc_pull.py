@@ -166,6 +166,13 @@ class RpcPullSync:
         self._import_block = import_block
         self._poll_interval_s = max(1.0, float(poll_interval_s))
         self._max_batch = max(1, int(max_batch_per_tick))
+        # Bound on how far back a reorg backfill will walk the winning branch
+        # (mirrors core.chain.block_import DEFAULT_MAX_REORG_DEPTH / the same env).
+        try:
+            self._max_reorg_depth = max(1, int(os.environ.get("ANIMICA_MAX_REORG_DEPTH", "96")))
+        except (TypeError, ValueError):
+            self._max_reorg_depth = 96
+        self._reorg_recoveries = 0
         self._stop = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
 
@@ -277,6 +284,20 @@ class RpcPullSync:
                 )
                 break
             if not accepted:
+                if self._is_missing_parent(reason):
+                    # The block at `height` builds on a parent we don't have —
+                    # the network reorged and our local head is on the losing
+                    # fork. Fetch the winning branch BY HASH, walk back to the
+                    # common ancestor, and let the importer reorg + drain the
+                    # buffered orphan(s). See _try_reorg_recovery.
+                    recovered = await self._try_reorg_recovery(
+                        client, height, payload, reason
+                    )
+                    if recovered:
+                        any_accepted = True
+                        # Head advanced via reorg + orphan cascade; recompute the
+                        # catch-up window from the new local head on the next tick.
+                        break
                 log.warning(
                     "rpc-pull import height=%d rejected: %s",
                     height,
@@ -349,6 +370,203 @@ class RpcPullSync:
         if not isinstance(rpc_block, dict):
             return None, f"unexpected response type {type(rpc_block).__name__}"
         return _block_dict_from_rpc(rpc_block), None
+
+    # ── reorg recovery via by-hash backfill ──────────────────────────────
+    #
+    # The plain catch-up loop only ever requests local_height + 1 BY HEIGHT.
+    # When the network reorgs and our local head lands on the losing fork, the
+    # next canonical block builds on a parent we don't have, the importer buffers
+    # it as an orphan and returns "missing parent", and the loop stalls forever
+    # (the upstream height index can even still point at the losing block, so
+    # re-fetching by height never helps). Recovery: fetch the winning branch BY
+    # HASH, walk back to the common ancestor already in our DB, and let the
+    # importer's fork-choice + orphan cascade perform the actual reorg.
+
+    @staticmethod
+    def _norm_hash_hex(value: Any) -> Optional[str]:
+        """Normalize a hash to lowercase 0x-prefixed hex, or None."""
+        if isinstance(value, (bytes, bytearray)):
+            return "0x" + bytes(value).hex()
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                return None
+            if not s.lower().startswith("0x"):
+                s = "0x" + s
+            return s.lower()
+        return None
+
+    @staticmethod
+    def _is_missing_parent(reason: Any) -> bool:
+        s = str(reason or "").lower()
+        return "missing parent" in s or "orphan" in s
+
+    @classmethod
+    def _extract_parent_hash_hex(cls, rpc_block: Dict[str, Any]) -> Optional[str]:
+        """Read parentHash from a JSON block (getBlockByHeight/getBlockByHash)."""
+        header = rpc_block.get("header")
+        if not isinstance(header, dict):
+            header = rpc_block
+        return cls._norm_hash_hex(header.get("parentHash") or header.get("parent_hash"))
+
+    @classmethod
+    def _payload_parent_hash_hex(cls, payload: Any) -> Optional[str]:
+        """Read parentHash from an already-fetched importable payload when it is
+        the JSON-dict form (raw CBOR bytes carry no accessible parentHash)."""
+        if isinstance(payload, dict):
+            header = payload.get("header")
+            if isinstance(header, dict):
+                return cls._norm_hash_hex(header.get("parentHash"))
+        return None
+
+    async def _fetch_block_by_hash(
+        self, client: Any, block_hash_hex: str
+    ) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
+        """Fetch a block BY HASH for reorg backfill.
+
+        Returns (importable_payload, parent_hash_hex, error). The JSON
+        `chain.getBlockByHash` view is always fetched — it yields the parentHash
+        needed to walk further back and doubles as an import fallback — while
+        `debug.getRawBlock {blockHash}` is preferred for the payload because raw
+        CBOR imports without the lossy JSON header reconstruction that can miss
+        the PoW target.
+        """
+        try:
+            rpc_block = await _rpc_call(
+                client,
+                self._url,
+                "chain.getBlockByHash",
+                {"blockHash": block_hash_hex},
+                timeout=15.0,
+            )
+        except Exception as exc:
+            return None, None, str(exc)
+        if not isinstance(rpc_block, dict):
+            return None, None, f"getBlockByHash returned {type(rpc_block).__name__}"
+        parent_hex = self._extract_parent_hash_hex(rpc_block)
+
+        raw_payload: Optional[bytes] = None
+        if not getattr(self, "_raw_by_hash_disabled", False):
+            try:
+                raw = await _rpc_call(
+                    client,
+                    self._url,
+                    "debug.getRawBlock",
+                    {"blockHash": block_hash_hex},
+                    timeout=15.0,
+                )
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "method not found" in msg or "-32601" in msg or "unknown" in msg:
+                    self._raw_by_hash_disabled = True
+                # else: transient — fall back to the JSON payload for this block
+            else:
+                if isinstance(raw, dict):
+                    cbor_hex = raw.get("blockCbor") or raw.get("block_cbor")
+                    if isinstance(cbor_hex, str) and cbor_hex:
+                        s = cbor_hex[2:] if cbor_hex[:2].lower() == "0x" else cbor_hex
+                        try:
+                            raw_payload = bytes.fromhex(s)
+                        except ValueError:
+                            raw_payload = None
+
+        payload = raw_payload if raw_payload is not None else _block_dict_from_rpc(rpc_block)
+        return payload, parent_hex, None
+
+    async def _fetch_parent_hash_of_height(
+        self, client: Any, height: int
+    ) -> Optional[str]:
+        """Read the parentHash of the canonical block at `height` from the
+        upstream JSON view — seeds the reorg walk when the rejected payload was
+        raw CBOR (which carries no accessible parentHash)."""
+        try:
+            rpc_block = await _rpc_call(
+                client,
+                self._url,
+                "chain.getBlockByHeight",
+                {"height": int(height)},
+                timeout=15.0,
+            )
+        except Exception as exc:
+            log.debug("rpc-pull reorg: getBlockByHeight(%d) failed: %s", height, exc)
+            return None
+        if not isinstance(rpc_block, dict):
+            return None
+        return self._extract_parent_hash_hex(rpc_block)
+
+    async def _backfill_reorg(
+        self, client: Any, first_parent_hex: str
+    ) -> Tuple[bool, int, Optional[str]]:
+        """Walk the winning branch backward BY HASH from `first_parent_hex` until
+        a block connects to our DB (its parent is already stored — the common
+        ancestor). Each winning block that is itself an orphan gets buffered; the
+        importer's _process_orphans cascade then re-imports the whole forward
+        chain (including the block rpc-pull rejected) and performs the reorg.
+        Returns (connected, imported_count, reason)."""
+        imported = 0
+        current: Optional[str] = first_parent_hex
+        seen: set[str] = set()
+        for _ in range(self._max_reorg_depth):
+            if not current:
+                return False, imported, "empty parent hash in reorg walk"
+            if current in seen:
+                return False, imported, "cycle in reorg walk"
+            seen.add(current)
+            payload, next_parent, err = await self._fetch_block_by_hash(client, current)
+            if payload is None:
+                return False, imported, f"fetch {current[:18]} failed: {err}"
+            try:
+                accepted, reason = self._import_block(payload)
+            except Exception as exc:
+                return False, imported, f"import {current[:18]} crashed: {exc}"
+            imported += 1
+            if accepted:
+                # Connected to the common ancestor. The orphan cascade drains the
+                # winning branch forward and triggers the reorg.
+                return True, imported, None
+            if self._is_missing_parent(reason):
+                current = next_parent
+                continue
+            return False, imported, f"{current[:18]} rejected: {reason}"
+        return False, imported, f"reorg depth limit {self._max_reorg_depth} exceeded"
+
+    async def _try_reorg_recovery(
+        self, client: Any, height: int, payload: Any, reason: Any
+    ) -> bool:
+        parent_hex = self._payload_parent_hash_hex(payload)
+        if parent_hex is None:
+            parent_hex = await self._fetch_parent_hash_of_height(client, height)
+        if not parent_hex:
+            log.warning(
+                "rpc-pull reorg: could not determine parentHash at height=%d (%s)",
+                height,
+                reason,
+            )
+            return False
+        before_h, before_hash = self._safe_local_head()
+        connected, imported, walk_reason = await self._backfill_reorg(client, parent_hex)
+        after_h, after_hash = self._safe_local_head()
+        if connected and (after_h > before_h or after_hash != before_hash):
+            self._reorg_recoveries += 1
+            log.info(
+                "rpc-pull reorg recovery ok at height=%d: backfilled %d winning "
+                "block(s), local %d->%d (total recoveries=%d)",
+                height,
+                imported,
+                before_h,
+                after_h,
+                self._reorg_recoveries,
+            )
+            return True
+        log.warning(
+            "rpc-pull reorg recovery failed at height=%d "
+            "(imported=%d connected=%s): %s",
+            height,
+            imported,
+            connected,
+            walk_reason,
+        )
+        return False
 
     def _safe_local_head(self) -> Tuple[int, bytes]:
         try:

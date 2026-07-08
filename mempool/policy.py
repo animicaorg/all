@@ -29,6 +29,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional, Tuple
 
+from .address_denylist import is_denied as _denylist_is_denied
+
 # Prefer the canonical error types if available
 try:
     from .errors import (AdmissionError, DoSError, FeeTooLow, Oversize,
@@ -320,9 +322,25 @@ class PolicySuite:
         self, tx, meta, *, pool_size: int, capacity: int, is_local: bool = False
     ) -> None:
         """
-        Combined check: ban gate + admission. Raises if not allowed.
+        Combined check: freeze-list gate + ban gate + admission. Raises if not allowed.
         """
         sender = getattr(tx, "sender", None)
+        # Operator address freeze-list (incident response): reject at ingress any
+        # tx from OR to a frozen account. See mempool.address_denylist.
+        recipient = None
+        for _attr in ("to", "recipient"):
+            _v = getattr(tx, _attr, None)
+            if isinstance(_v, (bytes, bytearray)):
+                recipient = bytes(_v)
+                break
+        if recipient is None:
+            _unsigned = getattr(tx, "unsigned", None)
+            _payload = getattr(_unsigned, "payload", None) if _unsigned is not None else None
+            _v = getattr(_payload, "to", None) if _payload is not None else None
+            if isinstance(_v, (bytes, bytearray)):
+                recipient = bytes(_v)
+        if _denylist_is_denied(sender) or _denylist_is_denied(recipient):
+            raise AdmissionError("sender or recipient is frozen (operator address denylist)")
         if sender is not None and self.bans.is_banned(sender):
             raise DoSError("sender temporarily banned due to prior abusive behavior")
         try:

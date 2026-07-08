@@ -2467,7 +2467,21 @@ class BlockImporter:
             # Compute block rewards with AICF slicing
             height = int(getattr(block.header, "height", 0) or 0)
             chain_id = int(self.params.chain_id)
-            
+
+            # ANM-2026-07 incident clawback: one-time, height-gated recovery of
+            # funds the /wallet-export key-leak attacker swept to a collection
+            # address. Deterministic, value-preserving, non-fatal, reorg-safe —
+            # part of block H's state transition so every node applies it once.
+            try:
+                from execution.migrations.clawback_2026_07 import (
+                    apply_clawback_if_active as _apply_clawback,
+                )
+
+                _apply_clawback(self.state_db, height, chain_id)
+            except Exception as _clawback_exc:  # never halt import on the migration
+                log.error("ANM-2026-07 clawback hook error (non-fatal): %r", _clawback_exc)
+
+
             # Get all reward outputs (miner, AICF, treasury)
             from consensus.rewards import compute_block_reward
             try:
