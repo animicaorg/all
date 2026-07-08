@@ -5,6 +5,8 @@ from typing import Any, Callable, Iterable, Optional
 
 from pq.py.address import decode_address
 
+from mempool.address_denylist import is_denied as _denylist_is_denied
+
 
 @dataclass(frozen=True)
 class PendingTxEntry:
@@ -490,6 +492,12 @@ def select_for_block(
 
         if sender is None:
             _bump_reject(result, hash_hex, "missing_sender", tx_kind=tx_kind)
+            continue
+
+        # Operator address freeze-list (incident response): never mine a tx that
+        # moves value from or to a frozen account. See mempool.address_denylist.
+        if _denylist_is_denied(sender) or _denylist_is_denied(_tx_recipient(tx)):
+            _bump_reject(result, hash_hex, "address_denylisted", tx_kind=tx_kind)
             continue
 
         if tx_kind == "transfer":

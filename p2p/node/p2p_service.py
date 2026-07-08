@@ -229,6 +229,12 @@ class _PeerState:
     broadcast: PeerBroadcastScore = field(default_factory=PeerBroadcastScore)
     negotiated_caps: set[str] = field(default_factory=set)
     accepts_inbound: Optional[bool] = None
+    # ANM-H03/H04 per-peer inbound message-rate limiter state
+    rl_tokens: float = 0.0
+    rl_last_mono: float = 0.0
+    rl_primed: bool = False
+    rl_strikes: int = 0
+    rl_last_warn_s: float = 0.0
 
 
 class _NullTxRelay:
@@ -946,8 +952,13 @@ class P2PService:
         self.peerstore = pstore.open_peerstore(peerstore_path, json_fallback=fallback_json)
 
         # Transport (TCP only for now)
+        # Trusted seeds bypass the transport's inbound-connection rate gate. The
+        # verifier-seed hosts/IPs are computed later in __init__ and folded in via
+        # add_trusted_hosts() once available.
         self._transport = TcpTransport(
-            handshake_prologue=b"animica/tcp/1", chain_id=self.chain_id
+            handshake_prologue=b"animica/tcp/1",
+            chain_id=self.chain_id,
+            trusted_hosts=set(self._trusted_seed_hosts),
         )
 
         self._running = False
@@ -991,6 +1002,7 @@ class P2PService:
             trusted_reconnect_grace_s=float(
                 os.environ.get("ANIMICA_P2P_TRUSTED_RECONNECT_GRACE", "180.0") or 180.0
             ),
+            trusted_hosts=set(self._trusted_seed_hosts),
         )
         self._hello_timeout_grace_s = float(
             os.environ.get("ANIMICA_P2P_HELLO_TIMEOUT_GRACE", "5.0") or 5.0
@@ -1525,6 +1537,11 @@ class P2PService:
                 "verifier_hosts": sorted(self._verifier_seed_hosts),
             }
         )
+        # Exempt our own verifier seeds from the transport inbound-rate gate and
+        # the registry per-IP inbound-count cap too.
+        _verifier_trusted = set(self._verifier_seed_hosts) | set(self._verifier_seed_ips)
+        self._transport.add_trusted_hosts(_verifier_trusted)
+        self._peer_registry.add_trusted_hosts(_verifier_trusted)
         
         self._seeding_mode = True
         self._feeler_interval = float(
@@ -1572,6 +1589,49 @@ class P2PService:
         self._misbehavior_score_cap = int(
             os.environ.get("ANIMICA_P2P_SCORE_CAP", "2000") or 2000
         )
+
+        # ── ANM-H03/H04: per-peer inbound message-rate limiting (DoS cap) ──────
+        # Sheds, then disconnects, peers that flood us with messages. The token
+        # bucket is intentionally generous (≈100x real peer traffic, even during
+        # aggressive block/header sync), so legitimate peers are never affected —
+        # only genuine floods trip the guard. Enabled by default with a sane cap;
+        # fully tunable and disengageable via env (set rate/burst <= 0 or the
+        # ENABLED flag to 0 to turn off).
+        self._peer_msg_rate_enabled = _env_flag(
+            "ANIMICA_P2P_PEER_MSG_RATE_ENABLED", default=True
+        )
+        self._peer_msg_rate_per_s = float(
+            os.environ.get("ANIMICA_P2P_PEER_MSG_RATE_PER_S", "1000") or 1000.0
+        )
+        self._peer_msg_rate_burst = float(
+            os.environ.get("ANIMICA_P2P_PEER_MSG_RATE_BURST", "2000") or 2000.0
+        )
+        self._peer_msg_rate_max_strikes = int(
+            os.environ.get("ANIMICA_P2P_PEER_MSG_RATE_MAX_STRIKES", "20") or 20
+        )
+        self._peer_msg_rate_ban_ttl = float(
+            os.environ.get("ANIMICA_P2P_PEER_MSG_RATE_BAN_TTL_S", "300") or 300.0
+        )
+        if self._peer_msg_rate_per_s <= 0 or self._peer_msg_rate_burst <= 0:
+            # Non-positive settings disable enforcement rather than wedge peers.
+            self._peer_msg_rate_enabled = False
+        if self._peer_msg_rate_enabled:
+            log.info(
+                "Per-peer inbound message rate limiting enabled",
+                extra={
+                    "rate_per_s": self._peer_msg_rate_per_s,
+                    "burst": self._peer_msg_rate_burst,
+                    "max_strikes": self._peer_msg_rate_max_strikes,
+                    "ban_ttl_s": self._peer_msg_rate_ban_ttl,
+                },
+            )
+        else:
+            log.warning(
+                "Per-peer inbound message rate limiting DISABLED "
+                "(ANIMICA_P2P_PEER_MSG_RATE_* off) — node has no per-peer "
+                "message flood protection"
+            )
+
         self._score_points = {
             "malformed_message": int(
                 os.environ.get("ANIMICA_P2P_SCORE_MALFORMED", "50") or 50
@@ -1608,7 +1668,22 @@ class P2PService:
                 float(os.environ.get("ANIMICA_P2P_BAN_MAX_S", "86400") or 86400),
             ),
         ]
-        self._ban_enabled = False
+        # ANM-L07 (event-loop wedge fix): peer banning MUST be enabled so that
+        # provably-incompatible peers — wrong_genesis / wrong_chain (1000 pts →
+        # 24h ban tier) — stop reconnecting. While banning was off, such a peer
+        # was penalised and dropped but never banned, so it reconnected in a hot
+        # loop and re-ran the CPU-heavy pure-Python AEAD handshake every time.
+        # That saturates the single asyncio event loop and halts block
+        # production. Banning is a LOCAL networking policy only — it does not
+        # touch block/state/consensus validation, so enabling it is not a
+        # consensus change and cannot fork or diverge the chain. Env-gated
+        # (default ON) so an operator can still disable it with
+        # ANIMICA_P2P_BAN_ENABLED=0. Seed / exempt / docker-local peers are
+        # already skipped inside _ban_peer / _penalize_peer.
+        self._ban_enabled = (
+            str(os.environ.get("ANIMICA_P2P_BAN_ENABLED", "1")).strip().lower()
+            not in ("0", "false", "no", "off", "")
+        )
         self._banlist_path = Path.home() / ".animica" / "banlist.json"
         self._banlist: dict[str, dict[str, Any]] = {}
         self._banlist_event = asyncio.Event()
@@ -6916,6 +6991,62 @@ class P2PService:
             log.info("Dropping peer %s due to hello timeout", peer.remote)
             await self._drop_peer(peer, reason="hello_timeout")
 
+    def _inbound_rate_check(self, peer: _PeerState) -> str:
+        """Per-peer inbound message-rate guard (ANM-H03/H04 DoS cap).
+
+        Returns one of:
+          "ok"   — within budget, process the message normally
+          "shed" — momentarily over budget: drop THIS message but keep the peer
+          "ban"  — sustained flood: caller should penalize + disconnect
+
+        Exempt, docker-local (and thereby trusted-local) peers are never
+        throttled. Uses a per-peer token bucket sized generously enough that a
+        legitimate peer — even mid block/header sync — never trips it.
+        """
+        if not self._peer_msg_rate_enabled:
+            return "ok"
+        host = self._extract_host(peer.remote) or ""
+        if self._is_peer_exempt(peer.remote) or (host and self._is_docker_local(host)):
+            return "ok"
+        now = time.monotonic()
+        if not peer.rl_primed:
+            peer.rl_primed = True
+            peer.rl_last_mono = now
+            peer.rl_tokens = self._peer_msg_rate_burst
+        else:
+            dt = now - peer.rl_last_mono
+            if dt > 0:
+                peer.rl_tokens = min(
+                    self._peer_msg_rate_burst,
+                    peer.rl_tokens + dt * self._peer_msg_rate_per_s,
+                )
+                peer.rl_last_mono = now
+        if peer.rl_tokens >= 1.0:
+            peer.rl_tokens -= 1.0
+            # Forgive accrued strikes once comfortably back under budget so a
+            # brief burst never leaves a long-lived peer one strike from a ban.
+            if peer.rl_strikes and peer.rl_tokens > (self._peer_msg_rate_burst * 0.5):
+                peer.rl_strikes = max(0, peer.rl_strikes - 1)
+            return "ok"
+        # Over budget.
+        peer.rl_strikes += 1
+        wnow = time.time()
+        if wnow - peer.rl_last_warn_s > 5.0:
+            peer.rl_last_warn_s = wnow
+            log.warning(
+                "Peer exceeded inbound message rate",
+                extra={
+                    "remote": peer.remote,
+                    "peer_id": peer.peer_id or "unknown",
+                    "strikes": peer.rl_strikes,
+                    "rate_per_s": self._peer_msg_rate_per_s,
+                    "burst": self._peer_msg_rate_burst,
+                },
+            )
+        if peer.rl_strikes >= self._peer_msg_rate_max_strikes:
+            return "ban"
+        return "shed"
+
     async def _peer_loop(self, peer: _PeerState) -> None:
         # Send HELLO immediately (both sides do this; handler is symmetric).
         try:
@@ -6948,6 +7079,20 @@ class P2PService:
                     break
                 self._peer_registry.mark_seen(peer.session_id)
                 peer.last_msg_at = time.time()
+                # ANM-H03/H04: shed / disconnect peers that flood us with
+                # messages before spending CPU on decode + dispatch.
+                verdict = self._inbound_rate_check(peer)
+                if verdict == "ban":
+                    self._penalize_peer(
+                        peer,
+                        "msg_rate_flood",
+                        points=self._score_points["malformed_message"],
+                        ban_ttl=self._peer_msg_rate_ban_ttl,
+                    )
+                    disconnect_reason = "msg_rate_flood"
+                    break
+                if verdict == "shed":
+                    continue
                 try:
                     frame = unpack_frame(data, aead=None)
                 except Exception:
@@ -14511,6 +14656,37 @@ class P2PService:
         self._sync_inflight_block_requests.clear()
         return True
 
+    def _select_sync_target_peer(self) -> Optional[_PeerState]:
+        """Pick the peer to (re)sync toward for a forced canonical reorg.
+
+        Returns the connected peer with the highest fresh head. Prefers the
+        normal sync-eligible best peer; if every ahead peer is currently
+        filtered out (penalized / in sync backoff / cooldown), fall back to the
+        highest-head hello-done peer so an operator-forced reorg can still make
+        progress against a peer the routine sync loop would skip. Returns None
+        when no connected peer reports a fresh head (``force-canonical`` then
+        reports ``no_peer``).
+
+        NOTE: this was referenced by ``force_canonical_reorg`` but never defined
+        (introduced in 59e50aa4), so ``debug force-canonical`` raised
+        ``AttributeError: 'P2PService' object has no attribute
+        '_select_sync_target_peer'`` on 6.0.3/6.0.4.
+        """
+        best_peer, _height, _head_hash = self._best_peer_head()
+        if best_peer is not None:
+            return best_peer
+        now = time.time()
+        fallback: Optional[_PeerState] = None
+        fallback_height = 0
+        for peer in self._peers.values():
+            if not peer.hello_done.is_set():
+                continue
+            height, _hh = self._fresh_peer_head(peer, now=now)
+            if height > fallback_height:
+                fallback_height = height
+                fallback = peer
+        return fallback
+
     def force_canonical_reorg(self, *, force: bool = False) -> dict[str, Any]:
         if not force:
             return {"success": False, "error": "--force required"}
@@ -15146,20 +15322,42 @@ class P2PService:
                     break
                 cursor = parent
         head_height = max(db_head_height, max(chain_headers.keys(), default=db_head_height))
-        locset = {bytes(h) for h in locator if isinstance(h, (bytes, bytearray))}
 
+        # ANM-L08 (event-loop DoS fix): resolve the anchor by walking the peer's
+        # locator (bounded — a header locator is a few dozen hashes) instead of
+        # scanning EVERY height from the head down to genesis. The previous code
+        # did one synchronous SQLite read per height, so a peer sending a locator
+        # full of unknown/foreign-chain hashes forced an O(chain-height) walk —
+        # tens of thousands of blocking DB reads on the single event loop per
+        # GET_HEADERS request — silently pegging the loop and stalling block
+        # production + RPC (and growing worse as the chain lengthens). We now do
+        # at most one header lookup + one canonical check per locator entry, and
+        # pick the highest-height locator hash that is on our canonical chain —
+        # identical semantics, bounded cost.
+        above_db_by_hash = {bytes(ch.hash): int(h) for h, ch in chain_headers.items()}
+        max_scan = int(os.environ.get("ANIMICA_P2P_MAX_LOCATOR_SCAN", "512") or 512)
         anchor_height = 0
         anchor_hash: Optional[bytes] = None
-        for h in range(head_height, -1, -1):
-            hh = None
-            if h <= db_head_height:
-                hh = bdb.get_canonical_hash(h)
-            if hh is None and h in chain_headers:
-                hh = chain_headers[h].hash
-            if hh and bytes(hh) in locset:
-                anchor_height = h
-                anchor_hash = bytes(hh)
+        best = -1
+        checked = 0
+        for h in locator:
+            if not isinstance(h, (bytes, bytearray)):
+                continue
+            checked += 1
+            if checked > max_scan:
                 break
+            hb = bytes(h)
+            hh = above_db_by_hash.get(hb)
+            if hh is None:
+                hdr = bdb.get_header_by_hash(hb)
+                if hdr is not None:
+                    cand = int(getattr(hdr, "height", -1))
+                    if 0 <= cand <= db_head_height and bdb.get_canonical_hash(cand) == hb:
+                        hh = cand
+            if hh is not None and hh > best:
+                best = hh
+                anchor_height = hh
+                anchor_hash = hb
         if anchor_hash is None:
             genesis = bdb.get_canonical_hash(0) or bdb.get_genesis_hash() or self._genesis_hash()
             if genesis:
