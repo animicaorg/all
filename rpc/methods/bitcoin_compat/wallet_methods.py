@@ -579,6 +579,16 @@ def listwallets(ctx=None) -> list:
 
 @method("backupwallet", desc="Bitcoin-compat: back up the node wallet file.")
 def backupwallet(destination: str, ctx=None):
+    # SECURITY (incident 2026-07-09): this copies the plaintext node key store
+    # (wallets.json — secret_key_hex for EVERY node wallet) to an arbitrary,
+    # caller-supplied path. Left unauthenticated it is a remote private-key
+    # exfiltration + arbitrary-file-write oracle (destination into a snapshot dir
+    # then snapshot.downloadChunk reads it back) — the same class as the
+    # /wallet-export leak the public-edge gate closed. Gate it exactly like
+    # wallet.send: a public-edge (nginx-proxied) caller is denied; only a direct
+    # localhost / private-network / admin-token caller may back up.
+    from rpc.methods.wallet import _authorize_wallet_rpc
+    _authorize_wallet_rpc(ctx)
     import shutil
     from pathlib import Path
     src = None
