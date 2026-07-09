@@ -111,6 +111,18 @@ EOF
         export QT_PLUGIN_PATH="$qt_plugin_path"
     fi
 
+    # Python C-extension wheels bundled in the venv (e.g. psycopg[binary]) ship
+    # private "*.libs" dirs whose sibling .so files are referenced by mangled
+    # SONAMEs (libkeyutils-<hash>.so, libkrb5support-<hash>.so, …) that are not
+    # on the default loader path. linuxdeployqt runs ldd over everything under
+    # usr/lib and aborts if any dependency is unresolved, so make those private
+    # dirs discoverable to ldd first.
+    _venv_libdirs="$(find "$appdir" -type d -name '*.libs' 2>/dev/null | tr '\n' ':')"
+    if [ -n "$_venv_libdirs" ]; then
+        export LD_LIBRARY_PATH="${_venv_libdirs}${LD_LIBRARY_PATH:-}"
+        echo "linuxdeployqt: added bundled venv lib dirs to LD_LIBRARY_PATH"
+    fi
+
     if ! APPIMAGE_EXTRACT_AND_RUN=1 linuxdeployqt "$appdir/usr/share/applications/animica-wallet.desktop" \
         -appimage \
         -bundle-non-qt-libs \
@@ -353,7 +365,7 @@ if [ "$BUILD_DEB" = true ]; then
     build_deb_package "$DEB_STAGE"
 fi
 
-if [ -d "$REPO_ROOT/website/public" ]; then
+if [ -d "$REPO_ROOT/website/public" ] && [ -z "${WALLET_SKIP_WEBSITE_PUBLISH:-}" ]; then
     log_section "Refreshing Website Downloads"
     publish_args=(
         --platform linux

@@ -372,7 +372,7 @@ main() {
         fi
     )
 
-    if [ -d "$REPO_ROOT/website/public" ]; then
+    if [ -d "$REPO_ROOT/website/public" ] && [ -z "${WALLET_SKIP_WEBSITE_PUBLISH:-}" ]; then
         local -a publish_args=(
             --platform macos
             --version "$version"

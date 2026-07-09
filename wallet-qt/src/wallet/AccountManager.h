@@ -25,7 +25,7 @@ public:
      * @param algId Algorithm ID (default: 0x1001 = Dilithium3)
      * @return New WalletAccount or invalid account on error
      */
-    WalletAccount createAccount(const QString& label, int algId = 0x1001);
+    WalletAccount createAccount(const QString& label, int algId = 0x1003);
     
     /**
      * @brief Import account from JSON.

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(AnimicaWallet VERSION 0.2.0 LANGUAGES CXX)
+project(AnimicaWallet VERSION 0.2.6 LANGUAGES CXX)
 
 set(WALLET_DISPLAY_NAME "Animica Wallet")
 set(WALLET_BUNDLE_NAME "AnimicaWallet")

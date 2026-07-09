@@ -485,6 +485,15 @@ void WalletWidget::probeRpcStatus()
     RpcReply* reply = m_rpcClient->getChainId();
     connect(reply, &RpcReply::finished, this, [this, reply]() {
         if (reply->error() != QNetworkReply::NoError) {
+            // A 403 means the endpoint responded but gated the connectivity
+            // probe. The node is reachable and sends work through the local
+            // signer, so treat it as connected rather than a network outage.
+            if (reply->httpStatusCode() == 403) {
+                clearConnectionBanner();
+                updateRpcStatusLabel("RPC: Connected", "#15803d");
+                reply->deleteLater();
+                return;
+            }
             handleRpcError(reply->errorString());
             reply->deleteLater();
             return;

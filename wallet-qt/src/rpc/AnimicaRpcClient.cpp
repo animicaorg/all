@@ -164,6 +164,15 @@ RpcReply* AnimicaRpcClient::call(const QString& method, const QJsonValue& params
             return;
         }
 
+        // HTTP 403 means the hosted endpoint responded but gated this method.
+        // The node is reachable and transactions still broadcast via the local
+        // signing path, so don't flag it as a network outage or surface an error.
+        if (reply->httpStatusCode() == 403) {
+            updateConnectionState(true);
+            qDebug() << "RPC method gated (HTTP 403), endpoint reachable:" << method;
+            return;
+        }
+
         updateConnectionState(false);
         qWarning() << "RPC error for" << method << ":" << reply->errorString();
         emit error(reply->errorString());

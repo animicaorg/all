@@ -38,19 +38,22 @@ void CreateAccountDialog::setupUi()
     for (const QJsonValue& value : algorithms) {
         const QJsonObject item = value.toObject();
         const QString name = item["name"].toString();
+        // Only ml_dsa_65 (0x1003, real FIPS 204) is accepted by the network.
+        // The legacy dilithium3 (0x1001) and sphincs_shake_128s (0x1002) schemes
+        // are forgeable commitment stubs — creating a wallet with them permanently
+        // strands its funds, so they are never offered as a creation choice.
+        if (name != "ml_dsa_65") {
+            continue;
+        }
         const QString display = item["display_name"].toString(name);
         const int algId = item["alg_id"].toInt();
-        QString label = display;
-        if (name == "ml_dsa_65") {
-            label += " (Recommended — FIPS 204)";
-        } else if (name == "dilithium3" || name == "sphincs_shake_128s") {
-            label += " (deprecated)";
-        }
-        m_algorithmCombo->addItem(label, algId);
+        m_algorithmCombo->addItem(display + " (Recommended — FIPS 204)", algId);
     }
     if (m_algorithmCombo->count() == 0) {
         m_algorithmCombo->addItem("ml_dsa_65 (Recommended — FIPS 204)", 0x1003);
     }
+    // Exactly one accepted scheme — no reason to let the user change it.
+    m_algorithmCombo->setEnabled(false);
     formLayout->addRow("Algorithm:", m_algorithmCombo);
     
     layout->addLayout(formLayout);
