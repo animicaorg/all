@@ -35,7 +35,7 @@ public:
     void resetAutoLock();
 
     QJsonArray supportedAlgorithms() const;
-    WalletAccount createAccount(const QString& label, int algId = 0x1001);
+    WalletAccount createAccount(const QString& label, int algId = 0x1003);
     WalletAccount importAccount(const QJsonObject& json);
     bool importWalletsFile(const QString& sourcePath, bool merge);
     bool removeAccount(const QString& accountId);

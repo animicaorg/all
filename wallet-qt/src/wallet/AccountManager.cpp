@@ -245,11 +245,24 @@ void AccountManager::clearAccounts()
 
 bool AccountManager::generateKeypair(int algId, QByteArray& outPublicKey, QByteArray& outSecretKey)
 {
+    // ml_dsa_65 (0x1003, FIPS 204) is the only signature scheme the network
+    // accepts. dilithium3 (0x1001) and sphincs_shake_128s (0x1002) are
+    // deprecated, forgeable stubs whose verify() ignores the secret key — a
+    // new wallet on either scheme would be unspendable and forgeable. Never
+    // mint a fresh keypair for anything but ml_dsa_65. Existing legacy wallets
+    // still load and label (algIdToName keeps the old names); they just can't
+    // be created here.
+    if (algId != 0x1003) {
+        qWarning() << "Refusing to generate a keypair for alg id" << Qt::hex << algId
+                   << "— only ml_dsa_65 (0x1003) can be created.";
+        return false;
+    }
+
     QString algName = algIdToName(algId);
     if (algName.isEmpty()) {
         return false;
     }
-    
+
     // Validate algName to prevent injection (should only be from our whitelist)
     if (!algName.contains(QRegularExpression("^[a-z0-9_]+$"))) {
         qWarning() << "Invalid algorithm name:" << algName;

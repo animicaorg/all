@@ -168,6 +168,18 @@ while read f; do
                   "$f" 2>/dev/null || true
 done < /tmp/macho-files-$ARCH.txt
 
+# Bundle the self-contained Python runtime (animica) into the .app so the wallet
+# runs standalone — mirrors the Windows WINDOWS_NODE_BUNDLE path. MAC_NODE_BUNDLE
+# is a dir containing venv/ . Done BEFORE signing so the signature covers it.
+if [ -n "${MAC_NODE_BUNDLE:-}" ] && [ -d "${MAC_NODE_BUNDLE}/venv" ]; then
+  echo "[mac-cross] bundling Python runtime from ${MAC_NODE_BUNDLE}"
+  rm -rf "$APP_PATH/Contents/Resources/node"
+  mkdir -p "$APP_PATH/Contents/Resources/node"
+  cp -a "${MAC_NODE_BUNDLE}/." "$APP_PATH/Contents/Resources/node/"
+  # The bundled Python's Mach-O files must be signed too; add them to the list.
+  find "$APP_PATH/Contents/Resources/node" -type f \( -name '*.so' -o -name '*.dylib' -o -name 'python*' \) >> /tmp/macho-files-$ARCH.txt 2>/dev/null || true
+fi
+
 # Ad-hoc sign — rcodesign is a pure-Rust reimplementation of `codesign`
 # that runs on Linux. Required for Apple Silicon to accept the bundle.
 if command -v rcodesign >/dev/null 2>&1; then

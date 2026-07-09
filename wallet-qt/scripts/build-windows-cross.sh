@@ -456,6 +456,15 @@ deploy_runtime_dependencies() {
             [ -n "$dependency" ] || continue
             local dependency_lower="${dependency,,}"
 
+            # MSVC/UCRT runtime DLLs pulled in by the prebuilt (MSVC-built) OpenSSL:
+            # api-ms-win-* and ucrtbase are part of the Windows 10/11 Universal CRT;
+            # vcruntime140/msvcp140 ship with the (near-universal) VC++ redist. None
+            # are bundleable from a Linux cross-build, so treat them as system DLLs.
+            case "$dependency_lower" in
+                api-ms-win-*|ucrtbase.dll|vcruntime140*.dll|msvcp140*.dll|concrt140.dll)
+                    continue ;;
+            esac
+
             if [ -n "${system_dlls[$dependency_lower]:-}" ]; then
                 continue
             fi
@@ -465,13 +474,24 @@ deploy_runtime_dependencies() {
             fi
 
             local resolved=""
+            # The app is built with the host GCC mingw (newer than the Qt-mingw
+            # that built Qt's DLLs). Ship the HOST compiler's runtime DLLs — a
+            # superset — so the binary can't hit a missing libstdc++ entry point
+            # against Qt's older bundled runtime. Resolve these from the compiler
+            # FIRST, before the Qt bin in search_dirs.
+            case "$dependency_lower" in
+                libstdc++-6.dll|libgcc_s_seh-1.dll|libgcc_s_dw2-1.dll|libwinpthread-1.dll)
+                    resolved="$(runtime_file_from_compiler "${COMPILER_PREFIX}-g++" "$dependency" || true)" ;;
+            esac
             local search_dir
-            for search_dir in "${search_dirs[@]}"; do
-                if [ -f "$search_dir/$dependency" ]; then
-                    resolved="$search_dir/$dependency"
-                    break
-                fi
-            done
+            if [ -z "$resolved" ]; then
+                for search_dir in "${search_dirs[@]}"; do
+                    if [ -f "$search_dir/$dependency" ]; then
+                        resolved="$search_dir/$dependency"
+                        break
+                    fi
+                done
+            fi
 
             if [ -z "$resolved" ]; then
                 resolved="$(runtime_file_from_compiler "${COMPILER_PREFIX}-g++" "$dependency" || true)"
