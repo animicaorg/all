@@ -278,10 +278,20 @@ if(WALLET_BUNDLE_PYTHON_RUNTIME)
         set(WALLET_NODE_INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/animica-wallet/node")
     endif()
 
+    # Do NOT bundle the AI/training stack (torch, CUDA, transformers, …). The
+    # Mining tab installs it on demand — a ~1.6–2.5 GB one-time download into a
+    # SEPARATE runtime dir (MiningDashboardWidget::enaPipArgs uses `pip --target`),
+    # so the wallet never needs it pre-bundled. Because animica lists torch et al.
+    # in its BASE dependencies, `pip install animica` drags the whole stack into
+    # the build venv; bundling it bloated the wallet (mac ~777 MB, win ~278 MB vs
+    # ~90 MB) and exhausted the Linux CI runner's disk during install. Exclude
+    # those top-level site-packages so the wallet stays lean; mining and on-demand
+    # training still work (training self-installs to its own runtime dir).
     install(
         DIRECTORY "${ANIMICA_NODE_VENV_DIR}/"
         DESTINATION "${WALLET_NODE_INSTALL_DESTINATION}/venv"
         USE_SOURCE_PERMISSIONS
+        REGEX "site-packages/(torch|torchvision|torchaudio|torchgen|functorch|nvidia|transformers|datasets|accelerate|peft|trl|sentence_transformers|tokenizers|safetensors|bitsandbytes|triton|sympy|xformers|flash_attn)([/._-]|$)" EXCLUDE
     )
 
     # Rewrite shebangs in the bundled venv's bin/ to be portable.
