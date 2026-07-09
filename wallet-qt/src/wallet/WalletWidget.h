@@ -21,6 +21,7 @@ class ReceiveWidget;
 class TransactionHistoryWidget;
 class ContractInteractionWidget;
 class SettingsWidget;
+class MiningDashboardWidget;
 
 /**
  * @brief Main wallet UI coordinator.
@@ -113,6 +114,7 @@ private:
     QAction* m_refreshAction;
     
     // Child widgets
+    MiningDashboardWidget* m_miningWidget;
     AccountsWidget* m_accountsWidget;
     AddressBookWidget* m_addressBookWidget;
     SendWidget* m_sendWidget;

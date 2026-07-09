@@ -123,6 +123,20 @@ EOF
         echo "linuxdeployqt: added bundled venv lib dirs to LD_LIBRARY_PATH"
     fi
 
+    # NVIDIA GPUDirect Storage over RDMA (libcufile_rdma + friends) hard-links to
+    # Mellanox InfiniBand userspace (libmlx5.so.1), absent on the build runner and
+    # on any desktop. linuxdeployqt's ldd sweep aborts on that unresolved dep.
+    # GPUDirect-over-InfiniBand is a multi-node datacenter feature — the bundled
+    # node's local mining / AI useful-work / ENA training runs on regular CUDA and
+    # never loads the RDMA variant — so drop just those RDMA libs. torch + CUDA
+    # compute (and thus in-wallet training) stay fully intact.
+    _rdma_libs="$(find "$appdir" -type f -path '*nvidia*' \( -name 'libcufile_rdma.so*' -o -name '*_rdma.so*' \) 2>/dev/null)"
+    if [ -n "$_rdma_libs" ]; then
+        echo "linuxdeployqt: pruning unused NVIDIA GPUDirect-RDMA libs (require InfiniBand/libmlx5):"
+        printf '  %s\n' $_rdma_libs
+        find "$appdir" -type f -path '*nvidia*' \( -name 'libcufile_rdma.so*' -o -name '*_rdma.so*' \) -delete 2>/dev/null || true
+    fi
+
     if ! APPIMAGE_EXTRACT_AND_RUN=1 linuxdeployqt "$appdir/usr/share/applications/animica-wallet.desktop" \
         -appimage \
         -bundle-non-qt-libs \

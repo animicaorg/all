@@ -13,6 +13,7 @@
 #include "WalletDatabase.h"
 #include "WalletEngine.h"
 #include "WalletSecuritySettings.h"
+#include "../mining/MiningDashboardWidget.h"
 #include "../rpc/AnimicaRpcClient.h"
 #include "../rpc/RpcReply.h"
 #include "../rpc/RpcSettings.h"
@@ -223,6 +224,9 @@ void WalletWidget::setupUi()
     layout->addWidget(m_connectionBanner);
 
     m_tabWidget = new QTabWidget(this);
+
+    m_miningWidget = new MiningDashboardWidget(m_engine, m_rpcClient, this);
+    m_tabWidget->addTab(m_miningWidget, "Mining");
 
     m_accountsWidget = new AccountsWidget(m_engine, this);
     m_tabWidget->addTab(m_accountsWidget, "Accounts");

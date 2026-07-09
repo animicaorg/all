@@ -107,6 +107,8 @@ set(SOURCES
     src/wallet/SettingsWidget.cpp
     src/wallet/WalletImporter.cpp
     src/wallet/WalletExporter.cpp
+    src/mining/ParticleLogoWidget.cpp
+    src/mining/MiningDashboardWidget.cpp
 )
 
 set(HEADERS
@@ -140,6 +142,8 @@ set(HEADERS
     src/wallet/SettingsWidget.h
     src/wallet/WalletImporter.h
     src/wallet/WalletExporter.h
+    src/mining/ParticleLogoWidget.h
+    src/mining/MiningDashboardWidget.h
 )
 
 if(APPLE)
