@@ -133,6 +133,15 @@ class ModelProviderConfig(Schema):
     temperature: float = 0.2
     timeout_seconds: float = 30.0
     retry_attempts: int = 2
+    # 7.1.1 mesh: carry backend-specific knobs (anthropic-version, chutes slug,
+    # provider seed/top_p, extra auth headers). from_dict drops unknown keys, so
+    # these must be declared to survive config round-trips.
+    provider_options: dict = field(default_factory=dict)
+    extra_headers: dict = field(default_factory=dict)
+    top_p: Optional[float] = None
+    seed: Optional[int] = None
+    cost_per_1k: Optional[float] = None
+    capabilities: list[str] = field(default_factory=list)
 
 
 @dataclass

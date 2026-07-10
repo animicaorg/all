@@ -8,6 +8,55 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [7.1.1] - 2026-07-10
+### Added — the Verifiable Inference Engine (VIE)
+A **non-consensus** AI-engine upgrade. No chain fork, no genesis, the node never
+halts; everything here lives in the ENA coordinator + the `animica ai serve`
+gateway, never in block validation. All new behavior is additive and backward
+compatible — set the flags below to opt in.
+
+- **Proof-of-Inference receipts.** Every completion from `/v1/chat/completions`
+  and `/v1/completions` can carry an `animica_receipt`: a content-hashed
+  (SHA3-256), post-quantum **ML-DSA-65-signed** (FIPS-204, domain
+  `animica.ai.proof-of-inference.v1`) record of `(model, provider, prompt-hash,
+  output-hash, tokens, seed, nonce)`, plus an `X-Animica-Receipt` response
+  header. Controlled by `ANIMICA_AI_RECEIPTS=off|hash|signed` (default `signed`,
+  degrades to `hash` when no signing key/PQ is available). `off` is byte-identical
+  to 7.1.0. The gateway signs on a threadpool so the ~ms PQ signature never blocks
+  the event loop. Signed by a **dedicated inference key** that controls no funds.
+- **Quantum-seeded sampling.** Opt in per request with `{"animica":{"quantum_seed":
+  true}}` (or `ANIMICA_AI_QUANTUM_SEED=1`): the RNG seed is derived from the node's
+  quantum randomness beacon (falling back, honestly labelled, to the node CSPRNG
+  then a local seed), and its provenance is recorded in the receipt.
+- **Offline replay + verification.** `animica ai verify <receipt.json>` recomputes
+  the hash and checks the signature with no node/model; `animica ai replay
+  <receipt.json> --prompt "…"` re-runs seed-honoring local backends and checks the
+  output hash. Replay is honest: `verified` only for reproducible local backends,
+  `best_effort` for remote ones. New: `animica ai receipt show/verify`, and gateway
+  routes `POST /v1/verify`, `GET /v1/signer`.
+- **Provider mesh + intelligent router.** First-class **Claude** (Opus 4.8, Sonnet 5,
+  Haiku 4.5, Fable 5), **Chutes/Bittensor**, and **ENA-served-checkpoint** backends,
+  behind `providers.register_adapter`. A policy router adds ordered fallback chains,
+  EWMA-latency telemetry, and a SQLite-backed circuit breaker (`GET
+  /v1/router/status`). With no routing policy configured, routing is a pure
+  pass-through — unchanged behavior. `animica ai chat --provider anthropic` works
+  out of the box with `ANTHROPIC_API_KEY`.
+
+### Changed
+- `ModelAdapter.generate(...)` gains a keyword-only `seed=`, honored by
+  deterministic/OpenAI-compatible/Ollama backends (and forwarded by the mesh);
+  default `None` keeps every existing output unchanged.
+- Gateway version string → `7.1.1`; `/health` now reports `receipts` mode and the
+  (public-only) signer identity.
+
+### Notes / boundaries (honest)
+- The receipt **signature** is post-quantum (ML-DSA-65); the beacon **attestation**
+  is classical (Ed25519 software self-signer unless a hardware QRNG is attached).
+  The two are kept distinct in the receipt schema.
+- On-chain anchoring degrades to a local envelope (`pending_node_rpc`) — the node
+  `aicf.anchorReceipt` RPC does not exist yet.
+- Heavy deps (fastapi/uvicorn/torch/etc.) remain lazy; stdlib-only paths are the default.
+
 ## [5.3.4] - 2026-07-03
 ### Fixed
 - **CRITICAL — GPU miners' useful-work AI generation crashed and took the PoW
