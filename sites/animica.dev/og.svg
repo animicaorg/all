@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="beam" x1="0" y1="0" x2="1200" y2="630">
+      <stop stop-color="#6d5ef6"/><stop offset="0.5" stop-color="#4aa8ff"/><stop offset="1" stop-color="#37e0d8"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.78" cy="0.05" r="0.7">
+      <stop stop-color="#6d5ef6" stop-opacity="0.35"/><stop offset="1" stop-color="#070b16" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#8ca0dc" stroke-opacity="0.09" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="#070b16"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <!-- brand -->
+  <g transform="translate(80,74)">
+    <path d="M22 0 0 40h10l12-22 12 22h10L22 0Z" fill="url(#beam)"/>
+    <circle cx="22" cy="30" r="5" fill="#070b16" stroke="url(#beam)" stroke-width="2.4"/>
+    <text x="58" y="30" font-family="'Space Grotesk',sans-serif" font-size="30" font-weight="600" fill="#e9edfb">Animica<tspan fill="#6c789e">.dev</tspan></text>
+  </g>
+
+  <!-- eyebrow -->
+  <text x="80" y="250" font-family="'JetBrains Mono',monospace" font-size="20" letter-spacing="3" fill="#37e0d8">POST-QUANTUM L1 · VERIFIABLE AI</text>
+
+  <!-- headline -->
+  <text x="78" y="340" font-family="'Space Grotesk',sans-serif" font-size="78" font-weight="700" fill="#e9edfb">Ship AI you can</text>
+  <text x="78" y="428" font-family="'Space Grotesk',sans-serif" font-size="78" font-weight="700" fill="url(#beam)">actually prove.</text>
+
+  <!-- subline -->
+  <text x="80" y="500" font-family="'Inter',sans-serif" font-size="27" fill="#98a3c6">OpenAI-compatible inference with signed, replayable</text>
+  <text x="80" y="538" font-family="'Inter',sans-serif" font-size="27" fill="#98a3c6">proof-of-inference receipts.</text>
+
+  <!-- verified seal -->
+  <g transform="translate(1000,74)">
+    <rect x="-40" y="0" width="80" height="80" rx="16" fill="#0f1a34" stroke="#37e0d8" stroke-opacity="0.4"/>
+    <path d="M-18 40l14 14 26-30" fill="none" stroke="#34e5a0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="1010" y="180" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="16" font-weight="700" letter-spacing="2" fill="#34e5a0">VERIFIED</text>
+  <text x="1010" y="205" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" fill="#6c789e">ml_dsa_65</text>
+</svg>

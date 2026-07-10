@@ -660,6 +660,13 @@ def serve(
     """
     from animica.ai.gateway import GatewayNotInstalled, build_app
 
+    # Env fallbacks let a managed service (systemd) supply the bearer key via a
+    # 0600 EnvironmentFile instead of the command line, keeping it out of argv/ps.
+    api_key = api_key or os.environ.get("ANIMICA_AI_GATEWAY_API_KEY") or None
+    if rate_limit is None:
+        _rl = (os.environ.get("ANIMICA_AI_GATEWAY_RATE_LIMIT") or "").strip()
+        rate_limit = int(_rl) if _rl.isdigit() else None
+
     try:
         app_obj = build_app(api_key=api_key, provider=provider, model=model,
                             rate_limit_per_min=rate_limit)

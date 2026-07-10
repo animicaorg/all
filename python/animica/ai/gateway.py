@@ -137,10 +137,13 @@ def resolve_chat_adapter(model: Optional[str], default_provider: Optional[str] =
         for key, mp in (cfg.model_providers or {}).items():
             if mp.model == model:
                 return build_model_adapter(mp), key, mp.model
-        # 2) a local ollama tag
+        # 2) a local ollama tag. Use a generous timeout — a cold model load on a
+        # CPU-only / busy host can take well over the 30s default and would 502.
         if model in _list_ollama_models():
-            mp = ModelProviderConfig(name="ollama", provider="ollama", transport="http",
-                                     model=model, base_url="http://127.0.0.1:11434")
+            mp = ModelProviderConfig(
+                name="ollama", provider="ollama", transport="http", model=model,
+                base_url=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
+                timeout_seconds=float(os.environ.get("ANIMICA_AI_OLLAMA_TIMEOUT", "300")))
             return build_model_adapter(mp), "ollama", model
     # 3) default provider (optionally overriding the model name)
     key = default_provider or cfg.default_model_provider
