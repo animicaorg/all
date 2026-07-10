@@ -124,6 +124,51 @@ try {
     Pop-Location
 }
 
+# Bundle the OpenSSL 3 runtime DLLs next to animica-wallet.exe.
+#
+# Qt6 Network links libcrypto-3-x64.dll / libssl-3-x64.dll, but windeployqt does
+# not deploy OpenSSL. Without these the app aborts on launch with
+# "libcrypto-3-x64.dll not found". Source them from the bundled
+# python-build-standalone runtime (node/venv/DLLs), which ships a matching
+# OpenSSL 3 pair — self-contained, no dependency on the runner's system OpenSSL.
+# System locations are kept only as fallbacks.
+Write-Log "Bundling OpenSSL runtime DLLs"
+$OpenSslNames = @("libcrypto-3-x64.dll", "libssl-3-x64.dll")
+$OpenSslSearchDirs = @(
+    (Join-Path $InstallDir "node\venv\DLLs"),
+    (Join-Path $InstallDir "node\venv")
+)
+if ($env:OPENSSL_ROOT_DIR) {
+    $OpenSslSearchDirs += (Join-Path $env:OPENSSL_ROOT_DIR "bin")
+    $OpenSslSearchDirs += $env:OPENSSL_ROOT_DIR
+}
+$OpenSslSearchDirs += @(
+    "C:\Program Files\OpenSSL-Win64\bin",
+    "C:\Program Files\OpenSSL\bin",
+    "C:\Strawberry\c\bin"
+)
+foreach ($dll in $OpenSslNames) {
+    $dest = Join-Path $InstallDir $dll
+    if (Test-Path $dest -PathType Leaf) {
+        Write-Log "  $dll already present at stage root"
+        continue
+    }
+    $found = $null
+    foreach ($dir in $OpenSslSearchDirs) {
+        $cand = Join-Path $dir $dll
+        if (Test-Path $cand -PathType Leaf) { $found = $cand; break }
+    }
+    if (-not $found) {
+        $cmd = Get-Command $dll -ErrorAction SilentlyContinue
+        if ($cmd) { $found = $cmd.Source }
+    }
+    if (-not $found) {
+        throw "Required OpenSSL runtime DLL not found: $dll (searched: $($OpenSslSearchDirs -join '; '))"
+    }
+    Copy-Item -Path $found -Destination $dest -Force
+    Write-Log "  bundled $dll from $found"
+}
+
 Invoke-ExternalCommand `
     -FilePath $PythonCmd `
     -ArgumentList @((Join-Path $ScriptDir "verify-bundle-layout.py"), "--platform", "windows", "--path", $InstallDir) `

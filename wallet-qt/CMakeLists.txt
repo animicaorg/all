@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(AnimicaWallet VERSION 0.2.6 LANGUAGES CXX)
+project(AnimicaWallet VERSION 0.2.7 LANGUAGES CXX)
 
 set(WALLET_DISPLAY_NAME "Animica Wallet")
 set(WALLET_BUNDLE_NAME "AnimicaWallet")
@@ -267,8 +267,18 @@ else()
 endif()
 
 if(WALLET_BUNDLE_PYTHON_RUNTIME)
-    get_filename_component(ANIMICA_NODE_BIN_DIR "${ANIMICA_NODE_PYTHON}" DIRECTORY)
-    get_filename_component(ANIMICA_NODE_VENV_DIR "${ANIMICA_NODE_BIN_DIR}" DIRECTORY)
+    # Use the venv directory exactly as animica_build_node() exported it. Do NOT
+    # re-derive it from the interpreter path with dirname(dirname(python)): that
+    # only holds when python lives at venv/<bin>/python. The relocatable
+    # python-build-standalone runtime (Windows) puts python.exe at the venv ROOT,
+    # so a double dirname overshoots to the venv's PARENT and would nest the whole
+    # runtime at node/venv/venv/ — breaking the OpenSSL copy, the layout verifier,
+    # and the C++ interpreter resolver. ANIMICA_NODE_VENV is correct on every
+    # platform and for both the built and prebuilt-override node paths.
+    if(NOT ANIMICA_NODE_VENV)
+        message(FATAL_ERROR "ANIMICA_NODE_VENV was not set by animica_build_node(); cannot bundle the wallet runtime.")
+    endif()
+    set(ANIMICA_NODE_VENV_DIR "${ANIMICA_NODE_VENV}")
 
     if(APPLE)
         set(WALLET_NODE_INSTALL_DESTINATION "${WALLET_BUNDLE_NAME}.app/Contents/Resources/node")

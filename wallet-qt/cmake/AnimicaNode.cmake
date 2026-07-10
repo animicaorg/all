@@ -57,7 +57,13 @@ function(animica_build_node OUT_VAR)
     if(ANIMICA_NODE_VENV_OVERRIDE)
         get_filename_component(NODE_VENV_DIR "${ANIMICA_NODE_VENV_OVERRIDE}" ABSOLUTE)
         if(WIN32)
-            set(NODE_PYTHON "${NODE_VENV_DIR}/Scripts/python.exe")
+            # Accept both a relocatable python-build-standalone tree (python.exe at
+            # the venv root) and a legacy `python -m venv` layout (Scripts/python.exe).
+            if(EXISTS "${NODE_VENV_DIR}/python.exe")
+                set(NODE_PYTHON "${NODE_VENV_DIR}/python.exe")
+            else()
+                set(NODE_PYTHON "${NODE_VENV_DIR}/Scripts/python.exe")
+            endif()
         else()
             set(NODE_PYTHON "${NODE_VENV_DIR}/bin/python")
         endif()
@@ -108,35 +114,93 @@ function(animica_build_node OUT_VAR)
     set(NODE_BUILD_DIR "${CMAKE_BINARY_DIR}/animica-node")
     set(NODE_VENV_DIR "${NODE_BUILD_DIR}/venv")
     
-    # Determine the Python executable in the venv
+    # Determine the bundled Python interpreter path.
+    #
+    # Windows: a `python -m venv` is NOT relocatable. Its Scripts/python.exe is a
+    # thin launcher that records the *build host's* base interpreter in
+    # pyvenv.cfg (home=...\hostedtoolcache\...). Shipped to an end user, that path
+    # doesn't exist and the launcher aborts with, verbatim:
+    #   No Python at 'C:\hostedtoolcache\windows\Python\3.12.10\x64\python.exe'
+    # That also breaks every wallet operation that shells out to the node (e.g.
+    # importing wallet.json via the "import_wallets" backend call). Bundle a fully
+    # self-contained python-build-standalone tree instead: python.exe lives at the
+    # venv root, finds its own Lib/ + DLLs/ relative to itself, and ships no
+    # pyvenv.cfg redirection. The C++ backend (AnimicaWalletBackend) already
+    # probes node/venv/python.exe for exactly this layout.
     if(WIN32)
-        set(NODE_PYTHON "${NODE_VENV_DIR}/Scripts/python.exe")
-        set(NODE_PIP "${NODE_VENV_DIR}/Scripts/pip.exe")
+        set(NODE_PYTHON "${NODE_VENV_DIR}/python.exe")
     else()
         set(NODE_PYTHON "${NODE_VENV_DIR}/bin/python")
-        set(NODE_PIP "${NODE_VENV_DIR}/bin/pip")
     endif()
-    
-    # Create the virtual environment if it doesn't exist
+    # Always drive pip via `python -m pip` so it works for both the standalone
+    # tree (which has no Scripts/pip.exe) and a POSIX venv.
+    set(NODE_PIP_CMD "${NODE_PYTHON}" -m pip)
+
+    # Create the bundled runtime if it doesn't exist.
     if(NOT EXISTS "${NODE_PYTHON}")
-        message(STATUS "Creating Python virtual environment at ${NODE_VENV_DIR}")
-        execute_process(
-            COMMAND ${PYTHON_EXE} -m venv --copies "${NODE_VENV_DIR}"
-            RESULT_VARIABLE VENV_RESULT
-            OUTPUT_VARIABLE VENV_OUTPUT
-            ERROR_VARIABLE VENV_ERROR
-        )
-        
-        if(NOT VENV_RESULT EQUAL 0)
-            message(FATAL_ERROR 
-                "Failed to create Python virtual environment:\n"
-                "Command: ${PYTHON_EXE} -m venv --copies ${NODE_VENV_DIR}\n"
-                "Output: ${VENV_OUTPUT}\n"
-                "Error: ${VENV_ERROR}\n"
+        if(WIN32)
+            # Relocatable CPython (python-build-standalone, install_only build).
+            set(PBS_TAG "20241016")
+            set(PBS_ARCHIVE "cpython-3.12.7+${PBS_TAG}-x86_64-pc-windows-msvc-install_only.tar.gz")
+            set(PBS_URL "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/${PBS_ARCHIVE}")
+            set(PBS_SHA256 "f05531bff16fa77b53be0776587b97b466070e768e6d5920894de988bdcd547a")
+            set(PBS_TARBALL "${NODE_BUILD_DIR}/${PBS_ARCHIVE}")
+            set(PBS_EXTRACT "${NODE_BUILD_DIR}/_pbs")
+
+            file(MAKE_DIRECTORY "${NODE_BUILD_DIR}")
+            message(STATUS "Downloading relocatable Python runtime: ${PBS_URL}")
+            file(DOWNLOAD "${PBS_URL}" "${PBS_TARBALL}"
+                EXPECTED_HASH SHA256=${PBS_SHA256}
+                TLS_VERIFY ON
+                STATUS PBS_DL_STATUS
+                SHOW_PROGRESS
             )
+            list(GET PBS_DL_STATUS 0 PBS_DL_CODE)
+            if(NOT PBS_DL_CODE EQUAL 0)
+                list(GET PBS_DL_STATUS 1 PBS_DL_MSG)
+                message(FATAL_ERROR
+                    "Failed to download python-build-standalone:\n"
+                    "  ${PBS_URL}\n"
+                    "  ${PBS_DL_MSG}\n"
+                )
+            endif()
+
+            file(REMOVE_RECURSE "${PBS_EXTRACT}")
+            file(MAKE_DIRECTORY "${PBS_EXTRACT}")
+            file(ARCHIVE_EXTRACT INPUT "${PBS_TARBALL}" DESTINATION "${PBS_EXTRACT}")
+            # install_only archives extract to a top-level python/ directory.
+            if(NOT EXISTS "${PBS_EXTRACT}/python/python.exe")
+                message(FATAL_ERROR "python-build-standalone extract is missing python/python.exe under ${PBS_EXTRACT}")
+            endif()
+            file(REMOVE_RECURSE "${NODE_VENV_DIR}")
+            file(RENAME "${PBS_EXTRACT}/python" "${NODE_VENV_DIR}")
+            file(REMOVE_RECURSE "${PBS_EXTRACT}")
+            file(REMOVE "${PBS_TARBALL}")
+
+            if(NOT EXISTS "${NODE_PYTHON}")
+                message(FATAL_ERROR "Relocatable Python runtime missing after extract: ${NODE_PYTHON}")
+            endif()
+            message(STATUS "Bundled relocatable Python runtime at ${NODE_VENV_DIR}")
+        else()
+            message(STATUS "Creating Python virtual environment at ${NODE_VENV_DIR}")
+            execute_process(
+                COMMAND ${PYTHON_EXE} -m venv --copies "${NODE_VENV_DIR}"
+                RESULT_VARIABLE VENV_RESULT
+                OUTPUT_VARIABLE VENV_OUTPUT
+                ERROR_VARIABLE VENV_ERROR
+            )
+
+            if(NOT VENV_RESULT EQUAL 0)
+                message(FATAL_ERROR
+                    "Failed to create Python virtual environment:\n"
+                    "Command: ${PYTHON_EXE} -m venv --copies ${NODE_VENV_DIR}\n"
+                    "Output: ${VENV_OUTPUT}\n"
+                    "Error: ${VENV_ERROR}\n"
+                )
+            endif()
         endif()
     else()
-        message(STATUS "Using existing virtual environment at ${NODE_VENV_DIR}")
+        message(STATUS "Using existing bundled runtime at ${NODE_VENV_DIR}")
     endif()
     
     # Upgrade pip, setuptools, wheel
@@ -155,7 +219,7 @@ function(animica_build_node OUT_VAR)
     # Install core dependencies (FastAPI, uvicorn, prometheus)
     message(STATUS "Installing core RPC dependencies")
     execute_process(
-        COMMAND ${NODE_PIP} install 
+        COMMAND ${NODE_PIP_CMD} install
             "fastapi>=0.115.0,<0.116.0"
             "uvicorn[standard]>=0.30.0,<1.0.0"
             "prometheus-client>=0.20.0,<1.0.0"
@@ -176,7 +240,7 @@ function(animica_build_node OUT_VAR)
     if(EXISTS "${SDK_PATH}/pyproject.toml")
         message(STATUS "Installing omni-sdk from ${SDK_PATH}")
         execute_process(
-            COMMAND ${NODE_PIP} install "${SDK_PATH}"
+            COMMAND ${NODE_PIP_CMD} install "${SDK_PATH}"
             RESULT_VARIABLE SDK_RESULT
             OUTPUT_QUIET
             ERROR_VARIABLE SDK_ERROR
@@ -194,7 +258,7 @@ function(animica_build_node OUT_VAR)
     if(EXISTS "${ANIMICA_PATH}/pyproject.toml")
         message(STATUS "Installing animica package from ${ANIMICA_PATH}")
         execute_process(
-            COMMAND ${NODE_PIP} install "${ANIMICA_PATH}[wallet_qt]"
+            COMMAND ${NODE_PIP_CMD} install "${ANIMICA_PATH}[wallet_qt]"
             RESULT_VARIABLE ANIMICA_RESULT
             OUTPUT_QUIET
             ERROR_VARIABLE ANIMICA_ERROR
@@ -216,7 +280,7 @@ function(animica_build_node OUT_VAR)
     if(EXISTS "${PQ_PATH}/pyproject.toml")
         message(STATUS "Installing pq package from ${PQ_PATH}")
         execute_process(
-            COMMAND ${NODE_PIP} install "${PQ_PATH}"
+            COMMAND ${NODE_PIP_CMD} install "${PQ_PATH}"
             RESULT_VARIABLE PQ_RESULT
             OUTPUT_QUIET
             ERROR_VARIABLE PQ_ERROR

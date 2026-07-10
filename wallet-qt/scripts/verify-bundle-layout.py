@@ -63,7 +63,16 @@ def verify_windows(path: Path) -> list[str]:
         )
     elif platform_plugin == root / "plugins" / "platforms" / "qwindows.dll":
         _assert_exists(root / "qt.conf", errors, "qt.conf")
-    _assert_exists(root / "node" / "venv" / "Scripts" / "python.exe", errors, "bundled Python runtime")
+    node_python = _first_existing([
+        root / "node" / "venv" / "python.exe",              # python-build-standalone (relocatable)
+        root / "node" / "venv" / "Scripts" / "python.exe",  # legacy `python -m venv` layout
+    ])
+    if node_python is None:
+        errors.append(
+            "missing bundled Python runtime: "
+            f"{root / 'node' / 'venv' / 'python.exe'} "
+            f"or {root / 'node' / 'venv' / 'Scripts' / 'python.exe'}"
+        )
     _assert_exists(root / "node" / "assets" / "spec" / "params.yaml", errors, "bundled spec asset")
     _assert_genesis_assets(root / "node", errors, "bundled genesis asset")
     return errors

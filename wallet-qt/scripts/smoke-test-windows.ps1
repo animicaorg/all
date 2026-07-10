@@ -52,15 +52,20 @@ Write-Host ""
 Write-Host "[1/5] Checking node binary..." -ForegroundColor Yellow
 
 $WalletDir = Split-Path -Parent $WalletExe
-$NodePython = Join-Path $WalletDir "node\venv\Scripts\python.exe"
-
-# Try relative to build dir if not found
-if (-not (Test-Path $NodePython)) {
-    $NodePython = Join-Path (Split-Path -Parent $WalletDir) "node\venv\Scripts\python.exe"
+# The bundled runtime is a relocatable python-build-standalone tree
+# (node\venv\python.exe at the root); older `python -m venv` builds kept it under
+# node\venv\Scripts\python.exe. Accept either, next to the exe or one level up.
+$NodePython = $null
+foreach ($base in @($WalletDir, (Split-Path -Parent $WalletDir))) {
+    foreach ($rel in @("node\venv\python.exe", "node\venv\Scripts\python.exe")) {
+        $cand = Join-Path $base $rel
+        if (Test-Path $cand -PathType Leaf) { $NodePython = $cand; break }
+    }
+    if ($NodePython) { break }
 }
 
-if (-not (Test-Path $NodePython)) {
-    Write-Host "❌ FAIL: Node Python not found at $NodePython" -ForegroundColor Red
+if (-not $NodePython) {
+    Write-Host "❌ FAIL: Node Python not found under $WalletDir (node\venv\python.exe or node\venv\Scripts\python.exe)" -ForegroundColor Red
     exit 1
 }
 

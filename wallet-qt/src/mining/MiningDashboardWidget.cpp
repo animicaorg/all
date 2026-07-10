@@ -566,8 +566,14 @@ void MiningDashboardWidget::onStartStopClicked()
         return;
     }
 
-    const QString cli = locateAnimicaCli();
-    if (cli.isEmpty()) {
+    // Launch mining through the bundled interpreter as `python -m animica up …`.
+    // The pip-generated Scripts/animica.exe console-script launcher bakes in the
+    // build-tree python path and is NOT relocatable (it fails on end-user
+    // machines with "Unable to create process"); `python -m animica` uses the
+    // bundled, relocatable python.exe and the same CLI entrypoint
+    // (animica.cli.main:main).
+    const QString py = locatePython();
+    if (py.isEmpty()) {
         const QString cmd = "pip install --upgrade animica && animica up";
         QMessageBox box(this);
         box.setWindowTitle("Bundled miner not found");
@@ -608,8 +614,8 @@ void MiningDashboardWidget::onStartStopClicked()
                 m_mineButton->style()->polish(m_mineButton);
                 m_mineStatus->setText("Idle");
             });
-    connect(m_minerProc, &QProcess::started, this, [this, cli]() {
-        appendLog(QString("▶ Started miner: %1 up --address …").arg(cli));
+    connect(m_minerProc, &QProcess::started, this, [this, py]() {
+        appendLog(QString("▶ Started miner: %1 -m animica up --address …").arg(py));
         m_mineButton->setText("Stop Mining");
         m_mineButton->setProperty("mining", true);
         m_mineButton->style()->unpolish(m_mineButton);
@@ -626,10 +632,11 @@ void MiningDashboardWidget::onStartStopClicked()
     // "various errors", and it could pay rewards to an address outside this
     // wallet. We pass ONLY --address: the bundled animica runtime does not
     // support --only/--profile, so those would make `up` error out.
-    const QStringList args{ QStringLiteral("up"), QStringLiteral("--address"), addr };
+    const QStringList args{ QStringLiteral("-m"), QStringLiteral("animica"),
+                            QStringLiteral("up"), QStringLiteral("--address"), addr };
     appendLog(QString("Launching bundled animica miner for %1…\n▶ %2 %3")
-                  .arg(addr, cli, args.join(' ')));
-    m_minerProc->start(cli, args);
+                  .arg(addr, py, args.join(' ')));
+    m_minerProc->start(py, args);
 }
 
 // ---------------------------------------------------------------------------
@@ -839,8 +846,10 @@ void MiningDashboardWidget::onStartTrainingClicked()
             });
         return;
     }
-    const QString cli = locateAnimicaCli();
-    if (cli.isEmpty()) {
+    // Run training through the bundled interpreter as `python -m animica ena …`
+    // (the Scripts/animica.exe wrapper is not relocatable — see onStartStopClicked).
+    const QString py = locatePython();
+    if (py.isEmpty()) {
         QMessageBox::information(this, "Runtime not found",
             "Could not find the bundled animica runtime next to this app.");
         return;
@@ -865,9 +874,10 @@ void MiningDashboardWidget::onStartTrainingClicked()
         if (m_trainProc) appendLog(QString("⚠ Training error: %1").arg(m_trainProc->errorString()));
     });
     QStringList args;
-    args << "ena" << "pool" << "train-loop" << m_trainPoolId
+    args << "-m" << "animica"
+         << "ena" << "pool" << "train-loop" << m_trainPoolId
          << "--worker-id" << addr << "--address" << addr
          << "--endpoint" << "https://pool.animica.org/api/ena";
-    appendLog(QString("▶ %1 %2").arg(cli, args.join(' ')));
-    m_trainProc->start(cli, args);
+    appendLog(QString("▶ %1 %2").arg(py, args.join(' ')));
+    m_trainProc->start(py, args);
 }
