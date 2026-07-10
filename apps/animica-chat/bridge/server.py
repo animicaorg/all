@@ -93,6 +93,23 @@ def _get_provider() -> DistributedAICFProvider:
         wallet_path=wallet_path,
         wallet_label=wallet_label,
     )
+    # The chain accepts ONLY ml_dsa_65 (0x1003) signatures. A legacy
+    # sphincs_shake_128s wallet (the historical default label "aicf") cannot sign
+    # on mainnet — its only backend is the pure-Python fallback, which is disabled
+    # — so every AICF payment fails with a cryptic "Pure-Python PQ fallbacks are
+    # disabled". Surface the real cause loudly at startup instead of at request time.
+    try:
+        _wi = _provider._wallet_info()
+        if _wi.scheme and _wi.scheme != "ml_dsa_65":
+            log.error(
+                "bridge wallet %r uses scheme %r, which CANNOT sign on this network "
+                "(only ml_dsa_65 is accepted) — AICF payments will fail. Point "
+                "ANIMICA_BRIDGE_WALLET_LABEL at an ml_dsa_65 wallet, e.g. create one "
+                "with `animica wallet create --label <name> --alg ml_dsa_65` and fund it.",
+                wallet_label, _wi.scheme,
+            )
+    except Exception:  # noqa: BLE001 — advisory only; never block startup on it
+        pass
     return _provider
 
 
