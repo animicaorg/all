@@ -535,8 +535,9 @@ def test_compute_block_reward_mainnet_100_pct_to_miner():
     assert miner_amt == 300000000000, f"Expected 300 ANM (300000000000 nANM), got {miner_amt}"
 
 
-def test_compute_block_reward_mainnet_100_pct_halving():
-    """Test that mainnet 100% miner split halves correctly at 1.35M blocks."""
+def test_compute_block_reward_mainnet_split_halving():
+    """Mainnet subsidy halves correctly at 1.35M blocks, with the post-7.1.0 85/15
+    foundation split applied to the halved amount (this height is above 42_001)."""
     params = {
         "monetary": {
             "issuance": {
@@ -561,16 +562,26 @@ def test_compute_block_reward_mainnet_100_pct_halving():
         },
     }
     
-    # Test at height 1_350_001 (first block of epoch 1, after first halving)
+    # Test at height 1_350_001 (first block of epoch 1, after first halving).
+    # This height is ABOVE FORK_FOUNDATION_SPLIT (mainnet 42_001), so the 85/15
+    # foundation split applies to the halved 150 ANM subsidy: 127.5 ANM miner /
+    # 22.5 ANM foundation treasury. Halving still works (total == 150 ANM); the split
+    # only redistributes it. (For the pre-fork 100%-miner path see the dedicated
+    # test_foundation_split.py grandfather tests.)
+    from consensus.rewards import FOUNDATION_TREASURY_ADDRESS
+
     rewards = compute_block_reward(chain_id=1, height=1350001, params=params)
-    
-    # Should return only 1 reward (miner gets 100%)
-    assert len(rewards) == 1, f"Expected 1 reward (100% to miner), got {len(rewards)}"
-    
-    # Verify miner gets 150 ANM (half of 300 ANM)
-    miner_addr, miner_amt = rewards[0]
-    assert "coinbase" in miner_addr, f"Expected coinbase address, got {miner_addr}"
-    assert miner_amt == 150000000000, f"Expected 150 ANM (150000000000 nANM) after halving, got {miner_amt}"
+
+    # Post-7.1.0: two outputs (miner + foundation treasury); total == halved subsidy.
+    assert len(rewards) == 2, f"Expected 2 rewards (85/15 split), got {len(rewards)}"
+    total = sum(amt for _, amt in rewards)
+    assert total == 150000000000, f"Expected 150 ANM total after halving, got {total}"
+
+    outs = dict(rewards)
+    foundation_amt = outs[FOUNDATION_TREASURY_ADDRESS]
+    miner_amt = total - foundation_amt
+    assert foundation_amt == 22500000000, f"Expected 22.5 ANM foundation (15%), got {foundation_amt}"
+    assert miner_amt == 127500000000, f"Expected 127.5 ANM miner (85%), got {miner_amt}"
 
 
 def test_instant_block_always_returns_zero_rewards():

@@ -2581,7 +2581,7 @@ class BlockImporter:
 
 
             # Get all reward outputs (miner, AICF, treasury)
-            from consensus.rewards import compute_block_reward
+            from consensus.rewards import compute_block_reward, FOUNDATION_TREASURY_ADDRESS
             try:
                 reward_outputs = compute_block_reward(
                     chain_id=chain_id,
@@ -2623,7 +2623,11 @@ class BlockImporter:
                 for addr, amount in reward_outputs:
                     if addr == aicf_addr:
                         aicf_reward += amount
-                    elif addr == treasury_addr:
+                    elif addr == treasury_addr or addr == FOUNDATION_TREASURY_ADDRESS:
+                        # FORK_FOUNDATION_SPLIT: at/after H compute_block_reward emits
+                        # the treasury slice to the foundation address (!= the params
+                        # placeholder), so recognise it here or it would fall through
+                        # to the miner bucket and the miner would get 100%.
                         treasury_reward += amount
                     else:
                         # Miner reward (default)
@@ -2697,7 +2701,39 @@ class BlockImporter:
                     height,
                     aicf_balance,
                 )
-            
+
+            # FORK_FOUNDATION_SPLIT (7.1.0): credit the 15% foundation-treasury slice.
+            # compute_block_reward only emits a non-zero treasury slice on mainnet
+            # at/after the fork height, so this is self-gating and forward-only
+            # (treasury_reward == 0 below H => no-op, byte-identical to pre-7.1.0).
+            # Without this credit the slice would be computed and discarded -> 15% of
+            # every post-H subsidy destroyed (deflation). The address is decoded with
+            # core.utils.address.address_to_bytes -> the SAME 32-byte account key that
+            # getbalance reads and that the miner is credited on; do NOT use the AICF
+            # path's pq.address.bech32_decode (unresolvable module -> zero-key fallback
+            # -> funds credited to a dead key and invisible).
+            treasury_total = int(treasury_reward)
+            if treasury_total > 0:
+                from core.utils.address import address_to_bytes
+                treasury_addr_bytes = address_to_bytes(FOUNDATION_TREASURY_ADDRESS)
+                treasury_balance = state_credit(
+                    self.state_db,
+                    treasury_addr_bytes,
+                    treasury_total,
+                    reason="BLOCK_APPLY_FOUNDATION_TREASURY_REWARD",
+                    tx_hash=None,
+                    height=height,
+                    callsite="core.chain.block_import._apply_block_state",
+                )
+                _BLOCK_COINBASE_CREDIT_TOTAL += treasury_total
+                log.info(
+                    "STATE_CREDIT treasury=%s reward=%d height=%d new_balance=%d",
+                    treasury_addr_bytes.hex(),
+                    treasury_total,
+                    height,
+                    treasury_balance,
+                )
+
             # Process AICF accounting (credits, epochs, etc.)
             try:
                 from execution.runtime.aicf_integration import process_block_for_aicf
@@ -2717,8 +2753,9 @@ class BlockImporter:
             except Exception as e:
                 log.error(f"AICF: Failed to process block {height}: {e}", exc_info=True)
             
-            # Log total coinbase credit metric
-            total_credited = miner_total + aicf_total
+            # Log total coinbase credit metric (include the foundation-treasury slice
+            # so the metric matches the actual coinbase emission post-FORK_FOUNDATION_SPLIT).
+            total_credited = miner_total + aicf_total + int(treasury_reward)
             if total_credited > 0:
                 log.info(
                     "metric block_coinbase_credit_total=%d",

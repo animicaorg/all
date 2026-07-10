@@ -25,6 +25,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Mapping, Tuple
 
+# Forward-only consensus fork gate for the 85/15 foundation subsidy split (7.1.0).
+# Imported at module top on purpose: if this core module ever failed to import, a
+# node must fail LOUDLY at startup rather than silently skip the split at runtime
+# (which would under-credit the foundation — the exact silent-divergence hazard).
+from core.network_params import is_fork_active, FORK_FOUNDATION_SPLIT
+
 log = logging.getLogger("consensus.rewards")
 
 # ==================================================================================
@@ -59,6 +65,23 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
     # Single premine address containing the entire 81M ANM allocation
     ("anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208", PREMINE_AMOUNT),
 ]
+
+# ==================================================================================
+# FORK_FOUNDATION_SPLIT (7.1.0) — 85% miner / 15% foundation-treasury subsidy split
+# ==================================================================================
+# At/after core.network_params FORK_FOUNDATION_SPLIT (mainnet block 42,001), the
+# per-block subsidy is split 85% miner / 15% foundation treasury instead of 100%
+# miner. The subsidy TOTAL is UNCHANGED (still 300 ANM at the genesis epoch, halving
+# on the same schedule) — only its division changes, so total emission and the
+# MAX_MONEY cap are unaffected (miner+treasury == the pre-split subsidy, every block).
+# Both the split percentage and the destination address are code-committed constants
+# so emission is byte-identical on every node (never params/env/wallclock). The
+# foundation address decodes to a valid mainnet ml_dsa_65 (0x1003) account key — the
+# params placeholder "anim1treasuryxxx…" does NOT decode, which is why the address is
+# hardcoded here rather than read from spec/params.yaml. Public: 15% of every block
+# subsidy funds the Animica Foundation treasury from block 42,001 onward.
+FOUNDATION_TREASURY_ADDRESS = "anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga"
+FOUNDATION_TREASURY_SPLIT_PCT = 15
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)
 def _validate_premine_distribution() -> None:
@@ -176,9 +199,23 @@ def compute_block_reward(
 
         # Mainnet default: no automatic secondary reward outputs unless explicitly enabled.
         if chain_id == 1 and not dev_fee_enabled:
-            aicf_amount = 0
-            treasury_amount = 0
-            aicf_params = {}
+            if is_fork_active(FORK_FOUNDATION_SPLIT, height_for_halving, chain_id=1):
+                # FORK_FOUNDATION_SPLIT (7.1.0): re-split the SAME per-block subsidy
+                # 85% miner / 15% foundation treasury. On mainnet the params split is
+                # 100/0/0, so (miner_amount + aicf_amount + treasury_amount) is exactly
+                # the pre-split subsidy total. Integer floor on treasury + remainder to
+                # miner guarantees miner+treasury == total (emission-conserving, no
+                # dust created/destroyed) and is float-free (deterministic).
+                total_subsidy = miner_amount + aicf_amount + treasury_amount
+                aicf_amount = 0
+                treasury_amount = (total_subsidy * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+                miner_amount = total_subsidy - treasury_amount
+                aicf_params = {}
+            else:
+                # Grandfathered (byte-identical to pre-7.1.0): 100% miner.
+                aicf_amount = 0
+                treasury_amount = 0
+                aicf_params = {}
         else:
             aicf_params = params.get("aicf", {})
         (
@@ -219,6 +256,19 @@ def compute_block_reward(
                 miner_amount_capped, aicf_amount_capped, treasury_amount_capped = _split_subsidy_total(
                     capped_total, schedule
                 )
+                # FORK_FOUNDATION_SPLIT: _split_subsidy_total re-reads the params
+                # split (100/0/0 on mainnet), which would silently revert the capped
+                # final block to 100% miner at end-of-emission. Re-apply the 85/15
+                # foundation split to the capped total so the fork holds to the last
+                # coin (still emission-conserving: miner+treasury == capped_total).
+                if (
+                    chain_id == 1
+                    and not dev_fee_enabled
+                    and is_fork_active(FORK_FOUNDATION_SPLIT, height_for_halving, chain_id=1)
+                ):
+                    aicf_amount_capped = 0
+                    treasury_amount_capped = (capped_total * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+                    miner_amount_capped = capped_total - treasury_amount_capped
                 (
                     final_miner,
                     final_aicf_base,
@@ -242,7 +292,15 @@ def compute_block_reward(
         
         # Chain treasury reward
         if final_treasury > 0:
-            treasury_addr = system_addresses.get("treasury", "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            # FORK_FOUNDATION_SPLIT: at/after H the 15% goes to the code-committed
+            # foundation address (the params "treasury" placeholder does not decode).
+            # On mainnet final_treasury is non-zero ONLY at/after H, so the foundation
+            # address is always used when it is credited; below H this branch is
+            # unreached (final_treasury == 0). Other chains keep their params treasury.
+            if chain_id == 1 and is_fork_active(FORK_FOUNDATION_SPLIT, height_for_halving, chain_id=1):
+                treasury_addr = FOUNDATION_TREASURY_ADDRESS
+            else:
+                treasury_addr = system_addresses.get("treasury", "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
             rewards.append((treasury_addr, final_treasury))
 
         # Optional explicit dev fee: applied as a slice from miner reward.
@@ -425,11 +483,29 @@ def _subsidy_total_for_height(height: int, schedule: Dict[str, Any]) -> int:
     if epoch >= max_halvings:
         epoch = max_halvings - 1
 
-    decay_factor = (100.0 - decay_pct) / 100.0
-    current_subsidy = int(start * (decay_factor**epoch))
+    current_subsidy = _integer_subsidy(start, decay_pct, epoch)
     if current_subsidy < tail:
         current_subsidy = tail
     return current_subsidy
+
+
+def _integer_subsidy(start: int, decay_pct: float, epoch: int) -> int:
+    """ANM-H08/M04: exact integer block subsidy (no float exponentiation).
+
+    For a whole-percent decay this reproduces int(start * ((100-decay)/100)**epoch)
+    EXACTLY — verified equal for decay=50 (the mainnet/testnet value) across every
+    epoch — so it changes NO reward value while removing the cross-platform float
+    determinism hazard. A non-whole-percent decay (not used by any shipped chain)
+    falls back to the exact legacy float expression so its values are unchanged too.
+    """
+    d = int(decay_pct)
+    if float(d) == float(decay_pct):
+        num = 100 - d
+        if num <= 0:
+            return 0
+        e = int(epoch)
+        return (int(start) * (num ** e)) // (100 ** e)
+    return int(start * (((100.0 - decay_pct) / 100.0) ** epoch))
 
 
 def _split_subsidy_total(total: int, schedule: Dict[str, Any]) -> Tuple[int, int, int]:
@@ -497,20 +573,19 @@ def _total_subsidy_through_height(height: int, schedule: Dict[str, Any]) -> int:
     tail = schedule["tail_nANM_per_block"]
     max_halvings = schedule["max_halvings"]
 
-    decay_factor = (100.0 - decay_pct) / 100.0
     max_epoch = max_halvings - 1
     full_epochs = min((height - 1) // epoch_length, max_epoch)
 
     total = 0
     for epoch in range(0, full_epochs):
-        subsidy = int(start * (decay_factor**epoch))
+        subsidy = _integer_subsidy(start, decay_pct, epoch)
         if subsidy < tail:
             subsidy = tail
         total += subsidy * epoch_length
 
     remaining = height - (full_epochs * epoch_length)
     if remaining > 0:
-        subsidy = int(start * (decay_factor**full_epochs))
+        subsidy = _integer_subsidy(start, decay_pct, full_epochs)
         if subsidy < tail:
             subsidy = tail
         total += subsidy * remaining
