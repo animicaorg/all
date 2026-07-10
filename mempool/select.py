@@ -7,6 +7,15 @@ from pq.py.address import decode_address
 
 from mempool.address_denylist import is_denied as _denylist_is_denied
 
+try:
+    # Consensus-frozen set (FORK_ADDRESS_FREEZE): union into the block-template
+    # pre-gate so an upgraded miner never builds a block that its own consensus
+    # rule would reject (self-orphan). height=None => exclude unconditionally.
+    from execution.migrations.address_freeze_2026 import is_frozen as _consensus_frozen
+except Exception:  # pragma: no cover - fail-open at mempool; block validation still enforces
+    def _consensus_frozen(addr, *, height=None):  # type: ignore
+        return False
+
 
 @dataclass(frozen=True)
 class PendingTxEntry:
@@ -494,9 +503,18 @@ def select_for_block(
             _bump_reject(result, hash_hex, "missing_sender", tx_kind=tx_kind)
             continue
 
-        # Operator address freeze-list (incident response): never mine a tx that
-        # moves value from or to a frozen account. See mempool.address_denylist.
-        if _denylist_is_denied(sender) or _denylist_is_denied(_tx_recipient(tx)):
+        # Address freeze: never mine a tx that moves value from or to a frozen
+        # account — both the operator's node-local denylist (mempool.address_denylist)
+        # and the network-wide consensus freeze-set (FORK_ADDRESS_FREEZE). The
+        # consensus union is what keeps an honest upgraded miner from building a
+        # block its own block-validation rule would orphan.
+        _recipient = _tx_recipient(tx)
+        if (
+            _denylist_is_denied(sender)
+            or _denylist_is_denied(_recipient)
+            or _consensus_frozen(sender)
+            or _consensus_frozen(_recipient)
+        ):
             _bump_reject(result, hash_hex, "address_denylisted", tx_kind=tx_kind)
             continue
 

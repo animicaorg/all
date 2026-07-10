@@ -8,7 +8,63 @@ from typing import List, Optional
 from core.ptl.model import PtlEntry, TxStatus
 from core.ptl.service import PtlService
 
+try:
+    from execution.migrations.address_freeze_2026 import is_frozen as _consensus_frozen
+except Exception:  # pragma: no cover - fail-open; block validation still enforces
+    def _consensus_frozen(addr, *, height=None):  # type: ignore
+        return False
+
+try:
+    from core.utils.tx import normalize_tx_envelope as _normalize_tx_envelope
+except Exception:  # pragma: no cover - decoder unavailable; sender fast-path only
+    _normalize_tx_envelope = None  # type: ignore
+
 log = logging.getLogger("animica.ptl.selection")
+
+
+def _normalized_recipient(body: object) -> object:
+    """Recipient bytes from a canonical tx body (payload.v.to / payload.to / to)."""
+    if not isinstance(body, dict):
+        return None
+    payload = body.get("payload")
+    if isinstance(payload, dict):
+        v = payload.get("v")
+        if isinstance(v, dict) and v.get("to") is not None:
+            return v.get("to")
+        if payload.get("to") is not None:
+            return payload.get("to")
+    return body.get("to")
+
+
+def _entry_spends_frozen(entry: "PtlEntry") -> bool:
+    """True if a PTL candidate moves value FROM or TO a consensus-frozen account.
+
+    PTL is the DEFAULT tx system, so this is the live block-building pre-gate: it
+    keeps an upgraded miner from selecting a tx that its own block-validation rule
+    (block_import._scan_block_frozen_addresses) would orphan — otherwise a peer
+    that replicates a frozen-recipient tx into this node's PTL could make it
+    repeatedly build self-orphaning blocks (a liveness grief). PtlEntry carries no
+    recipient and an unreliable ``sender``, so we decode ``tx_bytes`` canonically
+    to check BOTH. ``height=None`` => exclude unconditionally (never build it, even
+    below the activation height). Undecodable/opaque bytes are treated as not
+    frozen here — the authoritative block-import gate is the backstop.
+    """
+    if _consensus_frozen(getattr(entry, "sender", None)):
+        return True
+    raw = getattr(entry, "tx_bytes", None)
+    if not raw or _normalize_tx_envelope is None:
+        return False
+    try:
+        env = _normalize_tx_envelope(raw)
+    except Exception:
+        return False
+    body = env.get("tx") if isinstance(env, dict) else None
+    if isinstance(body, dict):
+        if _consensus_frozen(body.get("from")):
+            return True
+        if _consensus_frozen(_normalized_recipient(body)):
+            return True
+    return False
 
 
 class PtlSelector:
@@ -43,6 +99,12 @@ class PtlSelector:
         # Filter out excluded transactions
         if excluded_txids:
             candidates = [tx for tx in candidates if tx.txid not in excluded_txids]
+
+        # Address freeze (FORK_ADDRESS_FREEZE): never select a tx moving value
+        # FROM or TO a consensus-frozen account, so an upgraded miner never builds
+        # a block its own block-validation rule would orphan. Checks both ends by
+        # decoding tx_bytes (PtlEntry has no recipient field).
+        candidates = [tx for tx in candidates if not _entry_spends_frozen(tx)]
 
         # Sort by priority: fee (desc), size (asc), age (asc)
         candidates.sort(
