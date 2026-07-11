@@ -1,0 +1,6 @@
+[Unit]
+Description=Write Animica net-height JSON for the upgrade banner
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/anm-net-height.sh

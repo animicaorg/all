@@ -1,4 +1,4 @@
-# `animica ai` — the AI command namespace (5.2.0)
+# `animica ai` — the AI command namespace (7.1.1)
 
 One place to use Animica's AI: check readiness, configure once, chat, serve an
 OpenAI-compatible API, run paid inference jobs, earn as a provider, and do local
@@ -57,6 +57,67 @@ Endpoints (point any OpenAI client at `http://host:port/v1`):
 
 Errors use the OpenAI envelope `{"error": {message, type, code}}`. When
 `--api-key` is set, every `/v1/*` call must send `Authorization: Bearer <key>`.
+
+## Verifiable Inference Engine (7.1.1)
+
+Every response the gateway serves can carry a **Proof-of-Inference receipt**: a
+content-addressed, post-quantum-signed record of *what was asked, what was
+answered, which model served it, and with what seed* — replayable offline by
+anyone, with no trust in the server.
+
+```bash
+animica ai serve --port 8080                 # receipts on by default (mode "signed")
+# per-response receipt is returned in the X-Animica-Receipt response header
+```
+
+A receipt is:
+
+- **Content-hashed** — SHA3-256 over the canonical receipt (volatile + signature
+  fields excluded), so the hash is stable and independently recomputable.
+- **Signed** — ML-DSA-65 (FIPS-204, post-quantum) under a dedicated domain
+  `animica.ai.proof-of-inference.v1`, by a node key that *controls no funds*. The
+  signer address is bound to the signing key, so a receipt can't be relabeled to
+  impersonate another node.
+- **Quantum-seeded** (optional) — the sampling seed is derived from the network
+  randomness beacon (attested hardware QRNG when available, CSPRNG fallback
+  otherwise), and its provenance is recorded in the receipt.
+
+Modes are operator-controlled via `ANIMICA_AI_RECEIPTS=off|hash|signed`.
+
+### Verify & replay
+
+```bash
+animica ai receipt verify   receipt.json          # recompute hash + check the PQ signature
+animica ai verify           receipt.json          # same, machine-readable
+animica ai replay receipt.json --prompt "the original prompt"
+```
+
+`verify` is fully offline: it recomputes the content hash and checks the
+signature — no network, no server. `replay` re-runs generation with the recorded
+seed and checks `sha3(output)` against the receipt. Reproducibility is reported
+honestly:
+
+- `verified` — a bit-for-bit reproducible local backend (deterministic net, or a
+  seed-honoring in-process runner): the output is actually re-derived and matched.
+- `best_effort` — a seed-honoring but non-deterministic backend (remote
+  provider / GPU kernels): the receipt is signature-valid but not re-run.
+- `unsupported` — the backend can't be replayed.
+
+### Provider mesh + routing (opt-in)
+
+The gateway can front a mesh of backends — the offline deterministic net,
+`ollama`, any OpenAI-compatible endpoint, `anthropic`/`claude`, `chutes`,
+`bittensor`, and `ena_served` pools. Routing is an **operator** feature (enabled
+via config `[routing]` or `ANIMICA_AI_ROUTING=1`) — a client request can never
+silently steer traffic onto the operator's paid keys. When active, a route policy
+(`quality` / `cheapest` / `fastest` / `quantum_fair`) orders the candidates,
+enforces a `max_cost_per_1k` cap, skips any provider whose circuit breaker is
+open, and always keeps the offline deterministic net as the final fallback.
+
+```bash
+curl localhost:8080/v1/router/status     # policies + live per-provider health
+curl localhost:8080/v1/signer            # this node's public inference identity
+```
 
 ## Paid jobs (AICF marketplace)
 

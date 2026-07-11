@@ -71,7 +71,20 @@ from core.utils.time import maybe_normalize_unix_timestamp_seconds
 from core.utils.tx import normalize_tx_envelope
 from core.utils.hash import sha3_256
 from core.utils.pow import micro_threshold_to_target256
-from core.network_params import FORK_PQ_HARDENING, FORK_ROOT_COMMITMENT, is_fork_active
+from core.network_params import (
+    FORK_ADDRESS_FREEZE,
+    FORK_PQ_HARDENING,
+    FORK_ROOT_COMMITMENT,
+    is_fork_active,
+)
+# FORK_ADDRESS_FREEZE consensus set — imported at MODULE LOAD, deliberately NOT
+# inside a try/except. If the packaged freeze module were missing, we want
+# block_import to fail to import (node refuses to start) rather than silently
+# treating every block as unfrozen and ACCEPTING frozen-spend blocks that
+# upgraded peers reject — a silent consensus split. The module is pure stdlib
+# (typing only), so this cannot create an import cycle. Fail-closed, never halt:
+# a correctly-installed node always has it.
+from execution.migrations.address_freeze_2026 import is_frozen as _address_is_frozen
 from execution.runtime.env import make_block_env
 from execution.runtime.executor import apply_block
 from execution.state.apply_balance import (
@@ -512,6 +525,76 @@ def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Op
                 f"header={bytes(committed_pr).hex()[:16]}"
             )
     return None
+
+
+def _scan_block_frozen_addresses(block: Block, height: int) -> Optional[str]:
+    """Return a rejection reason if any non-coinbase tx spends FROM or TO a
+    consensus-frozen account active at ``height``; else None.
+
+    The sender is the tx's declared sender, which is authoritative here: the
+    pq_hardening gate (active below FORK_ADDRESS_FREEZE) has already verified
+    every signature against that sender's pubkey earlier in import_block, so a
+    hostile miner cannot forge a non-frozen sender. Coinbase txs are skipped (a
+    miner's own reward output is never frozen). Frozen digests are 32-byte account
+    keys, so an address that fails to decode is definitionally not frozen and is
+    skipped rather than false-rejected. Uses the module-level ``_address_is_frozen``
+    (imported at load, fail-closed) so the decision is a pure function of
+    (committed txs, height, code constant) — no per-node input, no split.
+    """
+    _is_frozen = _address_is_frozen
+    for idx, tx in enumerate(getattr(block, "txs", ()) or ()):
+        if _is_coinbase_tx(tx):
+            continue
+        try:
+            unsigned = _tx_unsigned(tx)
+            if unsigned is None:
+                unsigned = getattr(tx, "unsigned", tx)
+            sender = getattr(unsigned, "sender", None)
+            payload = getattr(unsigned, "payload", None)
+            to = (
+                getattr(payload, "to", None)
+                if payload is not None
+                else getattr(unsigned, "to", None)
+            )
+        except Exception as e:
+            # Structural decode quirk — the signature/structure gates already ran;
+            # don't false-reject a valid block here.
+            log.debug("frozen-scan decode skip [%d]: %r", idx, e)
+            continue
+        for role, addr in (("sender", sender), ("recipient", to)):
+            if addr is None:
+                continue
+            try:
+                key = _decode_address_bytes(addr)
+            except Exception:
+                continue
+            if _is_frozen(key, height=height):
+                return f"frozen_{role}[{idx}]:{bytes(key).hex()[:16]}"
+    return None
+
+
+def _verify_block_frozen_addresses_gated(
+    block: Block, height: int, chain_id: int
+) -> Optional[str]:
+    """FORK_ADDRESS_FREEZE forward-only gate: reject a block that moves funds
+    from or to a consensus-frozen (stolen / leaked-key) account once the freeze is
+    active for the chain. Returns a rejection reason (str) or None to accept.
+
+    Grandfathered below the activation height. The frozen set is a code constant
+    (execution.migrations.address_freeze_2026), byte-identical on every node, so
+    this decision is deterministic. Writes no state — a rule-violating block is
+    orphaned, never a silent balance fork.
+
+    Deliberately has NO env/shadow valve: a per-node env that suppressed the
+    rejection would make a shadow node ACCEPT a frozen-spend block that enforcing
+    nodes REJECT once the fork is active — a chain split. Determinism (identical
+    verdict on every upgraded node) is the whole point, so the verdict never reads
+    per-node state. Pre-activation the gate is inert (is_fork_active is False),
+    which is the only safe "observe" window and needs no valve.
+    """
+    if not is_fork_active(FORK_ADDRESS_FREEZE, height, chain_id=chain_id):
+        return None
+    return _scan_block_frozen_addresses(block, height)
 
 
 def _root_commitment_shadow() -> bool:
@@ -1420,6 +1503,21 @@ class BlockImporter:
             if root_error is not None:
                 return ImportResult(
                     ImportErrorCode.INVALID, height, h, False, f"root_commitment: {root_error}"
+                )
+
+            # FORK_ADDRESS_FREEZE: forward-only consensus address freeze. At/after
+            # the activation height, reject any block that moves funds from/to a
+            # code-committed frozen (stolen/leaked-key) account — turning the
+            # node-local, bypassable mempool freeze into a network-wide rule.
+            # Grandfathered below H; writes no state (orphans a bad block rather
+            # than silently forking balances). Runs after the signature gate so
+            # the tx sender is already pubkey-authenticated.
+            freeze_error = _verify_block_frozen_addresses_gated(
+                block, height, int(self.params.chain_id)
+            )
+            if freeze_error is not None:
+                return ImportResult(
+                    ImportErrorCode.INVALID, height, h, False, f"address_freeze: {freeze_error}"
                 )
 
             # Persist header & block
@@ -2483,7 +2581,7 @@ class BlockImporter:
 
 
             # Get all reward outputs (miner, AICF, treasury)
-            from consensus.rewards import compute_block_reward
+            from consensus.rewards import compute_block_reward, FOUNDATION_TREASURY_ADDRESS
             try:
                 reward_outputs = compute_block_reward(
                     chain_id=chain_id,
@@ -2525,7 +2623,11 @@ class BlockImporter:
                 for addr, amount in reward_outputs:
                     if addr == aicf_addr:
                         aicf_reward += amount
-                    elif addr == treasury_addr:
+                    elif addr == treasury_addr or addr == FOUNDATION_TREASURY_ADDRESS:
+                        # FORK_FOUNDATION_SPLIT: at/after H compute_block_reward emits
+                        # the treasury slice to the foundation address (!= the params
+                        # placeholder), so recognise it here or it would fall through
+                        # to the miner bucket and the miner would get 100%.
                         treasury_reward += amount
                     else:
                         # Miner reward (default)
@@ -2599,7 +2701,39 @@ class BlockImporter:
                     height,
                     aicf_balance,
                 )
-            
+
+            # FORK_FOUNDATION_SPLIT (7.1.0): credit the 15% foundation-treasury slice.
+            # compute_block_reward only emits a non-zero treasury slice on mainnet
+            # at/after the fork height, so this is self-gating and forward-only
+            # (treasury_reward == 0 below H => no-op, byte-identical to pre-7.1.0).
+            # Without this credit the slice would be computed and discarded -> 15% of
+            # every post-H subsidy destroyed (deflation). The address is decoded with
+            # core.utils.address.address_to_bytes -> the SAME 32-byte account key that
+            # getbalance reads and that the miner is credited on; do NOT use the AICF
+            # path's pq.address.bech32_decode (unresolvable module -> zero-key fallback
+            # -> funds credited to a dead key and invisible).
+            treasury_total = int(treasury_reward)
+            if treasury_total > 0:
+                from core.utils.address import address_to_bytes
+                treasury_addr_bytes = address_to_bytes(FOUNDATION_TREASURY_ADDRESS)
+                treasury_balance = state_credit(
+                    self.state_db,
+                    treasury_addr_bytes,
+                    treasury_total,
+                    reason="BLOCK_APPLY_FOUNDATION_TREASURY_REWARD",
+                    tx_hash=None,
+                    height=height,
+                    callsite="core.chain.block_import._apply_block_state",
+                )
+                _BLOCK_COINBASE_CREDIT_TOTAL += treasury_total
+                log.info(
+                    "STATE_CREDIT treasury=%s reward=%d height=%d new_balance=%d",
+                    treasury_addr_bytes.hex(),
+                    treasury_total,
+                    height,
+                    treasury_balance,
+                )
+
             # Process AICF accounting (credits, epochs, etc.)
             try:
                 from execution.runtime.aicf_integration import process_block_for_aicf
@@ -2619,8 +2753,9 @@ class BlockImporter:
             except Exception as e:
                 log.error(f"AICF: Failed to process block {height}: {e}", exc_info=True)
             
-            # Log total coinbase credit metric
-            total_credited = miner_total + aicf_total
+            # Log total coinbase credit metric (include the foundation-treasury slice
+            # so the metric matches the actual coinbase emission post-FORK_FOUNDATION_SPLIT).
+            total_credited = miner_total + aicf_total + int(treasury_reward)
             if total_credited > 0:
                 log.info(
                     "metric block_coinbase_credit_total=%d",

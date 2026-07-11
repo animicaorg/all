@@ -49,6 +49,13 @@ def _is_truthy(raw: str | None) -> bool:
 
 
 def _extract_ip(ctx: t.Any) -> str | None:
+    """Best-effort client IP for LOGGING and RATE-LIMITING only.
+
+    Prefers the forwarded header so per-client rate limits work behind the nginx
+    edge. This value is CLIENT-CONTROLLED and MUST NOT be used for any is-local /
+    loopback authorization decision — use _is_local_request()/_socket_peer_ip()
+    for that (see the 7.0.0 header-spoof fix below).
+    """
     try:
         headers = {k.lower(): v for k, v in getattr(ctx, "headers", {}).items()}
         forwarded = headers.get("x-forwarded-for") or headers.get("x-real-ip")
@@ -64,6 +71,48 @@ def _extract_ip(ctx: t.Any) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _socket_peer_ip(ctx: t.Any) -> str | None:
+    """The REAL transport peer IP (ctx.client) — never a client-supplied header.
+
+    The only trustworthy source for a loopback / is-local security decision.
+    """
+    try:
+        client = getattr(ctx, "client", None)
+        if client:
+            if isinstance(client, tuple):
+                return t.cast(str, client[0]) if client else None
+            host = getattr(client, "host", None)
+            if host:
+                return str(host)
+    except Exception:
+        pass
+    return None
+
+
+def _came_through_public_edge(ctx: t.Any) -> bool:
+    """True when the request carries proxy forwarding headers.
+
+    The node RPC binds loopback and every public nginx vhost sets
+    X-Real-IP / X-Forwarded-For, so a genuine internal caller connects DIRECTLY
+    with NONE of these. Presence => the request originated remotely, regardless of
+    the loopback socket peer (always nginx/docker-proxy) or any client-spoofed
+    header value. Mirrors rpc.methods.wallet._is_public_edge_request (the
+    incident-2026-07-09 hardening that this module was missing): before 7.0.0,
+    _extract_ip trusted X-Forwarded-For, so `X-Forwarded-For: 127.0.0.1` let any
+    remote caller pass the loopback gate for admin/sensitive methods.
+    """
+    try:
+        headers = {k.lower(): v for k, v in getattr(ctx, "headers", {}).items()}
+    except Exception:
+        return False
+    return bool(
+        headers.get("x-forwarded-for")
+        or headers.get("x-real-ip")
+        or headers.get("forwarded")
+        or headers.get("x-animica-public-edge")
+    )
 
 
 @dataclass
@@ -226,14 +275,23 @@ class AccessPolicy:
             return False
         return bool(ip_obj.is_loopback or ip_obj.is_unspecified)
 
-    def _authorized(self, ctx: t.Any, client_ip: str | None) -> bool:
+    def _authorized(self, ctx: t.Any, client_ip: str | None = None) -> bool:
         if self.admin_token:
             headers = {k.lower(): v for k, v in getattr(ctx, "headers", {}).items()}
             if headers.get("x-animica-admin-token") == self.admin_token:
                 return True
-        if client_ip:
+        # IP allowlist is matched against the REAL transport peer only — NEVER the
+        # client-controlled X-Forwarded-For/X-Real-IP (the `client_ip` arg comes
+        # from _extract_ip, which trusts those headers for logging/rate-limit). A
+        # remote attacker could otherwise spoof `X-Forwarded-For: <allowlisted-ip>`
+        # to pass this gate. Behind the public nginx edge the peer is the proxy
+        # (loopback), so a REMOTE allowlist entry correctly does NOT match — such
+        # operators must authenticate with the admin token instead. Direct callers
+        # (no proxy) match their genuine source IP.
+        peer_ip = _socket_peer_ip(ctx)
+        if peer_ip:
             try:
-                ip_obj = ipaddress.ip_address(client_ip)
+                ip_obj = ipaddress.ip_address(peer_ip)
                 for net in self.admin_allowlist:
                     if ip_obj in net:
                         return True
@@ -241,8 +299,20 @@ class AccessPolicy:
                 return False
         return False
 
+    def _is_local_request(self, ctx: t.Any) -> bool:
+        """Security-grade 'genuine localhost caller' check.
+
+        Uses the REAL transport peer only, and treats any proxy forwarding header
+        as REMOTE — so a spoofed ``X-Forwarded-For: 127.0.0.1`` can never
+        masquerade as loopback (pre-7.0.0 bug: the loopback grant read that
+        client-controlled header via _extract_ip).
+        """
+        if _came_through_public_edge(ctx):
+            return False
+        return self._is_local_client(_socket_peer_ip(ctx))
+
     def _peer_injection_authorized(self, ctx: t.Any, client_ip: str | None) -> bool:
-        if self._is_local_client(client_ip):
+        if self._is_local_request(ctx):
             return True
         return self._authorized(ctx, client_ip)
 

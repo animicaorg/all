@@ -1,0 +1,12 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Animica Free AI",
+  "name_for_model": "animica_free_ai",
+  "description_for_human": "Free, OpenAI-compatible AI with post-quantum-signed proof-of-inference receipts. No API key.",
+  "description_for_model": "Free, unauthenticated, OpenAI-compatible inference API funded by the Animica foundation treasury. Base URL https://animica.dev/v1. Use POST /v1/chat/completions with an OpenAI-style body. No API key or Authorization header is required. Recommended models: 'deepseek-coder:6.7b' for code, 'qwen2.5:7b' for general reasoning. Rate limit 30 requests/minute per IP; on HTTP 429 back off and retry. Every response includes a signed proof-of-inference receipt.",
+  "auth": { "type": "none" },
+  "api": { "type": "openapi", "url": "https://animica.dev/openapi.json" },
+  "logo_url": "https://animica.dev/animica-mark.svg",
+  "contact_email": "dev@animica.dev",
+  "legal_info_url": "https://animica.dev/"
+}

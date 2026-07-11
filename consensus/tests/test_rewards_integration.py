@@ -80,37 +80,38 @@ def test_mainnet_block_reward_at_height_1():
 
 
 def test_mainnet_block_reward_halving_at_1_35m():
-    """Test that mainnet block reward halves at 1.35M blocks."""
+    """Mainnet block reward halves at 1.35M blocks (total 150 ANM), split 85/15
+    post-7.1.0 (this height is above FORK_FOUNDATION_SPLIT @ 42_001)."""
+    from consensus.rewards import FOUNDATION_TREASURY_ADDRESS
     params = load_mainnet_params()
-    
+
     # Compute block reward at height 1_350_001 (first block of epoch 1)
     rewards = compute_block_reward(chain_id=1, height=1_350_001, params=params)
-    
-    # Should return exactly 1 reward entry (100% to miner)
-    assert len(rewards) == 1, \
-        f"Expected 1 reward entry (100% to miner), got {len(rewards)}"
-    
-    # Verify miner gets 150 ANM (half of 300 ANM)
-    miner_addr, miner_amt = rewards[0]
-    assert miner_amt == 150_000_000_000, \
-        f"Expected 150 ANM (150_000_000_000 nANM) after halving, got {miner_amt}"
+
+    # Post-7.1.0: miner + foundation treasury; total == halved subsidy (150 ANM).
+    total = sum(amt for _, amt in rewards)
+    assert total == 150_000_000_000, \
+        f"Expected 150 ANM total after halving, got {total}"
+    outs = dict(rewards)
+    assert outs[FOUNDATION_TREASURY_ADDRESS] == 22_500_000_000  # 15% of 150 ANM
+    assert total - outs[FOUNDATION_TREASURY_ADDRESS] == 127_500_000_000  # 85% miner
 
 
 def test_mainnet_block_reward_second_halving_at_2_7m():
-    """Test that mainnet block reward halves again at 2.7M blocks."""
+    """Mainnet block reward halves again at 2.7M blocks (total 75 ANM), split 85/15
+    post-7.1.0."""
+    from consensus.rewards import FOUNDATION_TREASURY_ADDRESS
     params = load_mainnet_params()
-    
+
     # Compute block reward at height 2_700_001 (first block of epoch 2)
     rewards = compute_block_reward(chain_id=1, height=2_700_001, params=params)
-    
-    # Should return exactly 1 reward entry (100% to miner)
-    assert len(rewards) == 1, \
-        f"Expected 1 reward entry (100% to miner), got {len(rewards)}"
-    
-    # Verify miner gets 75 ANM (quarter of 300 ANM)
-    miner_addr, miner_amt = rewards[0]
-    assert miner_amt == 75_000_000_000, \
-        f"Expected 75 ANM (75_000_000_000 nANM) after second halving, got {miner_amt}"
+
+    total = sum(amt for _, amt in rewards)
+    assert total == 75_000_000_000, \
+        f"Expected 75 ANM total after second halving, got {total}"
+    outs = dict(rewards)
+    assert outs[FOUNDATION_TREASURY_ADDRESS] == 11_250_000_000  # 15% of 75 ANM
+    assert total - outs[FOUNDATION_TREASURY_ADDRESS] == 63_750_000_000  # 85% miner
 
 
 def test_mainnet_emission_schedule_parsing():

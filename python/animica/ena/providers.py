@@ -68,6 +68,9 @@ def _api_key(cfg: ModelProviderConfig | EmbeddingProviderConfig) -> Optional[str
 
 class ModelAdapter:
     name = "base"
+    #: Whether ``generate(seed=…)`` deterministically influences the output.
+    #: True for offline/seed-honoring backends → their receipts can be replayed.
+    supports_seed = False
 
     def __init__(self, cfg: ModelProviderConfig) -> None:
         self.cfg = cfg
@@ -75,7 +78,8 @@ class ModelAdapter:
     def generate(self, prompt: str, *, system: Optional[str] = None,
                  history: Optional[list[dict[str, str]]] = None,
                  max_tokens: Optional[int] = None,
-                 temperature: Optional[float] = None) -> str:
+                 temperature: Optional[float] = None,
+                 seed: Optional[int] = None) -> str:
         raise NotImplementedError
 
     def test(self) -> dict[str, Any]:
@@ -99,24 +103,29 @@ class DeterministicModel(ModelAdapter):
     """
 
     name = "deterministic"
+    supports_seed = True
 
     def generate(self, prompt: str, *, system=None, history=None,
-                 max_tokens=None, temperature=None) -> str:
+                 max_tokens=None, temperature=None, seed=None) -> str:
         text = prompt.strip()
         if not text:
             return ""
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         head = lines[:3]
-        digest = hashlib.sha3_256(text.encode("utf-8")).hexdigest()[:8]
+        # The seed folds into the digest so (prompt, seed) → a stable, replayable
+        # output; identical inputs reproduce bit-for-bit (see ai.replay).
+        seed_tag = f"|seed:{int(seed)}" if seed is not None else ""
+        digest = hashlib.sha3_256((text + seed_tag).encode("utf-8")).hexdigest()[:8]
         body = " ".join(head) if head else text[:200]
         return f"[deterministic:{digest}] {body[: (max_tokens or 256) * 4]}"
 
 
 class OpenAICompatibleModel(ModelAdapter):
     name = "openai_compatible"
+    supports_seed = True  # honored by the upstream (best-effort; not bit-exact)
 
     def generate(self, prompt: str, *, system=None, history=None,
-                 max_tokens=None, temperature=None) -> str:
+                 max_tokens=None, temperature=None, seed=None) -> str:
         base = (self.cfg.base_url or self.cfg.endpoint or "").rstrip("/")
         if not base:
             raise ProviderError(f"model provider {self.cfg.name!r} has no base_url")
@@ -129,13 +138,14 @@ class OpenAICompatibleModel(ModelAdapter):
         key = _api_key(self.cfg)
         if key:
             headers["authorization"] = f"Bearer {key}"
-        data = _http_post(
-            f"{base}/chat/completions",
-            {"model": self.cfg.model, "messages": messages,
-             "max_tokens": max_tokens or self.cfg.max_tokens,
-             "temperature": self.cfg.temperature if temperature is None else temperature,
-             "stream": False},
-            headers=headers, timeout=self.cfg.timeout_seconds)
+        payload = {"model": self.cfg.model, "messages": messages,
+                   "max_tokens": max_tokens or self.cfg.max_tokens,
+                   "temperature": self.cfg.temperature if temperature is None else temperature,
+                   "stream": False}
+        if seed is not None:
+            payload["seed"] = int(seed)
+        data = _http_post(f"{base}/chat/completions", payload,
+                          headers=headers, timeout=self.cfg.timeout_seconds)
         try:
             return data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
@@ -144,20 +154,24 @@ class OpenAICompatibleModel(ModelAdapter):
 
 class OllamaModel(ModelAdapter):
     name = "ollama"
+    supports_seed = True  # ollama honors options.seed
 
     def generate(self, prompt: str, *, system=None, history=None,
-                 max_tokens=None, temperature=None) -> str:
+                 max_tokens=None, temperature=None, seed=None) -> str:
         base = (self.cfg.base_url or "http://127.0.0.1:11434").rstrip("/")
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.extend(history or [])
         messages.append({"role": "user", "content": prompt})
+        options = {"temperature": self.cfg.temperature if temperature is None
+                   else temperature, "num_predict": max_tokens or self.cfg.max_tokens}
+        if seed is not None:
+            options["seed"] = int(seed)
         data = _http_post(
             f"{base}/api/chat",
             {"model": self.cfg.model, "messages": messages, "stream": False,
-             "options": {"temperature": self.cfg.temperature if temperature is None
-                         else temperature, "num_predict": max_tokens or self.cfg.max_tokens}},
+             "options": options},
             headers={}, timeout=self.cfg.timeout_seconds)
         msg = (data.get("message") or {}).get("content")
         if msg is None:
@@ -173,7 +187,42 @@ _MODEL_ADAPTERS = {
 }
 
 
+def register_adapter(provider_key: str, cls: type[ModelAdapter]) -> None:
+    """Register a model adapter class under ``provider_key`` (mesh backends)."""
+    _MODEL_ADAPTERS[str(provider_key)] = cls
+
+
+_MESH_REGISTERED = False
+
+
+def ensure_mesh_registered() -> None:
+    """Lazily register the 7.1.1 mesh backends (anthropic/claude, chutes/bittensor,
+    ena_served). Idempotent; import-time-safe (these modules import from here)."""
+    global _MESH_REGISTERED
+    if _MESH_REGISTERED:
+        return
+    _MESH_REGISTERED = True
+    try:
+        from .adapters_anthropic import AnthropicModel
+        register_adapter("anthropic", AnthropicModel)
+        register_adapter("claude", AnthropicModel)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .adapters_chutes import ChutesModel
+        register_adapter("chutes", ChutesModel)
+        register_adapter("bittensor", ChutesModel)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .served_adapter import EnaServedModel
+        register_adapter("ena_served", EnaServedModel)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def build_model_adapter(cfg: ModelProviderConfig) -> ModelAdapter:
+    ensure_mesh_registered()
     klass = _MODEL_ADAPTERS.get(cfg.provider, DeterministicModel)
     return klass(cfg)
 
@@ -273,6 +322,11 @@ _EMBEDDING_ADAPTERS = {
     "openai": OpenAICompatibleEmbedding,
     "ollama": OllamaEmbedding,
 }
+
+
+def register_embedding_adapter(provider_key: str, cls: type[EmbeddingAdapter]) -> None:
+    """Register an embedding adapter class under ``provider_key`` (mesh backends)."""
+    _EMBEDDING_ADAPTERS[str(provider_key)] = cls
 
 
 def build_embedding_adapter(cfg: EmbeddingProviderConfig) -> EmbeddingAdapter:

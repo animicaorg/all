@@ -26,13 +26,54 @@ FastAPI is imported lazily by ``build_app`` so importing this module (and hence
 """
 
 import json
+import os
 import time
 import uuid
 from typing import Any, Optional
 
+#: Bumped for 7.1.1 — the Verifiable Inference Engine (proof-of-inference receipts).
+GATEWAY_VERSION = "7.1.1"
+
 
 class GatewayNotInstalled(RuntimeError):
     """Raised when the web-serving extra (FastAPI/uvicorn) is not installed."""
+
+
+def _want_quantum_seed(body: dict) -> bool:
+    """Whether to derive a quantum-attested seed for this request.
+
+    Opt-in per request via ``body['animica']['quantum_seed']`` or globally via the
+    ``ANIMICA_AI_QUANTUM_SEED`` env flag. Default off → byte-identical behavior.
+    """
+    a = body.get("animica")
+    if isinstance(a, dict) and "quantum_seed" in a:
+        return bool(a["quantum_seed"])
+    return os.environ.get("ANIMICA_AI_QUANTUM_SEED", "").strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _want_receipt_in_stream(body: dict) -> bool:
+    """Whether to append the receipt as a final SSE frame. Default OFF so
+    streaming responses stay byte-identical for standard OpenAI clients."""
+    a = body.get("animica")
+    if isinstance(a, dict) and "receipt_in_stream" in a:
+        return bool(a["receipt_in_stream"])
+    return os.environ.get("ANIMICA_AI_RECEIPTS_STREAM", "").strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _resolve_seed(body: dict, adapter: Any, request_id: str):
+    """Return (seed_int_or_None, seed_applied, qseed_receipt_dict_or_None)."""
+    if not _want_quantum_seed(body):
+        return None, False, None
+    try:
+        from animica.ena import quantum_sampling as qs
+    except Exception:  # noqa: BLE001
+        return None, False, None
+    qseed = qs.quantum_seed_for_request(request_id)
+    if qseed is None:
+        return None, False, None
+    seed_applied = bool(getattr(adapter, "supports_seed", False))
+    sint = qs.seed_int(qseed) if seed_applied else None
+    return sint, seed_applied, qs.seed_receipt_dict(qseed, seed_applied=seed_applied)
 
 
 _INSTALL_HINT = (
@@ -96,10 +137,13 @@ def resolve_chat_adapter(model: Optional[str], default_provider: Optional[str] =
         for key, mp in (cfg.model_providers or {}).items():
             if mp.model == model:
                 return build_model_adapter(mp), key, mp.model
-        # 2) a local ollama tag
+        # 2) a local ollama tag. Use a generous timeout — a cold model load on a
+        # CPU-only / busy host can take well over the 30s default and would 502.
         if model in _list_ollama_models():
-            mp = ModelProviderConfig(name="ollama", provider="ollama", transport="http",
-                                     model=model, base_url="http://127.0.0.1:11434")
+            mp = ModelProviderConfig(
+                name="ollama", provider="ollama", transport="http", model=model,
+                base_url=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
+                timeout_seconds=float(os.environ.get("ANIMICA_AI_OLLAMA_TIMEOUT", "300")))
             return build_model_adapter(mp), "ollama", model
     # 3) default provider (optionally overriding the model name)
     key = default_provider or cfg.default_model_provider
@@ -229,7 +273,14 @@ def build_app(*, api_key: Optional[str] = None,
 
     from animica.ena.providers import ProviderError
 
-    app = FastAPI(title="Animica AI Gateway", version="5.2.0")
+    app = FastAPI(title="Animica AI Gateway", version=GATEWAY_VERSION)
+
+    from animica.ai import receipt_mw
+    try:
+        from starlette.concurrency import run_in_threadpool
+    except Exception:  # noqa: BLE001 — starlette ships with fastapi
+        async def run_in_threadpool(fn, *a, **kw):  # type: ignore
+            return fn(*a, **kw)
 
     def _err(message: str, status: int, etype: str = "invalid_request_error",
              code: Optional[str] = None):
@@ -272,7 +323,16 @@ def build_app(*, api_key: Optional[str] = None,
 
     @app.get("/health")
     def health():  # noqa: ANN202
-        return {"status": "ok", "service": "animica-ai-gateway", "version": "5.2.0"}
+        out = {"status": "ok", "service": "animica-ai-gateway", "version": GATEWAY_VERSION,
+               "receipts": receipt_mw.receipts_mode()}
+        try:
+            from animica.ai.nodekey import public_identity
+            ident = public_identity()
+            out["signing"] = {"enabled": ident is not None,
+                              "signer_address": (ident or {}).get("address")}
+        except Exception:  # noqa: BLE001
+            out["signing"] = {"enabled": False}
+        return out
 
     @app.get("/v1/models")
     def models_route(request: Request):  # noqa: ANN202
@@ -296,7 +356,12 @@ def build_app(*, api_key: Optional[str] = None,
 
         req_model = body.get("model") or model
         try:
-            adapter, key, resolved_model = resolve_chat_adapter(req_model, provider)
+            from animica.ai.router import route as _route
+            # Route on the EFFECTIVE model so the server's --model default is honored
+            # (matches pre-7.1.1 and /v1/completions) instead of being dropped.
+            route_req = {**body, "model": req_model} if req_model else body
+            rr = _route(route_req, default_provider=provider)
+            adapter, key, resolved_model = rr.adapter, rr.provider_key, rr.resolved_model
         except Exception as e:  # noqa: BLE001
             return _err(f"could not resolve model: {e}", 400, "invalid_request_error", "model_not_found")
 
@@ -326,9 +391,14 @@ def build_app(*, api_key: Optional[str] = None,
                     "usage": {"prompt_tokens": pt, "completion_tokens": 0, "total_tokens": pt},
                 })
 
+        # Quantum-seed provenance (opt-in). seed_applied is honest per-backend.
+        seed_int, seed_applied, qdict = _resolve_seed(body, adapter, cid)
+        requester = body.get("user")
+
         def _generate() -> str:
             return adapter.generate(prompt, system=system, history=history,
-                                    max_tokens=max_tokens, temperature=temperature)
+                                    max_tokens=max_tokens, temperature=temperature,
+                                    seed=(seed_int if seed_applied else None))
 
         if not stream:
             try:
@@ -337,13 +407,28 @@ def build_app(*, api_key: Optional[str] = None,
                 return _err(str(e), 502, "upstream_error", "provider_error")
             except Exception as e:  # noqa: BLE001
                 return _err(f"generation failed: {e}", 500, "internal_error")
+            # Under mesh fallback the winner may differ from the primary — reflect
+            # who actually served in the receipt + response model.
+            key = getattr(adapter, "last_provider", None) or key
+            resolved_model = getattr(adapter, "last_model", None) or resolved_model
+            if qdict is not None and hasattr(adapter, "last_seed_applied"):
+                seed_applied = adapter.last_seed_applied
+                qdict = {**qdict, "seed_applied": seed_applied}
             pt, ct = _approx_tokens(prompt + (system or "")), _approx_tokens(content)
-            return JSONResponse(content={
+            resp = {
                 "id": cid, "object": "chat.completion", "created": created, "model": resolved_model,
                 "choices": [{"index": 0, "message": {"role": "assistant", "content": content},
                              "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct},
-            })
+            }
+            # Proof-of-Inference receipt (off | hash | signed). Offloaded to a
+            # thread so the ~ms PQ signature never blocks the event loop.
+            resp, _receipt, rhash = await run_in_threadpool(
+                receipt_mw.attach_receipt, resp, provider_key=key, resolved_model=resolved_model,
+                prompt=prompt, output=content, tokens_in=pt, tokens_out=ct, requester=requester,
+                qseed=qdict, seed_int=(seed_int if seed_applied else None), max_tokens=max_tokens)
+            headers = {receipt_mw.RECEIPTS_HEADER: rhash} if rhash else None
+            return JSONResponse(content=resp, headers=headers)
 
         # Streaming: ENA adapters are non-streaming, so we generate fully then
         # emit the text as SSE deltas — real content, chunked (OpenAI shape).
@@ -370,6 +455,20 @@ def build_app(*, api_key: Optional[str] = None,
             for i in range(0, len(buf), step):
                 yield chunk({"content": buf[i:i + step]})
             yield chunk({}, finish="stop")
+            # Proof-of-Inference receipt as a final, additive SSE frame — only
+            # when opted in, so default streams stay byte-identical for standard
+            # OpenAI clients. Emitted after the tokens, never delaying streaming.
+            if _want_receipt_in_stream(body):
+                try:
+                    pt, ct = _approx_tokens(prompt + (system or "")), _approx_tokens(content)
+                    receipt = receipt_mw.build_receipt(
+                        provider_key=key, resolved_model=resolved_model, prompt=prompt,
+                        output=content, tokens_in=pt, tokens_out=ct, requester=requester,
+                        qseed=qdict, seed_int=(seed_int if seed_applied else None), max_tokens=max_tokens)
+                    if receipt is not None:
+                        yield f"data: {json.dumps({'id': cid, 'object': 'animica.receipt', 'animica_receipt': receipt.to_dict()})}\n\n"
+                except Exception:  # noqa: BLE001 — a receipt failure never breaks the stream
+                    pass
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_sse(), media_type="text/event-stream")
@@ -390,17 +489,27 @@ def build_app(*, api_key: Optional[str] = None,
             return _err("'prompt' is required", 400)
         try:
             adapter, key, resolved_model = resolve_chat_adapter(body.get("model") or model, provider)
+            cmpl_id = "cmpl-" + uuid.uuid4().hex[:24]
+            seed_int, seed_applied, qdict = _resolve_seed(body, adapter, cmpl_id)
             text = adapter.generate(str(prompt), max_tokens=body.get("max_tokens"),
-                                    temperature=body.get("temperature"))
+                                    temperature=body.get("temperature"),
+                                    seed=(seed_int if seed_applied else None))
         except ProviderError as e:
             return _err(str(e), 502, "upstream_error", "provider_error")
         except Exception as e:  # noqa: BLE001
             return _err(f"generation failed: {e}", 500, "internal_error")
         pt, ct = _approx_tokens(str(prompt)), _approx_tokens(text)
-        return {"id": "cmpl-" + uuid.uuid4().hex[:24], "object": "text_completion",
+        resp = {"id": cmpl_id, "object": "text_completion",
                 "created": int(time.time()), "model": resolved_model,
                 "choices": [{"index": 0, "text": text, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
+        resp, _receipt, rhash = await run_in_threadpool(
+            receipt_mw.attach_receipt, resp, provider_key=key, resolved_model=resolved_model,
+            prompt=str(prompt), output=text, tokens_in=pt, tokens_out=ct,
+            requester=body.get("user"), qseed=qdict,
+            seed_int=(seed_int if seed_applied else None), max_tokens=body.get("max_tokens"))
+        headers = {receipt_mw.RECEIPTS_HEADER: rhash} if rhash else None
+        return JSONResponse(content=resp, headers=headers)
 
     @app.post("/v1/embeddings")
     async def embeddings(request: Request):  # noqa: ANN202
@@ -426,5 +535,42 @@ def build_app(*, api_key: Optional[str] = None,
         total = sum(_approx_tokens(t) for t in texts)
         return {"object": "list", "data": data, "model": resolved_model,
                 "usage": {"prompt_tokens": total, "total_tokens": total}}
+
+    @app.post("/v1/verify")
+    async def verify_receipt(request: Request):  # noqa: ANN202
+        """Verify a Proof-of-Inference receipt: recompute its hash + check the
+        ML-DSA-65 signature. Pure/offline — needs no upstream model."""
+        _g = _guard(request)
+        if _g is not None:
+            return _g
+        try:
+            body = await request.json()
+        except Exception:
+            return _err("request body must be valid JSON", 400)
+        receipt = body.get("receipt", body)
+        if not isinstance(receipt, dict) or "receipt_hash" not in receipt:
+            return _err("body must be an inference receipt (or {'receipt': …})", 400)
+        from animica.ena.inference_receipt import validate_inference_receipt
+        return {"object": "animica.verification", **validate_inference_receipt(receipt)}
+
+    @app.get("/v1/router/status")
+    def router_status_route(request: Request):  # noqa: ANN202
+        """Routing policies + per-provider health (latency EWMA, circuit breakers)."""
+        _g = _guard(request)
+        if _g is not None:
+            return _g
+        from animica.ai.router import router_status
+        return router_status()
+
+    @app.get("/v1/signer")
+    def signer(request: Request):  # noqa: ANN202
+        """The public receipt-signing identity (never the secret)."""
+        _g = _guard(request)
+        if _g is not None:
+            return _g
+        from animica.ai.nodekey import public_identity
+        ident = public_identity()
+        return {"object": "animica.signer", "enabled": ident is not None,
+                "domain": "animica.ai.proof-of-inference.v1", **(ident or {})}
 
     return app

@@ -31,6 +31,14 @@ from typing import Callable, Dict, Optional, Tuple
 
 from .address_denylist import is_denied as _denylist_is_denied
 
+try:
+    # Network-wide consensus freeze-set (FORK_ADDRESS_FREEZE): also reject frozen
+    # spends at ingress, independent of the operator's env/file denylist.
+    from execution.migrations.address_freeze_2026 import is_frozen as _consensus_frozen
+except Exception:  # pragma: no cover - fail-open at mempool; block validation still enforces
+    def _consensus_frozen(addr, *, height=None):  # type: ignore
+        return False
+
 # Prefer the canonical error types if available
 try:
     from .errors import (AdmissionError, DoSError, FeeTooLow, Oversize,
@@ -339,8 +347,13 @@ class PolicySuite:
             _v = getattr(_payload, "to", None) if _payload is not None else None
             if isinstance(_v, (bytes, bytearray)):
                 recipient = bytes(_v)
-        if _denylist_is_denied(sender) or _denylist_is_denied(recipient):
-            raise AdmissionError("sender or recipient is frozen (operator address denylist)")
+        if (
+            _denylist_is_denied(sender)
+            or _denylist_is_denied(recipient)
+            or _consensus_frozen(sender)
+            or _consensus_frozen(recipient)
+        ):
+            raise AdmissionError("sender or recipient is frozen (address freeze)")
         if sender is not None and self.bans.is_banned(sender):
             raise DoSError("sender temporarily banned due to prior abusive behavior")
         try:

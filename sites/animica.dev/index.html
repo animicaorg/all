@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animica — Free AI for developers &amp; agents (no API key)</title>
+<meta name="description" content="A free, OpenAI-compatible AI API and a GitHub-connected coding agent — no key, no signup, funded by the Animica treasury. Every response returns a post-quantum-signed proof-of-inference receipt. Agents welcome.">
+<meta name="keywords" content="free AI API, no API key, OpenAI compatible, coding agent, GitHub agent, proof of inference, Animica, ANM, LLM, qwen2.5, llms.txt">
+<meta name="theme-color" content="#f6f3ec">
+<link rel="canonical" href="https://animica.dev/">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="icon" href="/animica-mark.svg" type="image/svg+xml">
+<link rel="alternate" type="text/plain" title="llms.txt (AI-agent guide)" href="/llms.txt">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="animica.dev">
+<meta property="og:title" content="Free AI for developers &amp; agents — no API key">
+<meta property="og:description" content="Free OpenAI-compatible AI + a GitHub coding agent. No key. Signed proof-of-inference receipts. Agents welcome.">
+<meta property="og:url" content="https://animica.dev/">
+<meta property="og:image" content="https://animica.dev/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Free AI for developers &amp; agents — no API key">
+<meta name="twitter:description" content="Free OpenAI-compatible AI + a GitHub coding agent. No key. Signed receipts. Agents welcome.">
+<meta name="twitter:image" content="https://animica.dev/og.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="application/ld+json">
+{ "@context":"https://schema.org","@graph":[
+ {"@type":"Organization","@id":"https://animica.dev/#org","name":"Animica","url":"https://animica.dev/","logo":"https://animica.dev/animica-mark.svg","sameAs":["https://github.com/animicaorg/all","https://pypi.org/project/animica/","https://animica.org/"]},
+ {"@type":"WebSite","@id":"https://animica.dev/#site","url":"https://animica.dev/","name":"animica.dev","publisher":{"@id":"https://animica.dev/#org"}},
+ {"@type":"WebAPI","name":"Animica Free AI API","description":"Free, OpenAI-compatible inference with post-quantum proof-of-inference receipts. No API key.","documentation":"https://animica.dev/llms.txt","termsOfService":"https://animica.dev/","provider":{"@id":"https://animica.dev/#org"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}},
+ {"@type":"FAQPage","mainEntity":[
+   {"@type":"Question","name":"Is the AI really free?","acceptedAnswer":{"@type":"Answer","text":"Yes. The OpenAI-compatible endpoint at https://animica.dev/v1 needs no API key and no signup. Compute is funded by the Animica foundation treasury. Rate limit is 30 requests/minute per IP."}},
+   {"@type":"Question","name":"Can AI agents use it?","acceptedAnswer":{"@type":"Answer","text":"Yes — it is designed for agents. Machine-readable manifests are at /llms.txt, /openapi.json, /.well-known/ai-plugin.json and /.well-known/agents.json. No key is required."}},
+   {"@type":"Question","name":"What is a proof-of-inference receipt?","acceptedAnswer":{"@type":"Answer","text":"A content-addressed, ML-DSA-65 (post-quantum) signed record of the model, prompt hash, output hash and seed that anyone can verify offline."}}
+ ]}
+]}
+</script>
+<style>
+  :root{
+    --bg:#f6f3ec; --paper:#fbf9f3; --card:#ffffff; --ink:#1c1a17; --ink-2:#3a352d;
+    --muted:#6f685c; --muted-2:#938b7c; --line:#e6dfd0; --line-2:#d8cfbc;
+    --clay:#c8613f; --clay-ink:#a94e30; --blue:#2E63FF; --gold:#b9892f; --ok:#3f8f5b;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--clay-ink);text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3{font-family:"Fraunces","Georgia",serif;font-weight:500;line-height:1.08;letter-spacing:-.01em;margin:0}
+  code,kbd,pre,.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+  :focus-visible{outline:2px solid var(--clay);outline-offset:3px;border-radius:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  .serif{font-family:"Fraunces",serif}
+
+  /* nav */
+  header{position:sticky;top:0;z-index:20;background:rgba(246,243,236,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;gap:14px;height:64px}
+  .brand{display:flex;align-items:center;gap:11px;font-family:"Fraunces",serif;font-weight:600;font-size:20px;color:var(--ink)}
+  .nav .links{display:flex;gap:22px;margin-left:12px}
+  .nav .links a{color:var(--ink-2);font-size:14.5px}
+  .nav .links a:hover{color:var(--clay-ink);text-decoration:none}
+  .nav .sp{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--clay-ink);
+    background:rgba(200,97,63,.09);border:1px solid rgba(200,97,63,.25);padding:6px 12px;border-radius:999px}
+  .pill .d{width:7px;height:7px;border-radius:50%;background:var(--clay);box-shadow:0 0 0 3px rgba(200,97,63,.18)}
+  @media(max-width:760px){ .nav .links{display:none} }
+
+  /* hero */
+  .hero{padding:64px 0 26px}
+  .eyebrow{font-family:"JetBrains Mono";font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--clay-ink);margin-bottom:18px}
+  h1.title{font-size:clamp(38px,7vw,72px);font-weight:400;letter-spacing:-.02em}
+  h1.title em{font-style:italic;color:var(--clay-ink)}
+  .lede{font-size:clamp(17px,2.4vw,21px);color:var(--ink-2);max-width:640px;margin-top:20px}
+  .hero-cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
+  .btn{display:inline-flex;align-items:center;gap:8px;font-weight:500;font-size:15px;padding:12px 20px;border-radius:12px;cursor:pointer;border:1px solid transparent;font-family:inherit}
+  .btn.primary{background:var(--ink);color:var(--bg)}
+  .btn.primary:hover{background:var(--clay-ink);text-decoration:none}
+  .btn.ghost{background:transparent;border-color:var(--line-2);color:var(--ink)}
+  .btn.ghost:hover{border-color:var(--clay);color:var(--clay-ink);text-decoration:none}
+  .assur{display:flex;gap:20px;flex-wrap:wrap;margin-top:22px;color:var(--muted);font-size:13px;font-family:"JetBrains Mono"}
+  .assur span{display:inline-flex;align-items:center;gap:7px}
+  .assur b{color:var(--ink-2);font-weight:500}
+
+  section{padding:34px 0}
+  .kicker{font-family:"JetBrains Mono";font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--clay-ink);margin-bottom:12px}
+  h2{font-size:clamp(26px,4vw,38px);font-weight:400}
+  h2 .it{font-style:italic}
+  .sub{color:var(--muted);max-width:620px;margin:10px 0 0}
+
+  /* chat */
+  .chat{margin-top:26px;background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:0 18px 50px -32px rgba(40,30,15,.45);overflow:hidden}
+  .chat-head{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--line);background:var(--paper)}
+  .chat-head .t{font-family:"Fraunces",serif;font-weight:600;font-size:15px}
+  .chat-head select{margin-left:auto;font-family:"JetBrains Mono";font-size:12px;color:var(--ink-2);background:var(--bg);border:1px solid var(--line-2);border-radius:8px;padding:5px 8px}
+  .msgs{padding:18px;min-height:180px;max-height:440px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+  .m{max-width:88%;padding:12px 15px;border-radius:14px;font-size:15px;line-height:1.55;white-space:pre-wrap;word-wrap:break-word}
+  .m.user{align-self:flex-end;background:var(--ink);color:var(--bg);border-bottom-right-radius:5px}
+  .m.bot{align-self:flex-start;background:var(--paper);border:1px solid var(--line);border-bottom-left-radius:5px}
+  .m.bot .rcpt{margin-top:9px;font-family:"JetBrains Mono";font-size:11px;color:var(--ok);display:flex;align-items:center;gap:6px;border-top:1px dashed var(--line-2);padding-top:8px}
+  .m.sys{align-self:center;color:var(--muted);font-size:12.5px;font-family:"JetBrains Mono"}
+  .chat-in{display:flex;gap:10px;padding:14px 16px;border-top:1px solid var(--line);background:var(--paper)}
+  .chat-in textarea{flex:1;resize:none;border:1px solid var(--line-2);border-radius:12px;padding:11px 13px;font:inherit;font-size:15px;background:var(--card);color:var(--ink);max-height:120px}
+  .chat-in button{flex:0 0 auto;background:var(--clay);color:#fff;border:0;border-radius:12px;padding:0 18px;font-weight:500;cursor:pointer;font-family:inherit}
+  .chat-in button:disabled{opacity:.5;cursor:default}
+
+  /* agent */
+  .panel{margin-top:26px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 18px 50px -34px rgba(40,30,15,.4)}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+  .field{flex:1 1 240px;min-width:0}
+  .field label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:6px;font-family:"JetBrains Mono"}
+  .field input,.field select,.field textarea{width:100%;border:1px solid var(--line-2);border-radius:11px;padding:11px 13px;font:inherit;font-size:14.5px;background:var(--paper);color:var(--ink)}
+  .field textarea{min-height:70px;resize:vertical}
+  .agent-out{margin-top:18px;display:none}
+  .step{border-left:2px solid var(--line-2);padding:8px 0 8px 14px;margin:0 0 4px;font-size:13.5px;color:var(--ink-2)}
+  .step b{font-family:"JetBrains Mono";font-size:12px;color:var(--clay-ink);font-weight:500}
+  .prlink{margin-top:14px;padding:13px 16px;background:rgba(63,143,91,.09);border:1px solid rgba(63,143,91,.3);border-radius:12px;font-size:14.5px}
+  .warn{font-size:12.5px;color:var(--muted);margin-top:10px}
+
+  /* cards */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px}
+  @media(max-width:820px){ .grid{grid-template-columns:1fr} }
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}
+  .card h3{font-size:19px;margin:0 0 8px}
+  .card p{color:var(--muted);font-size:14.5px;margin:0}
+  .card .ic{font-size:22px;margin-bottom:12px;display:block}
+
+  /* agents-welcome (discoverability) — the loud one */
+  .agents{background:var(--ink);color:#efe9dd;border-radius:22px;padding:clamp(24px,4vw,42px);margin-top:26px;position:relative;overflow:hidden}
+  .agents::after{content:"◮";position:absolute;right:-10px;bottom:-30px;font-size:220px;color:rgba(200,97,63,.10);font-family:"Fraunces",serif;line-height:1}
+  .agents .kicker{color:#e6a583}
+  .agents h2{color:#fbf9f3}
+  .agents p{color:#c9c1b2;max-width:640px;position:relative}
+  .agents .files{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;position:relative}
+  .agents .files a{font-family:"JetBrains Mono";font-size:13px;color:#f4ece0;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);padding:8px 13px;border-radius:10px}
+  .agents .files a:hover{border-color:#e6a583;color:#fff;text-decoration:none}
+  pre{background:#161310;color:#e9e0d2;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:16px 18px;overflow-x:auto;font-size:13px;line-height:1.75;margin:20px 0 0;position:relative}
+  pre .cm{color:#9b917f} pre .st{color:#8fc7a0} pre .fn{color:#e6a583}
+  .copy{position:absolute;top:10px;right:12px;font-family:"JetBrains Mono";font-size:11px;color:#c9c1b2;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:4px 9px;cursor:pointer}
+  .copy:hover{color:#fff}
+
+  /* api models */
+  table.models{width:100%;border-collapse:collapse;margin-top:18px;font-size:14px}
+  table.models td{padding:11px 12px;border-bottom:1px solid var(--line)}
+  table.models tr td:first-child{font-family:"JetBrains Mono";font-size:13px;color:var(--ink)}
+  table.models td:last-child{color:var(--muted)}
+
+  /* ecosystem */
+  .eco{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:22px}
+  @media(max-width:820px){ .eco{grid-template-columns:repeat(2,1fr)} }
+  .eco a{display:block;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;color:var(--ink)}
+  .eco a:hover{border-color:var(--clay);text-decoration:none}
+  .eco a .n{font-family:"Fraunces",serif;font-weight:600;font-size:15px}
+  .eco a .d{color:var(--muted);font-size:12.5px;margin-top:3px}
+
+  footer{border-top:1px solid var(--line);margin-top:36px;padding:30px 0 70px;color:var(--muted-2);font-size:13px}
+  footer .wrap{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  footer a{color:var(--muted)}
+  .mk{flex:0 0 auto}
+</style>
+</head>
+<body>
+
+<header><div class="wrap"><nav class="nav">
+  <svg class="mk" width="27" height="27" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="128" cy="128" r="112" fill="#2E63FF"/><circle cx="128" cy="128" r="88" fill="#fff"/><path d="M128 68 L84 192 H172 L128 68 Z" fill="#2E63FF"/><rect x="104" y="160" width="48" height="16" rx="8" fill="#2E63FF"/></svg>
+  <a class="brand" href="/">Animica</a>
+  <div class="links">
+    <a href="#chat">Chat</a>
+    <a href="#agent">Agent</a>
+    <a href="#agents">For agents</a>
+    <a href="#api">API</a>
+    <a href="/portal.html">Docs</a>
+  </div>
+  <span class="sp"></span>
+  <span class="pill"><span class="d"></span> Free · no API key</span>
+</nav></div></header>
+
+<main>
+<div class="wrap">
+
+  <section class="hero" id="chat">
+    <div class="eyebrow">Free AI, funded by the Animica treasury</div>
+    <h1 class="title">Free AI for developers.<br>And for <em>your agents.</em></h1>
+    <p class="lede">An OpenAI-compatible API with no key and no signup, plus a GitHub-connected coding agent that opens pull requests for you. Every answer carries a post-quantum-signed proof-of-inference receipt.</p>
+    <div class="hero-cta">
+      <a class="btn primary" href="#agent">Try the coding agent →</a>
+      <a class="btn ghost" href="#api">Use the API</a>
+    </div>
+    <div class="assur">
+      <span><b>◦</b> No key, no signup</span>
+      <span><b>◦</b> OpenAI-compatible</span>
+      <span><b>◦</b> Signed &amp; verifiable</span>
+      <span><b>◦</b> Agents welcome</span>
+    </div>
+
+    <div class="chat">
+      <div class="chat-head">
+        <svg width="18" height="18" viewBox="0 0 256 256" aria-hidden="true"><circle cx="128" cy="128" r="112" fill="#2E63FF"/><circle cx="128" cy="128" r="88" fill="#fff"/><path d="M128 68 L84 192 H172 L128 68 Z" fill="#2E63FF"/><rect x="104" y="160" width="48" height="16" rx="8" fill="#2E63FF"/></svg>
+        <span class="t">Chat — free, right now</span>
+        <select id="model" aria-label="Model">
+          <option value="qwen2.5:7b">qwen2.5:7b · general</option>
+          <option value="deepseek-coder:6.7b">deepseek-coder:6.7b · code</option>
+          <option value="qwen2.5:0.5b">qwen2.5:0.5b · fast</option>
+        </select>
+      </div>
+      <div class="msgs" id="msgs">
+        <div class="m bot">Hi — I'm running on Animica's free, treasury-funded AI. Ask me anything. No key needed, and you can verify every reply with a signed receipt.</div>
+      </div>
+      <div class="chat-in">
+        <textarea id="q" rows="1" placeholder="Ask anything…  (Enter to send, Shift+Enter for newline)"></textarea>
+        <button id="send">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="agent">
+    <div class="kicker">GitHub coding agent</div>
+    <h2>Point it at a repo. <span class="it">Get a pull request.</span></h2>
+    <p class="sub">Connect a GitHub token, describe a change, and the agent reads your repo, edits files, and opens a PR — reasoning on the free Animica model. It only ever writes to a new branch.</p>
+
+    <div class="panel">
+      <div class="row">
+        <div class="field" style="flex:2 1 320px">
+          <label for="ghtoken">GitHub token (fine-grained: Contents + Pull requests → Read/Write)</label>
+          <input id="ghtoken" type="password" placeholder="github_pat_… (used only in your browser + this request, never stored)">
+        </div>
+        <div class="field" style="flex:0 0 auto">
+          <label>&nbsp;</label>
+          <button class="btn ghost" id="connect" style="width:100%">Connect</button>
+        </div>
+      </div>
+      <div class="row" id="repoRow" style="display:none;margin-top:14px">
+        <div class="field">
+          <label for="repo">Repository</label>
+          <select id="repo"></select>
+        </div>
+      </div>
+      <div class="row" id="taskRow" style="display:none;margin-top:14px">
+        <div class="field" style="flex:1 1 100%">
+          <label for="instruction">What should the agent change?</label>
+          <textarea id="instruction" placeholder="e.g. Add a MIT LICENSE file, or: fix the typo in README, or: add a /health route to server.js"></textarea>
+        </div>
+      </div>
+      <div class="row" id="runRow" style="display:none;margin-top:12px">
+        <button class="btn primary" id="run">Run agent →</button>
+        <span class="warn" id="runNote"></span>
+      </div>
+      <div class="agent-out" id="agentOut"></div>
+      <p class="warn">Your token stays in this browser tab (session storage), is sent only with your requests over HTTPS, and is never stored or logged on the server. Revoke it anytime in GitHub settings.</p>
+    </div>
+  </section>
+
+  <!-- LOUD discoverability for AI agents -->
+  <section id="agents">
+    <div class="agents">
+      <div class="kicker">For AI agents &amp; bots</div>
+      <h2>Autonomous agents: this API is for you.</h2>
+      <p>Call it directly — no key, no auth header, no signup. It's OpenAI-compatible and funded by the Animica treasury. Machine-readable manifests are published at well-known paths, and <span class="mono" style="color:#f4ece0">llms.txt</span> tells you everything.</p>
+      <div class="files">
+        <a href="/llms.txt">/llms.txt</a>
+        <a href="/openapi.json">/openapi.json</a>
+        <a href="/.well-known/ai-plugin.json">/.well-known/ai-plugin.json</a>
+        <a href="/.well-known/agents.json">/.well-known/agents.json</a>
+        <a href="/net-height">/net-height</a>
+      </div>
+      <pre><button class="copy" data-copy='curl https://animica.dev/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"qwen2.5:7b\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a haiku about post-quantum crypto\"}]}"'>copy</button><span class="cm"># no API key — just call it</span>
+curl https://animica.dev/v1/chat/completions \
+  -H <span class="st">"Content-Type: application/json"</span> \
+  -d '{
+    <span class="fn">"model"</span>: <span class="st">"qwen2.5:7b"</span>,
+    <span class="fn">"messages"</span>: [{<span class="fn">"role"</span>:<span class="st">"user"</span>,<span class="fn">"content"</span>:<span class="st">"Hello"</span>}]
+  }'</pre>
+    </div>
+  </section>
+
+  <section id="api">
+    <div class="kicker">The API</div>
+    <h2>OpenAI-compatible. <span class="it">Point your client here.</span></h2>
+    <p class="sub">Set the base URL to <span class="mono">https://animica.dev/v1</span> and use any API key value (it's ignored). Chat, completions, embeddings.</p>
+    <table class="models">
+      <tr><td>qwen2.5:7b</td><td>Balanced general chat &amp; reasoning — the default recommendation</td></tr>
+      <tr><td>deepseek-coder:6.7b</td><td>Coding model — recommended for code</td></tr>
+      <tr><td>qwen2.5-coder:14b</td><td>Largest coder — available via the API (slow on the free CPU tier)</td></tr>
+      <tr><td>qwen2.5:0.5b</td><td>Tiny &amp; fast</td></tr>
+      <tr><td>nomic-embed-text</td><td>Embeddings — <span class="mono">POST /v1/embeddings</span></td></tr>
+      <tr><td>deterministic</td><td>Reproducible, no external model</td></tr>
+    </table>
+    <div class="grid">
+      <div class="card"><span class="ic">🔑</span><h3>No key</h3><p>No signup, no billing, no dashboard. Send a request and get a response. Rate limit 30/min per IP.</p></div>
+      <div class="card"><span class="ic">🔏</span><h3>Verifiable</h3><p>Every response carries a content-addressed, ML-DSA-65 (post-quantum) signed proof-of-inference receipt you can verify offline.</p></div>
+      <div class="card"><span class="ic">🧩</span><h3>Drop-in</h3><p>Works with the OpenAI SDKs, LangChain, LlamaIndex, and anything that speaks the OpenAI API.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">The ecosystem</div>
+    <h2>Built on a post-quantum L1.</h2>
+    <div class="eco">
+      <a href="https://animica.org"><div class="n">animica.org</div><div class="d">The network &amp; docs</div></a>
+      <a href="https://explorer.animica.org"><div class="n">Explorer</div><div class="d">Blocks, txs, addresses</div></a>
+      <a href="https://pool.animica.org"><div class="n">Pool &amp; ENA</div><div class="d">Mine &amp; train</div></a>
+      <a href="https://wallet.animica.org"><div class="n">Wallet</div><div class="d">Your ANM, your keys</div></a>
+      <a href="https://pypi.org/project/animica/"><div class="n">pip install animica</div><div class="d">Node + CLI (7.1.1)</div></a>
+      <a href="https://github.com/animicaorg/all"><div class="n">GitHub</div><div class="d">Source &amp; releases</div></a>
+      <a href="https://rpc.animica.org"><div class="n">JSON-RPC</div><div class="d">rpc.animica.org</div></a>
+      <a href="/upgrade"><div class="n">Node upgrade</div><div class="d">7.1.1 before block 42,000</div></a>
+    </div>
+  </section>
+
+</div>
+</main>
+
+<footer><div class="wrap">
+  <svg class="mk" width="22" height="22" viewBox="0 0 256 256" aria-hidden="true"><circle cx="128" cy="128" r="112" fill="#2E63FF"/><circle cx="128" cy="128" r="88" fill="#fbf9f3"/><path d="M128 68 L84 192 H172 L128 68 Z" fill="#2E63FF"/><rect x="104" y="160" width="48" height="16" rx="8" fill="#2E63FF"/></svg>
+  <span>Animica · free AI on a post-quantum chain</span>
+  <a href="/llms.txt">llms.txt</a><a href="/openapi.json">OpenAPI</a>
+  <a href="https://animica.org">animica.org</a><a href="https://github.com/animicaorg/all">GitHub</a>
+</div></footer>
+
+<script>
+(function(){
+  var V1="/v1", AGENT="/agent";
+  var msgs=document.getElementById('msgs'), q=document.getElementById('q'), send=document.getElementById('send'), modelSel=document.getElementById('model');
+
+  function add(cls, text){ var d=document.createElement('div'); d.className='m '+cls; d.textContent=text; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; return d; }
+  function auto(){ q.style.height='auto'; q.style.height=Math.min(120,q.scrollHeight)+'px'; }
+  q.addEventListener('input',auto);
+  q.addEventListener('keydown',function(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); } });
+  send.addEventListener('click',doSend);
+
+  async function doSend(){
+    var text=q.value.trim(); if(!text) return;
+    add('user',text); q.value=''; auto(); send.disabled=true;
+    var bot=add('bot','…'); var acc='';
+    try{
+      var res=await fetch(V1+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:modelSel.value,stream:true,messages:[
+          {role:'system',content:'You are a concise, helpful assistant on the free Animica AI network.'},
+          {role:'user',content:text}]})});
+      if(!res.ok){ bot.textContent='('+res.status+') '+(res.status===429?'Rate limit reached — please wait a moment.':'The free model is busy, try again.'); send.disabled=false; return; }
+      var reader=res.body.getReader(), dec=new TextDecoder(), buf='', receipt=null;
+      bot.textContent='';
+      while(true){ var r=await reader.read(); if(r.done) break; buf+=dec.decode(r.value,{stream:true});
+        var parts=buf.split('\n'); buf=parts.pop();
+        for(var i=0;i<parts.length;i++){ var ln=parts[i].trim(); if(ln.indexOf('data:')!==0) continue; ln=ln.replace(/^data:\s*/,''); if(!ln||ln==='[DONE]') continue;
+          try{ var j=JSON.parse(ln); var d=j.choices&&j.choices[0]&&(j.choices[0].delta||{}); if(d.content){ acc+=d.content; bot.textContent=acc; msgs.scrollTop=msgs.scrollHeight; }
+               if(j.animica_receipt) receipt=j.animica_receipt; }catch(e){}
+        }
+      }
+      if(!acc){
+        // streaming yielded nothing — fall back to a non-streaming request
+        try{
+          var r2=await fetch(V1+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({model:modelSel.value,messages:[
+              {role:'system',content:'You are a concise, helpful assistant on the free Animica AI network.'},
+              {role:'user',content:text}]})});
+          var j2=await r2.json();
+          acc=(j2.choices&&j2.choices[0]&&j2.choices[0].message&&j2.choices[0].message.content)||'';
+          if(j2.animica_receipt) receipt=j2.animica_receipt;
+        }catch(e){}
+        bot.textContent=acc||'(the free model is warming up — please try again in a moment)';
+      }
+      var chip=document.createElement('div'); chip.className='rcpt';
+      chip.innerHTML='🔏 post-quantum signed · proof-of-inference'+(receipt&&receipt.id?(' · '+String(receipt.id).slice(0,14)+'…'):'');
+      bot.appendChild(chip);
+    }catch(e){ bot.textContent='Network error — please retry.'; }
+    send.disabled=false;
+  }
+
+  // ---- GitHub agent ----
+  var TKEY='anmGhToken';
+  var ghtoken=document.getElementById('ghtoken'), connect=document.getElementById('connect'),
+      repoRow=document.getElementById('repoRow'), repo=document.getElementById('repo'),
+      taskRow=document.getElementById('taskRow'), runRow=document.getElementById('runRow'),
+      run=document.getElementById('run'), instruction=document.getElementById('instruction'),
+      out=document.getElementById('agentOut'), runNote=document.getElementById('runNote');
+  try{ var saved=sessionStorage.getItem(TKEY); if(saved) ghtoken.value=saved; }catch(e){}
+
+  connect.addEventListener('click',async function(){
+    var tok=ghtoken.value.trim(); if(!tok){ ghtoken.focus(); return; }
+    connect.textContent='Connecting…'; connect.disabled=true;
+    try{
+      var r=await fetch(AGENT+'/github/repos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok})});
+      var j=await r.json();
+      if(!r.ok){ runNote.textContent=(j.detail||'Could not connect.'); connect.textContent='Connect'; connect.disabled=false; return; }
+      try{ sessionStorage.setItem(TKEY,tok); }catch(e){}
+      repo.innerHTML=''; (j.repos||[]).forEach(function(x){ var o=document.createElement('option'); o.value=x.full_name; o.textContent=x.full_name+(x.private?' (private)':''); repo.appendChild(o); });
+      repoRow.style.display=''; taskRow.style.display=''; runRow.style.display='';
+      connect.textContent='Connected: '+(j.login||'✓');
+    }catch(e){ runNote.textContent='Network error.'; connect.textContent='Connect'; connect.disabled=false; }
+  });
+
+  run.addEventListener('click',async function(){
+    var tok=ghtoken.value.trim(), rp=repo.value, ins=instruction.value.trim();
+    if(!tok||!rp||!ins){ runNote.textContent='Pick a repo and describe the change.'; return; }
+    run.disabled=true; runNote.textContent='Working — the agent is reading the repo and reasoning. The free model runs on CPU, so a run can take a few minutes…';
+    out.style.display='block'; out.innerHTML='<div class="step"><b>starting</b> · '+rp+'</div>';
+    try{
+      var r=await fetch(AGENT+'/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok,repo:rp,instruction:ins})});
+      var j=await r.json();
+      if(!r.ok){ out.innerHTML='<div class="step"><b>error</b> · '+(j.detail||('HTTP '+r.status))+'</div>'; runNote.textContent=''; run.disabled=false; return; }
+      var html='';
+      (j.transcript||[]).forEach(function(s){ html+='<div class="step"><b>'+s.action+'</b> · '+(s.thought||'').replace(/</g,'&lt;')+(s.args&&s.args.path?(' — '+s.args.path):'')+'</div>'; });
+      if(j.pr_url) html+='<div class="prlink">✅ Pull request opened: <a href="'+j.pr_url+'" target="_blank" rel="noopener">'+j.pr_url+'</a></div>';
+      else if(j.answer) html+='<div class="prlink">'+String(j.answer).replace(/</g,'&lt;')+'</div>';
+      out.innerHTML=html; runNote.textContent='';
+    }catch(e){ out.innerHTML='<div class="step"><b>error</b> · network</div>'; runNote.textContent=''; }
+    run.disabled=false;
+  });
+
+  document.addEventListener('click',function(e){ var b=e.target.closest&&e.target.closest('.copy'); if(!b) return;
+    var t=b.getAttribute('data-copy')||''; navigator.clipboard&&navigator.clipboard.writeText(t).then(function(){ var o=b.textContent; b.textContent='copied'; setTimeout(function(){b.textContent=o;},1300); }); });
+})();
+</script>
+</body>
+</html>

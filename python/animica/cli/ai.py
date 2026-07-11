@@ -409,6 +409,20 @@ def _resolve_adapter(provider: str | None, model: str | None, local: bool):
             model=model or app_config.get("default_model", section="ai") or "qwen2.5:7b",
             base_url=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
         )
+    # 7.1.1 mesh backends: synthesize a config so `--provider anthropic|claude|
+    # chutes|bittensor|ena_served` works without a config.toml entry.
+    _MESH_DEFAULTS = {
+        "anthropic": ("claude-opus-4-8", ["ANTHROPIC_API_KEY"]),
+        "claude": ("claude-opus-4-8", ["ANTHROPIC_API_KEY"]),
+        "chutes": ("", ["CHUTES_API_TOKEN"]),
+        "bittensor": ("", ["CHUTES_API_TOKEN"]),
+        "ena_served": ("", []),
+    }
+    if key in _MESH_DEFAULTS and mp.provider != key:
+        default_model, env_vars = _MESH_DEFAULTS[key]
+        mp = ModelProviderConfig(name=key, provider=key, transport="http",
+                                 model=model or default_model,
+                                 api_key_env_vars=env_vars)
     # Model override precedence.
     chosen_model = model or (None if provider else app_config.get("default_model", section="ai"))
     if chosen_model:
@@ -645,6 +659,13 @@ def serve(
     local/configured providers as `animica ai chat`.
     """
     from animica.ai.gateway import GatewayNotInstalled, build_app
+
+    # Env fallbacks let a managed service (systemd) supply the bearer key via a
+    # 0600 EnvironmentFile instead of the command line, keeping it out of argv/ps.
+    api_key = api_key or os.environ.get("ANIMICA_AI_GATEWAY_API_KEY") or None
+    if rate_limit is None:
+        _rl = (os.environ.get("ANIMICA_AI_GATEWAY_RATE_LIMIT") or "").strip()
+        rate_limit = int(_rl) if _rl.isdigit() else None
 
     try:
         app_obj = build_app(api_key=api_key, provider=provider, model=model,
@@ -1240,3 +1261,96 @@ def balance(
             _time.sleep(max(1.0, interval))
     except KeyboardInterrupt:
         console.print("\nstopped.")
+
+
+# ===========================================================================
+# 7.1.1 — Verifiable Inference Engine: receipt verify / replay (fully offline)
+# ===========================================================================
+
+def _load_receipt(path: str) -> dict[str, Any]:
+    import sys as _sys
+    raw = _sys.stdin.read() if path == "-" else Path(path).expanduser().read_text(encoding="utf-8")
+    obj = _json.loads(raw)
+    # Accept a full chat response, a {'receipt': …} envelope, or a bare receipt.
+    return obj.get("animica_receipt") or obj.get("receipt") or obj
+
+
+@app.command("verify")
+def verify(
+    receipt_file: str = typer.Argument(..., help="Receipt JSON path (or '-' for stdin)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit the verdict as JSON."),
+) -> None:
+    """Verify a Proof-of-Inference receipt offline: recompute its content hash and
+    check the ML-DSA-65 signature. Needs no node and no model."""
+    from animica.ena.inference_receipt import validate_inference_receipt
+    try:
+        receipt = _load_receipt(receipt_file)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]could not read receipt: {e}[/]", markup=False)
+        raise typer.Exit(code=1)
+    v = validate_inference_receipt(receipt)
+    if json_output:
+        typer.echo(_json.dumps(v, indent=2))
+        raise typer.Exit(0 if v["valid"] else 2)
+    ok = "[green]✔[/]" if v["valid"] else "[red]✘[/]"
+    console.print(f"{ok} receipt {receipt.get('receipt_hash','')[:16]}…  "
+                  f"valid=[bold]{v['valid']}[/]")
+    console.print(f"    hash_ok={v['hash_ok']}  signed={v['signed']}  signature_ok={v['signature_ok']}")
+    console.print(f"    seed_applied={v['seed_applied']}  attestation={v['attestation_backend']}")
+    if v.get("signer_address"):
+        console.print(f"    signer={v['signer_address']}")
+    raise typer.Exit(0 if v["valid"] else 2)
+
+
+@app.command("replay")
+def replay_cmd(
+    receipt_file: str = typer.Argument(..., help="Receipt JSON path (or '-' for stdin)."),
+    prompt: str = typer.Option(..., "--prompt", "-p", help="The original prompt (receipts are hash-only)."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Re-run a receipt's generation with its recorded seed and check the output
+    hash. Reports 'verified' only for reproducible local backends, else 'best_effort'."""
+    from animica.ai.replay import replay_receipt
+    try:
+        receipt = _load_receipt(receipt_file)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]could not read receipt: {e}[/]", markup=False)
+        raise typer.Exit(code=1)
+    res = replay_receipt(receipt, prompt)
+    if json_output:
+        typer.echo(_json.dumps(res, indent=2))
+        raise typer.Exit(0 if res.get("match") else 2)
+    tag = {"verified": "[green]", "best_effort": "[yellow]", "unsupported": "[red]"}.get(
+        res["reproducible"], "[white]")
+    console.print(f"reproducible: {tag}{res['reproducible']}[/]   match={res['match']}   "
+                  f"prompt_ok={res['prompt_ok']}   backend={res['backend_class']}")
+    raise typer.Exit(0 if res.get("match") else 2)
+
+
+receipt_app = typer.Typer(name="receipt", help="Inspect + verify Proof-of-Inference receipts.",
+                          no_args_is_help=True)
+app.add_typer(receipt_app, name="receipt")
+
+
+@receipt_app.command("show")
+def receipt_show(receipt_file: str = typer.Argument(..., help="Receipt JSON path (or '-').")) -> None:
+    """Pretty-print the salient fields of a receipt."""
+    try:
+        r = _load_receipt(receipt_file)
+    except Exception as e:  # noqa: BLE001
+        console.print(f"[red]could not read receipt: {e}[/]", markup=False)
+        raise typer.Exit(code=1)
+    for k in ("receipt_hash", "model_id", "provider_key", "prompt_hash", "output_hash",
+              "tokens_in", "tokens_out", "signed", "signature_alg_name", "signer_address",
+              "seed_applied", "attested", "attestation_backend", "beacon_round"):
+        if k in r:
+            console.print(f"  [bold]{k}[/]: {r[k]}")
+
+
+@receipt_app.command("verify")
+def receipt_verify(
+    receipt_file: str = typer.Argument(..., help="Receipt JSON path (or '-')."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Alias of `animica ai verify`."""
+    verify(receipt_file, json_output=json_output)

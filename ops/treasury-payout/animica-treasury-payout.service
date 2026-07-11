@@ -1,0 +1,9 @@
+[Unit]
+Description=Animica treasury inference-reward payout (pays registered miners' on-chain earnings)
+After=network-online.target
+[Service]
+Type=oneshot
+# Allowlist is implicit: only on-chain registered workers with earnings are paid.
+Environment=ANIMICA_TREASURY_ADDRESS=anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+ExecStart=/usr/local/bin/anm-treasury-inference-payout.py

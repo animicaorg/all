@@ -1,0 +1,61 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Animica Free AI API",
+    "version": "1.0.0",
+    "description": "Free, OpenAI-compatible inference. No API key required. Every response includes a post-quantum-signed proof-of-inference receipt. Funded by the Animica foundation treasury.",
+    "contact": { "name": "Animica", "url": "https://animica.dev/" },
+    "license": { "name": "Free to use" }
+  },
+  "servers": [ { "url": "https://animica.dev/v1", "description": "Free public endpoint (no auth)" } ],
+  "paths": {
+    "/models": {
+      "get": {
+        "operationId": "listModels",
+        "summary": "List available models",
+        "responses": { "200": { "description": "Model list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ModelList" } } } } }
+      }
+    },
+    "/chat/completions": {
+      "post": {
+        "operationId": "createChatCompletion",
+        "summary": "Create a chat completion (OpenAI-compatible)",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChatRequest" } } } },
+        "responses": { "200": { "description": "Completion (or SSE stream if stream=true)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChatResponse" } } } }, "429": { "description": "Rate limited (30 req/min per IP) — back off and retry" } }
+      }
+    },
+    "/embeddings": {
+      "post": {
+        "operationId": "createEmbedding",
+        "summary": "Create embeddings",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmbeddingRequest" } } } },
+        "responses": { "200": { "description": "Embedding vectors" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ModelList": { "type": "object", "properties": { "object": { "type": "string" }, "data": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" } } } } } },
+      "ChatRequest": {
+        "type": "object", "required": ["model", "messages"],
+        "properties": {
+          "model": { "type": "string", "default": "qwen2.5:7b", "description": "e.g. qwen2.5:7b, qwen2.5-coder:14b, deepseek-coder:6.7b" },
+          "messages": { "type": "array", "items": { "type": "object", "properties": { "role": { "type": "string", "enum": ["system", "user", "assistant"] }, "content": { "type": "string" } }, "required": ["role", "content"] } },
+          "stream": { "type": "boolean", "default": false },
+          "temperature": { "type": "number", "default": 0.7 },
+          "max_tokens": { "type": "integer" }
+        }
+      },
+      "ChatResponse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "choices": { "type": "array", "items": { "type": "object", "properties": { "message": { "type": "object", "properties": { "role": { "type": "string" }, "content": { "type": "string" } } }, "finish_reason": { "type": "string" } } } },
+          "usage": { "type": "object" },
+          "animica_receipt": { "type": "object", "description": "Post-quantum (ML-DSA-65) signed proof-of-inference receipt" }
+        }
+      },
+      "EmbeddingRequest": { "type": "object", "required": ["model", "input"], "properties": { "model": { "type": "string", "default": "nomic-embed-text" }, "input": { "oneOf": [ { "type": "string" }, { "type": "array", "items": { "type": "string" } } ] } } }
+    }
+  }
+}

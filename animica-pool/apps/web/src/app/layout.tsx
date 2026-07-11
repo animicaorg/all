@@ -1,12 +1,24 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import Link from "next/link";
+import Script from "next/script";
 import "./globals.css";
 import { Providers } from "./providers";
 import { isConsoleHost } from "@/lib/host";
 
-const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-sans" });
-const mono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--font-mono" });
+// Animica design system type: IBM Plex Sans (display + body) / IBM Plex Mono (data).
+const inter = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-sans",
+});
+const mono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+  variable: "--font-mono",
+});
 
 type Col = { title: string; links: [string, string][] };
 interface SiteConfig {
@@ -119,6 +131,41 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen font-sans antialiased">
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
         <Providers>
+          {!isConsole && (
+            <a
+              href="https://animica.org/upgrade.html"
+              style={{
+                display: "block",
+                textDecoration: "none",
+                textAlign: "center",
+                background: "linear-gradient(90deg,#3a2a05,#4a1d05)",
+                borderBottom: "1px solid #7a5a12",
+                color: "#ffd98a",
+                fontSize: "14px",
+                lineHeight: 1.5,
+                padding: "9px 16px",
+              }}
+            >
+              <span aria-hidden>⚠️</span>{" "}
+              <strong style={{ color: "#ffb020" }}>Network upgrade required</strong> — node
+              operators &amp; miners must run{" "}
+              <code
+                style={{
+                  background: "rgba(255,255,255,.12)",
+                  padding: "2px 7px",
+                  borderRadius: "5px",
+                  color: "#fff",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                pip install -U animica==6.0.1
+              </code>{" "}
+              before block <strong>40,000</strong>{" "}
+              <span style={{ textDecoration: "underline", whiteSpace: "nowrap" }}>
+                details →
+              </span>
+            </a>
+          )}
           <header className="sticky top-0 z-50 border-b border-white/10 bg-ink-900/60 backdrop-blur-xl supports-[backdrop-filter]:bg-ink-900/50">
             <nav className="mx-auto flex max-w-6xl items-center gap-5 px-4 py-3 text-sm">
               <Link href="/" className="flex items-center gap-2 text-lg font-semibold tracking-tight text-white">
@@ -136,6 +183,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
               <span className="flex-1 lg:hidden" />
               <div className="flex items-center gap-3">
+                {!isConsole && (
+                  <span className="hidden sm:inline" dangerouslySetInnerHTML={{ __html: "<anm-price-ticker></anm-price-ticker>" }} />
+                )}
                 <Link href={c.cta.secondary[0]} className="hidden text-white/65 transition-colors hover:text-white sm:inline">
                   {c.cta.secondary[1]}
                 </Link>
@@ -178,6 +228,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-white/5 pt-6 text-xs text-white/40 sm:flex-row sm:items-center">
                 <p>© {new Date().getFullYear()} Animica.{isConsole ? " AI for builders." : " Useful-work economy."}</p>
                 <div className="flex items-center gap-4">
+                  <a href="https://nonkyc.io/market/ANM_USDT" target="_blank" rel="noopener" className="transition-colors hover:text-white/70">Buy / Trade ANM</a>
+                  <a href="https://nonkyc.io/pool/ANM_USDT" target="_blank" rel="noopener" className="transition-colors hover:text-white/70">Liquidity Pool</a>
                   <a href="https://animica.org" className="transition-colors hover:text-white/70">animica.org</a>
                   {isConsole ? (
                     <>
@@ -194,6 +246,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </footer>
+          <Script src="/anm-ticker.js" strategy="afterInteractive" />
         </Providers>
       </body>
     </html>

@@ -172,6 +172,45 @@ FORK_PQ_HARDENING = "pq_hardening"
 #     ANIMICA_ROOT_COMMITMENT_SHADOW=1 (observe-only) for pre-activation validation.
 FORK_ROOT_COMMITMENT = "root_commitment"
 
+#   address_freeze: at/after this height, block import REJECTS any block that
+#     contains a non-coinbase transaction whose authoritative sender OR recipient
+#     is a consensus-frozen account (execution.migrations.address_freeze_2026).
+#     This upgrades the node-local, trivially-bypassable mempool freeze
+#     (mempool/address_denylist.py — a per-node env/file control that only stops
+#     the operator's own nodes from ADMITTING or MINING a frozen spend) into a
+#     hard, network-wide consensus rule: an upgraded node will not build on a
+#     chain that moves frozen funds, so a stolen/leaked-key address cannot be
+#     drained by taking the operator's node offline. The frozen set is a
+#     code-committed constant (identical on every node — never env/file), so the
+#     reject decision is deterministic; it writes NO state (stateRoot is only
+#     shadow-enforced), so a rule-violating block is loudly orphaned rather than
+#     silently forking balances. Forward-only + grandfathered below H; DAO-fork
+#     shape — every block producer MUST run this build before the height or a
+#     post-height frozen-spend block they mine will be orphaned by upgraded nodes.
+FORK_ADDRESS_FREEZE = "address_freeze"
+
+#   foundation_split: at/after this height, the block subsidy is split 85% miner /
+#     15% foundation treasury instead of 100% miner. The base subsidy is UNCHANGED
+#     (still 300 ANM/block at the current epoch, halving on the same schedule) — the
+#     15% is a redistribution of the SAME total, not new issuance, so total emission
+#     and the MAX_MONEY supply cap are unaffected (miner+treasury == the old miner
+#     amount, every block). The 15% is credited to a code-committed foundation
+#     address (consensus.rewards.FOUNDATION_TREASURY_ADDRESS — identical on every
+#     node, never env/params) so the credit is deterministic and byte-identical.
+#     UNLIKE address_freeze (a reject-only rule that writes no state and is loudly
+#     orphaned on violation), this is a STATE-MUTATING emission change: this chain
+#     commits no enforced stateRoot, so a node that does NOT run this build will keep
+#     crediting 100% to the miner and silently under-credit the foundation — a
+#     balance divergence, not a chain split (the same PoW-valid blocks are accepted
+#     by both). There is therefore NO loud reject available; correctness depends on
+#     coordinated upgrade. Every full node, the pool/miner, and every exchange or
+#     explorer that tracks balances MUST run this build (or set
+#     ANIMICA_FORK_FOUNDATION_SPLIT_HEIGHT) before this height, or their balances
+#     diverge from the network. Forward-only + grandfathered below H (pre-H rewards
+#     stay 100% miner; history is never re-credited). Activation is its OWN height,
+#     one block after address_freeze, so the two rule changes are never co-located.
+FORK_FOUNDATION_SPLIT = "foundation_split"
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
     # This MUST match on every node — the live node and every operator's pip install
@@ -187,15 +226,34 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     ("mainnet", 1): {
         FORK_PQ_HARDENING: 40_000,
         FORK_ROOT_COMMITMENT: 40_000,
+        # Coordinated consensus address-freeze activation. Ships in pip 7.0.0.
+        # Head was ~40,834 at ship time, giving a ~1-day upgrade runway; every
+        # miner + node operator MUST run 7.0.0 (or set
+        # ANIMICA_FORK_ADDRESS_FREEZE_HEIGHT) before this height. Retunable via
+        # that env override if adoption slips.
+        FORK_ADDRESS_FREEZE: 42_000,
+        # Foundation subsidy split (85% miner / 15% foundation treasury). Ships in
+        # pip 7.1.0 (a strict superset of 7.0.0). Its own height, one block after
+        # the freeze so the two consensus changes never activate on the same block.
+        # Head was ~40,920 at ship time (~1-day runway). STATE-MUTATING emission
+        # change: every node, the pool, and every balance-tracking exchange/explorer
+        # MUST run 7.1.0 (or set ANIMICA_FORK_FOUNDATION_SPLIT_HEIGHT) before this
+        # height or they will silently under-credit the foundation. Retunable via
+        # that env override if adoption slips.
+        FORK_FOUNDATION_SPLIT: 42_001,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {
         FORK_PQ_HARDENING: 0,
         FORK_ROOT_COMMITMENT: 0,
+        FORK_ADDRESS_FREEZE: 0,
+        FORK_FOUNDATION_SPLIT: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
         FORK_ROOT_COMMITMENT: 0,
+        FORK_ADDRESS_FREEZE: 0,
+        FORK_FOUNDATION_SPLIT: 0,
     },
 }
 
