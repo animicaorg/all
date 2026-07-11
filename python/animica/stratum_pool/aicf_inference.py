@@ -14,8 +14,12 @@ matches the architecture-miners-as-aicf-workers note.
 
 Activation:
 - ANIMICA_AICF_TIERS=standard,premium      (advertise these to the pool)
-- ANIMICA_AICF_MODEL=Qwen/Qwen2.5-0.5B-Instruct   (HF repo id)
-- ANIMICA_AICF_MAX_TOKENS=128              (cap per job; default 128)
+- ANIMICA_AICF_MODEL=Qwen/Qwen2.5-Coder-7B-Instruct   (HF repo id)
+- ANIMICA_AICF_MAX_TOKENS=4096             (hard per-job cap; default: dynamic —
+                                            sized to this worker's device + the
+                                            model's context window, see
+                                            _dynamic_token_cap)
+- ANIMICA_AICF_CODING_PROMPT=...           (system prompt for code tasks)
 - ANIMICA_AICF_DEVICE=cpu                  (cpu|cuda; default auto)
 
 If `transformers` and `torch` aren't importable, the engine still
@@ -44,10 +48,16 @@ log = logging.getLogger("animica.stratum_pool.aicf_inference")
 # replaces these with larger models from the HF cache or a local bundle
 # dir whenever they're available.
 _FALLBACK_TIER_MODEL: dict[str, str] = {
+    # Coder-tuned defaults from `standard` up: the network is used heavily for
+    # code (animica.dev agents, chat), and the Coder-Instruct models are far
+    # stronger at programming while still competent at general chat. `free`
+    # stays a small general model for cheap Q&A. Operators override per-tier
+    # with ANIMICA_AICF_MODEL[_<TIER>]; auto-detection still upgrades to any
+    # larger cached/bundled model.
     "free":     "Qwen/Qwen2.5-0.5B-Instruct",
-    "standard": "Qwen/Qwen2.5-1.5B-Instruct",
-    "premium":  "Qwen/Qwen2.5-3B-Instruct",
-    "elite":    "Qwen/Qwen2.5-7B-Instruct",
+    "standard": "Qwen/Qwen2.5-Coder-3B-Instruct",
+    "premium":  "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "elite":    "Qwen/Qwen2.5-Coder-32B-Instruct",
 }
 _DEFAULT_MODEL = _FALLBACK_TIER_MODEL["standard"]
 
@@ -348,6 +358,92 @@ def _resolve_system_prompt() -> str:
     return raw
 
 
+# System prompt used when the request is a plain coding task (no Animica
+# grounding needed). Keeping it short leaves the model's whole budget for
+# the answer, and it explicitly forbids the truncation/"...rest of code"
+# behavior that makes small models look broken. Override with
+# ANIMICA_AICF_CODING_PROMPT.
+_DEFAULT_CODING_PROMPT = (
+    "You are an expert programming assistant served by an Animica AICF miner. "
+    "Write correct, complete, runnable code. Output the ENTIRE solution — never "
+    "truncate, never elide with '...' or 'rest of code unchanged'. Put code in a "
+    "single fenced block with all required imports. When editing a file, return "
+    "the full updated file (or a precise unified diff if asked). Keep prose "
+    "minimal; if the request is ambiguous, make a reasonable assumption and note "
+    "it in one line."
+)
+
+
+def _resolve_coding_system_prompt() -> str:
+    raw = os.environ.get("ANIMICA_AICF_CODING_PROMPT")
+    if raw is None:
+        return _DEFAULT_CODING_PROMPT
+    return raw
+
+
+# Signals that a prompt is a generic coding task (→ coding prompt, no RAG).
+# Deliberately inclusive: a coding prompt on a borderline request is harmless,
+# whereas injecting Animica RAG into a real code task derails small models.
+_CODE_SIGNALS = (
+    "```", "def ", "class ", "import ", "#include", "public static", "=>",
+    "console.log", "print(", "function", "</", "select ", "create table",
+    "algorithm", "regex", "endpoint", " api", "unit test", "refactor",
+    "implement", "compile", "debug", "stack trace", "traceback", "syntax error",
+    "code", "script", "leetcode", "docker", "kubernetes", "html", "css",
+    # languages / frameworks
+    "python", "javascript", "typescript", "java ", "c++", "c#", "rust",
+    "golang", "kotlin", "swift", "php", "ruby", "bash", "shell", "sql",
+    "react", "vue", "svelte", "next.js", "node.js", "fastapi", "flask",
+    # animica.dev agent ReAct schema tokens — these are always code work
+    '"action"', "list_files", "write_file", "read_file", "finalize",
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".cpp", ".sql", ".html", ".css",
+)
+# Animica-specific signals: keep the RAG grounding even if the prompt is
+# code-ish (e.g. "write an Animica smart contract").
+_ANIMICA_SIGNALS = (
+    "animica", "aicf", "poies", "ml-dsa", "dilithium", "sphincs",
+    "stratum", "pool.animica", "rpc.animica", "anm ", "$anm",
+)
+
+
+def _looks_like_code_task(prompt: str) -> bool:
+    p = prompt.lower()
+    return any(sig in p for sig in _CODE_SIGNALS)
+
+
+def _is_animica_query(prompt: str) -> bool:
+    p = prompt.lower()
+    return any(sig in p for sig in _ANIMICA_SIGNALS)
+
+
+def _dynamic_token_cap(model: Any, device: Optional[str]) -> int:
+    """Largest sane `max_new_tokens` for THIS worker right now.
+
+    "As large as the network can handle at any given time": derived from the
+    loaded model's context window and the device class, so a GPU miner serves
+    long completions while a CPU miner stays responsive. Recomputed every job
+    (the model can change between jobs) and always overridable by pinning
+    ANIMICA_AICF_MAX_TOKENS.
+    """
+    is_gpu = bool(device and str(device).startswith(("cuda", "mps")))
+    # Device ceiling — CPU decoding is slow, so cap lower to keep jobs bounded;
+    # accelerators can afford long generations.
+    ceiling = 8192 if is_gpu else 3072
+    ctx = 0
+    cfg = getattr(model, "config", None)
+    if cfg is not None:
+        for attr in ("max_position_embeddings", "n_positions", "max_sequence_length", "seq_length"):
+            v = getattr(cfg, attr, None)
+            if isinstance(v, int) and v > 0:
+                ctx = v
+                break
+    if ctx:
+        # Reserve ~1/3 of the context window for the incoming prompt+system.
+        room = max(256, int(ctx * 2 // 3))
+        return max(256, min(room, ceiling))
+    return ceiling if is_gpu else 2048
+
+
 @dataclass
 class InferenceResult:
     text: str
@@ -378,10 +474,14 @@ class InferenceEngine:
         *,
         model_id: Optional[str] = None,
         device: Optional[str] = None,
-        max_new_tokens_cap: int = 128,
+        max_new_tokens_cap: int = 0,
     ) -> None:
         self._model_id = (model_id or os.environ.get("ANIMICA_AICF_MODEL") or "").strip()
         self._device = (device or os.environ.get("ANIMICA_AICF_DEVICE") or "").strip().lower()
+        # 0 (the default) means "no fixed cap — size each job to what this
+        # worker can actually handle right now" (see _dynamic_token_cap).
+        # An explicit ANIMICA_AICF_MAX_TOKENS pins a hard ceiling for operators
+        # who want a predictable per-job cost.
         try:
             self._max_new_tokens_cap = int(
                 os.environ.get("ANIMICA_AICF_MAX_TOKENS", str(max_new_tokens_cap))
@@ -468,23 +568,45 @@ class InferenceEngine:
                     )
             try:
                 import torch  # type: ignore
-                max_out = int(spec.get("max_output_tokens") or 64)
-                max_out = max(1, min(max_out, self._max_new_tokens_cap))
+                # Effective per-job token cap. An explicit ANIMICA_AICF_MAX_TOKENS
+                # pin wins; otherwise size the job to what THIS worker can handle
+                # right now (device + model context window). A client that omits
+                # max_output_tokens gets the full cap so complete files aren't cut.
+                try:
+                    _dev = str(next(self._model.parameters()).device)
+                except (StopIteration, AttributeError):
+                    _dev = self._device or "cpu"
+                cap = (
+                    self._max_new_tokens_cap
+                    if self._max_new_tokens_cap > 0
+                    else _dynamic_token_cap(self._model, _dev)
+                )
+                requested = spec.get("max_output_tokens")
+                max_out = int(requested) if requested else cap
+                max_out = max(1, min(max_out, cap))
                 # Use the tokenizer's chat template when available so the
                 # system + user roles are honored. Without this, the
                 # model sees a raw string with no context and happily
                 # hallucinates (e.g. "Animica's mobile games division").
-                system_prompt = _resolve_system_prompt()
-                # RAG: pull top-k relevant doc chunks for this query and
-                # prepend them to the system message. The retriever is
-                # silent-noop when the index or encoder isn't available,
-                # so this stays cheap and safe on minimal installs.
-                try:
-                    from .aicf_rag import retrieve_context
-                    rag_block = retrieve_context(prompt, top_k=3)
-                except Exception as rag_exc:
-                    log.debug("aicf-rag: retrieve_context unavailable: %s", rag_exc)
+                # Generic coding tasks get a lean coding prompt and NO RAG:
+                # injecting Animica docs into "write a merge_intervals function"
+                # is pure noise that derails small models and wastes budget.
+                # Animica-specific questions (even code ones) keep the grounding.
+                if _looks_like_code_task(prompt) and not _is_animica_query(prompt):
+                    system_prompt = _resolve_coding_system_prompt()
                     rag_block = ""
+                else:
+                    system_prompt = _resolve_system_prompt()
+                    # RAG: pull top-k relevant doc chunks for this query and
+                    # prepend them to the system message. The retriever is
+                    # silent-noop when the index or encoder isn't available,
+                    # so this stays cheap and safe on minimal installs.
+                    try:
+                        from .aicf_rag import retrieve_context
+                        rag_block = retrieve_context(prompt, top_k=3)
+                    except Exception as rag_exc:
+                        log.debug("aicf-rag: retrieve_context unavailable: %s", rag_exc)
+                        rag_block = ""
                 if rag_block:
                     system_prompt = (
                         (system_prompt + "\n\n" if system_prompt else "")

@@ -8,6 +8,29 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [7.1.3] - 2026-07-11
+### Improved — much better AI coding, served by miners
+Non-consensus. All changes live in the miner-served AICF worker and the edge
+gateway; no chain fork, no node changes. A miner picks these up simply by
+running `animica up` or `animica miner aicf-worker start` on 7.1.3.
+
+- **Dynamic, capability-based token cap.** The old fixed 128-token cap truncated
+  almost every code file mid-function. The worker now sizes each job to *what it
+  can actually handle* — derived from the loaded model's context window and the
+  device class (CPU vs CUDA/MPS), recomputed per job. "As large as the network
+  can handle at any given time." Pin a hard ceiling with `ANIMICA_AICF_MAX_TOKENS`.
+- **Coder-tuned tier defaults.** `standard`→`Qwen2.5-Coder-3B`, `premium`→
+  `Qwen2.5-Coder-7B`, `elite`→`Qwen2.5-Coder-32B` (was general Qwen 1.5B/3B/7B).
+  `free` stays a small general model. Auto-detection still upgrades to any larger
+  cached/bundled model; per-tier overrides (`ANIMICA_AICF_MODEL_<TIER>`) unchanged.
+- **Code-aware prompting.** Generic coding requests get a lean coding system
+  prompt (and skip Animica RAG injection, which was derailing small models);
+  Animica-specific questions keep their doc grounding. Override with
+  `ANIMICA_AICF_CODING_PROMPT`.
+- **Edge gateway + agents** default to a high output budget so the *worker's*
+  dynamic cap is the real limit, and the animica.dev coding agents run on any
+  serving tier (best available) instead of a single pinned model.
+
 ## [7.1.1] - 2026-07-10
 ### Added — the Verifiable Inference Engine (VIE)
 A **non-consensus** AI-engine upgrade. No chain fork, no genesis, the node never

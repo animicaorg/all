@@ -23,13 +23,13 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 GATEWAY = os.environ.get("ANIMICA_FREE_AI_BASE", "http://127.0.0.1:8792/v1")
 GATEWAY_KEY = os.environ.get("ANIMICA_AI_GATEWAY_API_KEY", "")
-GH_API = "https://api.github.com"
-DEFAULT_MODEL = os.environ.get("ANIMICA_AGENT_MODEL", "qwen2.5-coder:14b")
+GH_API = os.environ.get("ANIMICA_AGENT_GH_API", "https://api.github.com").rstrip("/")
+DEFAULT_MODEL = os.environ.get("ANIMICA_AGENT_MODEL", "qwen2.5:7b")
 MAX_STEPS = int(os.environ.get("ANIMICA_AGENT_MAX_STEPS", "10"))
 MAX_FILE_BYTES = 60_000
 
@@ -71,12 +71,40 @@ async def llm(client: httpx.AsyncClient, model: str, messages: list[dict]) -> st
     r = await client.post(
         GATEWAY.rstrip("/") + "/chat/completions",
         headers=headers,
-        json={"model": model, "messages": messages, "temperature": 0.2, "max_tokens": 1024},
+        json={"model": model, "messages": messages, "temperature": 0.2, "max_tokens": 4096},
         timeout=300,
     )
     r.raise_for_status()
     d = r.json()
     return d["choices"][0]["message"]["content"]
+
+
+# Prefer higher-quality tiers, but run on ANY tier a worker is actually serving.
+_MODEL_PRIORITY = ["animica-chat-flagship", "animica-chat", "animica-chat-small"]
+
+
+async def serving_models(client: httpx.AsyncClient) -> set:
+    """Model ids a worker will currently pick up (serving!=false from /v1/models)."""
+    try:
+        r = await client.get(GATEWAY.rstrip("/") + "/models", timeout=12)
+        r.raise_for_status()
+        return {m["id"] for m in r.json().get("data", []) if m.get("serving") is not False}
+    except Exception:   # noqa: BLE001
+        return set()
+
+
+async def pick_serving_model(client: httpx.AsyncClient, preferred: Optional[str]) -> str:
+    """Resolve to a serving tier: the requested one if live, else the best serving
+    tier available, else best-effort fall back so we never hard-fail on a probe miss."""
+    avail = await serving_models(client)
+    if not avail:
+        return preferred or DEFAULT_MODEL
+    if preferred and preferred in avail:
+        return preferred
+    for m in _MODEL_PRIORITY:
+        if m in avail:
+            return m
+    return sorted(avail)[0]
 
 
 def parse_action(text: str) -> dict:
@@ -150,7 +178,6 @@ async def repos(req: ReposReq):
 
 @app.post("/agent/run")
 async def run(req: RunReq):
-    model = req.model or DEFAULT_MODEL
     if "/" not in req.repo:
         raise HTTPException(400, "repo must be 'owner/name'")
     owner, name = req.repo.split("/", 1)
@@ -158,6 +185,7 @@ async def run(req: RunReq):
     transcript: list[dict] = []
 
     async with httpx.AsyncClient() as client:
+        model = await pick_serving_model(client, req.model or DEFAULT_MODEL)
         # repo metadata
         meta = await gh(client, "GET", f"/repos/{owner}/{name}", req.token)
         if meta.status_code >= 400:
@@ -279,3 +307,149 @@ async def _commit_and_pr(client, token, owner, name, base, staged, title, body) 
 
 def _slug(s: str) -> str:
     return (re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "change")[:40]
+
+
+# ============================ agents-mode (build swarm) ============================ #
+SWARM_MAX_FILES = int(os.environ.get("ANIMICA_SWARM_MAX_FILES", "5"))
+
+
+class SwarmReq(BaseModel):
+    prompt: str
+    model: Optional[str] = None
+    files: Optional[dict[str, str]] = None   # when present → revise this project
+
+
+class PublishReq(BaseModel):
+    token: str
+    repo: str
+    project: str
+    files: dict[str, str]
+    base_branch: Optional[str] = None
+
+
+def _strip_fence(s: str) -> str:
+    s = (s or "").strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
+        i = s.rfind("```")
+        if i != -1:
+            s = s[:i]
+    return s.strip()
+
+
+LEADER_SYS = """You are the LEAD agent of an AI build swarm. Turn the user's request into a SMALL, self-contained web app using ONLY plain HTML/CSS/JS — no build step, no frameworks, no external network or CDNs. Output ONLY one JSON object and nothing else:
+{"project":"<short name>","description":"<one sentence>","files":[{"path":"index.html","spec":"<precise, self-contained brief for the worker who writes ONLY this file>"}]}
+Rules: 2 to 4 files. ALWAYS include index.html. Prefer index.html + style.css + app.js; index.html MUST reference them by those exact names (<link rel=stylesheet href="style.css">, <script src="app.js"></script>). Each spec fully describes that file so a worker can write it in isolation. Make it genuinely impressive, interactive, and actually runnable by opening index.html."""
+
+
+def _worker_sys(project: str, desc: str, paths: list[str]) -> str:
+    return (f"You are ONE worker in a build swarm. Project: {project} — {desc}. "
+            f"The project files are: {', '.join(paths)}. You write exactly ONE of them. "
+            "Output ONLY the raw, complete contents of your assigned file — no markdown fences, no commentary. "
+            "It MUST integrate with the sibling files (index.html links style.css and app.js by those exact names). "
+            "Plain HTML/CSS/JS only; no external resources, CDNs, or network calls.")
+
+
+def _inline_preview(files: dict[str, str]) -> str:
+    """Fold style.css / app.js into index.html so the result runs in an iframe srcdoc."""
+    html = files.get("index.html", "") or "<!doctype html><meta charset=utf-8><body>(no index.html produced)</body>"
+    css = files.get("style.css", "")
+    js = files.get("app.js", "")
+    if css:
+        new, n = re.subn(r'<link[^>]*href=["\']\.?/?style\.css["\'][^>]*>', f"<style>\n{css}\n</style>", html, flags=re.I)
+        html = new if n else (html.replace("</head>", f"<style>\n{css}\n</style></head>", 1) if "</head>" in html else f"<style>\n{css}\n</style>" + html)
+    if js:
+        new, n = re.subn(r'<script[^>]*src=["\']\.?/?app\.js["\'][^>]*>\s*</script>', f"<script>\n{js}\n</script>", html, flags=re.I)
+        html = new if n else (html.replace("</body>", f"<script>\n{js}\n</script></body>", 1) if "</body>" in html else html + f"<script>\n{js}\n</script>")
+    return html
+
+
+REVISE_LEADER_SYS = """You are the LEAD agent revising an existing web app. You are given the current files and a change request from the user. Output ONLY one JSON object and nothing else:
+{"project":"<name>","description":"<one sentence>","files":[{"path":"<path>","spec":"<what this file must now contain / how to change it>"}]}
+Include ONLY the files that must change or be added (1 to 4). Keep paths consistent with the existing project (index.html, style.css, app.js). Each spec fully describes the file's intended new state so a worker can rewrite it."""
+
+
+async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[dict] = None):
+    def ev(o):
+        return "data: " + json.dumps(o) + "\n\n"
+    preferred = model or DEFAULT_MODEL
+    existing = {k.lstrip("/"): v for k, v in (existing or {}).items() if k and ".." not in k}
+    revise = bool(existing)
+    async with httpx.AsyncClient() as client:
+        model = await pick_serving_model(client, preferred)
+        yield ev({"type": "phase", "phase": "planning",
+                  "note": "Leader agent is planning the revision…" if revise else "Leader agent is decomposing your request…"})
+        if revise:
+            cur = "\n".join(f"- {p} ({len(c)} chars)" for p, c in existing.items())
+            lead_msgs = [{"role": "system", "content": REVISE_LEADER_SYS},
+                         {"role": "user", "content": f"Current files:\n{cur}\n\nChange request: {prompt}"}]
+        else:
+            lead_msgs = [{"role": "system", "content": LEADER_SYS}, {"role": "user", "content": prompt}]
+        try:
+            raw = await llm(client, model, lead_msgs)
+        except Exception as e:   # noqa: BLE001
+            yield ev({"type": "error", "message": f"leader failed: {e}"}); return
+        plan = parse_action(_strip_fence(raw)) if "{" in (raw or "") else {}
+        clean, seen = [], set()
+        for f in (plan.get("files") or [])[:SWARM_MAX_FILES]:
+            p = str(f.get("path", "")).strip().lstrip("/")
+            if not p or p in seen or ".." in p:
+                continue
+            seen.add(p); clean.append({"path": p, "spec": str(f.get("spec", ""))})
+        if not clean and not revise:
+            clean = [{"path": "index.html", "spec": "The complete single-page app for: " + prompt}]
+        project = str(plan.get("project") or "app")[:60]
+        desc = str(plan.get("description") or prompt[:100])[:200]
+        yield ev({"type": "leader", "project": project, "description": desc,
+                  "files": [f["path"] for f in clean], "revise": revise})
+
+        built: dict[str, str] = dict(existing)
+        allpaths = list(dict.fromkeys([f["path"] for f in clean] + list(existing.keys())))
+        wsys = _worker_sys(project, desc, allpaths)
+        for f in clean:
+            yield ev({"type": "worker", "path": f["path"], "status": "start"})
+            umsg = f"Write the file `{f['path']}`.\nSpec: {f['spec']}"
+            cur_content = existing.get(f["path"], "")
+            if cur_content:
+                umsg += (f"\n\nCurrent contents of {f['path']} — rewrite the whole file to satisfy the spec, "
+                         f"keeping what still applies:\n{cur_content[:MAX_FILE_BYTES]}")
+            try:
+                wr = await llm(client, model, [{"role": "system", "content": wsys}, {"role": "user", "content": umsg}])
+                content = _strip_fence(wr)
+            except Exception as e:   # noqa: BLE001
+                content = existing.get(f["path"]) or f"<!-- worker error for {f['path']}: {e} -->"
+            built[f["path"]] = content
+            yield ev({"type": "worker", "path": f["path"], "status": "done", "bytes": len(content)})
+            # LIVE incremental preview — the app takes shape as each file lands
+            yield ev({"type": "preview", "preview": _inline_preview(built)})
+
+        yield ev({"type": "phase", "phase": "assembling", "note": "Finalizing the build…"})
+        yield ev({"type": "done", "project": project, "description": desc, "files": built,
+                  "preview": _inline_preview(built)})
+
+
+@app.post("/agent/swarm")
+async def swarm(req: SwarmReq):
+    return StreamingResponse(_swarm_events(req.prompt, req.model, req.files), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/agent/publish")
+async def publish(req: PublishReq):
+    """Open a PR containing a set of built files (used by agents-mode 'Open PR')."""
+    if "/" not in req.repo:
+        raise HTTPException(400, "repo must be 'owner/name'")
+    owner, name = req.repo.split("/", 1)
+    files = {k.lstrip("/"): v for k, v in (req.files or {}).items() if k and ".." not in k}
+    if not files:
+        raise HTTPException(400, "no files to publish")
+    async with httpx.AsyncClient() as client:
+        meta = await gh(client, "GET", f"/repos/{owner}/{name}", req.token)
+        if meta.status_code >= 400:
+            raise HTTPException(meta.status_code, f"Cannot access repo: {meta.text[:160]}")
+        base = req.base_branch or meta.json().get("default_branch", "main")
+        pr_url = await _commit_and_pr(client, req.token, owner, name, base, files,
+                                      f"Add {req.project} (built by the Animica agent swarm)",
+                                      f"The Animica agent swarm built **{req.project}** from a single prompt.\n\nFiles: "
+                                      + ", ".join(files))
+        return {"pr_url": pr_url, "files": list(files)}

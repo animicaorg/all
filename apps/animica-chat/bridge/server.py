@@ -412,33 +412,52 @@ def _full_payload(resp_id: str, model: str, text: str, usage: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+_MODEL_CHAIN_TIER = {
+    "animica-chat": "standard",
+    "animica-chat-small": "standard",
+    "animica-chat-flagship": "premium",
+}
+_MODELS_META = [
+    ("animica-chat", "On-chain AICF chat — routed through registered miners."),
+    ("animica-chat-small", "Tier 'small' on the AICF network."),
+    ("animica-chat-flagship", "Tier 'flagship' on the AICF network."),
+]
+_tier_avail_cache = {"at": 0.0, "val": set()}
+
+
+def _cached_tier_availability(ttl: float = 20.0) -> set:
+    now = time.time()
+    if _tier_avail_cache["at"] > 0 and now - _tier_avail_cache["at"] < ttl:
+        return _tier_avail_cache["val"]
+    try:
+        v = _probe_chain_tier_availability()
+    except Exception:    # noqa: BLE001
+        v = _tier_avail_cache["val"]
+    _tier_avail_cache["at"] = now
+    _tier_avail_cache["val"] = v
+    return v
+
+
 @app.get("/v1/models")
 async def list_models() -> JSONResponse:
-    return JSONResponse(
-        {
-            "object": "list",
-            "data": [
-                {
-                    "id": "animica-chat",
-                    "object": "model",
-                    "owned_by": "animica",
-                    "description": "On-chain AICF chat — routed through registered miners.",
-                },
-                {
-                    "id": "animica-chat-small",
-                    "object": "model",
-                    "owned_by": "animica",
-                    "description": "Tier 'small' on the AICF network.",
-                },
-                {
-                    "id": "animica-chat-flagship",
-                    "object": "model",
-                    "owned_by": "animica",
-                    "description": "Tier 'flagship' on the AICF network.",
-                },
-            ],
-        }
-    )
+    # `serving` = a registered, fresh worker exists for the model's tier, i.e. a
+    # worker WILL pick the job up. The UI greys out models where serving is false.
+    try:
+        available = await asyncio.get_event_loop().run_in_executor(None, _cached_tier_availability)
+    except Exception:    # noqa: BLE001
+        available = set()
+    data = []
+    for mid, desc in _MODELS_META:
+        ct = _MODEL_CHAIN_TIER.get(mid, "standard")
+        data.append({
+            "id": mid,
+            "object": "model",
+            "owned_by": "animica",
+            "description": desc,
+            "chain_tier": ct,
+            "serving": ct in available,
+        })
+    return JSONResponse({"object": "list", "data": data})
 
 
 # Static catalog of user-facing tiers. The chain itself uses the names
@@ -600,7 +619,10 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
         prompt=prompt,
         tier_preferred=tier,
         history=history,
-        max_output_tokens=req.max_tokens or 512,
+        # Default high so the SERVING WORKER's dynamic cap is the real limit
+        # ("as large as the network can handle"): the worker clamps this down to
+        # what its device+model can do (see aicf_inference._dynamic_token_cap).
+        max_output_tokens=req.max_tokens or 8192,
         temperature=req.temperature if req.temperature is not None else 0.2,
         top_p=req.top_p if req.top_p is not None else 0.95,
         yolo=True,    # bridge is internal; skip the interactive cost prompt

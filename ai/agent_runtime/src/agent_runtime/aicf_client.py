@@ -167,10 +167,20 @@ class AICFClient:
                 ]
                 time.sleep(delay_ms / 1000.0)
             except httpx.HTTPStatusError as exc:
-                # 4xx — don't retry, raise immediately as AICFError.
+                status = exc.response.status_code
+                # 5xx — the node was momentarily busy or a job hit a stale
+                # worker. Retry with backoff instead of surfacing a raw 503 to
+                # the user. 4xx are client errors — raise immediately.
+                if status >= 500 and attempt < self.max_retries:
+                    last_exc = exc
+                    delay_ms = self.retry_backoff_ms[
+                        min(attempt, len(self.retry_backoff_ms) - 1)
+                    ]
+                    time.sleep(delay_ms / 1000.0)
+                    continue
                 raise AICFError(
                     "HTTP_ERROR",
-                    f"AICF endpoint returned {exc.response.status_code}",
+                    f"AICF endpoint returned {status}",
                     detail={"body": exc.response.text[:1024]},
                 ) from exc
         raise ProviderUnavailable(
