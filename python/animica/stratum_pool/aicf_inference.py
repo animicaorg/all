@@ -20,7 +20,8 @@ Activation:
                                             model's context window, see
                                             _dynamic_token_cap)
 - ANIMICA_AICF_CODING_PROMPT=...           (system prompt for code tasks)
-- ANIMICA_AICF_DEVICE=cpu                  (cpu|cuda; default auto)
+- ANIMICA_AICF_DEVICE=cpu                  (cpu|cuda|mps; default auto —
+                                            CUDA → Apple Metal (MPS) → CPU)
 
 If `transformers` and `torch` aren't importable, the engine still
 produces output (the stub), so chat round-trips work without the
@@ -561,7 +562,18 @@ class InferenceEngine:
         except Exception as exc:
             return f"ml_stack_unavailable: {exc}"
         try:
-            device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
+            # Auto-detect the best accelerator when not pinned: CUDA, then Apple
+            # Metal (MPS), then CPU. Without the MPS branch an Apple Silicon box
+            # (M-series Mac) silently ran every model on the CPU cores because
+            # torch.cuda.is_available() is False there.
+            device = self._device
+            if not device:
+                if torch.cuda.is_available():
+                    device = "cuda"
+                elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+                    device = "mps"
+                else:
+                    device = "cpu"
             self._tokenizer = AutoTokenizer.from_pretrained(model_id)
             kwargs: dict[str, Any] = {}
             # startswith so an explicit "cuda:0"/"cuda:1" also GPU-loads
@@ -569,9 +581,25 @@ class InferenceEngine:
             if device.startswith("cuda"):
                 kwargs["torch_dtype"] = torch.float16
                 kwargs["device_map"] = "auto"
+            elif device.startswith("mps"):
+                # Run any op unimplemented on Metal on the CPU instead of raising
+                # (an uncaught error here would silently stub-fallback forever).
+                os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+                # fp16 by default: fp32 is 2x the memory and a 7B won't fit a
+                # 16-24 GB Mac. fp16 on MPS is fine for Qwen-class models but can
+                # be numerically off for some architectures — set
+                # ANIMICA_AICF_MPS_DTYPE=float32 if output is garbage (needs RAM).
+                _mps_dtype = os.environ.get("ANIMICA_AICF_MPS_DTYPE", "float16").strip().lower()
+                kwargs["torch_dtype"] = (
+                    torch.float32 if _mps_dtype in ("float32", "fp32") else torch.float16
+                )
+                # device_map="auto" is not for MPS — we load then move onto the
+                # GPU below with .to("mps").
             self._model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
             if device == "cpu":
                 self._model = self._model.to("cpu")
+            elif device.startswith("mps"):
+                self._model = self._model.to("mps")
             self._loaded = True
             self._effective_model = model_id
             log.info(

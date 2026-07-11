@@ -8,6 +8,17 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [7.1.6] - 2026-07-11
+### Fixed — AICF inference uses the Apple Metal (MPS) GPU, not the CPU
+Non-consensus, worker-side.
+
+- The inference engine (`aicf_inference._try_load`) only ever loaded models on
+  `cuda` or `cpu`. On an Apple Silicon Mac (M1/M2/M3) `torch.cuda.is_available()`
+  is False, so it silently ran **every model on the CPU cores** — the Metal GPU
+  went unused. It now auto-detects the accelerator (CUDA → Apple Metal/MPS → CPU)
+  and loads on MPS in fp16, so Mac miners actually serve on the GPU. Pin with
+  `ANIMICA_AICF_DEVICE=cpu|cuda|mps` to override.
+
 ## [7.1.5] - 2026-07-11
 ### Fixed — `animica up` gates AICF serving tiers by memory
 Non-consensus, worker-side.
