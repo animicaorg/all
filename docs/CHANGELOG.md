@@ -8,6 +8,18 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [7.1.4] - 2026-07-11
+### Added — miners pre-install their models; `animica up` is ready-to-serve
+Non-consensus, worker-side.
+
+- **`animica up` (and `miner start --aicf` / `aicf-worker start`) now pre-download
+  the models for the tiers the miner advertises**, in the background, so the first
+  inference job serves immediately instead of stalling minutes on a multi-GB fetch.
+  Idempotent and best-effort (a failure just falls back to lazy download). Disable
+  with `ANIMICA_AICF_PREFETCH=0`.
+- **New `animica miner install [--tiers …]`** to pre-fetch the tier models up front
+  with visible progress (defaults to `ANIMICA_AICF_TIERS`, else all tiers).
+
 ## [7.1.3] - 2026-07-11
 ### Improved — much better AI coding, served by miners
 Non-consensus. All changes live in the miner-served AICF worker and the edge

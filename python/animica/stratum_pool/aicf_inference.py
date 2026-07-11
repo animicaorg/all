@@ -301,6 +301,51 @@ _TIER_DEFAULT_MODEL: dict[str, str] = {
 }
 
 
+def prefetch_tier_models(tiers, *, log=None) -> list[str]:
+    """Pre-download the HF weights for each advertised tier.
+
+    So a freshly-started worker serves its first job immediately instead of
+    stalling minutes on a multi-GB download. Idempotent (``snapshot_download``
+    skips already-cached files) and best-effort — any failure just means that
+    model downloads lazily on first use. Disable with ``ANIMICA_AICF_PREFETCH=0``.
+    Returns the list of model ids that are now present locally.
+    """
+    _log = log or (lambda _m: None)
+    if os.environ.get("ANIMICA_AICF_PREFETCH", "1").strip().lower() in ("0", "false", "no", "off"):
+        return []
+    ready: list[str] = []
+    seen: set[str] = set()
+    for tier in tiers:
+        try:
+            model_id = resolve_tier_model(tier)
+        except Exception as exc:   # noqa: BLE001
+            _log(f"aicf-prefetch: cannot resolve tier {tier!r}: {exc}")
+            continue
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        # A resolved local bundle / directory is already "installed".
+        try:
+            if Path(model_id).expanduser().exists():
+                ready.append(model_id)
+                continue
+        except Exception:   # noqa: BLE001
+            pass
+        try:
+            from huggingface_hub import snapshot_download
+        except Exception as exc:   # noqa: BLE001
+            _log(f"aicf-prefetch: huggingface_hub unavailable ({exc}); models will load lazily")
+            return ready
+        try:
+            _log(f"aicf-prefetch: downloading {model_id} (tier {tier}) …")
+            snapshot_download(model_id)
+            _log(f"aicf-prefetch: {model_id} ready")
+            ready.append(model_id)
+        except Exception as exc:   # noqa: BLE001
+            _log(f"aicf-prefetch: {model_id} download failed ({exc}); will retry on first job")
+    return ready
+
+
 # System prompt prepended to every chat turn so off-the-shelf small
 # models (Qwen 0.5B, etc.) have factual grounding about Animica instead
 # of hallucinating a "mobile games division" or a generic

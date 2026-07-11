@@ -19,6 +19,7 @@ import base64
 import json
 import os
 import re
+import time
 from typing import Any, Optional
 
 import httpx
@@ -77,6 +78,39 @@ async def llm(client: httpx.AsyncClient, model: str, messages: list[dict]) -> st
     r.raise_for_status()
     d = r.json()
     return d["choices"][0]["message"]["content"]
+
+
+async def llm_stream(client: httpx.AsyncClient, model: str, messages: list[dict], *, max_tokens: int = 4096):
+    """Yield content deltas from the gateway's streaming chat endpoint.
+
+    Lets the build swarm repaint the live preview token-by-token instead of
+    waiting for a whole file to finish.
+    """
+    headers = {"Content-Type": "application/json"}
+    if GATEWAY_KEY:
+        headers["Authorization"] = f"Bearer {GATEWAY_KEY}"
+    async with client.stream(
+        "POST",
+        GATEWAY.rstrip("/") + "/chat/completions",
+        headers=headers,
+        json={"model": model, "messages": messages, "temperature": 0.2,
+              "max_tokens": max_tokens, "stream": True},
+        timeout=600,
+    ) as r:
+        r.raise_for_status()
+        async for line in r.aiter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                obj = json.loads(payload)
+                delta = obj["choices"][0]["delta"].get("content") or ""
+            except Exception:   # noqa: BLE001
+                continue
+            if delta:
+                yield delta
 
 
 # Prefer higher-quality tiers, but run on ANY tier a worker is actually serving.
@@ -311,6 +345,13 @@ def _slug(s: str) -> str:
 
 # ============================ agents-mode (build swarm) ============================ #
 SWARM_MAX_FILES = int(os.environ.get("ANIMICA_SWARM_MAX_FILES", "5"))
+# Refinement is DYNAMIC: the swarm keeps running critic->improve passes until
+# the critic judges the product genuinely good (score >= bar / done), bounded by
+# how much the network can actually chew through — a fast/deep network fits many
+# passes in the time budget, a thin/slow one fits fewer. All tunable per deploy.
+REFINE_MAX_ROUNDS = int(os.environ.get("ANIMICA_SWARM_REFINE_MAX", "24"))       # hard safety cap
+REFINE_TIME_BUDGET_S = float(os.environ.get("ANIMICA_SWARM_REFINE_BUDGET_S", "900"))  # wall-clock budget
+REFINE_SCORE_BAR = int(os.environ.get("ANIMICA_SWARM_REFINE_SCORE", "90"))      # "good product" bar (0-100)
 
 
 class SwarmReq(BaseModel):
@@ -339,7 +380,7 @@ def _strip_fence(s: str) -> str:
 
 LEADER_SYS = """You are the LEAD agent of an AI build swarm. Turn the user's request into a SMALL, self-contained web app using ONLY plain HTML/CSS/JS — no build step, no frameworks, no external network or CDNs. Output ONLY one JSON object and nothing else:
 {"project":"<short name>","description":"<one sentence>","files":[{"path":"index.html","spec":"<precise, self-contained brief for the worker who writes ONLY this file>"}]}
-Rules: 2 to 4 files. ALWAYS include index.html. Prefer index.html + style.css + app.js; index.html MUST reference them by those exact names (<link rel=stylesheet href="style.css">, <script src="app.js"></script>). Each spec fully describes that file so a worker can write it in isolation. Make it genuinely impressive, interactive, and actually runnable by opening index.html."""
+Rules: ALWAYS split the work into at LEAST 3 files — index.html + style.css + app.js — and up to 5 for richer apps (e.g. a second JS module or a data file). index.html MUST reference them by those exact names (<link rel=stylesheet href="style.css">, <script src="app.js"></script>). Each spec is a precise, self-contained brief so a worker can write that file in isolation. Aim high: a genuinely impressive, polished, interactive product — real features, thoughtful layout and styling, keyboard support and empty/edge states — not a bare-minimum demo. It must run by simply opening index.html."""
 
 
 def _worker_sys(project: str, desc: str, paths: list[str]) -> str:
@@ -362,6 +403,21 @@ def _inline_preview(files: dict[str, str]) -> str:
         new, n = re.subn(r'<script[^>]*src=["\']\.?/?app\.js["\'][^>]*>\s*</script>', f"<script>\n{js}\n</script>", html, flags=re.I)
         html = new if n else (html.replace("</body>", f"<script>\n{js}\n</script></body>", 1) if "</body>" in html else html + f"<script>\n{js}\n</script>")
     return html
+
+
+CRITIC_SYS = """You are the QUALITY CRITIC of an AI build swarm. You are shown the current files of a small web app (plain HTML/CSS/JS, no build step, no external network/CDNs). Your job is to make it genuinely impressive and complete, and to judge honestly when it is good enough. Output ONLY one JSON object and nothing else:
+{"score":<0-100>,"summary":"<one short line on what you're improving>","done":false,"files":[{"path":"<existing or new file>","spec":"<precise, self-contained instructions for the worker who will rewrite this WHOLE file>"}]}
+Scoring — be a demanding judge. A "good product" (score >= 90) is complete, bug-free, visually polished, genuinely interactive, keyboard-accessible, and handles empty/error states. Score honestly: a first draft is usually 55-75.
+Each pass, identify the concrete improvements worth the MOST right now — missing features the request implies, real bugs, broken/incomplete code, weak visual design, missing interactivity, missing empty/error states — at most 4 files, ordered by impact. Keep paths consistent (index.html, style.css, app.js, …). Each spec is self-contained: the worker sees only your spec plus the file's current contents. NEVER remove working features. When it's genuinely excellent and further edits wouldn't clearly help, set "done":true (and score it accordingly)."""
+
+
+def _critic_user(project: str, desc: str, orig_prompt: str, files: dict[str, str]) -> str:
+    parts = [f"Project: {project}", f"Goal: {desc}", f"Original user request: {orig_prompt}",
+             "", "Current files:"]
+    for p, c in files.items():
+        parts.append(f"\n===== {p} ({len(c)} chars) =====\n{c[:MAX_FILE_BYTES]}")
+    parts.append("\nReturn your JSON improvement plan now (or {\"done\":true} if it's already excellent).")
+    return "\n".join(parts)
 
 
 REVISE_LEADER_SYS = """You are the LEAD agent revising an existing web app. You are given the current files and a change request from the user. Output ONLY one JSON object and nothing else:
@@ -404,24 +460,90 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                   "files": [f["path"] for f in clean], "revise": revise})
 
         built: dict[str, str] = dict(existing)
-        allpaths = list(dict.fromkeys([f["path"] for f in clean] + list(existing.keys())))
-        wsys = _worker_sys(project, desc, allpaths)
-        for f in clean:
-            yield ev({"type": "worker", "path": f["path"], "status": "start"})
-            umsg = f"Write the file `{f['path']}`.\nSpec: {f['spec']}"
-            cur_content = existing.get(f["path"], "")
-            if cur_content:
-                umsg += (f"\n\nCurrent contents of {f['path']} — rewrite the whole file to satisfy the spec, "
-                         f"keeping what still applies:\n{cur_content[:MAX_FILE_BYTES]}")
+
+        async def _build_file(path: str, spec: str, paths: list[str]) -> str:
+            wsys = _worker_sys(project, desc, paths)
+            umsg = f"Write the file `{path}`.\nSpec: {spec}"
+            cur = built.get(path) or existing.get(path, "")
+            if cur:
+                umsg += (f"\n\nCurrent contents of {path} — rewrite the WHOLE file to satisfy the "
+                         f"spec, keeping what already works and improving the rest:\n{cur[:MAX_FILE_BYTES]}")
             try:
-                wr = await llm(client, model, [{"role": "system", "content": wsys}, {"role": "user", "content": umsg}])
-                content = _strip_fence(wr)
+                return _strip_fence(await llm(client, model, [
+                    {"role": "system", "content": wsys}, {"role": "user", "content": umsg}]))
             except Exception as e:   # noqa: BLE001
-                content = existing.get(f["path"]) or f"<!-- worker error for {f['path']}: {e} -->"
-            built[f["path"]] = content
-            yield ev({"type": "worker", "path": f["path"], "status": "done", "bytes": len(content)})
-            # LIVE incremental preview — the app takes shape as each file lands
+                return built.get(path) or existing.get(path) or f"<!-- worker error for {path}: {e} -->"
+
+        # Round 0 — initial build from the leader's plan.
+        for f in clean:
+            paths = list(dict.fromkeys([x["path"] for x in clean] + list(built.keys())))
+            yield ev({"type": "worker", "path": f["path"], "status": "start"})
+            built[f["path"]] = await _build_file(f["path"], f["spec"], paths)
+            yield ev({"type": "worker", "path": f["path"], "status": "done", "bytes": len(built[f["path"]])})
             yield ev({"type": "preview", "preview": _inline_preview(built)})
+
+        # Refinement — a critic agent reviews the assembled app and dispatches
+        # improvement workers, so the swarm keeps making the product better
+        # instead of stopping after the first draft. How many passes it runs is
+        # DYNAMIC: it continues until the critic judges the product genuinely
+        # good (score >= bar) OR the network runs out of the wall-clock budget
+        # (fast/deep networks fit more passes; thin/slow ones fit fewer). The
+        # preview repaints after every file so it visibly improves as it works.
+        t_refine = time.monotonic()
+        round_times: list[float] = []
+        rnd = 0
+        while rnd < REFINE_MAX_ROUNDS:
+            elapsed = time.monotonic() - t_refine
+            remaining = REFINE_TIME_BUDGET_S - elapsed
+            # Predictive stop: don't start a pass we can't afford to finish
+            # (estimate from the average of prior passes).
+            est = (sum(round_times) / len(round_times)) if round_times else 0.0
+            if remaining <= 0 or (est and remaining < est):
+                yield ev({"type": "phase", "phase": "reviewing",
+                          "note": f"Reached the build budget after {rnd} refinement pass(es)."})
+                break
+            rnd += 1
+            r_start = time.monotonic()
+            yield ev({"type": "phase", "phase": "reviewing",
+                      "note": f"Critic agent is reviewing the build (pass {rnd}, {int(remaining)}s of budget left)…"})
+            try:
+                craw = await llm(client, model, [
+                    {"role": "system", "content": CRITIC_SYS},
+                    {"role": "user", "content": _critic_user(project, desc, prompt, built)}])
+                cplan = parse_action(_strip_fence(craw)) if "{" in (craw or "") else {}
+            except Exception:   # noqa: BLE001
+                break
+            try:
+                score = int(cplan.get("score"))
+            except (TypeError, ValueError):
+                score = None
+            if score is not None:
+                yield ev({"type": "phase", "phase": "reviewing", "note": f"Critic score: {score}/100"})
+            if cplan.get("done") is True or (score is not None and score >= REFINE_SCORE_BAR):
+                yield ev({"type": "phase", "phase": "reviewing",
+                          "note": f"Critic: the build is good (pass {rnd}). Finishing."})
+                break
+            improvements, fseen = [], set()
+            for f in (cplan.get("files") or [])[:SWARM_MAX_FILES]:
+                p = str(f.get("path", "")).strip().lstrip("/")
+                if not p or ".." in p or p in fseen:
+                    continue
+                fseen.add(p)
+                improvements.append({"path": p, "spec": str(f.get("spec", ""))})
+            if not improvements:
+                yield ev({"type": "phase", "phase": "reviewing",
+                          "note": f"Critic proposed no further changes (pass {rnd}). Finishing."})
+                break
+            yield ev({"type": "leader", "project": project, "description": desc,
+                      "files": [i["path"] for i in improvements], "round": rnd, "refine": True,
+                      "note": str(cplan.get("summary") or "")[:200]})
+            for f in improvements:
+                paths = list(dict.fromkeys(list(built.keys()) + [f["path"]]))
+                yield ev({"type": "worker", "path": f["path"], "status": "start"})
+                built[f["path"]] = await _build_file(f["path"], f["spec"], paths)
+                yield ev({"type": "worker", "path": f["path"], "status": "done", "bytes": len(built[f["path"]])})
+                yield ev({"type": "preview", "preview": _inline_preview(built)})
+            round_times.append(time.monotonic() - r_start)
 
         yield ev({"type": "phase", "phase": "assembling", "note": "Finalizing the build…"})
         yield ev({"type": "done", "project": project, "description": desc, "files": built,

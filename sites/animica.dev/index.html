@@ -10,6 +10,10 @@
 <link rel="canonical" href="https://animica.dev/">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="icon" href="/animica-mark.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Animica AI">
 <link rel="alternate" type="text/plain" title="llms.txt (AI-agent guide)" href="/llms.txt">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="animica.dev">
@@ -158,6 +162,50 @@
   footer .wrap{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
   footer a{color:var(--muted)}
   .mk{flex:0 0 auto}
+
+  /* PWA install button */
+  .pwa-btn{display:none;align-items:center;gap:6px;font:inherit;font-size:13px;font-weight:500;color:#fff;background:var(--blue);border:0;border-radius:10px;padding:8px 13px;cursor:pointer}
+  .pwa-btn.show{display:inline-flex}
+
+  /* live AI stats strip */
+  .aistrip{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:22px;padding:13px 18px;background:var(--card);border:1px solid var(--line);border-radius:14px;font-size:13.5px}
+  .aistrip .live{display:inline-flex;align-items:center;gap:7px;color:var(--ok);font-family:"JetBrains Mono";font-size:12px}
+  .aistrip .live .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(63,143,91,.18);animation:anmpulse 2s infinite}
+  @keyframes anmpulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .aistrip .stat b{font-family:"Fraunces",serif;font-weight:600;color:var(--ink);font-size:16px}
+  .aistrip .stat .l{color:var(--muted);font-size:12px}
+  .aistrip .spark{display:flex;align-items:flex-end;gap:2px;height:26px;margin-left:auto}
+  .aistrip .spark i{width:4px;background:linear-gradient(var(--clay),var(--blue));border-radius:2px;min-height:2px;opacity:.9}
+  .aistrip .models{display:flex;gap:6px;flex-wrap:wrap}
+  .aistrip .models span{font-family:"JetBrains Mono";font-size:11px;color:var(--blue);background:rgba(46,99,255,.08);border:1px solid rgba(46,99,255,.2);padding:2px 8px;border-radius:999px}
+  @media(max-width:600px){ .aistrip .spark{display:none} }
+
+  /* build swarm */
+  .swarm{margin-top:18px}
+  .swarm-tree{display:flex;flex-direction:column;gap:8px}
+  .snode{display:flex;align-items:center;gap:11px;padding:11px 14px;border:1px solid var(--line);border-radius:12px;background:var(--paper);font-size:14px}
+  .snode.leader{border-color:rgba(46,99,255,.35);background:rgba(46,99,255,.05)}
+  .snode.worker{margin-left:24px}
+  .snode .ic{flex:0 0 auto;width:20px;display:grid;place-items:center}
+  .snode .t{flex:1}
+  .snode .st{font-family:"JetBrains Mono";font-size:11.5px;color:var(--muted-2)}
+  .snode.done .st{color:var(--ok)}
+  .spin{width:15px;height:15px;border:2px solid var(--line-2);border-top-color:var(--clay);border-radius:50%;animation:anmspin .8s linear infinite}
+  @keyframes anmspin{to{transform:rotate(360deg)}}
+  .build-result{margin-top:18px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card)}
+  .br-tabs{display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--paper);flex-wrap:wrap}
+  .br-tab{font:inherit;font-size:13px;color:var(--muted);background:transparent;border:1px solid transparent;border-radius:8px;padding:5px 12px;cursor:pointer}
+  .br-tab.active{color:var(--ink);background:var(--card);border-color:var(--line-2)}
+  .br-dl,.br-pr{font:inherit;font-size:12.5px;border:1px solid var(--line-2);background:transparent;border-radius:8px;padding:5px 11px;cursor:pointer;color:var(--ink)}
+  .br-dl{margin-left:auto} .br-pr{color:var(--ok);border-color:rgba(63,143,91,.4)}
+  .br-preview{width:100%;height:460px;border:0;background:#fff;display:block}
+  .br-code{max-height:460px;overflow:auto;background:#161310}
+  .br-code .f{font-family:"JetBrains Mono";font-size:11.5px;color:#e6a583;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .br-code pre{margin:0;border:0;border-radius:0;background:#161310;color:#e9e0d2;padding:12px 14px}
+  @media(max-width:600px){ .br-preview{height:340px} }
+  .chat-tools{display:flex;gap:8px;align-items:center;margin-left:auto}
+  .chat-tools button{font:inherit;font-size:11.5px;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:7px;padding:4px 9px;cursor:pointer}
+  .chat-tools button:hover{color:var(--clay-ink);border-color:var(--clay)}
 </style>
 </head>
 <body>
@@ -168,11 +216,13 @@
   <div class="links">
     <a href="#chat">Chat</a>
     <a href="#agent">Agent</a>
+    <a href="#build">Build</a>
     <a href="#agents">For agents</a>
     <a href="#api">API</a>
     <a href="/portal.html">Docs</a>
   </div>
   <span class="sp"></span>
+  <button id="pwaInstall" class="pwa-btn" type="button">⬇ Install app</button>
   <span class="pill"><span class="d"></span> Free · no API key</span>
 </nav></div></header>
 
@@ -199,10 +249,11 @@
         <svg width="18" height="18" viewBox="0 0 256 256" aria-hidden="true"><circle cx="128" cy="128" r="112" fill="#2E63FF"/><circle cx="128" cy="128" r="88" fill="#fff"/><path d="M128 68 L84 192 H172 L128 68 Z" fill="#2E63FF"/><rect x="104" y="160" width="48" height="16" rx="8" fill="#2E63FF"/></svg>
         <span class="t">Chat — free, right now</span>
         <select id="model" aria-label="Model">
-          <option value="qwen2.5:7b">qwen2.5:7b · general</option>
-          <option value="deepseek-coder:6.7b">deepseek-coder:6.7b · code</option>
-          <option value="qwen2.5:0.5b">qwen2.5:0.5b · fast</option>
+          <option value="animica-chat">animica-chat · standard</option>
+          <option value="animica-chat-small">animica-chat-small · fast</option>
+          <option value="animica-chat-flagship">animica-chat-flagship · quality</option>
         </select>
+        <button id="chatClear" type="button" title="Clear this conversation" style="font:inherit;font-size:12px;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:8px;padding:5px 9px;cursor:pointer">Clear</button>
       </div>
       <div class="msgs" id="msgs">
         <div class="m bot">Hi — I'm running on Animica's free, treasury-funded AI. Ask me anything. No key needed, and you can verify every reply with a signed receipt.</div>
@@ -211,6 +262,43 @@
         <textarea id="q" rows="1" placeholder="Ask anything…  (Enter to send, Shift+Enter for newline)"></textarea>
         <button id="send">Send</button>
       </div>
+    </div>
+  </section>
+
+  <section style="padding-top:6px">
+    <div class="aistrip" id="aistrip">
+      <span class="live"><span class="dot"></span> LIVE</span>
+      <span class="stat"><b id="stReq">—</b> <span class="l">free AI requests served</span></span>
+      <span class="stat"><b id="stHr">—</b> <span class="l">last hour</span></span>
+      <span class="models" id="stModels"></span>
+      <span class="spark" id="stSpark" title="AI requests per minute (last 30m)"></span>
+    </div>
+  </section>
+
+  <section id="build">
+    <div class="kicker">Agents mode</div>
+    <h2>One prompt. <span class="it">A swarm of agents builds it.</span></h2>
+    <p class="sub">A leader agent plans your app, then dispatches worker agents — one per file — and assembles a live, runnable result. All on the free model, no key.</p>
+    <div class="panel">
+      <div class="field" style="flex:1 1 100%">
+        <textarea id="buildPrompt" placeholder="Describe an app to build…  e.g. “a neon snake game with a score”, “a markdown notepad with live preview”, “a pomodoro timer”"></textarea>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="buildGo">Build it with agents →</button>
+        <span class="warn" id="buildNote"></span>
+      </div>
+      <div class="swarm" id="swarm" style="display:none"><div class="swarm-tree" id="swarmTree"></div></div>
+      <div class="build-result" id="buildResult" style="display:none">
+        <div class="br-tabs">
+          <button class="br-tab active" data-tab="preview">Preview</button>
+          <button class="br-tab" data-tab="code">Code</button>
+          <button class="br-dl" id="buildDl">Download .html</button>
+          <button class="br-pr" id="buildPr" style="display:none">Open PR →</button>
+        </div>
+        <iframe class="br-preview" id="buildPreview" sandbox="allow-scripts allow-forms allow-pointer-lock allow-modals allow-popups" title="Build preview — interactive"></iframe>
+        <div class="br-code" id="buildCode" style="display:none"></div>
+      </div>
+      <p class="warn">No GitHub or signup needed — build, preview, steer and download right here. Built by AI agents on the free CPU model, so results vary and a build can take a couple of minutes; previews run sandboxed. Connecting GitHub (in the Agent section) is optional — only if you want to open a PR.</p>
     </div>
   </section>
 
@@ -264,11 +352,11 @@
         <a href="/.well-known/agents.json">/.well-known/agents.json</a>
         <a href="/net-height">/net-height</a>
       </div>
-      <pre><button class="copy" data-copy='curl https://animica.dev/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"qwen2.5:7b\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a haiku about post-quantum crypto\"}]}"'>copy</button><span class="cm"># no API key — just call it</span>
+      <pre><button class="copy" data-copy='curl https://animica.dev/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"animica-chat\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a haiku about post-quantum crypto\"}]}"'>copy</button><span class="cm"># no API key — just call it</span>
 curl https://animica.dev/v1/chat/completions \
   -H <span class="st">"Content-Type: application/json"</span> \
   -d '{
-    <span class="fn">"model"</span>: <span class="st">"qwen2.5:7b"</span>,
+    <span class="fn">"model"</span>: <span class="st">"animica-chat"</span>,
     <span class="fn">"messages"</span>: [{<span class="fn">"role"</span>:<span class="st">"user"</span>,<span class="fn">"content"</span>:<span class="st">"Hello"</span>}]
   }'</pre>
     </div>
@@ -279,12 +367,10 @@ curl https://animica.dev/v1/chat/completions \
     <h2>OpenAI-compatible. <span class="it">Point your client here.</span></h2>
     <p class="sub">Set the base URL to <span class="mono">https://animica.dev/v1</span> and use any API key value (it's ignored). Chat, completions, embeddings.</p>
     <table class="models">
-      <tr><td>qwen2.5:7b</td><td>Balanced general chat &amp; reasoning — the default recommendation</td></tr>
-      <tr><td>deepseek-coder:6.7b</td><td>Coding model — recommended for code</td></tr>
-      <tr><td>qwen2.5-coder:14b</td><td>Largest coder — available via the API (slow on the free CPU tier)</td></tr>
-      <tr><td>qwen2.5:0.5b</td><td>Tiny &amp; fast</td></tr>
-      <tr><td>nomic-embed-text</td><td>Embeddings — <span class="mono">POST /v1/embeddings</span></td></tr>
-      <tr><td>deterministic</td><td>Reproducible, no external model</td></tr>
+      <tr><td>animica-chat</td><td>Standard tier — general chat &amp; reasoning (default)</td></tr>
+      <tr><td>animica-chat-small</td><td>Small tier — faster and lighter</td></tr>
+      <tr><td>animica-chat-flagship</td><td>Flagship tier — highest quality (routes to a flagship-capable miner)</td></tr>
+      <tr><td colspan="2" style="color:var(--muted)">See the live list at <span class="mono">GET /v1/models</span>. Inference is served by the Animica miner network.</td></tr>
     </table>
     <div class="grid">
       <div class="card"><span class="ic">🔑</span><h3>No key</h3><p>No signup, no billing, no dashboard. Send a request and get a response. Rate limit 30/min per IP.</p></div>
@@ -323,7 +409,32 @@ curl https://animica.dev/v1/chat/completions \
   var V1="/v1", AGENT="/agent";
   var msgs=document.getElementById('msgs'), q=document.getElementById('q'), send=document.getElementById('send'), modelSel=document.getElementById('model');
 
+  // Grey out models no worker will serve right now (serving=false from /v1/models).
+  function refreshModels(){
+    fetch('/v1/models',{cache:'no-store'}).then(function(r){return r.ok?r.json():null}).then(function(d){
+      if(!d||!d.data) return;
+      var avail={}; d.data.forEach(function(m){ avail[m.id]=(m.serving!==false); });
+      var opts=modelSel.options, firstOk=null;
+      for(var i=0;i<opts.length;i++){ var o=opts[i];
+        if(!o.getAttribute('data-label')) o.setAttribute('data-label', o.textContent);
+        var base=o.getAttribute('data-label'), ok=(avail[o.value]!==false);
+        o.disabled=!ok;
+        o.textContent = ok ? base : base+' · no worker';
+        if(ok && firstOk===null) firstOk=o.value;
+      }
+      var sel=modelSel.options[modelSel.selectedIndex];
+      if(sel && sel.disabled && firstOk){ modelSel.value=firstOk; }
+    }).catch(function(){});
+  }
+  refreshModels(); setInterval(refreshModels, 60000);
+
   function add(cls, text){ var d=document.createElement('div'); d.className='m '+cls; d.textContent=text; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; return d; }
+  // ---- local session persistence ----
+  var CHIST='anmChat-v1', hist=[];
+  function saveChat(){ try{ localStorage.setItem(CHIST, JSON.stringify(hist.slice(-40))); }catch(e){} }
+  try{ var _s=JSON.parse(localStorage.getItem(CHIST)||'[]'); if(_s.length){ msgs.innerHTML=''; hist=_s.slice(-40); hist.forEach(function(x){ add(x.r==='u'?'user':'bot', x.t); }); } }catch(e){}
+  var _cc=document.getElementById('chatClear');
+  if(_cc) _cc.onclick=function(){ hist=[]; try{localStorage.removeItem(CHIST)}catch(e){}; msgs.innerHTML='<div class="m bot">New chat — ask anything on the free Animica AI.</div>'; };
   function auto(){ q.style.height='auto'; q.style.height=Math.min(120,q.scrollHeight)+'px'; }
   q.addEventListener('input',auto);
   q.addEventListener('keydown',function(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); } });
@@ -331,16 +442,17 @@ curl https://animica.dev/v1/chat/completions \
 
   async function doSend(){
     var text=q.value.trim(); if(!text) return;
-    add('user',text); q.value=''; auto(); send.disabled=true;
+    add('user',text); q.value=''; auto(); send.disabled=true; hist.push({r:'u',t:text});
     var bot=add('bot','…'); var acc='';
+    var warm=setTimeout(function(){ if(!acc) bot.innerHTML='<span style="opacity:.6">Warming up the free model — the first reply can take up to a minute…</span>'; }, 3000);
     try{
       var res=await fetch(V1+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({model:modelSel.value,stream:true,messages:[
           {role:'system',content:'You are a concise, helpful assistant on the free Animica AI network.'},
           {role:'user',content:text}]})});
-      if(!res.ok){ bot.textContent='('+res.status+') '+(res.status===429?'Rate limit reached — please wait a moment.':'The free model is busy, try again.'); send.disabled=false; return; }
+      if(!res.ok){ clearTimeout(warm); bot.textContent='('+res.status+') '+(res.status===429?'Rate limit reached — please wait a moment.':'The free model is busy, try again.'); send.disabled=false; return; }
       var reader=res.body.getReader(), dec=new TextDecoder(), buf='', receipt=null;
-      bot.textContent='';
+      clearTimeout(warm);
       while(true){ var r=await reader.read(); if(r.done) break; buf+=dec.decode(r.value,{stream:true});
         var parts=buf.split('\n'); buf=parts.pop();
         for(var i=0;i<parts.length;i++){ var ln=parts[i].trim(); if(ln.indexOf('data:')!==0) continue; ln=ln.replace(/^data:\s*/,''); if(!ln||ln==='[DONE]') continue;
@@ -364,7 +476,8 @@ curl https://animica.dev/v1/chat/completions \
       var chip=document.createElement('div'); chip.className='rcpt';
       chip.innerHTML='🔏 post-quantum signed · proof-of-inference'+(receipt&&receipt.id?(' · '+String(receipt.id).slice(0,14)+'…'):'');
       bot.appendChild(chip);
-    }catch(e){ bot.textContent='Network error — please retry.'; }
+    }catch(e){ clearTimeout(warm); bot.textContent='Network error — please retry.'; }
+    hist.push({r:'b',t:(acc||bot.textContent||'').slice(0,4000)}); saveChat();
     send.disabled=false;
   }
 
@@ -411,6 +524,112 @@ curl https://animica.dev/v1/chat/completions \
 
   document.addEventListener('click',function(e){ var b=e.target.closest&&e.target.closest('.copy'); if(!b) return;
     var t=b.getAttribute('data-copy')||''; navigator.clipboard&&navigator.clipboard.writeText(t).then(function(){ var o=b.textContent; b.textContent='copied'; setTimeout(function(){b.textContent=o;},1300); }); });
+})();
+</script>
+
+<script>
+(function(){
+  var AGENT='/agent';
+  var $=function(id){return document.getElementById(id)};
+
+  // ---------- live AI stats ----------
+  function pollStats(){
+    fetch('/ai-stats.json',{cache:'no-store'}).then(function(r){return r.ok?r.json():null}).then(function(d){
+      if(!d) return;
+      if($('stReq')) $('stReq').textContent=(d.requests_all_time||0).toLocaleString();
+      if($('stHr'))  $('stHr').textContent=(d.requests_1h||0).toLocaleString();
+      var m=$('stModels'); if(m){ m.innerHTML=''; (d.models_loaded||[]).forEach(function(x){ var s=document.createElement('span'); s.textContent=x; m.appendChild(s); }); }
+      var sp=$('stSpark'); if(sp){ sp.innerHTML=''; var a=d.sparkline||[]; var mx=Math.max(1,Math.max.apply(null,a.length?a:[1])); a.forEach(function(v){ var i=document.createElement('i'); i.style.height=(2+Math.round((v/mx)*22))+'px'; sp.appendChild(i); }); }
+    }).catch(function(){});
+  }
+  pollStats(); setInterval(pollStats,10000);
+
+  // ---------- build swarm (live + steerable) ----------
+  var buildGo=$('buildGo'), buildPrompt=$('buildPrompt'), swarm=$('swarm'), swarmTree=$('swarmTree'),
+      buildResult=$('buildResult'), buildPreview=$('buildPreview'), buildCode=$('buildCode'),
+      buildNote=$('buildNote'), buildDl=$('buildDl'), buildPr=$('buildPr');
+  var lastBuild=null, steerRow=null, running=false;
+
+  function snode(cls,icon,title,status){ var n=document.createElement('div'); n.className='snode '+cls;
+    n.innerHTML='<span class="ic"></span><span class="t"></span><span class="st"></span>';
+    n.querySelector('.ic').textContent=icon; n.querySelector('.t').textContent=title; n.querySelector('.st').innerHTML=status; swarmTree.appendChild(n); return n; }
+  function setSt(n,html,done){ if(!n)return; n.querySelector('.st').innerHTML=html; if(done)n.classList.add('done'); }
+  function livePreview(html){ if(buildResult) buildResult.style.display='block'; if(buildPreview) buildPreview.srcdoc=html||''; }
+  function renderCode(files){ if(!buildCode) return; buildCode.innerHTML=''; Object.keys(files||{}).forEach(function(fp){
+    var h=document.createElement('div'); h.className='f'; h.textContent=fp; buildCode.appendChild(h);
+    var pre=document.createElement('pre'); pre.textContent=files[fp]; buildCode.appendChild(pre); }); }
+  function ghCreds(){ var rs=$('repo'), tk=$('ghtoken'); return {repo:rs&&rs.value, token:tk&&tk.value}; }
+  function refreshPrBtn(){ var c=ghCreds(); if(buildPr) buildPr.style.display=(c.repo&&c.token)?'inline-flex':'none'; }
+
+  function ensureSteer(){
+    if(steerRow){ steerRow.style.display='flex'; return; }
+    steerRow=document.createElement('div'); steerRow.className='row'; steerRow.style.marginTop='12px';
+    steerRow.innerHTML='<input id="steerIn" placeholder="Step in — tell the leader what to change…  e.g. “make it faster”, “add a dark-mode toggle”" style="flex:1 1 300px;border:1px solid var(--line-2);border-radius:11px;padding:11px 13px;font:inherit;font-size:14.5px;background:var(--paper);color:var(--ink)"><button class="btn ghost" id="steerGo" type="button" style="flex:0 0 auto">Direct the leader →</button>';
+    var panel=$('build') && $('build').querySelector('.panel'); if(panel) panel.appendChild(steerRow);
+    $('steerGo').onclick=function(){ var s=$('steerIn').value.trim(); if(!s||running) return; $('steerIn').value=''; runSwarm(s, lastBuild&&lastBuild.files); };
+    $('steerIn').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); $('steerGo').click(); } });
+  }
+
+  async function runSwarm(prompt, existingFiles){
+    running=true; if(buildGo) buildGo.disabled=true;
+    buildNote.textContent=(existingFiles?'The leader is revising the build':'The agent swarm is building')+' on the free CPU model — this can take a couple of minutes…';
+    swarm.style.display='block'; swarmTree.innerHTML='';
+    var leaderNode=snode('leader','🧠',(existingFiles?'Leader — planning revision…':'Leader — planning…'),'<span class="spin"></span>');
+    var wnodes={};
+    try{
+      var res=await fetch(AGENT+'/swarm',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(existingFiles?{prompt:prompt,files:existingFiles}:{prompt:prompt})});
+      if(!res.ok||!res.body){ buildNote.textContent='Swarm unavailable ('+(res.status||'net')+').'; running=false; if(buildGo) buildGo.disabled=false; return; }
+      var reader=res.body.getReader(), dec=new TextDecoder(), buf='';
+      while(true){ var r=await reader.read(); if(r.done) break; buf+=dec.decode(r.value,{stream:true});
+        var parts=buf.split('\n\n'); buf=parts.pop();
+        parts.forEach(function(chunk){
+          var line=chunk.split('\n').filter(function(l){return l.indexOf('data:')===0})[0]; if(!line) return;
+          var d; try{ d=JSON.parse(line.slice(5)); }catch(e){ return; }
+          if(d.type==='leader'){
+            if(d.refine){ snode('','🔁','Refinement pass '+(d.round||'')+(d.note?' — '+d.note:''),(d.files||[]).length+' agents'); }
+            else { leaderNode.querySelector('.t').textContent='Leader — '+(d.project||'build'); setSt(leaderNode,(d.files||[]).length+' agents dispatched',true); }
+            (d.files||[]).forEach(function(fp){ wnodes[fp]=snode('worker','⚙','Worker — '+fp,'queued'); }); }
+          else if(d.type==='worker'){ var wn=wnodes[d.path]||(wnodes[d.path]=snode('worker','⚙','Worker — '+d.path,''));
+            if(d.status==='start') setSt(wn,'<span class="spin"></span> writing…');
+            else if(d.status==='streaming') setSt(wn,'<span class="spin"></span> '+(d.bytes||0)+' B');
+            else if(d.status==='done') setSt(wn,'✓ '+(d.bytes||0)+' B',true); }
+          else if(d.type==='preview'){ livePreview(d.preview); }
+          else if(d.type==='phase'&&d.phase==='reviewing'){ snode('','🧐',d.note||'Critic is reviewing…','<span class="spin"></span>'); }
+          else if(d.type==='phase'&&d.phase==='assembling'){ snode('','🧩','Assembling…','<span class="spin"></span>'); }
+          else if(d.type==='done'){ lastBuild={project:d.project,description:d.description,files:d.files,preview:d.preview};
+            livePreview(d.preview); renderCode(d.files); persistBuild(); refreshPrBtn(); ensureSteer(); buildNote.textContent=''; }
+          else if(d.type==='error'){ buildNote.textContent='Swarm error: '+(d.message||''); }
+        });
+      }
+    }catch(e){ buildNote.textContent='Network error — please retry.'; }
+    running=false; if(buildGo) buildGo.disabled=false;
+  }
+
+  if(buildGo) buildGo.onclick=function(){ var p=buildPrompt.value.trim(); if(!p||running) return; if(buildResult) buildResult.style.display='none'; runSwarm(p,null); };
+  if(buildResult) buildResult.addEventListener('click',function(e){ var t=e.target.closest('.br-tab'); if(!t) return;
+    buildResult.querySelectorAll('.br-tab').forEach(function(x){x.classList.remove('active')}); t.classList.add('active');
+    var tab=t.getAttribute('data-tab'); buildPreview.style.display=tab==='preview'?'block':'none'; buildCode.style.display=tab==='code'?'block':'none'; });
+  if(buildDl) buildDl.onclick=function(){ if(!lastBuild) return; var b=new Blob([lastBuild.preview||''],{type:'text/html'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=((lastBuild.project||'app').replace(/[^a-z0-9]+/gi,'-')||'app')+'.html'; document.body.appendChild(a); a.click(); a.remove(); };
+  if(buildPr) buildPr.onclick=async function(){ var c=ghCreds(); if(!lastBuild||!c.repo||!c.token) return;
+    buildPr.disabled=true; buildPr.textContent='Opening PR…';
+    try{ var r=await fetch(AGENT+'/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:c.token,repo:c.repo,project:lastBuild.project||'app',files:lastBuild.files})});
+      var j=await r.json(); if(j.pr_url) buildNote.innerHTML='✅ PR: <a href="'+j.pr_url+'" target="_blank" rel="noopener">'+j.pr_url+'</a>'; else buildNote.textContent=(j.detail||'PR failed'); }
+    catch(e){ buildNote.textContent='PR failed'; }
+    buildPr.disabled=false; buildPr.textContent='Open PR →'; };
+
+  function persistBuild(){ try{ localStorage.setItem('anmBuild-v1', JSON.stringify(lastBuild)); }catch(e){} }
+  try{ var lb=JSON.parse(localStorage.getItem('anmBuild-v1')||'null'); if(lb&&lb.preview){ lastBuild=lb; livePreview(lb.preview); renderCode(lb.files); refreshPrBtn(); ensureSteer(); } }catch(e){}
+
+  // ---------- PWA install ----------
+  if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(function(){}); }
+  var pwaBtn=$('pwaInstall'), dp=null;
+  window.addEventListener('beforeinstallprompt',function(e){ e.preventDefault(); dp=e; if(pwaBtn) pwaBtn.classList.add('show'); });
+  if(pwaBtn) pwaBtn.onclick=function(){ if(dp){ dp.prompt(); dp.userChoice.finally(function(){ dp=null; pwaBtn.classList.remove('show'); }); }
+    else { alert('To install: open your browser menu and choose “Add to Home Screen”.'); } };
+  window.addEventListener('appinstalled',function(){ if(pwaBtn) pwaBtn.classList.remove('show'); });
+  if(/iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && pwaBtn){ pwaBtn.classList.add('show'); }
 })();
 </script>
 </body>

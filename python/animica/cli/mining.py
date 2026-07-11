@@ -1550,6 +1550,42 @@ def show_config() -> None:
     )
 
 
+@app.command("install")
+def install_models(
+    tiers: Optional[str] = typer.Option(
+        None, "--tiers",
+        help="Comma-separated tiers to install (default: ANIMICA_AICF_TIERS or all).",
+    ),
+) -> None:
+    """Pre-download the AICF models for the given tiers so the worker serves the
+    first job immediately instead of stalling on a multi-GB fetch.
+
+    `animica up` and `animica miner aicf-worker start` also do this automatically
+    in the background; run this to fetch them up front with visible progress.
+    """
+    try:
+        from animica.stratum_pool.aicf_inference import (
+            prefetch_tier_models, resolve_tier_model, _TIER_RANGES,
+        )
+    except Exception as exc:   # noqa: BLE001
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if tiers:
+        want = [t.strip() for t in tiers.split(",") if t.strip()]
+    else:
+        env = os.environ.get("ANIMICA_AICF_TIERS", "").strip()
+        want = ([t.strip() for t in env.split(",") if t.strip()]
+                if env else [t for t, _, _ in _TIER_RANGES])
+    typer.echo("Installing AICF models for tiers: " + ", ".join(want))
+    for t in want:
+        try:
+            typer.echo(f"  {t:<9s} -> {resolve_tier_model(t)}")
+        except Exception:   # noqa: BLE001
+            pass
+    ready = prefetch_tier_models(want, log=lambda m: typer.echo("  " + m))
+    typer.echo(f"Done. {len(ready)} model(s) ready locally.")
+
+
 @app.command("models")
 def models(
     tier: Optional[str] = typer.Option(
