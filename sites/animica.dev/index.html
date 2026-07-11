@@ -253,6 +253,7 @@
           <option value="animica-chat-small">animica-chat-small · fast</option>
           <option value="animica-chat-flagship">animica-chat-flagship · quality</option>
         </select>
+        <button id="webToggle" type="button" role="switch" aria-pressed="false" title="Let the AI search the web for current information" style="font:inherit;font-size:12px;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:8px;padding:5px 9px;cursor:pointer">🌐 Web</button>
         <button id="chatClear" type="button" title="Clear this conversation" style="font:inherit;font-size:12px;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:8px;padding:5px 9px;cursor:pointer">Clear</button>
       </div>
       <div class="msgs" id="msgs">
@@ -408,6 +409,12 @@ curl https://animica.dev/v1/chat/completions \
 (function(){
   var V1="/v1", AGENT="/agent";
   var msgs=document.getElementById('msgs'), q=document.getElementById('q'), send=document.getElementById('send'), modelSel=document.getElementById('model');
+  var webToggle=document.getElementById('webToggle'), webOn=false;
+  if(webToggle){ webToggle.addEventListener('click',function(){ webOn=!webOn;
+    webToggle.setAttribute('aria-pressed',webOn?'true':'false');
+    webToggle.style.background=webOn?'#c8613f':'transparent';
+    webToggle.style.color=webOn?'#fff':'var(--muted)';
+    webToggle.style.borderColor=webOn?'#c8613f':'var(--line-2)'; }); }
 
   // Grey out models no worker will serve right now (serving=false from /v1/models).
   function refreshModels(){
@@ -447,7 +454,7 @@ curl https://animica.dev/v1/chat/completions \
     var warm=setTimeout(function(){ if(!acc) bot.innerHTML='<span style="opacity:.6">Warming up the free model — the first reply can take up to a minute…</span>'; }, 3000);
     try{
       var res=await fetch(V1+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({model:modelSel.value,stream:true,messages:[
+        body:JSON.stringify({model:modelSel.value,stream:true,web:webOn,messages:[
           {role:'system',content:'You are a concise, helpful assistant on the free Animica AI network.'},
           {role:'user',content:text}]})});
       if(!res.ok){ clearTimeout(warm); bot.textContent='('+res.status+') '+(res.status===429?'Rate limit reached — please wait a moment.':'The free model is busy, try again.'); send.disabled=false; return; }
@@ -464,7 +471,7 @@ curl https://animica.dev/v1/chat/completions \
         // streaming yielded nothing — fall back to a non-streaming request
         try{
           var r2=await fetch(V1+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({model:modelSel.value,messages:[
+            body:JSON.stringify({model:modelSel.value,web:webOn,messages:[
               {role:'system',content:'You are a concise, helpful assistant on the free Animica AI network.'},
               {role:'user',content:text}]})});
           var j2=await r2.json();

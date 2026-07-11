@@ -27,6 +27,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+import web_access  # local: keyless, SSRF-hardened web search/fetch (runs on the edge, HTTP only)
+
 GATEWAY = os.environ.get("ANIMICA_FREE_AI_BASE", "http://127.0.0.1:8792/v1")
 GATEWAY_KEY = os.environ.get("ANIMICA_AI_GATEWAY_API_KEY", "")
 GH_API = os.environ.get("ANIMICA_AGENT_GH_API", "https://api.github.com").rstrip("/")
@@ -179,12 +181,15 @@ Respond with EXACTLY ONE JSON object per turn and nothing else. Shape:
 Actions:
 - {"action":"list_files","args":{}}                      list the repository file tree
 - {"action":"read_file","args":{"path":"<path>"}}         read a file's contents
+- {"action":"web_search","args":{"query":"<query>"}}      search the web — returns titles, URLs, and snippets
+- {"action":"web_fetch","args":{"url":"<https url>"}}     fetch a public web page and read its text
 - {"action":"write_file","args":{"path":"<path>","content":"<FULL new file contents>"}}  stage a file (create or fully replace)
 - {"action":"finalize","args":{"title":"<PR title>","body":"<PR description>"}}  commit all staged files to a new branch and open a PR
 - {"action":"answer","args":{"text":"<message>"}}          reply without changing the repo
 
 Rules:
 - Inspect before editing: list_files, then read the files you will change.
+- Use web_search / web_fetch to look up current library docs, APIs, versions, or facts you are unsure about BEFORE writing code — don't guess. Only public http(s) URLs work.
 - write_file always provides the COMPLETE file, not a diff.
 - Keep changes minimal and correct. Stage every file you change with write_file, then finalize once.
 - Never invent file paths — only write paths you have seen or that clearly should be created.
@@ -274,6 +279,22 @@ async def run(req: RunReq):
                     j = fr.json()
                     content = base64.b64decode(j.get("content", "")).decode("utf-8", "replace")[:MAX_FILE_BYTES]
                     obs = f"Contents of {path}:\n{content}"
+            elif action == "web_search":
+                q = str(args.get("query", "")).strip()
+                res = await web_access.web_search(q, k=5)
+                if not res:
+                    obs = f"web_search '{q}': no results."
+                else:
+                    obs = f"Web results for '{q}':\n" + "\n".join(
+                        f"{i+1}. {r['title']}\n   {r['url']}\n   {r['snippet']}"
+                        for i, r in enumerate(res))
+            elif action == "web_fetch":
+                u = str(args.get("url", "")).strip()
+                fr = await web_access.web_fetch(u, max_chars=6000)
+                if not fr.get("ok"):
+                    obs = f"web_fetch error for {u}: {fr.get('error') or ('HTTP ' + str(fr.get('status')))}"
+                else:
+                    obs = f"Fetched {fr['url']} (HTTP {fr.get('status')}) — {fr.get('title','')}\n{fr['text']}"
             elif action == "write_file":
                 path = str(args.get("path", "")).lstrip("/")
                 content = args.get("content", "")
@@ -295,7 +316,7 @@ async def run(req: RunReq):
                 final_text = str(args.get("text", "")).strip()
                 break
             else:
-                obs = f"Unknown action '{action}'. Use list_files, read_file, write_file, finalize, or answer."
+                obs = f"Unknown action '{action}'. Use list_files, read_file, web_search, web_fetch, write_file, finalize, or answer."
 
             messages.append({"role": "user", "content": f"Observation:\n{obs[:8000]}"})
         else:

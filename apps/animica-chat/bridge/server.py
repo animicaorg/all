@@ -43,6 +43,8 @@ from agent_runtime.errors import (
 )
 from agent_runtime.providers import DistributedAICFProvider, TurnRequest
 
+import web_access  # local: keyless, SSRF-hardened web search/fetch (edge, HTTP only)
+
 
 log = logging.getLogger("animica-chat-bridge")
 logging.basicConfig(
@@ -149,6 +151,9 @@ class OpenAIChatRequest(BaseModel):
     mode: Optional[str] = None
     stages: Optional[int] = None
     decode_mode: Optional[str] = None
+    # When true, the bridge does a keyless web search on the latest user message and
+    # injects the results into the prompt before the miner completes ("🌐 Web" toggle).
+    web: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +614,23 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
     prompt, history = _flatten_messages(req.messages)
     tier = _resolve_tier(req.model, req.tier)
     model_label = req.model or DEFAULT_MODEL
+
+    # Optional live web access (the chat "🌐 Web" toggle): search the web on the edge
+    # (HTTP only, never inference) and prepend the results so the serving miner
+    # answers with current information + citations. Opt-in per request.
+    if req.web:
+        try:
+            wc = await web_access.web_context(prompt, k=4, fetch_top=1, max_chars=2000)
+        except Exception:    # noqa: BLE001
+            wc = {"text": "", "sources": []}
+        if wc.get("text"):
+            prompt = (
+                "You have live web access. Use the search results below to answer the "
+                "user's question with CURRENT information, and cite sources inline as "
+                "[n] with the matching URLs listed at the end.\n\n"
+                "=== WEB RESULTS ===\n" + wc["text"] + "\n=== END WEB RESULTS ===\n\n"
+                "User question:\n" + prompt
+            )
 
     # If the caller passed `tools`, glue an instruction block onto the
     # prompt so the worker model knows about them. The streamer below
