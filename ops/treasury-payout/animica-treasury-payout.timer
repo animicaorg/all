@@ -1,0 +1,8 @@
+[Unit]
+Description=Run the Animica treasury inference-reward payout every 30 min
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+AccuracySec=1min
+[Install]
+WantedBy=timers.target
