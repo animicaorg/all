@@ -1,0 +1,20 @@
+[Unit]
+Description=Animica free AI — GitHub coding agent backend (animica.dev/agent)
+After=network-online.target animica-ai-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/animica/apps/animica-dev-ai
+Environment=PYTHONUNBUFFERED=1
+Environment=ANIMICA_FREE_AI_BASE=http://127.0.0.1:8792/v1
+Environment=ANIMICA_AGENT_MODEL=qwen2.5:7b
+Environment=ANIMICA_AGENT_MAX_STEPS=6
+EnvironmentFile=/etc/animica/ai-gateway.env
+ExecStart=/root/animica/.venv/bin/uvicorn server:app --host 127.0.0.1 --port 8793
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

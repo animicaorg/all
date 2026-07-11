@@ -1,0 +1,5 @@
+# Rendered to /etc/nginx/snippets/anm-free-ai-auth.conf (chmod 600) at deploy from
+# the gateway env — injects the server-side free-tier key so /v1 needs no client key:
+#   source /etc/animica/ai-gateway.env
+#   printf 'proxy_set_header Authorization "Bearer %s";\n' "$ANIMICA_AI_GATEWAY_API_KEY" > /etc/nginx/snippets/anm-free-ai-auth.conf
+proxy_set_header Authorization "Bearer <ANIMICA_AI_GATEWAY_API_KEY>";

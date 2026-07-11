@@ -1,42 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="beam" x1="0" y1="0" x2="1200" y2="630">
-      <stop stop-color="#6d5ef6"/><stop offset="0.5" stop-color="#4aa8ff"/><stop offset="1" stop-color="#37e0d8"/>
+    <linearGradient id="edge" x1="0" y1="0" x2="1200" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c8613f"/><stop offset="1" stop-color="#2E63FF"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.78" cy="0.05" r="0.7">
-      <stop stop-color="#6d5ef6" stop-opacity="0.35"/><stop offset="1" stop-color="#070b16" stop-opacity="0"/>
-    </radialGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="#8ca0dc" stroke-opacity="0.09" stroke-width="1"/>
-    </pattern>
   </defs>
-  <rect width="1200" height="630" fill="#070b16"/>
-  <rect width="1200" height="630" fill="url(#grid)"/>
-  <rect width="1200" height="630" fill="url(#glow)"/>
+  <rect width="1200" height="630" fill="#f6f3ec"/>
+  <rect x="0" y="0" width="1200" height="8" fill="url(#edge)"/>
+  <circle cx="1040" cy="150" r="230" fill="#c8613f" opacity="0.06"/>
 
-  <!-- brand -->
+  <!-- wallet mark + wordmark -->
   <g transform="translate(80,74)">
-    <path d="M22 0 0 40h10l12-22 12 22h10L22 0Z" fill="url(#beam)"/>
-    <circle cx="22" cy="30" r="5" fill="#070b16" stroke="url(#beam)" stroke-width="2.4"/>
-    <text x="58" y="30" font-family="'Space Grotesk',sans-serif" font-size="30" font-weight="600" fill="#e9edfb">Animica<tspan fill="#6c789e">.dev</tspan></text>
+    <circle cx="30" cy="30" r="30" fill="#2E63FF"/>
+    <circle cx="30" cy="30" r="23.5" fill="#f6f3ec"/>
+    <path d="M30 14 L18.5 46 H41.5 L30 14 Z" fill="#2E63FF"/>
+    <rect x="23.5" y="38" width="13" height="4.5" rx="2.25" fill="#2E63FF"/>
+    <text x="76" y="41" font-family="Georgia, 'Times New Roman', serif" font-size="30" font-weight="600" fill="#1c1a17">Animica</text>
   </g>
 
-  <!-- eyebrow -->
-  <text x="80" y="250" font-family="'JetBrains Mono',monospace" font-size="20" letter-spacing="3" fill="#37e0d8">POST-QUANTUM L1 · VERIFIABLE AI</text>
+  <text x="80" y="212" font-family="'DejaVu Sans Mono', monospace" font-size="20" letter-spacing="3" fill="#a94e30">FREE AI · FUNDED BY THE TREASURY · NO API KEY</text>
 
-  <!-- headline -->
-  <text x="78" y="340" font-family="'Space Grotesk',sans-serif" font-size="78" font-weight="700" fill="#e9edfb">Ship AI you can</text>
-  <text x="78" y="428" font-family="'Space Grotesk',sans-serif" font-size="78" font-weight="700" fill="url(#beam)">actually prove.</text>
+  <text x="78" y="302" font-family="Georgia, 'Times New Roman', serif" font-size="76" font-weight="500" fill="#1c1a17">Free AI for developers.</text>
+  <text x="78" y="388" font-family="Georgia, 'Times New Roman', serif" font-size="76" font-weight="500" fill="#1c1a17">And for <tspan font-style="italic" fill="#a94e30">your agents.</tspan></text>
 
-  <!-- subline -->
-  <text x="80" y="500" font-family="'Inter',sans-serif" font-size="27" fill="#98a3c6">OpenAI-compatible inference with signed, replayable</text>
-  <text x="80" y="538" font-family="'Inter',sans-serif" font-size="27" fill="#98a3c6">proof-of-inference receipts.</text>
+  <text x="80" y="454" font-family="Arial, Helvetica, sans-serif" font-size="27" fill="#3a352d">OpenAI-compatible · a GitHub coding agent · signed proof-of-inference receipts</text>
 
-  <!-- verified seal -->
-  <g transform="translate(1000,74)">
-    <rect x="-40" y="0" width="80" height="80" rx="16" fill="#0f1a34" stroke="#37e0d8" stroke-opacity="0.4"/>
-    <path d="M-18 40l14 14 26-30" fill="none" stroke="#34e5a0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <g font-family="'DejaVu Sans Mono', monospace" font-size="20">
+    <rect x="80" y="502" width="188" height="48" rx="24" fill="#ffffff" stroke="#d8cfbc"/>
+    <text x="104" y="533" fill="#a94e30">no API key</text>
+    <rect x="284" y="502" width="236" height="48" rx="24" fill="#ffffff" stroke="#d8cfbc"/>
+    <text x="308" y="533" fill="#1c1a17">animica.dev/v1</text>
+    <rect x="536" y="502" width="224" height="48" rx="24" fill="#ffffff" stroke="#d8cfbc"/>
+    <text x="560" y="533" fill="#3f8f5b">agents welcome</text>
   </g>
-  <text x="1010" y="180" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="16" font-weight="700" letter-spacing="2" fill="#34e5a0">VERIFIED</text>
-  <text x="1010" y="205" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="13" fill="#6c789e">ml_dsa_65</text>
+
+  <text x="80" y="598" font-family="'DejaVu Sans Mono', monospace" font-size="20" fill="#6f685c">animica.dev</text>
 </svg>

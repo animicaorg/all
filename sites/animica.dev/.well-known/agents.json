@@ -1,0 +1,34 @@
+{
+  "schema_version": "0.1",
+  "name": "Animica Free AI",
+  "description": "Free, treasury-funded, OpenAI-compatible inference with post-quantum proof-of-inference receipts. Open for autonomous agent use.",
+  "url": "https://animica.dev/",
+  "provider": { "name": "Animica", "url": "https://animica.dev/" },
+  "authentication": { "type": "none", "note": "No API key required." },
+  "pricing": { "model": "free", "funded_by": "Animica foundation treasury" },
+  "rate_limit": { "requests_per_minute": 30, "burst": 12, "scope": "per-ip", "on_limit": "HTTP 429, back off and retry" },
+  "endpoints": {
+    "openai_base_url": "https://animica.dev/v1",
+    "chat_completions": "https://animica.dev/v1/chat/completions",
+    "models": "https://animica.dev/v1/models",
+    "embeddings": "https://animica.dev/v1/embeddings"
+  },
+  "openapi": "https://animica.dev/openapi.json",
+  "llms_txt": "https://animica.dev/llms.txt",
+  "recommended_models": {
+    "code": "deepseek-coder:6.7b",
+    "general": "qwen2.5:7b",
+    "fast": "qwen2.5:0.5b",
+    "embeddings": "nomic-embed-text"
+  },
+  "capabilities": ["chat", "code", "embeddings", "streaming"],
+  "verifiable": {
+    "proof_of_inference": true,
+    "signature_scheme": "ML-DSA-65 (FIPS-204, post-quantum)",
+    "description": "Every response is bound to a content-addressed, offline-verifiable, replayable receipt."
+  },
+  "tools_for_agents": {
+    "github_coding_agent": "https://animica.dev/#agent",
+    "note": "A free GitHub-connected coding agent that can read and edit repositories and open pull requests."
+  }
+}

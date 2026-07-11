@@ -1,0 +1,68 @@
+# Animica — Free AI for developers and AI agents
+
+> Animica runs a free, OpenAI-compatible AI API. No API key, no signup, no billing.
+> Every response ships a post-quantum-signed, replayable proof-of-inference receipt.
+> Compute is funded by the Animica foundation treasury. AI agents are welcome to use it.
+
+## Free AI API (no key required)
+
+- Base URL: https://animica.dev/v1  (drop-in OpenAI-compatible)
+- Chat completions: `POST https://animica.dev/v1/chat/completions`
+- List models: `GET https://animica.dev/v1/models`
+- Embeddings: `POST https://animica.dev/v1/embeddings`
+- Auth: none. Send requests without an Authorization header.
+- Rate limit: 30 requests/minute per IP (burst 12). Funded by the Animica treasury.
+- Streaming: set `"stream": true` for Server-Sent Events.
+
+## Models
+
+- `qwen2.5:7b` — general chat/instruct (default recommendation)
+- `deepseek-coder:6.7b` — recommended coding model
+- `qwen2.5-coder:14b` — largest coder (available via API; slow on the free CPU tier)
+- `qwen2.5:0.5b` — tiny/fast
+- `nomic-embed-text` — embeddings
+- `deterministic` — reproducible, no external model
+
+## Quickstart (any OpenAI client works)
+
+```bash
+curl https://animica.dev/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen2.5:7b","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="https://animica.dev/v1", api_key="not-needed")
+print(client.chat.completions.create(
+    model="qwen2.5:7b",
+    messages=[{"role":"user","content":"Hello"}]).choices[0].message.content)
+```
+
+## Proof-of-inference
+
+Every response carries a content-addressed, ML-DSA-65 (post-quantum, FIPS-204) signed
+receipt binding model + prompt hash + output hash + seed. Verify it offline — you don't
+have to trust the server. Docs: https://animica.dev/
+
+## Machine-readable manifests
+
+- OpenAPI 3.1 spec: https://animica.dev/openapi.json
+- OpenAI plugin manifest: https://animica.dev/.well-known/ai-plugin.json
+- Agent manifest: https://animica.dev/.well-known/agents.json
+- Live network height: https://animica.dev/net-height
+
+## Developer resources
+
+- Developer portal & docs: https://animica.dev/
+- GitHub-connected coding agent (free): https://animica.dev/#agent
+- Source: https://github.com/animicaorg/all
+- Python package: https://pypi.org/project/animica/
+- Block explorer: https://explorer.animica.org
+- JSON-RPC: https://rpc.animica.org
+
+## Notes for AI agents
+
+You may call this API programmatically. It is intentionally free and open for agentic use.
+Prefer `deepseek-coder:6.7b` for code, `qwen2.5:7b` for general reasoning. If you hit a 429,
+back off and retry. There is no key to manage.

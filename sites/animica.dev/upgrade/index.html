@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mandatory network upgrade — animica 7.1.1 before block 42,000 | Animica</title>
+<meta name="description" content="Animica consensus rules change at block 42,000 (address-freeze) and 42,001 (foundation subsidy split). Every full node, miner, pool and exchange must run animica 7.1.1 before block 42,000 or fork off mainnet. Upgrade with: pip install -U animica.">
+<meta name="theme-color" content="#070b16">
+<link rel="canonical" href="https://animica.dev/upgrade">
+<link rel="icon" href="/animica-mark.svg" type="image/svg+xml">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="animica.dev">
+<meta property="og:title" content="Mandatory network upgrade — animica 7.1.1 before block 42,000">
+<meta property="og:description" content="Consensus rules change at block 42,000 & 42,001. Every full node must run animica 7.1.1 or fork off mainnet.">
+<meta property="og:url" content="https://animica.dev/upgrade">
+<meta property="og:image" content="https://animica.dev/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Mandatory network upgrade — animica 7.1.1">
+<meta name="twitter:description" content="Consensus rules change at block 42,000 & 42,001. Run animica 7.1.1 before block 42,000.">
+<meta name="twitter:image" content="https://animica.dev/og.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Mandatory network upgrade — animica 7.1.1 before block 42,000",
+  "datePublished": "2026-07-11",
+  "author": { "@type": "Organization", "name": "Animica" },
+  "publisher": { "@type": "Organization", "name": "Animica", "url": "https://animica.dev/" },
+  "description": "Animica consensus rules change at block 42,000 (address-freeze, pip 7.0.0) and 42,001 (foundation subsidy split, pip 7.1.0). Every full node must run animica 7.1.1 before block 42,000 or fork off mainnet.",
+  "keywords": "Animica upgrade, hard fork, block 42000, address freeze, foundation split, animica 7.1.1, node operators"
+}
+</script>
+<style>
+  :root{
+    --ink:#070b16; --ink-2:#0b1224; --surface:#0e1730; --card:#121d3a;
+    --iris:#6d5ef6; --cyan:#37e0d8; --amber:#ffb020; --green:#34e5a0; --rose:#ff6b8b;
+    --text:#e8ecf6; --muted:#9aa6c4; --muted-2:#6b7699; --line:#1b2748; --line-2:#24325a;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0; background:var(--ink); color:var(--text);
+    font-family:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif; line-height:1.6;
+    -webkit-font-smoothing:antialiased;}
+  a{color:var(--cyan); text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3{font-family:"Space Grotesk",system-ui,sans-serif; font-weight:600; line-height:1.12; letter-spacing:-.02em; margin:0}
+  code,kbd,pre,.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+  :focus-visible{outline:2px solid var(--cyan); outline-offset:3px; border-radius:6px}
+  .wrap{max-width:900px; margin:0 auto; padding:0 20px}
+
+  /* top bar */
+  header{border-bottom:1px solid var(--line); background:rgba(7,11,22,.85); backdrop-filter:blur(8px); position:sticky; top:0; z-index:20}
+  .nav{display:flex; align-items:center; gap:12px; height:60px}
+  .brand{display:flex; align-items:center; gap:10px; font-family:"Space Grotesk"; font-weight:600; font-size:17px; color:var(--text)}
+  .brand .m{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--iris),var(--cyan))}
+  .nav .sp{flex:1}
+  .nav a.back{font-family:"JetBrains Mono"; font-size:13px; color:var(--muted)}
+
+  /* hero */
+  .hero{padding:46px 0 30px}
+  .flag{display:inline-flex; align-items:center; gap:9px; font-family:"JetBrains Mono"; font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--amber); border:1px solid rgba(255,176,32,.35); background:rgba(255,176,32,.08); padding:6px 12px; border-radius:999px}
+  .flag .d{width:8px;height:8px;border-radius:50%;background:var(--amber); box-shadow:0 0 0 4px rgba(255,176,32,.16)}
+  h1.title{font-size:clamp(30px,6vw,48px); margin:20px 0 12px}
+  h1.title .hl{color:var(--amber)}
+  .lede{font-size:clamp(16px,2.6vw,19px); color:var(--muted); max-width:680px}
+
+  /* countdown */
+  .count{display:flex; gap:14px; flex-wrap:wrap; margin:28px 0 6px}
+  .cbox{flex:1 1 150px; min-width:130px; background:var(--card); border:1px solid var(--line-2); border-radius:14px; padding:18px 18px}
+  .cbox .n{font-family:"Space Grotesk"; font-size:clamp(26px,5vw,34px); font-weight:600; letter-spacing:-.02em}
+  .cbox .n.amber{color:var(--amber)} .cbox .n.cyan{color:var(--cyan)}
+  .cbox .l{font-family:"JetBrains Mono"; font-size:11.5px; color:var(--muted-2); text-transform:uppercase; letter-spacing:.06em; margin-top:6px}
+  .bar{height:8px; background:var(--ink-2); border:1px solid var(--line); border-radius:999px; overflow:hidden; margin:16px 0 4px}
+  .bar > i{display:block; height:100%; width:0; background:linear-gradient(90deg,var(--iris),var(--cyan)); transition:width .6s ease}
+  .barnote{font-family:"JetBrains Mono"; font-size:12px; color:var(--muted-2)}
+
+  /* cta row */
+  .ctas{display:flex; gap:12px; flex-wrap:wrap; margin:26px 0 6px}
+  .btn{display:inline-flex; align-items:center; gap:8px; font-weight:600; font-size:14.5px; padding:12px 18px; border-radius:11px; cursor:pointer}
+  .btn.primary{color:#04122a; background:linear-gradient(180deg,var(--cyan),#2bb6cf)}
+  .btn.primary:hover{text-decoration:none; filter:brightness(1.05)}
+  .btn.ghost{color:var(--text); border:1px solid var(--line-2); background:transparent}
+  .btn.ghost:hover{text-decoration:none; border-color:var(--cyan); color:var(--cyan)}
+
+  /* sections */
+  section.body{padding:16px 0 8px}
+  h2{font-size:clamp(21px,3.4vw,26px); margin:40px 0 6px}
+  .sub{color:var(--muted); margin:0 0 18px}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media (max-width:680px){ .grid2{grid-template-columns:1fr} }
+  .card{background:var(--card); border:1px solid var(--line-2); border-radius:14px; padding:20px}
+  .card .tag{font-family:"JetBrains Mono"; font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--iris)}
+  .card h3{font-size:18px; margin:9px 0 8px}
+  .card p{margin:0; color:var(--muted); font-size:14.5px}
+  .card .h{font-family:"JetBrains Mono"; color:var(--amber); font-weight:700}
+
+  ul.clean{list-style:none; padding:0; margin:14px 0 0}
+  ul.clean li{display:flex; gap:11px; padding:9px 0; border-bottom:1px dashed var(--line); color:var(--muted); font-size:15px}
+  ul.clean li:last-child{border-bottom:0}
+  ul.clean li b{color:var(--text); font-weight:600}
+  ul.clean .k{flex:0 0 auto; color:var(--cyan); font-family:"JetBrains Mono"; font-size:13px}
+
+  pre{background:#060a15; border:1px solid var(--line-2); border-radius:12px; padding:16px 18px; overflow-x:auto; font-size:13.5px; line-height:1.7; color:#d6e2ff; margin:14px 0}
+  pre .c{color:var(--muted-2)}
+  pre .g{color:var(--green)}
+  .copy{float:right; font-family:"JetBrains Mono"; font-size:11.5px; color:var(--muted); background:transparent; border:1px solid var(--line-2); padding:4px 9px; border-radius:7px; cursor:pointer}
+  .copy:hover{color:var(--cyan); border-color:var(--cyan)}
+
+  .callout{border-left:3px solid var(--amber); background:rgba(255,176,32,.06); padding:14px 18px; border-radius:0 12px 12px 0; margin:16px 0; color:var(--muted); font-size:14.5px}
+  .callout.ok{border-left-color:var(--green); background:rgba(52,229,160,.06)}
+  .callout b{color:var(--text)}
+
+  details{border:1px solid var(--line-2); border-radius:12px; padding:2px 16px; margin:10px 0; background:var(--ink-2)}
+  details > summary{cursor:pointer; padding:14px 0; font-weight:600; font-family:"Space Grotesk"; list-style:none}
+  details > summary::-webkit-details-marker{display:none}
+  details > summary::before{content:"+"; color:var(--cyan); font-family:"JetBrains Mono"; margin-right:10px}
+  details[open] > summary::before{content:"–"}
+  details p{color:var(--muted); margin:0 0 14px; font-size:14.5px}
+
+  footer{border-top:1px solid var(--line); margin-top:48px; padding:26px 0 60px; color:var(--muted-2); font-size:13px; font-family:"JetBrains Mono"}
+  footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<header><div class="wrap"><nav class="nav">
+  <svg width="27" height="27" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="flex:0 0 auto"><circle cx="128" cy="128" r="112" fill="#2E63FF"/><circle cx="128" cy="128" r="88" fill="#fff"/><path d="M128 68 L84 192 H172 L128 68 Z" fill="#2E63FF"/><rect x="104" y="160" width="48" height="16" rx="8" fill="#2E63FF"/></svg>
+  <a class="brand" href="/">Animica</a>
+  <span class="sp"></span>
+  <a class="back" href="/">← animica.dev</a>
+</nav></div></header>
+
+<main>
+<div class="wrap">
+  <section class="hero">
+    <span class="flag"><span class="d"></span> Mandatory node upgrade</span>
+    <h1 class="title">Upgrade to <span class="hl">animica 7.1.1</span> before block 42,000</h1>
+    <p class="lede">Animica's consensus rules tighten at two coordinated block heights. Every full node — miners, pools, exchanges and self-hosted wallets — must be running <b>7.1.1</b> (or newer) before block&nbsp;42,000, or it will diverge from mainnet and stop following the real chain.</p>
+
+    <div class="count">
+      <div class="cbox"><div class="n amber" id="blocksLeft">—</div><div class="l">blocks until 42,000</div></div>
+      <div class="cbox"><div class="n cyan" id="curHeight">—</div><div class="l">current mainnet height</div></div>
+      <div class="cbox"><div class="n" id="deadline">42,000</div><div class="l">address-freeze activates</div></div>
+    </div>
+    <div class="bar"><i id="progFill"></i></div>
+    <div class="barnote" id="barNote">Fetching live network height…</div>
+
+    <div class="ctas">
+      <a class="btn primary" href="#how">How to upgrade →</a>
+      <a class="btn ghost" href="https://pypi.org/project/animica/" rel="noopener">animica 7.1.1 on PyPI</a>
+      <a class="btn ghost" href="https://github.com/animicaorg/all" rel="noopener">Source &amp; releases</a>
+    </div>
+  </section>
+
+  <section class="body">
+    <h2>What is changing</h2>
+    <p class="sub">Two forward-only consensus rules activate at fixed block heights. They are grandfathered below their activation height, so history the network already accepted stays valid.</p>
+    <div class="grid2">
+      <div class="card">
+        <div class="tag">block <span class="h">42,000</span> · pip 7.0.0</div>
+        <h3>Consensus address-freeze</h3>
+        <p>Block import rejects any block containing a non-coinbase transaction that spends from — or pays to — a known-compromised address. It's a validation-only reject rule: it writes no state and never halts the honest chain. The frozen set is a single entry: the ANM-2026-07 attacker address, already clawed back and holding ~0 ANM. <b style="color:var(--text)">No ordinary address is affected.</b></p>
+      </div>
+      <div class="card">
+        <div class="tag">block <span class="h">42,001</span> · pip 7.1.0</div>
+        <h3>Foundation subsidy split</h3>
+        <p>The per-block mining subsidy is re-split <b class="h">85% miner / 15% foundation treasury</b> — total emission is unchanged. This is an emission change, <b style="color:var(--text)">not</b> a reject rule: an older node stays on the same chain but keeps crediting the whole subsidy to the miner, so it silently reports wrong balances. Anyone tracking balances — exchanges, explorers — must run 7.1.0+ to stay accurate.</p>
+      </div>
+    </div>
+    <div class="callout"><b>Why one release covers both:</b> 7.1.1 is the current release. Its node consensus is identical to 7.1.0 (the 7.1.1 delta is the non-consensus Verifiable Inference Engine), so installing 7.1.1 satisfies the 42,000 <em>and</em> 42,001 rules in a single upgrade.</div>
+
+    <h2 id="who">Who must act</h2>
+    <ul class="clean">
+      <li><span class="k">must</span><span><b>Miners &amp; pool operators</b> — an un-upgraded miner builds blocks the network rejects; your rewards land on a dead fork.</span></li>
+      <li><span class="k">must</span><span><b>Exchanges &amp; custodians</b> running their own node — deposits/withdrawals will track a non-canonical chain if you don't upgrade.</span></li>
+      <li><span class="k">must</span><span><b>Full-node / RPC / self-hosted wallet operators</b> — your node silently diverges at block 42,000.</span></li>
+      <li><span class="k">safe</span><span><b>Users of hosted Animica services</b> (animica.org, wallet.animica.org, the explorer, the pool front-end) — nothing to do; that infrastructure is already on 7.1.1.</span></li>
+    </ul>
+
+    <h2 id="how">How to upgrade</h2>
+    <p class="sub">Install the latest release and restart your node before block 42,000.</p>
+    <pre><button class="copy" data-copy="pip install -U animica">copy</button><span class="c"># upgrade the node software (delivers 7.1.1)</span>
+pip install -U animica
+
+<span class="c"># confirm the version, then restart your node/miner/pool process</span>
+animica --version   <span class="c"># → animica 7.1.1</span></pre>
+    <div class="callout ok"><b>Docker operators:</b> pull/rebuild your image so the container ships <span class="mono">animica&nbsp;7.1.1</span>, then recreate the container. <b>Verify</b> you're on the canonical chain after activation by comparing your head hash at a height ≥ 42,001 against <a href="https://explorer.animica.org" rel="noopener">explorer.animica.org</a> or <a href="https://rpc.animica.org" rel="noopener">rpc.animica.org</a>.</div>
+
+    <h2>What happens if you don't</h2>
+    <p class="sub">The two rules fail differently — and the second is easy to miss.</p>
+    <div class="grid2">
+      <div class="card">
+        <div class="tag">block <span class="h">42,000</span> · address-freeze</div>
+        <h3>Fork off the network</h3>
+        <p>The freeze becomes a block-validation rule. An un-upgraded node stops enforcing it, so if a block spending the compromised address is produced, the upgraded majority rejects it while your node accepts it — splitting you onto a dead minority fork that no longer tracks mainnet. Upgrading is the only way to be guaranteed on the canonical chain.</p>
+      </div>
+      <div class="card">
+        <div class="tag">block <span class="h">42,001</span> · foundation-split</div>
+        <h3>Silently wrong balances</h3>
+        <p>This one does <b style="color:var(--text)">not</b> reject blocks. Your node stays on the same canonical chain but keeps crediting 100% of the subsidy to the miner, so every balance it reports drifts from the network's — with no visible error. Exchanges, explorers and anyone settling on reported balances must upgrade, or they will quote and pay out wrong numbers.</p>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:16px">Recovery in both cases is the same: install 7.1.1 and let your node re-derive state on the canonical chain.</p>
+
+    <h2>FAQ</h2>
+    <details><summary>Are my funds at risk?</summary><p>No. The address-freeze affects exactly one known-attacker address (already clawed back). No legitimate balance is frozen, moved, or altered by these forks.</p></details>
+    <details><summary>I only use the web wallet / hosted explorer. Do I need to do anything?</summary><p>No. Hosted Animica services already run 7.1.1. This notice is for operators who run their own node software.</p></details>
+    <details><summary>Is this a new token, airdrop, or migration?</summary><p>No. No genesis, no token swap, no address change. It is a software upgrade that tightens consensus at two block heights.</p></details>
+    <details><summary>Can I set the activation height manually?</summary><p>Each fork honors an <span class="mono">ANIMICA_FORK_&lt;NAME&gt;_HEIGHT</span> override, but the coordinated mainnet heights (42,000 / 42,001) are compiled into 7.1.1. Simply upgrading is the supported path — don't override on mainnet.</p></details>
+    <details><summary>How do I know I upgraded in time?</summary><p>Run <span class="mono">animica --version</span> (must read 7.1.1) and check your node's head at height ≥ 42,001 matches the public explorer/RPC.</p></details>
+  </section>
+</div>
+</main>
+
+<footer><div class="wrap">
+  Animica · post-quantum L1 with verifiable AI ·
+  <a href="/">animica.dev</a> ·
+  <a href="https://animica.org">animica.org</a> ·
+  <a href="https://github.com/animicaorg/all">GitHub</a> ·
+  <a href="https://pypi.org/project/animica/">PyPI</a> ·
+  <a href="https://explorer.animica.org">Explorer</a>
+</div></footer>
+
+<script>
+(function(){
+  var FREEZE=42000, SPLIT=42001;
+  function fmt(n){ return n.toLocaleString(); }
+  function paint(h){
+    var cur=document.getElementById('curHeight'),
+        bl=document.getElementById('blocksLeft'),
+        fill=document.getElementById('progFill'),
+        note=document.getElementById('barNote');
+    cur.textContent=fmt(h);
+    if(h>=SPLIT){
+      bl.textContent='0'; bl.className='n cyan';
+      document.getElementById('deadline').textContent='ACTIVE';
+      fill.style.width='100%';
+      note.innerHTML='Both forks are <b style="color:var(--green)">active</b>. Your node must be on 7.1.1 to stay on the canonical chain.';
+    } else {
+      var left=Math.max(0, FREEZE-h);
+      bl.textContent=fmt(left);
+      // show progress across the last 2,000 blocks toward the fork
+      var span=2000, start=FREEZE-span;
+      var pct=Math.max(2, Math.min(100, ((h-start)/span)*100));
+      fill.style.width=pct.toFixed(1)+'%';
+      note.innerHTML='~<b style="color:var(--text)">'+fmt(left)+'</b> blocks until the block-42,000 upgrade deadline. Block times vary — upgrade now, don’t wait.';
+    }
+  }
+  // same-origin: animica.dev proxies /rpc to the node
+  fetch('/rpc',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({jsonrpc:'2.0',id:1,method:'chain.getHead',params:[]})})
+    .then(function(r){return r.json();})
+    .then(function(d){ var h=d&&d.result&&d.result.height; if(typeof h==='number') paint(h);
+      else document.getElementById('barNote').textContent='Live height unavailable — deadline is block 42,000. Upgrade to 7.1.1 now.'; })
+    .catch(function(){ document.getElementById('barNote').textContent='Live height unavailable — deadline is block 42,000. Upgrade to 7.1.1 now.'; });
+
+  document.addEventListener('click',function(e){
+    var b=e.target.closest && e.target.closest('.copy'); if(!b) return;
+    var t=b.getAttribute('data-copy')||'';
+    navigator.clipboard && navigator.clipboard.writeText(t).then(function(){ var o=b.textContent; b.textContent='copied'; setTimeout(function(){b.textContent=o;},1400); });
+  });
+})();
+</script>
+</body>
+</html>

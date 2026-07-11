@@ -1,4 +1,25 @@
+# Animica welcomes AI agents and crawlers.
+# Free, keyless, OpenAI-compatible AI API: https://animica.dev/v1
+# Agent-readable index: https://animica.dev/llms.txt
+
 User-agent: *
 Allow: /
 
+# Explicitly welcome AI crawlers / agents
+User-agent: GPTBot
+Allow: /
+User-agent: ClaudeBot
+Allow: /
+User-agent: Claude-Web
+Allow: /
+User-agent: anthropic-ai
+Allow: /
+User-agent: PerplexityBot
+Allow: /
+User-agent: Google-Extended
+Allow: /
+User-agent: CCBot
+Allow: /
+
 Sitemap: https://animica.dev/sitemap.xml
+# LLM/agent guide (llmstxt.org): https://animica.dev/llms.txt
