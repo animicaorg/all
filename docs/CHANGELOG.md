@@ -8,6 +8,21 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [7.1.5] - 2026-07-11
+### Fixed — `animica up` gates AICF serving tiers by memory
+Non-consensus, worker-side.
+
+- `animica up` previously advertised `standard,premium,elite` for **any** GPU box,
+  so an Apple Silicon Mac (Metal counts as a GPU) would claim `elite` and try to
+  fetch/serve **Coder-32B (~65 GB)** — which won't fit an M2 mini's unified memory,
+  wasting a huge download and failing at serve time. It now picks tiers from the
+  machine's actual memory (GPU VRAM / Apple unified memory; CPU boxes use system
+  RAM and cap at `standard`, since larger models are impractically slow on CPU):
+  `free` ≥3 GB, `standard` ≥7 GB, `premium` ≥15 GB, `elite` ≥72 GB (Coder-32B
+  needs an 80 GB-class accelerator). So a typical M2 mini serves
+  `standard`+`premium` and skips `elite`. Explicit `ANIMICA_AICF_TIERS` still
+  overrides the pool-facing worker's tiers. The chosen tiers show in `animica up --plan`.
+
 ## [7.1.4] - 2026-07-11
 ### Added — miners pre-install their models; `animica up` is ready-to-serve
 Non-consensus, worker-side.

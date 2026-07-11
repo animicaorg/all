@@ -390,6 +390,51 @@ def _cli_device_flag(caps: Capabilities) -> Optional[str]:
     return {"cuda": "cuda", "rocm": "rocm", "mps": "metal"}.get(kind)
 
 
+# Rough accelerator-memory (GB) a machine needs to actually LOAD + serve each
+# tier's default coder model. Sized to the real serving footprint (quantized
+# weights — 4/8-bit MLX/GGUF — plus KV/activations and an OS reserve), NOT a
+# strict fp16 load: fp16 weights alone are ~2x these numbers (Coder-7B ~15 GB,
+# Coder-32B ~65 GB), which is why `elite` needs an 80 GB-class accelerator.
+# Advertising a tier the box can't load just wastes a multi-GB download and then
+# fails at serve time — e.g. an M2 Mac mini should not claim `elite` (Coder-32B)
+# merely because Metal counts as a GPU.
+_TIER_MIN_MEM_GB: tuple[tuple[str, float], ...] = (
+    ("free",     3.0),    # ~0.5B
+    ("standard", 7.0),    # ~3B  coder
+    ("premium",  15.0),   # ~7B  coder
+    ("elite",    72.0),   # ~32B coder — needs an 80 GB-class card (fp16 ~65 GB)
+)
+
+
+def _eligible_aicf_tiers(caps: Capabilities) -> list[str]:
+    """Which AICF tiers this machine can actually serve, gated by memory.
+
+    GPUs use VRAM (Apple Silicon uses unified/system memory); CPU-only boxes use
+    system RAM and are capped at ``standard`` because larger models are
+    impractically slow to decode on CPU. An explicit ``ANIMICA_AICF_TIERS``
+    overrides this. Always returns at least ``["free"]`` so the miner still
+    serves something.
+
+    Scope: this governs the tiers the pool/stratum-facing worker advertises
+    (``reference_cpu_miner`` reads ``ANIMICA_AICF_TIERS``). The separate
+    ``agent_runtime`` AICF-broker worker gates its own tiers by hardware via its
+    model catalog and does not read this env — its tier vocabulary differs
+    (unifying the two is tracked separately).
+    """
+    override = os.environ.get("ANIMICA_AICF_TIERS", "").strip()
+    if override:
+        return [t.strip() for t in override.split(",") if t.strip()]
+    mem_gb = float(caps.vram_gb or 0.0) if caps.gpu else _system_memory_gb()
+    cpu_ceiling = None if caps.gpu else "standard"
+    tiers: list[str] = []
+    for tier, need in _TIER_MIN_MEM_GB:
+        if mem_gb + 1e-6 >= need:
+            tiers.append(tier)
+        if cpu_ceiling and tier == cpu_ceiling:
+            break
+    return tiers or ["free"]
+
+
 def _coordinator_endpoint(pool_host: str) -> str:
     """ENA coordinator base URL for a pool host: ``pool.animica.org`` →
     ``https://pool.animica.org/api/ena`` (the nginx route fronting the
@@ -511,9 +556,14 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
     if cfg.threads:
         miner_argv += ["--threads", str(cfg.threads)]
     miner_env = dict(base_env)
-    miner_env["ANIMICA_AICF_TIERS"] = "standard,premium,elite" if gpu else "free,standard"
+    # Gate the pool/stratum worker's serving tiers by the memory this machine
+    # actually has, so it only advertises models it can load (e.g. an M2 mini
+    # serves standard/premium but not elite/32B). ANIMICA_AICF_TIERS overrides.
+    aicf_tiers = _eligible_aicf_tiers(caps)
+    miner_env["ANIMICA_AICF_TIERS"] = ",".join(aicf_tiers)
     plan.append(Component("miner", miner_argv, enabled=True,
-                          reason="SHA3 proof-of-work + AICF inference", env=miner_env))
+                          reason=f"SHA3 proof-of-work + AICF inference (tiers: {','.join(aicf_tiers)})",
+                          env=miner_env))
 
     # The ENA coordinator (pools, shards, useful-work queue) lives on the pool
     # host, not this box. Point every ENA component at it over HTTP so workers
