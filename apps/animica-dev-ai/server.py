@@ -30,7 +30,12 @@ from pydantic import BaseModel
 GATEWAY = os.environ.get("ANIMICA_FREE_AI_BASE", "http://127.0.0.1:8792/v1")
 GATEWAY_KEY = os.environ.get("ANIMICA_AI_GATEWAY_API_KEY", "")
 GH_API = os.environ.get("ANIMICA_AGENT_GH_API", "https://api.github.com").rstrip("/")
-DEFAULT_MODEL = os.environ.get("ANIMICA_AGENT_MODEL", "qwen2.5:7b")
+# Prefer the flagship (premium-tier, 7B) model — the best a GPU miner honestly
+# serves today; the agent falls back to lower serving tiers automatically via
+# pick_serving_model. (Elite/32B is intentionally NOT the default: no fielded
+# worker can serve a 32B yet, and a worker that over-advertises "elite" would hang
+# the job. Re-enable elite here once a >=72GB multi-GPU rig serves it honestly.)
+DEFAULT_MODEL = os.environ.get("ANIMICA_AGENT_MODEL", "animica-chat-flagship")
 MAX_STEPS = int(os.environ.get("ANIMICA_AGENT_MAX_STEPS", "10"))
 MAX_FILE_BYTES = 60_000
 
@@ -345,13 +350,13 @@ def _slug(s: str) -> str:
 
 # ============================ agents-mode (build swarm) ============================ #
 SWARM_MAX_FILES = int(os.environ.get("ANIMICA_SWARM_MAX_FILES", "5"))
-# Refinement is DYNAMIC: the swarm keeps running critic->improve passes until
-# the critic judges the product genuinely good (score >= bar / done), bounded by
-# how much the network can actually chew through — a fast/deep network fits many
-# passes in the time budget, a thin/slow one fits fewer. All tunable per deploy.
-REFINE_MAX_ROUNDS = int(os.environ.get("ANIMICA_SWARM_REFINE_MAX", "24"))       # hard safety cap
-REFINE_TIME_BUDGET_S = float(os.environ.get("ANIMICA_SWARM_REFINE_BUDGET_S", "900"))  # wall-clock budget
-REFINE_SCORE_BAR = int(os.environ.get("ANIMICA_SWARM_REFINE_SCORE", "90"))      # "good product" bar (0-100)
+# Refinement runs until the critic judges the product genuinely good (score >=
+# bar / done) or proposes no further changes — with NO time limit by default: it
+# will keep improving for as long as it takes. Set a budget/round cap via env to
+# bound it. 0 = unlimited (run forever if need be).
+REFINE_MAX_ROUNDS = int(os.environ.get("ANIMICA_SWARM_REFINE_MAX", "0"))            # 0 = unlimited rounds
+REFINE_TIME_BUDGET_S = float(os.environ.get("ANIMICA_SWARM_REFINE_BUDGET_S", "0"))  # 0 = no time limit
+REFINE_SCORE_BAR = int(os.environ.get("ANIMICA_SWARM_REFINE_SCORE", "90"))          # "good product" bar (0-100)
 
 
 class SwarmReq(BaseModel):
@@ -492,20 +497,26 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
         t_refine = time.monotonic()
         round_times: list[float] = []
         rnd = 0
-        while rnd < REFINE_MAX_ROUNDS:
-            elapsed = time.monotonic() - t_refine
-            remaining = REFINE_TIME_BUDGET_S - elapsed
-            # Predictive stop: don't start a pass we can't afford to finish
-            # (estimate from the average of prior passes).
-            est = (sum(round_times) / len(round_times)) if round_times else 0.0
-            if remaining <= 0 or (est and remaining < est):
-                yield ev({"type": "phase", "phase": "reviewing",
-                          "note": f"Reached the build budget after {rnd} refinement pass(es)."})
-                break
+        unlimited_time = REFINE_TIME_BUDGET_S <= 0
+        unlimited_rounds = REFINE_MAX_ROUNDS <= 0
+        while unlimited_rounds or rnd < REFINE_MAX_ROUNDS:
+            if not unlimited_time:
+                elapsed = time.monotonic() - t_refine
+                remaining = REFINE_TIME_BUDGET_S - elapsed
+                # Predictive stop: don't start a pass we can't afford to finish
+                # (estimate from the average of prior passes).
+                est = (sum(round_times) / len(round_times)) if round_times else 0.0
+                if remaining <= 0 or (est and remaining < est):
+                    yield ev({"type": "phase", "phase": "reviewing",
+                              "note": f"Reached the build budget after {rnd} refinement pass(es)."})
+                    break
             rnd += 1
             r_start = time.monotonic()
+            budget_note = ("no time limit — refining until it's good"
+                           if unlimited_time
+                           else f"{int(REFINE_TIME_BUDGET_S - (time.monotonic() - t_refine))}s of budget left")
             yield ev({"type": "phase", "phase": "reviewing",
-                      "note": f"Critic agent is reviewing the build (pass {rnd}, {int(remaining)}s of budget left)…"})
+                      "note": f"Critic agent is reviewing the build (pass {rnd}, {budget_note})…"})
             try:
                 craw = await llm(client, model, [
                     {"role": "system", "content": CRITIC_SYS},

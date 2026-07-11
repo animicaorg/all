@@ -416,6 +416,10 @@ _MODEL_CHAIN_TIER = {
     "animica-chat": "standard",
     "animica-chat-small": "standard",
     "animica-chat-flagship": "premium",
+    # NOTE: no "animica-chat-elite" yet. Elite = the 32B coder, which needs a
+    # >=72GB (multi-GPU, VRAM-pooled) rig to serve honestly. Until such a worker is
+    # fielded, exposing elite would list a tier some miners over-advertise but can't
+    # actually serve — routing a 32B job there hangs. Re-add once elite is served.
 }
 _MODELS_META = [
     ("animica-chat", "On-chain AICF chat — routed through registered miners."),

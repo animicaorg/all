@@ -114,9 +114,20 @@ def _detect_gpu_via_torch() -> Optional[tuple[str, float, str]]:
     # set torch.version.hip. Covers the overwhelming majority of discrete GPUs.
     try:
         if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            n = torch.cuda.device_count()
             name = torch.cuda.get_device_name(0)
-            vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            # Pool VRAM across ALL visible GPUs so a multi-GPU rig can serve a larger
+            # tier (the inference engine shards via device_map="auto"). But discount a
+            # per-GPU overhead on multi-GPU rigs: the naive sum overstates usable
+            # memory and would let a rig advertise a tier it can only OOM/offload on.
+            vram_sum = sum(
+                torch.cuda.get_device_properties(i).total_memory for i in range(n)
+            ) / (1024 ** 3)
+            vram = vram_sum - n * _MULTI_GPU_OVERHEAD_GB if n > 1 else vram_sum
+            vram = max(0.0, vram)
             hip = getattr(getattr(torch, "version", None), "hip", None)
+            if n > 1:
+                name = f"{n}x {name}"
             return name, round(float(vram), 1), ("rocm" if hip else "cuda")
     except Exception:
         pass
@@ -143,12 +154,37 @@ def _detect_gpu_via_smi() -> Optional[tuple[str, float, str]]:
                 [exe, "--query-gpu=name,memory.total",
                  "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=10)
-            line = (out.stdout or "").strip().splitlines()[:1]
-            if out.returncode == 0 and line:
-                parts = [p.strip() for p in line[0].split(",")]
-                name = parts[0]
-                vram = (float(parts[1]) / 1024.0
-                        if len(parts) > 1 and parts[1] else 0.0)
+            lines = (out.stdout or "").strip().splitlines()
+            if out.returncode == 0 and lines:
+                # Aggregate VRAM across every GPU nvidia-smi reports (one line per
+                # card), not just the first — a multi-GPU rig pools its cards to
+                # serve a larger, sharded model. Parse each line independently so one
+                # malformed value (e.g. "[N/A]" on some MIG/vGPU configs) skips that
+                # card instead of aborting the whole rig to CPU-only.
+                total = 0.0
+                valid = 0
+                first_name = None
+                for ln in lines:
+                    parts = [p.strip() for p in ln.split(",")]
+                    if not parts or not parts[0]:
+                        continue
+                    try:
+                        if len(parts) > 1 and parts[1]:
+                            total += float(parts[1]) / 1024.0
+                            valid += 1
+                            # name the rig after the first card we actually counted,
+                            # not a skipped [N/A] one
+                            if first_name is None:
+                                first_name = parts[0]
+                    except (ValueError, TypeError):
+                        continue
+                if valid == 0:
+                    return None
+                # Discount per-GPU overhead on multi-GPU rigs (see torch path).
+                vram = total - valid * _MULTI_GPU_OVERHEAD_GB if valid > 1 else total
+                vram = max(0.0, vram)
+                name = (f"{valid}x {first_name}" if valid > 1 and first_name
+                        else (first_name or "NVIDIA GPU"))
                 return name, round(vram, 1), "cuda"
         except Exception:
             pass
@@ -404,6 +440,15 @@ _TIER_MIN_MEM_GB: tuple[tuple[str, float], ...] = (
     ("premium",  15.0),   # ~7B  coder
     ("elite",    72.0),   # ~32B coder — needs an 80 GB-class card (fp16 ~65 GB)
 )
+
+# Per-GPU usable-VRAM overhead (GB) subtracted from a MULTI-GPU rig's pooled total
+# before tier-gating. A naive sum overstates what the rig can serve: each card holds
+# its own CUDA context/reserve, fragmentation isn't shared across cards, and
+# device_map sharding concentrates KV-cache/activations on whichever card runs a
+# layer. Without this discount a rig of small cards (e.g. 3×24=72 GB) would cross the
+# elite gate calibrated for one coherent 80 GB card, then OOM or silently CPU-offload
+# the 32B model (serving at 10-100× slowdown). Single-GPU rigs are NOT discounted.
+_MULTI_GPU_OVERHEAD_GB = 1.5
 
 
 def _eligible_aicf_tiers(caps: Capabilities) -> list[str]:

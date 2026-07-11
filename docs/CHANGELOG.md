@@ -8,6 +8,40 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [7.1.7] - 2026-07-11
+### Changed — AICF inference uses every GPU on a multi-GPU rig
+Worker-side; non-consensus. Especially benefits agent/coding workloads, which get
+the largest model the hardware can serve.
+
+- `animica up` now pools the VRAM of **all** visible GPUs (CUDA via torch, or every
+  line of `nvidia-smi`) when choosing which serving tiers to advertise, instead of
+  reading only GPU 0. A multi-GPU rig therefore qualifies for the larger tiers and
+  serves a bigger model — e.g. a 4×24 GB rig reaches the elite (32B) tier.
+- The inference engine shards that model across every card via `device_map="auto"`
+  (set `ANIMICA_AICF_DEVICE_MAP=balanced` to spread evenly), and the load log prints
+  `gpus_used=N/M` so operators can confirm all GPUs are engaged.
+- Honest gating: the pooled VRAM is discounted a small per-GPU overhead (multi-GPU
+  only) so a rig of small cards can't advertise a tier it would only OOM or silently
+  CPU-offload on; `nvidia-smi` parsing tolerates a bad per-card line, and CPU/disk
+  offload is logged loudly instead of serving at 10-100× slowdown.
+
+### Fixed — Node Docker image builds again (PQ backend self-test)
+Node operators / CI only; non-consensus, no on-box or on-chain behaviour change.
+
+- `ops/docker/scripts/pq_backend_selftest.py` failed the node image build at the
+  final `RUN` step. It required a working **SPHINCS+-SHAKE-128s** keypair, but
+  SPHINCS+ (scheme id 2) is a forgeable stub that is **disabled on mainnet**
+  (`coretx.schemes`, ANM-C01/L06) and has no backend other than the *insecure*
+  pure-Python fallback (gated behind `ANIMICA_ALLOW_PQ_PURE_FALLBACK=1`). A mainnet
+  build leaves that flag unset, so the self-test raised `NotImplementedError` and
+  `docker build` exited 1.
+- The self-test now **requires `ml_dsa_65`** — scheme id 11, the only
+  mainnet-enabled signature scheme, which the old test did not cover at all — with a
+  keypair/sign/verify round-trip **plus tamper-rejection** (a modified message or
+  signature must fail to verify), and **asserts SPHINCS+ is gated off** instead of
+  demanding it mint forgeable keys. The disabled, forgeable `dilithium3` (id 1) is no
+  longer exercised. No production node ever enables the insecure pure-Python fallback.
+
 ## [7.1.6] - 2026-07-11
 ### Fixed — AICF inference uses the Apple Metal (MPS) GPU, not the CPU
 Non-consensus, worker-side.

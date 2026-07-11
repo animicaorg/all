@@ -22,6 +22,14 @@ Activation:
 - ANIMICA_AICF_CODING_PROMPT=...           (system prompt for code tasks)
 - ANIMICA_AICF_DEVICE=cpu                  (cpu|cuda|mps; default auto —
                                             CUDA → Apple Metal (MPS) → CPU)
+- ANIMICA_AICF_DEVICE_MAP=auto             (multi-GPU: how HF accelerate spreads a
+                                            model across CUDA cards; "auto" fills
+                                            GPUs in order, "balanced" spreads evenly)
+
+Multi-GPU: on a CUDA rig every visible GPU is used — the model is sharded across
+all cards via device_map (see ANIMICA_AICF_DEVICE_MAP), and `animica up` pools the
+VRAM of all GPUs so the rig advertises the largest tier its combined memory can
+serve. The load log prints `gpus_used=N/M` so you can confirm full engagement.
 
 If `transformers` and `torch` aren't importable, the engine still
 produces output (the stub), so chat round-trips work without the
@@ -580,7 +588,15 @@ class InferenceEngine:
             # (a bare `== "cuda"` left those on CPU).
             if device.startswith("cuda"):
                 kwargs["torch_dtype"] = torch.float16
-                kwargs["device_map"] = "auto"
+                # Shard across ALL visible CUDA GPUs. device_map lets HF accelerate
+                # split a model too big for one card across every GPU (with CPU
+                # offload as a last resort) — this is how a multi-GPU rig serves the
+                # large premium/elite tiers. "auto" fills GPUs in order; set
+                # ANIMICA_AICF_DEVICE_MAP=balanced to spread evenly across all cards.
+                kwargs["device_map"] = (
+                    (os.environ.get("ANIMICA_AICF_DEVICE_MAP") or "auto").strip()
+                    or "auto"
+                )
             elif device.startswith("mps"):
                 # Run any op unimplemented on Metal on the CPU instead of raising
                 # (an uncaught error here would silently stub-fallback forever).
@@ -602,8 +618,47 @@ class InferenceEngine:
                 self._model = self._model.to("mps")
             self._loaded = True
             self._effective_model = model_id
+            # Report how many GPUs the model actually landed on so operators can
+            # confirm a multi-GPU rig is fully engaged (e.g. "gpus_used=3/4").
+            gpu_note = ""
+            try:
+                if device.startswith("cuda"):
+                    try:
+                        ndev = torch.cuda.device_count()
+                    except Exception:
+                        ndev = 1
+                    used: set[str] = set()
+                    offloaded = False
+                    spread = getattr(self._model, "hf_device_map", None)
+                    if spread:
+                        for v in spread.values():
+                            s = str(v)
+                            if s.startswith("cuda"):
+                                used.add(s if ":" in s else "cuda:0")
+                            elif s.isdigit():
+                                used.add(f"cuda:{s}")
+                            elif s in ("cpu", "disk"):
+                                offloaded = True
+                    gpu_note = " gpus_used=%d/%d" % (len(used) or 1, ndev)
+                    if offloaded:
+                        # The model didn't fit GPU VRAM and accelerate spilled layers
+                        # to CPU/disk. It "loads" but serves at 10-100x slowdown —
+                        # make that loud instead of a silent slow-serve, so the
+                        # operator drops to a smaller tier or adds VRAM.
+                        gpu_note += " OFFLOAD=cpu/disk(SLOW)"
+                        log.warning(
+                            "aicf inference: model %s did not fit GPU VRAM and was "
+                            "partially offloaded to CPU/disk — serving will be very "
+                            "slow; advertise a smaller tier or add VRAM.",
+                            model_id,
+                        )
+            except Exception:  # a logging-note error must never discard a loaded model
+                gpu_note = ""
             log.info(
-                "aicf inference engine ready: model=%s device=%s", model_id, device
+                "aicf inference engine ready: model=%s device=%s%s",
+                model_id,
+                device,
+                gpu_note,
             )
             return None
         except Exception as exc:
