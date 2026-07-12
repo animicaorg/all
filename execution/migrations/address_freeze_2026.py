@@ -47,6 +47,14 @@ from typing import Dict, Optional
 # consensus machinery live from activation.
 _FROZEN_HEX: tuple[tuple[str, int], ...] = (
     ("ce0c733bab5f7c86fe106f4f817892adc952ec6312c8378c6b45ebd230d4870c", 42_000),
+    # Entry 2/3 — ANM-2026-07 treasury-scam recipients, cleared to the foundation
+    # treasury by clawback_treasury_scam_2026_07 at H=44,444. Frozen from the SAME
+    # forward-only height (> head when shipped): a post-recovery lockout so the
+    # scam accounts cannot be re-used or re-funded. Neither is a treasury / reward
+    # / coinbase address. 0x3e79d533 is a stranded SPHINCS+ (0x1002) wallet that is
+    # already unspendable; the freeze additionally blocks inbound re-use.
+    ("c12185ebba4d108b5c8c3f969ec858882221693f1bef1d65f78ad63352008948", 44_444),
+    ("3e79d53343a4161560daf8553e204c75306bcc92a9d7524029ae2ba5385fc658", 44_444),
 )
 
 

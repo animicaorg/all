@@ -2579,6 +2579,18 @@ class BlockImporter:
             except Exception as _clawback_exc:  # never halt import on the migration
                 log.error("ANM-2026-07 clawback hook error (non-fatal): %r", _clawback_exc)
 
+            # ANM-2026-07 treasury-scam clawback: forward-only (default H=44,444),
+            # moves two scam-source balances to the foundation treasury. Same
+            # deterministic/value-preserving/non-fatal/reorg-safe contract.
+            try:
+                from execution.migrations.clawback_treasury_scam_2026_07 import (
+                    apply_clawback_if_active as _apply_scam_clawback,
+                )
+
+                _apply_scam_clawback(self.state_db, height, chain_id)
+            except Exception as _scam_exc:  # never halt import on the migration
+                log.error("ANM-2026-07 treasury-scam clawback hook error (non-fatal): %r", _scam_exc)
+
 
             # Get all reward outputs (miner, AICF, treasury)
             from consensus.rewards import compute_block_reward, FOUNDATION_TREASURY_ADDRESS
