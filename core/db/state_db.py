@@ -444,7 +444,16 @@ class StateDB:
             tx_hash = _parse_applied_tx_key(k)
             applied_tx_entries.append((tx_hash, bytes(v)))
 
-        return StateSnapshot(acc_entries, sto_entries, code_entries, applied_tx_entries)
+        # AICF pool/epoch bookkeeping (flat PFX_AICF namespace). Captured by RAW
+        # full key so revert restores it verbatim — otherwise a reorg leaks stale
+        # AICF state that snapshot/revert never touched.
+        aicf_entries: List[Tuple[bytes, bytes]] = []
+        for k, v in self.kv.iter_prefix(PFX_AICF):
+            aicf_entries.append((bytes(k), bytes(v)))
+
+        return StateSnapshot(
+            acc_entries, sto_entries, code_entries, applied_tx_entries, aicf_entries
+        )
 
     def commit(self) -> None:
         """
@@ -470,6 +479,7 @@ class StateDB:
         sto_keys = [k for k, _ in self.kv.iter_prefix(PFX_STO)]
         code_keys = [k for k, _ in self.kv.iter_prefix(PFX_CODE)]
         applied_tx_keys = [k for k, _ in self.kv.iter_prefix(PFX_APPLIED_TX)]
+        aicf_keys = [k for k, _ in self.kv.iter_prefix(PFX_AICF)]
 
         with self.kv.batch() as batch:
             for k in acc_keys:
@@ -480,6 +490,8 @@ class StateDB:
                 batch.delete(k)
             for k in applied_tx_keys:
                 batch.delete(k)
+            for k in aicf_keys:
+                batch.delete(k)
 
             for addr, acc in snap.iter_accounts():
                 batch.put(_k_acc(addr), acc.to_cbor())
@@ -489,6 +501,9 @@ class StateDB:
                 batch.put(_k_code(addr), bytes(code))
             for tx_hash, marker in snap.iter_applied_txs():
                 batch.put(_k_applied_tx(tx_hash), bytes(marker))
+            # PFX_AICF restored by RAW full key (captured verbatim in snapshot()).
+            for raw_key, raw_val in snap.iter_aicf():
+                batch.put(bytes(raw_key), bytes(raw_val))
 
 
 class StateSnapshot:
@@ -496,7 +511,7 @@ class StateSnapshot:
     Immutable, in-memory copy of a subset of state at a point in time.
     """
 
-    __slots__ = ("_acc", "_sto", "_code", "_applied_txs")
+    __slots__ = ("_acc", "_sto", "_code", "_applied_txs", "_aicf")
 
     def __init__(
         self,
@@ -504,11 +519,17 @@ class StateSnapshot:
         sto_entries: List[Tuple[bytes, bytes, bytes]],
         code_entries: List[Tuple[bytes, bytes]],
         applied_tx_entries: Optional[List[Tuple[bytes, bytes]]] = None,
+        aicf_entries: Optional[List[Tuple[bytes, bytes]]] = None,
     ) -> None:
         self._acc = acc_entries
         self._sto = sto_entries
         self._code = code_entries
         self._applied_txs = applied_tx_entries or []
+        # Raw (full-key, value) pairs under PFX_AICF. Captured verbatim so revert
+        # restores the exact AICF pool/epoch bookkeeping; without this a reorg that
+        # reverts to a snapshot leaves stale AICF state (a silent balance/emission
+        # divergence, since AICF moves value EOA -> pool -> miner EOAs).
+        self._aicf = aicf_entries or []
 
     # Iterators over frozen content
     def iter_accounts(self) -> Iterator[Tuple[bytes, Account]]:
@@ -535,6 +556,10 @@ class StateSnapshot:
 
     def iter_applied_txs(self) -> Iterator[Tuple[bytes, bytes]]:
         yield from self._applied_txs
+
+    def iter_aicf(self) -> Iterator[Tuple[bytes, bytes]]:
+        """Raw (full-key, value) pairs under PFX_AICF."""
+        yield from self._aicf
 
     # Convenience: compute a deterministic "state digest" over snapshot
     def digest(self) -> bytes:
