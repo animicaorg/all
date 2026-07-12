@@ -818,6 +818,7 @@ class BlockImporter:
         "_pending_snapshots",
         "_data_dir",
         "_pinned_checkpoints",
+        "_invalid_blocks",
     )
 
     def __init__(
@@ -837,6 +838,13 @@ class BlockImporter:
         self.tx_index = tx_index
         self.state_db = state_db
         self.fork_choice = fork_choice
+        # Durable set of block hashes proven invalid at application time (7.1.9
+        # FORK_STATE_COMMITMENT: committed stateRoot != recomputed post-execution
+        # root). Persists on the importer across fork-choice rebuilds — the
+        # per-tree ForkChoice.invalid set is wiped by _restore_pre_reorg_state /
+        # _init_fork_choice_from_db, so this is the source of truth that is
+        # re-applied after every rebuild and short-circuits re-import.
+        self._invalid_blocks: set[bytes] = set()
         # Store full params dict for reward calculation (includes monetary.issuance)
         # If not provided, try to load from spec/params.yaml
         self.full_params_dict = full_params_dict
@@ -1248,6 +1256,19 @@ class BlockImporter:
                     False,
                     f"checkpoint mismatch at height {cp_height}: "
                     f"0x{h.hex()} != pinned 0x{cp_pin.hex()}",
+                )
+
+            # Already proven invalid (7.1.9 FORK_STATE_COMMITMENT: a prior apply
+            # found its committed stateRoot != recomputed root). Short-circuit so a
+            # re-broadcast can never re-enter fork choice, re-trigger the reject
+            # dance, or stall the head. Durable across fork-choice rebuilds.
+            if h in self._invalid_blocks:
+                return ImportResult(
+                    ImportErrorCode.INVALID,
+                    cp_height,
+                    h,
+                    False,
+                    f"state_commitment: block 0x{h.hex()} previously rejected on committed-root mismatch",
                 )
 
             # Duplicate?
@@ -1815,6 +1836,15 @@ class BlockImporter:
             max_reorg_depth=self._max_reorg_depth,
         )
         self._seed_fork_choice_from_canonical()
+        # Re-apply durable invalidations so a state-rejected block (and its
+        # descendants) stay excluded across fork-choice rebuilds. Without this,
+        # _restore_pre_reorg_state's rebuild would forget the rejection and the
+        # block could be re-selected → head-stall loop.
+        for bad in self._invalid_blocks:
+            try:
+                self.fork_choice.mark_invalid(bad)
+            except Exception:
+                pass
 
     def _seed_fork_choice_from_canonical(self) -> None:
         if self.fork_choice is None:
@@ -2390,6 +2420,43 @@ class BlockImporter:
         
         return None
 
+    def _state_commitment_reject_reason(self, block: Block) -> Optional[str]:
+        """FORK_STATE_COMMITMENT (7.1.9): a block committing a NON-ZERO stateRoot
+        must commit the real post-execution root. Call this immediately after the
+        block's state has been applied (state_db holds its post-state). Returns a
+        reason string on mismatch (→ reject), else None.
+
+        Split-safe by design: it checks the root of the ACTUAL application every
+        node performs against the block's parent state — deterministic and reorg-
+        covered, because this runs in the same _apply_state_reorg path for BOTH the
+        tip-extension and reorg-attached blocks (the exact bypass that sank the
+        reverted 7.1.8 gate). Self-gates on a zero/uncommitted root, so a pre-fork
+        or not-yet-upgraded zero-root miner is never false-rejected. NEVER raises: a
+        compute error returns None (do-not-reject), so a transient/node-local
+        failure fails OPEN on a single block rather than halting — enforcement only
+        turns on after a zero-mismatch shadow window, so a real determinism fault is
+        caught before activation, and 'never halt' is preserved.
+        """
+        try:
+            height = int(getattr(block.header, "height", 0) or 0)
+            chain_id = int(self.params.chain_id)
+            from core.network_params import FORK_STATE_COMMITMENT, is_fork_active
+
+            if not is_fork_active(FORK_STATE_COMMITMENT, height, chain_id=chain_id):
+                return None
+            committed = bytes(getattr(block.header, "stateRoot", b"") or b"")
+            if not committed or committed == b"\x00" * 32:
+                return None  # self-gate: zero/uncommitted root is accepted
+            from core.chain.state_commit import compute_state_root
+
+            observed = bytes(compute_state_root(self.state_db))
+            if observed != committed:
+                return f"committed={committed.hex()[:16]} observed={observed.hex()[:16]}"
+            return None
+        except Exception as e:  # never halt block apply on the verification itself
+            log.debug("state_commitment: check skipped (non-fatal): %s", e)
+            return None
+
     def _apply_state_reorg(
         self,
         detached: list[bytes],
@@ -2437,6 +2504,29 @@ class BlockImporter:
                     },
                 )
                 return self._rebuild_state_from_canonical(best.height)
+            # 7.1.9 FORK_STATE_COMMITMENT enforcement — the block's post-execution
+            # state is now in state_db; reject if a committed non-zero stateRoot does
+            # not match. Mark durably invalid (survives the fork-choice rebuild in
+            # _restore_pre_reorg_state) and return False so _apply_reorg rolls back
+            # canonical head + state to the pre-reorg snapshot. Head advances past
+            # the bad block instead of stalling on it.
+            _sc_reason = self._state_commitment_reject_reason(block)
+            if _sc_reason is not None:
+                log.error(
+                    "state_commitment: rejecting block on committed-root mismatch",
+                    extra={
+                        "height": _height_of(block.header),
+                        "hash": h.hex(),
+                        "reason": _sc_reason,
+                    },
+                )
+                self._invalid_blocks.add(bytes(h))
+                try:
+                    if self.fork_choice is not None:
+                        self.fork_choice.mark_invalid(h)
+                except Exception as _mi_exc:
+                    log.error("state_commitment: mark_invalid failed: %s", _mi_exc)
+                return False
             height = _height_of(block.header)
             self._capture_state_snapshot(height)
             applied += 1

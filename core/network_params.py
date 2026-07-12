@@ -211,6 +211,21 @@ FORK_ADDRESS_FREEZE = "address_freeze"
 #     one block after address_freeze, so the two rule changes are never co-located.
 FORK_FOUNDATION_SPLIT = "foundation_split"
 
+# FORK_STATE_COMMITMENT (7.1.9) — the deterministic "inclusion ⇒ execution" cure.
+# From H, a block that commits a NON-ZERO stateRoot must commit the REAL
+# post-execution root: every node re-applies the block to its parent state (the
+# path _apply_block_state already runs for BOTH the tip and reorg) and REJECTS on
+# mismatch. Self-gating on non-zero (a zero/uncommitted root is accepted, so a
+# pre-fork or not-yet-upgraded miner's zero-root block never false-rejects — no
+# split from adoption; only a WRONG non-zero root is rejected). The miner seals
+# the root via BlockImporter.compute_sealed_state_root (identical apply → equal
+# root by construction). Forward-only + grandfathered below H. This is state-
+# VERIFYING, not state-producing, so it cannot change emission; but a determinism
+# bug in compute_state_root would split, hence it enables only after a live
+# shadow window with zero mismatches (ANIMICA_ROOT_COMMITMENT_SHADOW=1) and an
+# adversarial review. Retunable via ANIMICA_FORK_STATE_COMMITMENT_HEIGHT.
+FORK_STATE_COMMITMENT = "state_commitment"
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
     # This MUST match on every node — the live node and every operator's pip install
@@ -241,6 +256,12 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # height or they will silently under-credit the foundation. Retunable via
         # that env override if adoption slips.
         FORK_FOUNDATION_SPLIT: 42_001,
+        # State-commitment enforcement (7.1.9). Operator-chosen height 44,444.
+        # DORMANT until the enforcement path is shadow-validated + reviewed and the
+        # miner is sealing real roots network-wide; retune via
+        # ANIMICA_FORK_STATE_COMMITMENT_HEIGHT. Self-gating on non-zero root means a
+        # premature activation cannot split honest zero-root miners.
+        FORK_STATE_COMMITMENT: 44_444,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {
@@ -248,12 +269,14 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_ROOT_COMMITMENT: 0,
         FORK_ADDRESS_FREEZE: 0,
         FORK_FOUNDATION_SPLIT: 0,
+        FORK_STATE_COMMITMENT: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
         FORK_ROOT_COMMITMENT: 0,
         FORK_ADDRESS_FREEZE: 0,
         FORK_FOUNDATION_SPLIT: 0,
+        FORK_STATE_COMMITMENT: 0,
     },
 }
 
