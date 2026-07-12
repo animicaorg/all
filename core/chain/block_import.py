@@ -2232,14 +2232,45 @@ class BlockImporter:
                 except Exception:
                     pass
 
-        if self.state_db is not None and old_state_snapshot is not None:
-            try:
-                self.state_db.revert(old_state_snapshot)
-            except Exception:
-                log.error("state: failed to restore pre-reorg snapshot", exc_info=True)
-            else:
-                if old_head is not None:
-                    self._state_snapshots[int(old_head[0])] = old_state_snapshot
+        # Purge snapshot-cache entries captured for the failed / rolled-back branch —
+        # heights ABOVE the restored head. A failed multi-block reorg overwrites the
+        # height-keyed _state_snapshots with rejected-branch state (via
+        # _capture_state_snapshot) before it fails; left in place, one could later be
+        # selected as a _rebuild_state_from_canonical baseline and silently corrupt the
+        # rebuild — or cause an HONEST block to be recomputed against the wrong base and
+        # false-rejected, wedging the head. (Adversarial review: corruption F2 / liveness A.)
+        if old_head is not None:
+            _oh = int(old_head[0])
+            for _hgt in [k for k in list(self._state_snapshots.keys()) if int(k) > _oh]:
+                self._state_snapshots.pop(_hgt, None)
+
+        if self.state_db is not None:
+            _restored = False
+            if old_state_snapshot is not None:
+                try:
+                    self.state_db.revert(old_state_snapshot)
+                    _restored = True
+                    if old_head is not None:
+                        self._state_snapshots[int(old_head[0])] = old_state_snapshot
+                except Exception:
+                    log.error(
+                        "state: failed to restore pre-reorg snapshot; rebuilding from canonical",
+                        exc_info=True,
+                    )
+            if not _restored and old_head is not None:
+                # No usable in-memory snapshot (capture returned None — e.g. snapshot()
+                # OOM'd on a large state — or revert threw). Self-heal from the DURABLE
+                # canonical chain rather than leave live state holding the rejected branch
+                # while the head is rolled back (silent balance divergence — adversarial
+                # review corruption F1). _apply_reorg captured _state_snapshots[old_height]
+                # from the correct pre-mutation state, so this reverts to the right baseline
+                # (or a lower one + replay). Fails LOUD, never silently diverges.
+                if not self._rebuild_state_from_canonical(int(old_head[0])):
+                    log.critical(
+                        "state: could not restore OR rebuild state after failed reorg; "
+                        "state may be inconsistent with head height=%s — operator action needed",
+                        int(old_head[0]),
+                    )
 
         # Reset fork-choice view to canonical DB view so failed branches don't pin best tip.
         self.fork_choice = None
@@ -2420,6 +2451,24 @@ class BlockImporter:
         
         return None
 
+    # Bound the durable invalid-block set so a PoW-gated wrong-root spam cannot grow
+    # it without limit (adversarial review liveness B). Eviction is SAFE: a re-imported
+    # invalid block is re-rejected deterministically by _apply_block_state, merely
+    # re-doing the cheap work; the cap only weakens the ingress short-circuit fast-path,
+    # never correctness.
+    _INVALID_BLOCKS_CAP = 100_000
+
+    def _record_invalid_block(self, h: bytes) -> None:
+        hb = bytes(h)
+        if hb in self._invalid_blocks:
+            return
+        if len(self._invalid_blocks) >= self._INVALID_BLOCKS_CAP:
+            try:
+                self._invalid_blocks.pop()  # bounded; arbitrary eviction is safe
+            except KeyError:
+                pass
+        self._invalid_blocks.add(hb)
+
     def _state_commitment_reject_reason(self, block: Block) -> Optional[str]:
         """FORK_STATE_COMMITMENT (7.1.9): a block committing a NON-ZERO stateRoot
         must commit the real post-execution root. Call this immediately after the
@@ -2496,6 +2545,22 @@ class BlockImporter:
                 )
                 return self._rebuild_state_from_canonical(best.height)
             if not self._apply_block_state(block):
+                # _apply_block_state now enforces FORK_STATE_COMMITMENT internally and,
+                # on a committed-root mismatch, records the block in _invalid_blocks.
+                # Distinguish the two False causes:
+                #  * state-commitment REJECT → return False so _apply_reorg rolls back
+                #    head+state to the pre-reorg snapshot. Do NOT rebuild to best
+                #    (best is the rejected branch — that would re-adopt it).
+                #  * ordinary execution failure → rebuild canonical state (unchanged).
+                if bytes(h) in self._invalid_blocks:
+                    log.error(
+                        "state_commitment: reorg attach rejected on committed-root mismatch",
+                        extra={
+                            "height": getattr(block.header, "height", None),
+                            "hash": h.hex(),
+                        },
+                    )
+                    return False
                 log.error(
                     "state: block execution failed during reorg; rebuilding canonical state",
                     extra={
@@ -2504,29 +2569,6 @@ class BlockImporter:
                     },
                 )
                 return self._rebuild_state_from_canonical(best.height)
-            # 7.1.9 FORK_STATE_COMMITMENT enforcement — the block's post-execution
-            # state is now in state_db; reject if a committed non-zero stateRoot does
-            # not match. Mark durably invalid (survives the fork-choice rebuild in
-            # _restore_pre_reorg_state) and return False so _apply_reorg rolls back
-            # canonical head + state to the pre-reorg snapshot. Head advances past
-            # the bad block instead of stalling on it.
-            _sc_reason = self._state_commitment_reject_reason(block)
-            if _sc_reason is not None:
-                log.error(
-                    "state_commitment: rejecting block on committed-root mismatch",
-                    extra={
-                        "height": _height_of(block.header),
-                        "hash": h.hex(),
-                        "reason": _sc_reason,
-                    },
-                )
-                self._invalid_blocks.add(bytes(h))
-                try:
-                    if self.fork_choice is not None:
-                        self.fork_choice.mark_invalid(h)
-                except Exception as _mi_exc:
-                    log.error("state_commitment: mark_invalid failed: %s", _mi_exc)
-                return False
             height = _height_of(block.header)
             self._capture_state_snapshot(height)
             applied += 1
@@ -2921,6 +2963,30 @@ class BlockImporter:
                         )
                 except Exception as e:  # pragma: no cover - never break apply
                     log.debug("root_commitment SHADOW: compute failed: %s", e)
+
+            # 7.1.9 FORK_STATE_COMMITMENT enforcement — placed HERE, the SINGLE
+            # chokepoint every apply path funnels through: normal reorg-attach, the
+            # missing-LCA-snapshot rebuild fallback, AND startup rebuild all call
+            # _apply_block_state. So the accept/reject verdict is identical on every
+            # node and cannot be bypassed by a node that happens to lack an LCA
+            # snapshot (the split hole the adversarial review found when the check
+            # lived only in the _apply_state_reorg attach loop). Skipped for the
+            # miner-seal dry-run (seal_only).
+            if not seal_only:
+                _sc_reason = self._state_commitment_reject_reason(block)
+                if _sc_reason is not None:
+                    _bad_h = block.header.hash()
+                    log.error(
+                        "state_commitment: rejecting block on committed-root mismatch",
+                        extra={"height": height, "hash": _bad_h.hex(), "reason": _sc_reason},
+                    )
+                    self._record_invalid_block(_bad_h)
+                    try:
+                        if self.fork_choice is not None:
+                            self.fork_choice.mark_invalid(_bad_h)
+                    except Exception as _mi_exc:
+                        log.error("state_commitment: mark_invalid failed: %s", _mi_exc)
+                    return False
 
             return True
         except Exception as exc:

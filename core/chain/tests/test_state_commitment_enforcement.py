@@ -115,6 +115,62 @@ def test_zero_root_block_is_accepted_selfgate(tmp_path: Path) -> None:
     assert imp.block_db.get_canonical_head()[0] == 1
 
 
+# ── Adversarial-review regression tests (split / corruption / stall fixes) ──
+
+def test_enforcement_lives_in_apply_block_state_chokepoint(tmp_path: Path) -> None:
+    # Split fix: the check must live in _apply_block_state (which EVERY apply path
+    # funnels through — normal attach, missing-snapshot rebuild, startup rebuild),
+    # NOT only in the _apply_state_reorg attach loop. Call it directly.
+    imp, g = _mk(tmp_path)
+    good = _empty_block(g, state_root=imp.compute_sealed_state_root(_empty_block(g, state_root=ZERO32)))
+    assert imp._apply_block_state(good) is True  # correct root applies
+
+    imp2, g2 = _mk(tmp_path / "b")
+    bad = _empty_block(g2, state_root=b"\xcd" * 32)
+    assert imp2._apply_block_state(bad) is False           # wrong root rejected here
+    assert bad.header.hash() in imp2._invalid_blocks        # and recorded durably
+
+
+def test_restore_purges_poisoned_snapshots_above_head(tmp_path: Path) -> None:
+    # Corruption F2 / liveness A: a failed reorg must not leave rejected-branch
+    # snapshots at heights above the restored head (they poison later rebuilds).
+    imp, g = _mk(tmp_path)
+    good_snap = imp.state_db.snapshot()  # valid → avoids the rebuild fallback path
+    imp._state_snapshots[5] = object()   # simulate poisoned captures above head 0
+    imp._state_snapshots[6] = object()
+    imp._restore_pre_reorg_state(
+        old_head=(0, g), old_canonical_height=0, old_canonical_hashes={},
+        old_state_snapshot=good_snap,
+    )
+    assert 5 not in imp._state_snapshots
+    assert 6 not in imp._state_snapshots
+
+
+def test_restore_self_heals_state_when_snapshot_is_none(tmp_path: Path) -> None:
+    # Corruption F1 (CRITICAL): if the in-memory snapshot is None, restore must
+    # self-heal state from canonical instead of leaving the rejected branch applied
+    # (silent balance divergence at the correct head).
+    imp, g = _mk(tmp_path)
+    imp._state_snapshots.setdefault(0, imp.state_db.snapshot())  # baseline at head 0
+    imp.state_db.set_balance(SENDER, 999)  # simulate "rejected branch applied"
+    imp._restore_pre_reorg_state(
+        old_head=(0, g), old_canonical_height=0, old_canonical_hashes={},
+        old_state_snapshot=None,  # the corruption trigger
+    )
+    # State recovered to head-0's real value, not left at the poisoned 999.
+    assert imp.state_db.get_balance(SENDER) == 10_000_000
+
+
+def test_invalid_blocks_set_is_bounded(tmp_path: Path) -> None:
+    # Liveness B: the durable invalid set is capped (eviction is safe — re-import
+    # re-rejects deterministically).
+    imp, _ = _mk(tmp_path)
+    cap = imp._INVALID_BLOCKS_CAP
+    for i in range(cap + 50):
+        imp._record_invalid_block(i.to_bytes(32, "big"))
+    assert len(imp._invalid_blocks) <= cap
+
+
 if __name__ == "__main__":
     import pytest, sys
     sys.exit(pytest.main([__file__, "-q"]))
