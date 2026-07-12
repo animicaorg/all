@@ -294,12 +294,13 @@
           <button class="br-tab active" data-tab="preview">Preview</button>
           <button class="br-tab" data-tab="code">Code</button>
           <button class="br-dl" id="buildDl">Download .html</button>
+          <button class="br-dl" id="buildZip">Download .zip</button>
           <button class="br-pr" id="buildPr" style="display:none">Open PR →</button>
         </div>
         <iframe class="br-preview" id="buildPreview" sandbox="allow-scripts allow-forms allow-pointer-lock allow-modals allow-popups" title="Build preview — interactive"></iframe>
         <div class="br-code" id="buildCode" style="display:none"></div>
       </div>
-      <p class="warn">No GitHub or signup needed — build, preview, steer and download right here. Built by AI agents on the free CPU model, so results vary and a build can take a couple of minutes; previews run sandboxed. Connecting GitHub (in the Agent section) is optional — only if you want to open a PR.</p>
+      <p class="warn">No GitHub or signup needed — build, preview, steer and download right here. A swarm of agents plans, writes, and critiques a multi-file app (it may pull in vetted CDN libraries like React, Tailwind, D3 or Three.js for richer results). Builds run in the background on the free CPU network — you can close this tab and come back, they keep going — so complex apps that take a few minutes don't need babysitting. Previews run sandboxed; download the single-file <b>.html</b> or the full project <b>.zip</b>. Connecting GitHub (in the Agent section) is optional — only if you want to open a PR.</p>
     </div>
   </section>
 
@@ -554,7 +555,7 @@ curl https://animica.dev/v1/chat/completions \
   // ---------- build swarm (live + steerable) ----------
   var buildGo=$('buildGo'), buildPrompt=$('buildPrompt'), swarm=$('swarm'), swarmTree=$('swarmTree'),
       buildResult=$('buildResult'), buildPreview=$('buildPreview'), buildCode=$('buildCode'),
-      buildNote=$('buildNote'), buildDl=$('buildDl'), buildPr=$('buildPr');
+      buildNote=$('buildNote'), buildDl=$('buildDl'), buildZip=$('buildZip'), buildPr=$('buildPr');
   var lastBuild=null, steerRow=null, running=false;
 
   function snode(cls,icon,title,status){ var n=document.createElement('div'); n.className='snode '+cls;
@@ -577,40 +578,84 @@ curl https://animica.dev/v1/chat/completions \
     $('steerIn').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); $('steerGo').click(); } });
   }
 
-  async function runSwarm(prompt, existingFiles){
-    running=true; if(buildGo) buildGo.disabled=true;
-    buildNote.textContent=(existingFiles?'The leader is revising the build':'The agent swarm is building')+' on the free CPU model — this can take a couple of minutes…';
+  // ---- background build: runs server-side; survives tab close / reconnect ----
+  var buildCtx=null;
+  function sleep(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
+  function finishRun(){ running=false; if(buildGo) buildGo.disabled=false; }
+  function saveJob(jobId,prompt){ try{ localStorage.setItem('anmBuildJob',JSON.stringify({jobId:jobId,prompt:prompt})); }catch(e){} }
+  function clearJob(){ try{ localStorage.removeItem('anmBuildJob'); }catch(e){} }
+  function resetTree(revise){
     swarm.style.display='block'; swarmTree.innerHTML='';
-    var leaderNode=snode('leader','🧠',(existingFiles?'Leader — planning revision…':'Leader — planning…'),'<span class="spin"></span>');
-    var wnodes={};
-    try{
-      var res=await fetch(AGENT+'/swarm',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(existingFiles?{prompt:prompt,files:existingFiles}:{prompt:prompt})});
-      if(!res.ok||!res.body){ buildNote.textContent='Swarm unavailable ('+(res.status||'net')+').'; running=false; if(buildGo) buildGo.disabled=false; return; }
-      var reader=res.body.getReader(), dec=new TextDecoder(), buf='';
-      while(true){ var r=await reader.read(); if(r.done) break; buf+=dec.decode(r.value,{stream:true});
-        var parts=buf.split('\n\n'); buf=parts.pop();
-        parts.forEach(function(chunk){
-          var line=chunk.split('\n').filter(function(l){return l.indexOf('data:')===0})[0]; if(!line) return;
-          var d; try{ d=JSON.parse(line.slice(5)); }catch(e){ return; }
-          if(d.type==='leader'){
-            if(d.refine){ snode('','🔁','Refinement pass '+(d.round||'')+(d.note?' — '+d.note:''),(d.files||[]).length+' agents'); }
-            else { leaderNode.querySelector('.t').textContent='Leader — '+(d.project||'build'); setSt(leaderNode,(d.files||[]).length+' agents dispatched',true); }
-            (d.files||[]).forEach(function(fp){ wnodes[fp]=snode('worker','⚙','Worker — '+fp,'queued'); }); }
-          else if(d.type==='worker'){ var wn=wnodes[d.path]||(wnodes[d.path]=snode('worker','⚙','Worker — '+d.path,''));
-            if(d.status==='start') setSt(wn,'<span class="spin"></span> writing…');
-            else if(d.status==='streaming') setSt(wn,'<span class="spin"></span> '+(d.bytes||0)+' B');
-            else if(d.status==='done') setSt(wn,'✓ '+(d.bytes||0)+' B',true); }
-          else if(d.type==='preview'){ livePreview(d.preview); }
-          else if(d.type==='phase'&&d.phase==='reviewing'){ snode('','🧐',d.note||'Critic is reviewing…','<span class="spin"></span>'); }
-          else if(d.type==='phase'&&d.phase==='assembling'){ snode('','🧩','Assembling…','<span class="spin"></span>'); }
-          else if(d.type==='done'){ lastBuild={project:d.project,description:d.description,files:d.files,preview:d.preview};
-            livePreview(d.preview); renderCode(d.files); persistBuild(); refreshPrBtn(); ensureSteer(); buildNote.textContent=''; }
-          else if(d.type==='error'){ buildNote.textContent='Swarm error: '+(d.message||''); }
-        });
-      }
-    }catch(e){ buildNote.textContent='Network error — please retry.'; }
-    running=false; if(buildGo) buildGo.disabled=false;
+    var leaderNode=snode('leader','🧠',(revise?'Leader — planning revision…':'Leader — planning…'),'<span class="spin"></span>');
+    buildCtx={leaderNode:leaderNode, wnodes:{}, cursor:0};
+  }
+  function renderEvent(d){
+    if(!buildCtx||!d||d.type==='_gap') return;
+    var leaderNode=buildCtx.leaderNode, wnodes=buildCtx.wnodes;
+    if(d.type==='leader'){
+      if(d.refine){ snode('','🔁','Refinement pass '+(d.round||'')+(d.note?' — '+d.note:''),(d.files||[]).length+' agents'); }
+      else { leaderNode.querySelector('.t').textContent='Leader — '+(d.project||'build'); setSt(leaderNode,(d.files||[]).length+' agents dispatched',true); }
+      (d.files||[]).forEach(function(fp){ if(!wnodes[fp]) wnodes[fp]=snode('worker','⚙','Worker — '+fp,'queued'); }); }
+    else if(d.type==='worker'){ var wn=wnodes[d.path]||(wnodes[d.path]=snode('worker','⚙','Worker — '+d.path,''));
+      if(d.status==='start') setSt(wn,'<span class="spin"></span> writing…');
+      else if(d.status==='streaming') setSt(wn,'<span class="spin"></span> '+(d.bytes||0)+' B');
+      else if(d.status==='done') setSt(wn,'✓ '+(d.bytes||0)+' B',true); }
+    else if(d.type==='preview'){ livePreview(d.preview); }
+    else if(d.type==='phase'&&d.phase==='planning'&&d.note){ setSt(leaderNode,d.note+' <span class="spin"></span>'); }
+    else if(d.type==='phase'&&d.phase==='reviewing'){ snode('','🧐',d.note||'Critic is reviewing…','<span class="spin"></span>'); }
+    else if(d.type==='phase'&&d.phase==='verifying'){ snode('','🔧',d.note||'Verifying…','<span class="spin"></span>'); }
+    else if(d.type==='phase'&&d.phase==='assembling'){ snode('','🧩','Assembling…','<span class="spin"></span>'); }
+    else if(d.type==='validation'&&!d.ok){ snode('','⚠','Fixing '+(d.path||'')+' — '+(d.note||''),''); }
+    else if(d.type==='done'){ lastBuild={project:d.project,description:d.description,files:d.files,preview:d.preview};
+      livePreview(d.preview); renderCode(d.files); persistBuild(); refreshPrBtn(); ensureSteer();
+      buildNote.textContent='✅ Build complete — preview it, download .html/.zip, or open a PR.'; clearJob(); finishRun(); }
+    else if(d.type==='error'){ buildNote.textContent='Swarm error: '+(d.message||''); clearJob(); finishRun(); }
+  }
+  // Stream a background job from buildCtx.cursor; auto-reconnect on a dropped
+  // connection until the job finishes. Every `data:` frame is one server event
+  // (cursor++); `:`-comment keepalives are ignored and not counted.
+  async function streamJob(jobId){
+    running=true; if(buildGo) buildGo.disabled=true;
+    while(true){
+      var from=buildCtx?buildCtx.cursor:0, res=null;
+      try{ res=await fetch(AGENT+'/swarm/events/'+encodeURIComponent(jobId)+'?cursor='+from); }catch(e){ res=null; }
+      if(res&&res.status===404){ buildNote.textContent='This build expired.'; clearJob(); finishRun(); return; }
+      if(!res||!res.ok||!res.body){ await sleep(2000); continue; }
+      var finished=false;
+      try{
+        var reader=res.body.getReader(), dec=new TextDecoder(), buf='';
+        while(true){ var r=await reader.read(); if(r.done) break; buf+=dec.decode(r.value,{stream:true});
+          var parts=buf.split('\n\n'); buf=parts.pop();
+          for(var i=0;i<parts.length;i++){
+            var line=parts[i].split('\n').filter(function(l){return l.indexOf('data:')===0})[0];
+            if(!line) continue;                 // keepalive comment — not an indexed event
+            if(buildCtx) buildCtx.cursor++;
+            var d; try{ d=JSON.parse(line.slice(5)); }catch(e){ continue; }
+            renderEvent(d);
+            if(d.type==='done'||d.type==='error'){ finished=true; }
+          }
+          if(finished) break;
+        }
+      }catch(e){ /* network drop — fall through to reconnect */ }
+      if(finished){ finishRun(); return; }
+      var st=null; try{ st=await (await fetch(AGENT+'/swarm/status/'+encodeURIComponent(jobId))).json(); }catch(e){}
+      if(st&&st.done){ finishRun(); return; }   // done but stream ended cleanly (already rendered)
+      await sleep(1500);                          // still running — reconnect from cursor
+    }
+  }
+  async function runSwarm(prompt, existingFiles){
+    resetTree(!!existingFiles); running=true; if(buildGo) buildGo.disabled=true;
+    buildNote.textContent=(existingFiles?'The leader is revising the build':'The agent swarm is building')
+      +' on the free CPU network. This runs in the background — you can close this tab and come back, it keeps going. Complex apps can take a few minutes…';
+    var res=null;
+    try{ res=await fetch(AGENT+'/swarm/start',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(existingFiles?{prompt:prompt,files:existingFiles}:{prompt:prompt})}); }
+    catch(e){ buildNote.textContent='Network error — please retry.'; finishRun(); return; }
+    if(!res.ok){ buildNote.textContent='Swarm unavailable ('+(res.status||'net')+').'; finishRun(); return; }
+    var j=null; try{ j=await res.json(); }catch(e){}
+    if(!j||!j.job_id){ buildNote.textContent='Could not start the build.'; finishRun(); return; }
+    saveJob(j.job_id, prompt);
+    streamJob(j.job_id);
   }
 
   if(buildGo) buildGo.onclick=function(){ var p=buildPrompt.value.trim(); if(!p||running) return; if(buildResult) buildResult.style.display='none'; runSwarm(p,null); };
@@ -619,6 +664,16 @@ curl https://animica.dev/v1/chat/completions \
     var tab=t.getAttribute('data-tab'); buildPreview.style.display=tab==='preview'?'block':'none'; buildCode.style.display=tab==='code'?'block':'none'; });
   if(buildDl) buildDl.onclick=function(){ if(!lastBuild) return; var b=new Blob([lastBuild.preview||''],{type:'text/html'});
     var a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=((lastBuild.project||'app').replace(/[^a-z0-9]+/gi,'-')||'app')+'.html'; document.body.appendChild(a); a.click(); a.remove(); };
+  if(buildZip) buildZip.onclick=async function(){ if(!lastBuild||!lastBuild.files||buildZip.disabled) return;
+    var label=buildZip.textContent; buildZip.disabled=true; buildZip.textContent='Zipping…';
+    try{ var r=await fetch(AGENT+'/zip',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({project:lastBuild.project||'app',files:lastBuild.files})});
+      if(!r.ok){ throw new Error('zip failed'); }
+      var blob=await r.blob(); var a=document.createElement('a'); var url=URL.createObjectURL(blob);
+      a.href=url; a.download=((lastBuild.project||'app').replace(/[^a-z0-9]+/gi,'-')||'app')+'.zip';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){URL.revokeObjectURL(url);},2000); }
+    catch(e){ buildNote.textContent='ZIP download failed — try again.'; }
+    buildZip.disabled=false; buildZip.textContent=label; };
   if(buildPr) buildPr.onclick=async function(){ var c=ghCreds(); if(!lastBuild||!c.repo||!c.token) return;
     buildPr.disabled=true; buildPr.textContent='Opening PR…';
     try{ var r=await fetch(AGENT+'/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:c.token,repo:c.repo,project:lastBuild.project||'app',files:lastBuild.files})});
@@ -628,6 +683,20 @@ curl https://animica.dev/v1/chat/completions \
 
   function persistBuild(){ try{ localStorage.setItem('anmBuild-v1', JSON.stringify(lastBuild)); }catch(e){} }
   try{ var lb=JSON.parse(localStorage.getItem('anmBuild-v1')||'null'); if(lb&&lb.preview){ lastBuild=lb; livePreview(lb.preview); renderCode(lb.files); refreshPrBtn(); ensureSteer(); } }catch(e){}
+
+  // Reconnect a background build that was still running when the page was closed/reloaded.
+  (function reconnectBuild(){
+    var raw=null; try{ raw=JSON.parse(localStorage.getItem('anmBuildJob')||'null'); }catch(e){}
+    if(!raw||!raw.jobId) return;
+    fetch(AGENT+'/swarm/status/'+encodeURIComponent(raw.jobId)).then(function(r){ return r.ok?r.json():null; }).then(function(st){
+      if(!st){ clearJob(); return; }                       // 404 → expired/unknown
+      if(st.done && !st.has_result){ clearJob(); return; }  // finished (likely errored) and gone
+      if(buildResult) buildResult.style.display='block';
+      resetTree(false);                                     // rebuild the tree; replay from cursor 0
+      buildNote.textContent=st.done?'Loading your finished build…':'Reconnecting to your build — it kept running in the background…';
+      streamJob(raw.jobId);
+    }).catch(function(){});
+  })();
 
   // ---------- PWA install ----------
   if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js').catch(function(){}); }

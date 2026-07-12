@@ -15,7 +15,7 @@ import ipaddress
 import re
 import socket
 from typing import Optional
-from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
+from urllib.parse import parse_qs, quote, quote_plus, urljoin, urlparse
 
 import httpx
 
@@ -105,10 +105,23 @@ def _ddg_unwrap(href: str) -> Optional[str]:
 
 
 async def web_search(query: str, *, k: int = 5) -> list[dict]:
-    """Keyless web search via DuckDuckGo HTML. Returns [{title, url, snippet}]."""
+    """Keyless web search. Returns [{title, url, snippet}].
+
+    Tries DuckDuckGo's HTML endpoint first; when that is unavailable — datacenter
+    IPs get served a 202 "anomaly" page with no results — falls back to the
+    Wikipedia search API, which is keyless and answers reliably from server IPs.
+    """
     q = (query or "").strip()
     if not q:
         return []
+    results = await _ddg_search(q, k=k)
+    if results:
+        return results
+    return await _wikipedia_search(q, k=k)
+
+
+async def _ddg_search(q: str, *, k: int) -> list[dict]:
+    """Scrape DuckDuckGo's HTML results endpoint (keyless, no API key)."""
     try:
         async with httpx.AsyncClient(
             timeout=_TIMEOUT, headers={"User-Agent": _UA}, follow_redirects=True
@@ -133,6 +146,35 @@ async def web_search(query: str, *, k: int = 5) -> list[dict]:
             "title": _strip_html(title)[:200],
             "url": real,
             "snippet": snippet[:400],
+        })
+        if len(out) >= k:
+            break
+    return out
+
+
+async def _wikipedia_search(q: str, *, k: int) -> list[dict]:
+    """Keyless fallback via the Wikipedia search API (works from datacenter IPs
+    where DuckDuckGo is anomaly-blocked). Good for factual/entity grounding."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=_TIMEOUT, headers={"User-Agent": _UA}, follow_redirects=True
+        ) as c:
+            r = await c.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "list": "search", "srsearch": q,
+                "format": "json", "srlimit": str(max(1, k)), "srprop": "snippet",
+            })
+        hits = r.json().get("query", {}).get("search", [])
+    except Exception:
+        return []
+    out: list[dict] = []
+    for h in hits:
+        title = (h.get("title") or "").strip()
+        if not title:
+            continue
+        out.append({
+            "title": title[:200],
+            "url": "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_"), safe=""),
+            "snippet": _strip_html(h.get("snippet") or "")[:400],
         })
         if len(out) >= k:
             break

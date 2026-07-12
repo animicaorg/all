@@ -18,15 +18,18 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import io
 import json
 import os
 import re
 import time
+import uuid
+import zipfile
 from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 import web_access  # local: keyless, SSRF-hardened web search/fetch (runs on the edge, HTTP only)
@@ -113,12 +116,41 @@ def _is_stub(text: str) -> bool:
     return any(m in (text or "") for m in _STUB_MARKERS)
 
 
+# A chat-tuned model may over-refuse a coding task ("I'm sorry, I cannot fulfil that
+# request. As an AI model…"). Detection is intentionally CONSERVATIVE — a false positive
+# needlessly downgrades a valid turn (and, in the ReAct agent, can fail a whole run), so
+# only high-confidence patterns count. Benign English like "I can't help but love this",
+# "I cannot wait to help", "I can't write to localStorage here", or the legitimate
+# clarification "I can't create X until you provide Y" must NOT match.
+_REFUSAL_RE = re.compile(
+    # (a) an apology lead followed by an inability within the same clause
+    r"^\W{0,4}(?:i'?m sorry|i apologi[sz]e|sorry[, ]|unfortunately[, ])"
+    r"[^.\n]{0,70}\b(?:can(?:no|')?t|cannot|am unable to|'m unable to|won'?t|not able to|must decline)\b"
+    # (b) unambiguous refusal phrasing (these verb pairings are essentially always refusals)
+    r"|\bi (?:cannot|can'?t|am unable to|will not|won'?t)\s+(?:fulfil|fulfill|comply|assist you with (?:that|this)|help you with (?:that|this))\b"
+    r"|\bi must decline\b"
+    # (c) the classic AI-model disclaimer paired with an inability
+    r"|\bas an ai(?: language)? model[,\s][^.\n]{0,50}\b(?:can(?:no|')?t|cannot|am unable to|not able to|won'?t|do not|don'?t)\b",
+    re.I)
+
+
+def _looks_refusal(text: str) -> bool:
+    t = (text or "").strip()
+    if not t or len(t) > 1200:      # refusals are short; long outputs are genuine work
+        return False
+    return bool(_REFUSAL_RE.search(t[:400]))
+
+
 async def llm(client: httpx.AsyncClient, model: str, messages: list[dict], *,
-              retries: int = 2, timeout: float = 90.0) -> str:
+              retries: int = 2, timeout: float = 90.0, refusal_downgrade: bool = True) -> str:
     """Call the AICF gateway. A stub (no miner claimed the job) or a timeout/5xx is
     treated as a transient no-serve and retried with backoff; if inference stays
     unavailable we raise InferenceUnavailable rather than hanging or feeding a stub
-    into the reasoning loop. Bounded: (retries+1) * timeout + backoffs (~5 min)."""
+    into the reasoning loop. Bounded: (retries+1) * timeout + backoffs (~5 min).
+
+    A short refusal ("I'm sorry, I cannot…") won't change on a same-model retry at low
+    temperature, so when refusal_downgrade is set we raise InferenceUnavailable at once —
+    the swarm's leader/worker/critic loops catch that and switch to another tier."""
     headers = {"Content-Type": "application/json"}
     if GATEWAY_KEY:
         headers["Authorization"] = f"Bearer {GATEWAY_KEY}"
@@ -133,6 +165,8 @@ async def llm(client: httpx.AsyncClient, model: str, messages: list[dict], *,
             text = r.json()["choices"][0]["message"]["content"]
         except httpx.HTTPError:
             text = None    # timeout / 5xx — the miner didn't respond; treat as no-serve
+        if text and refusal_downgrade and _looks_refusal(text):
+            raise InferenceUnavailable("model declined the request (refusal) — trying another tier")
         if text and not _is_stub(text):
             return text
         if attempt < retries:
@@ -143,6 +177,27 @@ async def llm(client: httpx.AsyncClient, model: str, messages: list[dict], *,
         "No miner is currently serving inference — the AICF network returned only "
         "stub placeholders / timeouts after retries. Please try again shortly."
     )
+
+
+async def _prewarm(client: httpx.AsyncClient, model: str, *, timeout: float = 210.0) -> bool:
+    """Load `model` on the miner with a 1-token call so the first REAL call runs warm.
+    Returns True if the miner produced a (non-stub) response, False on timeout/error/stub.
+    A False lets the swarm skip a tier that can't load rather than time out the leader.
+    Best-effort: never raises."""
+    headers = {"Content-Type": "application/json"}
+    if GATEWAY_KEY:
+        headers["Authorization"] = f"Bearer {GATEWAY_KEY}"
+    try:
+        r = await client.post(
+            GATEWAY.rstrip("/") + "/chat/completions", headers=headers,
+            json={"model": model, "messages": [{"role": "user", "content": "ready?"}],
+                  "max_tokens": 1, "temperature": 0.0}, timeout=timeout)
+        if r.status_code >= 400:
+            return False
+        txt = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        return not _is_stub(txt)
+    except Exception:   # noqa: BLE001
+        return False
 
 
 async def llm_stream(client: httpx.AsyncClient, model: str, messages: list[dict], *, max_tokens: int = 4096):
@@ -802,10 +857,11 @@ def _validate_build(files: dict, *, web: bool = False) -> list:
     (path, note) problems — empty means it passed. Flags empty files and leaked
     no-miner stubs / worker-error placeholders.
 
-    The index.html -> sibling style.css / app.js reference check is swarm-specific
-    (the swarm always emits that trio) and would false-positive on an arbitrary
-    repo, so it only runs when `web=True`; it must never gate the general
-    /agent/run finalize path."""
+    The index.html -> local sibling reference check is swarm-specific (the swarm
+    emits a multi-file web app) and would false-positive on an arbitrary repo, so it
+    only runs when `web=True`; it must never gate the general /agent/run finalize
+    path. It generalizes to ANY number of local .css/.js files (folded into the
+    preview by basename), so index.html must name each one."""
     problems: list = []
     for path, content in (files or {}).items():
         if content is None or not str(content).strip():
@@ -816,12 +872,13 @@ def _validate_build(files: dict, *, web: bool = False) -> list:
         if "<!-- worker error" in content:
             problems.append((path, "contains a worker-error placeholder"))
     if web:
-        idx = files.get("index.html")
+        idx = files.get("index.html") or files.get("index.htm") or ""
         if idx:
-            if "style.css" in files and "style.css" not in idx:
-                problems.append(("index.html", "does not reference style.css"))
-            if "app.js" in files and "app.js" not in idx:
-                problems.append(("index.html", "does not reference app.js"))
+            for path in files:
+                if path in ("index.html", "index.htm"):
+                    continue
+                if path.lower().endswith((".css", ".js", ".jsx", ".mjs")) and _basename(path) not in idx:
+                    problems.append(("index.html", f"does not reference {_basename(path)}"))
     return problems
 
 
@@ -842,13 +899,96 @@ def _autofinalize_body(staged: dict, base_note: str) -> str:
 
 
 # ============================ agents-mode (build swarm) ============================ #
-SWARM_MAX_FILES = int(os.environ.get("ANIMICA_SWARM_MAX_FILES", "5"))
+# File count is UNLIMITED by default (0) so the swarm can build genuinely large,
+# multi-file apps — honoring the whole architecture the leader/critic proposes.
+# A large hard safety backstop still prevents a pathological plan from requesting
+# thousands of files.
+SWARM_MAX_FILES = int(os.environ.get("ANIMICA_SWARM_MAX_FILES", "0"))    # 0 = unlimited
+_SWARM_SAFETY_CAP = int(os.environ.get("ANIMICA_SWARM_SAFETY_CAP", "120"))
+# Floor for genuine decomposition — if the leader proposes fewer files than this for a
+# fresh build, re-ask with a focused "split into many files" prompt, then fall back to a
+# rich modular architecture. Real apps want many focused files, not one monolith.
+SWARM_MIN_FILES = int(os.environ.get("ANIMICA_SWARM_MIN_FILES", "5"))
+
+# The swarm's starting tier. Flagship gives dramatically better decomposition and
+# richer files, and the miner serves it FAST once warm — so the swarm PREWARMS this
+# tier (loads the model with a 1-token call) before the leader step, then runs the
+# whole build on it. If the tier can't load in time or refuses, the leader/worker/
+# critic loops downgrade through the ladder (animica-chat -> small), so the swarm is
+# never worse than the reliably-served standard tier. Override with ANIMICA_SWARM_MODEL.
+SWARM_DEFAULT_MODEL = os.environ.get("ANIMICA_SWARM_MODEL", "animica-chat-flagship")
+# Per-call floor for swarm llm() timeouts: a warm flagship writing a full 4096-token
+# file can run longer than the latency-EWMA-derived value (which the tiny keep-warm
+# pings bias downward). Builds run in the background, so a generous floor is fine.
+_SWARM_CALL_FLOOR_S = float(os.environ.get("ANIMICA_SWARM_CALL_FLOOR_S", "240"))
+# How long to allow a cold model load during prewarm before giving up on that tier. MUST
+# be >= the real per-call budget, otherwise prewarm is stricter than the call it protects
+# and would disqualify a tier that the real (retried) leader/worker calls could still load
+# and serve. Kept a bit above the floor to cover a genuinely cold big-model load.
+_COLD_START_S = max(float(os.environ.get("ANIMICA_SWARM_COLD_START_S", "300")), _SWARM_CALL_FLOOR_S)
+
+
+def _cap_files(items):
+    """Apply the file-count limit. SWARM_MAX_FILES=0 means unlimited (bounded only
+    by the large _SWARM_SAFETY_CAP backstop)."""
+    lim = SWARM_MAX_FILES if SWARM_MAX_FILES > 0 else _SWARM_SAFETY_CAP
+    return list(items)[:lim]
+
+
+def _dedup_files(items) -> list:
+    """Normalize a leader/critic file list: strip bad/duplicate/traversing paths, keep
+    {path, spec}. Caps to the file limit."""
+    out, seen = [], set()
+    for f in _cap_files(items or []):
+        if not isinstance(f, dict):
+            continue
+        # Normalize: the model often emits "./file" or "/file" or "./components/x.js".
+        p = re.sub(r"^(?:\./|/)+", "", str(f.get("path", "")).strip())
+        if not p or p in seen or ".." in p.split("/"):
+            continue
+        seen.add(p)
+        out.append({"path": p, "spec": str(f.get("spec", ""))})
+    return out
+
+
+# Core modules of the rich fallback architecture (a general modular SPA), so we can tell
+# which leader-proposed files are "extra" feature modules to keep alongside them.
+_RICH_CORE = ("index.html", "styles.css", "style.css", "state.js", "storage.js",
+              "ui.js", "features.js", "app.js")
+
+
+def _rich_default_files(prompt: str, extra: list) -> list:
+    """A real modular architecture used when the leader under-decomposes: HTML + CSS +
+    state/storage/ui/features/app modules, plus any extra feature modules the leader named.
+    Each worker then writes ONE focused, substantial file instead of one monolith."""
+    extra = [f for f in (extra or []) if f.get("path") not in _RICH_CORE]
+    refs = ", ".join(["styles.css", "state.js", "storage.js", "ui.js", "features.js", "app.js"]
+                     + [f["path"] for f in extra])
+    core = [
+        ("index.html", "The full HTML structure, layout and markup for this app: " + prompt
+         + f". Reference these local files by exact name: {refs}. You MAY add vetted CDN libraries. "
+         "Include every screen, section and control the app needs."),
+        ("styles.css", "Complete, polished, responsive styling for this app: " + prompt
+         + ". A cohesive theme, thoughtful layout, and empty/loading/error/hover/focus states."),
+        ("state.js", "The in-memory state and data model for this app: " + prompt
+         + ". Define the data structures and a small state store on window; no DOM code here."),
+        ("storage.js", "localStorage persistence for this app: " + prompt
+         + ". Load and save the state defined in state.js; tolerate missing or corrupt data."),
+        ("ui.js", "DOM rendering and reusable UI components for this app: " + prompt
+         + ". Pure render functions that read state and build the interface; attach them to window."),
+        ("features.js", "The primary feature logic for this app: " + prompt
+         + ". Implement the main interactions and behaviours, updating state and re-rendering via ui.js."),
+        ("app.js", "Bootstrap for this app: " + prompt + ". On load, wire the modules together, restore "
+         "saved state, render the initial UI, and register all event listeners and keyboard shortcuts."),
+    ]
+    return [{"path": p, "spec": s} for p, s in core] + extra
+
+
 # Refinement runs until the critic judges the product genuinely good (score >=
-# bar / done) or proposes no further changes — with NO time limit by default: it
-# will keep improving for as long as it takes. Set a budget/round cap via env to
-# bound it. 0 = unlimited (run forever if need be).
-REFINE_MAX_ROUNDS = int(os.environ.get("ANIMICA_SWARM_REFINE_MAX", "3"))              # 0 = unlimited rounds
-REFINE_TIME_BUDGET_S = float(os.environ.get("ANIMICA_SWARM_REFINE_BUDGET_S", "240"))  # 0 = no time limit
+# bar / done) or proposes no further changes, bounded by a round/time budget so a
+# slow miner can't run forever. Complex apps get a generous budget. 0 = unlimited.
+REFINE_MAX_ROUNDS = int(os.environ.get("ANIMICA_SWARM_REFINE_MAX", "6"))              # 0 = unlimited rounds
+REFINE_TIME_BUDGET_S = float(os.environ.get("ANIMICA_SWARM_REFINE_BUDGET_S", "600"))  # 0 = no time limit
 REFINE_SCORE_BAR = int(os.environ.get("ANIMICA_SWARM_REFINE_SCORE", "90"))          # "good product" bar (0-100)
 
 
@@ -866,6 +1006,11 @@ class PublishReq(BaseModel):
     base_branch: Optional[str] = None
 
 
+class ZipReq(BaseModel):
+    files: dict[str, str]
+    project: Optional[str] = None
+
+
 def _strip_fence(s: str) -> str:
     s = (s or "").strip()
     if s.startswith("```"):
@@ -876,65 +1021,232 @@ def _strip_fence(s: str) -> str:
     return s.strip()
 
 
-LEADER_SYS = """You are the LEAD agent of an AI build swarm. Turn the user's request into a SMALL, self-contained web app using ONLY plain HTML/CSS/JS — no build step, no frameworks, no external network or CDNs. Output ONLY one JSON object and nothing else:
-{"project":"<short name>","description":"<one sentence>","files":[{"path":"index.html","spec":"<precise, self-contained brief for the worker who writes ONLY this file>"}]}
-Rules: ALWAYS split the work into at LEAST 3 files — index.html + style.css + app.js — and up to 5 for richer apps (e.g. a second JS module or a data file). index.html MUST reference them by those exact names (<link rel=stylesheet href="style.css">, <script src="app.js"></script>). Each spec is a precise, self-contained brief so a worker can write that file in isolation. Aim high: a genuinely impressive, polished, interactive product — real features, thoughtful layout and styling, keyboard support and empty/edge states — not a bare-minimum demo. It must run by simply opening index.html."""
+# Vetted, no-build-step CDN libraries the swarm may use to build far richer apps.
+# They load directly in the sandboxed preview iframe (no CSP blocks them).
+_CDN_ALLOW = (
+    "React 18 + ReactDOM + Babel standalone (unpkg.com) for JSX with no build step, "
+    "Vue 3 (unpkg.com), Tailwind CSS Play CDN (cdn.tailwindcss.com), Alpine.js, D3, "
+    "Chart.js, Three.js, anime.js, marked, DOMPurify, Day.js, Lodash "
+    "(cdn.jsdelivr.net / unpkg.com), Google Fonts (fonts.googleapis.com), and icon "
+    "sets (lucide, heroicons via CDN)"
+)
+
+LEADER_SYS = (
+    "You are the LEAD ARCHITECT of an AI build swarm. Turn the user's request into a "
+    "COMPLETE, genuinely COMPLEX, production-quality web app — as ambitious and full-"
+    "featured as the request implies. Never a toy or bare-minimum demo. Output ONLY one "
+    "JSON object and nothing else:\n"
+    '{"project":"<short name>","description":"<one sentence>","files":[{"path":"<path>",'
+    '"spec":"<precise, self-contained brief for the worker who writes ONLY this file>"}]}\n'
+    "Architecture:\n"
+    "- Decompose the app into MANY focused files — there is NO upper limit, and you MUST "
+    "split into at least 6 (aim for 6-12 for a real app). NEVER put all the logic in "
+    "index.html or a single app.js. Real apps have many parts: index.html, one or more "
+    "stylesheets, and SEVERAL JS modules split by responsibility (state/data model, "
+    "storage/persistence, UI rendering & components, EACH major feature in its own module, "
+    "utilities, bootstrap), plus sample-data files and a README.md. One responsibility per "
+    "file so each worker writes one focused, complete, substantial file.\n"
+    "- index.html is the entry point and MUST run by simply opening it in a browser. It "
+    "references every local file by exact relative path (<link rel=stylesheet href=\"style.css\">, "
+    "<script src=\"app.js\"></script>, ...).\n"
+    "- You MAY use these vetted CDN libraries (load via <script>/<link> in index.html) to "
+    "build much richer apps with no build step: " + _CDN_ALLOW + ". Prefer them when they "
+    "make the app better; for React/JSX load Babel standalone and use <script type=\"text/babel\">.\n"
+    "- PREVIEW RULE: split local JS into PLAIN scripts that attach what siblings need to "
+    "window/global scope — do NOT use ES-module import/export between local files (they must "
+    "compose when concatenated in the preview). CDN libraries are exempt.\n"
+    "- Each spec is precise and self-contained (the worker sees only its spec + the sibling "
+    "filenames): state the data model, the functions/exports, and how it integrates.\n"
+    "Aim for a deep, impressive product: real features, thoughtful UX, polished responsive "
+    "design, keyboard support, and empty/loading/error states with sensible sample data.\n"
+    "OUTPUT RULES: emit ONLY the JSON object — no prose, no markdown fences, before or after. "
+    "Keep each spec to 1-3 sentences so the whole plan is compact and valid JSON. Do NOT include "
+    "any file CONTENTS in the plan (only path + spec); the workers write the code."
+)
+
+# Focused re-prompt used when the first leader plan under-decomposes. A narrow "just list
+# many files" task is something even a smaller model does reliably, so it recovers a proper
+# modular breakdown instead of a single-file plan.
+DECOMPOSE_SYS = (
+    "You are a software architect. Split the requested web app into MANY small, focused "
+    "files — a real modular codebase, NEVER everything in one file. Output ONLY this JSON "
+    "and nothing else:\n"
+    '{"project":"<short name>","description":"<one sentence>","files":[{"path":"<file>",'
+    '"spec":"<1-3 sentence brief>"}]}\n'
+    "You MUST list at least 6 files (aim 6-12): index.html, one or more stylesheets, and "
+    "SEVERAL JavaScript modules split by responsibility — state/data model, storage/"
+    "persistence, UI rendering & components, EACH major feature in its own module, "
+    "utilities, and a small bootstrap that wires them together — plus any sample-data files. "
+    "index.html references every local file by exact name. Keep local JS as plain scripts "
+    "(no cross-file import/export). Keep each spec to 1-3 sentences."
+)
 
 
 def _worker_sys(project: str, desc: str, paths: list[str]) -> str:
-    return (f"You are ONE worker in a build swarm. Project: {project} — {desc}. "
-            f"The project files are: {', '.join(paths)}. You write exactly ONE of them. "
-            "Output ONLY the raw, complete contents of your assigned file — no markdown fences, no commentary. "
-            "It MUST integrate with the sibling files (index.html links style.css and app.js by those exact names). "
-            "Plain HTML/CSS/JS only; no external resources, CDNs, or network calls.")
+    return (f"You are ONE worker in a build swarm building a COMPLEX, production-quality web app. "
+            f"Project: {project} — {desc}. The project files are: {', '.join(paths)}. You write "
+            "exactly ONE of them (named in the next message). Output ONLY the raw, COMPLETE "
+            "contents of that file — no markdown fences, no commentary, no placeholders or TODOs. "
+            "Write a substantial, finished file that integrates cleanly with the siblings "
+            "(index.html references them by exact name). You MAY use these vetted CDN libraries: "
+            + _CDN_ALLOW + ". If this is a JS file, write a PLAIN script that attaches what siblings "
+            "need to window/global scope — do NOT use ES-module import/export between local files. "
+            "Match the app's data model and visual style; make it genuinely good.")
+
+
+def _basename(p: str) -> str:
+    return p.rsplit("/", 1)[-1]
+
+
+def _fold_escape(content: str, tag: str) -> str:
+    """Neutralize a literal </script> or </style> inside a file so it can't close the
+    folded tag early. Such a sequence can only legitimately occur inside a JS/CSS string
+    literal, where the backslash break (<\\/script>) is an equivalent, valid form."""
+    return re.sub(r"</(" + tag + r")", r"<\\/\1", content, flags=re.I)
 
 
 def _inline_preview(files: dict[str, str]) -> str:
-    """Fold style.css / app.js into index.html so the result runs in an iframe srcdoc."""
-    html = files.get("index.html", "") or "<!doctype html><meta charset=utf-8><body>(no index.html produced)</body>"
-    css = files.get("style.css", "")
-    js = files.get("app.js", "")
-    if css:
-        new, n = re.subn(r'<link[^>]*href=["\']\.?/?style\.css["\'][^>]*>', f"<style>\n{css}\n</style>", html, flags=re.I)
-        html = new if n else (html.replace("</head>", f"<style>\n{css}\n</style></head>", 1) if "</head>" in html else f"<style>\n{css}\n</style>" + html)
-    if js:
-        new, n = re.subn(r'<script[^>]*src=["\']\.?/?app\.js["\'][^>]*>\s*</script>', f"<script>\n{js}\n</script>", html, flags=re.I)
-        html = new if n else (html.replace("</body>", f"<script>\n{js}\n</script></body>", 1) if "</body>" in html else html + f"<script>\n{js}\n</script>")
+    """Assemble one self-contained HTML document from the built files so the result
+    runs in a sandboxed iframe srcdoc.
+
+    Every LOCAL stylesheet/script that index.html references by relative path is
+    folded inline (a srcdoc iframe can't fetch sibling files) — this works for ANY
+    number of local .css/.js files, in the order they appear in the HTML. External
+    CDN references (<link>/<script src="https://…">) are left untouched so the
+    iframe loads them normally. A folded <script>'s `type` (e.g. text/babel for JSX)
+    is preserved so React/Babel apps still run in the preview."""
+    html = files.get("index.html") or files.get("index.htm") or ""
+    if not html:
+        for p, c in files.items():
+            if p.lower().endswith((".html", ".htm")) and c:
+                html = c
+                break
+    if not html:
+        return "<!doctype html><meta charset=utf-8><body>(no index.html produced)</body>"
+
+    # Fold every referenced local stylesheet: <link ... href="x.css"> -> <style>…</style>.
+    # The colon-free path class keeps CDN URLs (https:…) from matching a local basename.
+    for path, content in files.items():
+        if path in ("index.html", "index.htm") or not path.lower().endswith(".css") or not content:
+            continue
+        name = re.escape(_basename(path))
+        # RELATIVE refs only: (?:\./)? optional leading ./, then zero+ path segments that
+        # contain no slash/colon/quote. This never matches a leading "/" (absolute), "//"
+        # (protocol-relative), or "scheme://" — so CDN links are always left intact even
+        # when a local file happens to share their basename.
+        pat = re.compile(r'<link\b[^>]*?href=["\'](?:\./)?(?:[^"\':/]+/)*' + name + r'["\'][^>]*?>', re.I)
+        repl = '<style data-src="' + _basename(path) + '">\n' + _fold_escape(content, "style") + '\n</style>'
+        html = pat.sub(lambda _m, r=repl: r, html)
+
+    # Fold every referenced local script: <script src="x.js"></script> -> <script>…</script>,
+    # keeping any type= attribute (text/babel, module, …) on the folded tag.
+    for path, content in files.items():
+        if path in ("index.html", "index.htm") or not path.lower().endswith((".js", ".jsx", ".mjs")) or not content:
+            continue
+        name = re.escape(_basename(path))
+        # RELATIVE refs only (see the CSS note above) so a CDN <script src> is never folded.
+        pat = re.compile(
+            r'<script\b([^>]*?)\bsrc=["\'](?:\./)?(?:[^"\':/]+/)*' + name + r'["\']([^>]*?)>\s*</script>', re.I)
+
+        def _repl(m, c=content):
+            attrs = (m.group(1) or "") + " " + (m.group(2) or "")
+            tm = re.search(r'\btype=["\']([^"\']+)["\']', attrs, re.I)
+            typ = f' type="{tm.group(1)}"' if tm else ""
+            return f"<script{typ}>\n{_fold_escape(c, 'script')}\n</script>"
+
+        html = pat.sub(_repl, html)
+
     return html
 
 
-CRITIC_SYS = """You are the QUALITY CRITIC of an AI build swarm. You are shown the current files of a small web app (plain HTML/CSS/JS, no build step, no external network/CDNs). Your job is to make it genuinely impressive and complete, and to judge honestly when it is good enough. Output ONLY one JSON object and nothing else:
-{"score":<0-100>,"summary":"<one short line on what you're improving>","done":false,"files":[{"path":"<existing or new file>","spec":"<precise, self-contained instructions for the worker who will rewrite this WHOLE file>"}]}
-Scoring — be a demanding judge. A "good product" (score >= 90) is complete, bug-free, visually polished, genuinely interactive, keyboard-accessible, and handles empty/error states. Score honestly: a first draft is usually 55-75.
-Each pass, identify the concrete improvements worth the MOST right now — missing features the request implies, real bugs, broken/incomplete code, weak visual design, missing interactivity, missing empty/error states — at most 4 files, ordered by impact. Keep paths consistent (index.html, style.css, app.js, …). Each spec is self-contained: the worker sees only your spec plus the file's current contents. NEVER remove working features. When it's genuinely excellent and further edits wouldn't clearly help, set "done":true (and score it accordingly)."""
+CRITIC_SYS = (
+    "You are the QUALITY CRITIC of an AI build swarm building a genuinely COMPLEX web app "
+    "(plain HTML/CSS/JS plus, optionally, these vetted CDN libraries: " + _CDN_ALLOW + "). "
+    "You are shown the app's file manifest and current contents. Make it genuinely "
+    "impressive, deep, and complete, and judge honestly when it is good enough. Output ONLY "
+    "one JSON object and nothing else:\n"
+    '{"score":<0-100>,"summary":"<one short line on what you\'re improving>","done":false,'
+    '"files":[{"path":"<existing or NEW file>","spec":"<precise, self-contained instructions '
+    'for the worker who will rewrite this WHOLE file>"}]}\n'
+    "Scoring — be a demanding judge. A \"good product\" (score >= 90) is feature-complete for "
+    "what the request implies, bug-free, visually polished, genuinely interactive, responsive, "
+    "keyboard-accessible, and handles empty/loading/error states. Score honestly: a first "
+    "draft is usually 55-75.\n"
+    "Each pass, list the improvements worth the MOST right now — missing features the request "
+    "implies, real bugs, broken/incomplete code, shallow UX, weak visual design, missing "
+    "states — ordered by impact. You MAY ADD NEW files to grow the app (there is NO file "
+    "limit); split large files that are doing too much. Keep paths consistent. Each spec is "
+    "self-contained: the worker sees only your spec plus the file's current contents. Keep "
+    "local JS as PLAIN scripts (no cross-file import/export). NEVER remove working features. "
+    "Set \"done\":true only when it's genuinely excellent and further edits wouldn't clearly help."
+)
+
+# Total char budget for the file bodies shown to the critic, so a large multi-file app
+# can't overflow the model's context. index.html is shown in full first; the rest share
+# what's left. Each targeted worker still sees its file's full current contents separately.
+CRITIC_CONTEXT_BUDGET = int(os.environ.get("ANIMICA_SWARM_CRITIC_BUDGET", "22000"))
 
 
 def _critic_user(project: str, desc: str, orig_prompt: str, files: dict[str, str]) -> str:
     parts = [f"Project: {project}", f"Goal: {desc}", f"Original user request: {orig_prompt}",
-             "", "Current files:"]
+             "", "Files in the project (name — size):"]
     for p, c in files.items():
-        parts.append(f"\n===== {p} ({len(c)} chars) =====\n{c[:MAX_FILE_BYTES]}")
+        parts.append(f"- {p} ({len(c or '')} chars)")
+    parts += ["", "Current file contents (large / lower-priority files may be truncated — "
+              "target them by name and the worker will get the full file):"]
+    budget = CRITIC_CONTEXT_BUDGET
+    ordered = sorted(files.items(), key=lambda kv: (kv[0] not in ("index.html", "index.htm"), kv[0]))
+    for p, c in ordered:
+        c = c or ""
+        take = min(len(c), MAX_FILE_BYTES, max(0, budget))
+        suffix = "" if take >= len(c) else f"\n… [truncated {len(c) - take} chars]"
+        parts.append(f"\n===== {p} ({len(c)} chars) =====\n{c[:take]}{suffix}")
+        budget -= take
     parts.append("\nReturn your JSON improvement plan now (or {\"done\":true} if it's already excellent).")
     return "\n".join(parts)
 
 
-REVISE_LEADER_SYS = """You are the LEAD agent revising an existing web app. You are given the current files and a change request from the user. Output ONLY one JSON object and nothing else:
-{"project":"<name>","description":"<one sentence>","files":[{"path":"<path>","spec":"<what this file must now contain / how to change it>"}]}
-Include ONLY the files that must change or be added (1 to 4). Keep paths consistent with the existing project (index.html, style.css, app.js). Each spec fully describes the file's intended new state so a worker can rewrite it."""
+REVISE_LEADER_SYS = (
+    "You are the LEAD ARCHITECT revising an existing web app. You are given the current "
+    "files and a change request. Output ONLY one JSON object and nothing else:\n"
+    '{"project":"<name>","description":"<one sentence>","files":[{"path":"<path>",'
+    '"spec":"<what this file must now contain / how to change it>"}]}\n'
+    "Include ONLY the files that must change or be added — there is NO fixed limit; add as "
+    "many new files as the change genuinely needs. Keep paths consistent with the existing "
+    "project. You MAY use these vetted CDN libraries: " + _CDN_ALLOW + ". Keep local JS as "
+    "PLAIN scripts (no cross-file import/export between local files). Each spec fully "
+    "describes the file's intended new state so a worker can rewrite the WHOLE file."
+)
 
 
 async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[dict] = None):
     def ev(o):
         return "data: " + json.dumps(o) + "\n\n"
-    preferred = model or DEFAULT_MODEL
+    # Start on the best (flagship) tier for quality; it's prewarmed below so the first
+    # real call isn't a cold-start, and every step downgrades the tier on a real
+    # no-serve/refusal — so the build uses the strongest tier that actually serves.
+    preferred = model or SWARM_DEFAULT_MODEL
     existing = {k.lstrip("/"): v for k, v in (existing or {}).items() if k and ".." not in k}
     revise = bool(existing)
     async with httpx.AsyncClient() as client:
         model = await pick_serving_model(client, preferred)
-        run_to = await _run_timeout(client)   # rank 13: adaptive llm() timeout for the swarm
+        run_to = max(await _run_timeout(client), _SWARM_CALL_FLOOR_S)   # generous per-call floor
         unserved: set[str] = set()            # rank 12: tiers that returned no-serve this run
 
         async with _keepwarm(client) as warm:   # rank 2: hold the miner warm across the whole build
+            # Prewarm the chosen tier (load the model with a 1-token call) so the leader's
+            # first real call runs warm and fast. If the tier can't load in the cold-start
+            # window, skip straight to the next tier instead of timing the leader out.
+            yield ev({"type": "phase", "phase": "planning",
+                      "note": f"Warming up the {model} model on the mining network…"})
+            while model and not await _prewarm(client, model, timeout=_COLD_START_S):
+                unserved.add(model)
+                nxt = _next_lower_tier(model, unserved)
+                if not nxt:
+                    break
+                yield ev({"type": "phase", "phase": "planning",
+                          "note": f"{model} could not load — falling back to {nxt}…"})
+                model = nxt
             yield ev({"type": "phase", "phase": "planning",
                       "note": "Leader agent is planning the revision…" if revise else "Leader agent is decomposing your request…"})
             if revise:
@@ -943,21 +1255,55 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                              {"role": "user", "content": f"Current files:\n{cur}\n\nChange request: {prompt}"}]
             else:
                 lead_msgs = [{"role": "system", "content": LEADER_SYS}, {"role": "user", "content": prompt}]
-            try:
-                raw = await llm(client, model, lead_msgs, timeout=run_to)
-            except Exception as e:   # noqa: BLE001
-                yield ev({"type": "error", "message": f"leader failed: {e}"}); return
+            # Leader downgrade-and-retry: if the chosen tier only advertised serving and
+            # then returns stubs/timeouts, walk down the tier ladder instead of aborting
+            # the whole build (workers/critic already self-heal this way).
+            raw = None
+            while True:
+                try:
+                    raw = await llm(client, model, lead_msgs, timeout=run_to, retries=1)
+                    break
+                except InferenceUnavailable as e:
+                    unserved.add(model)
+                    nxt = _next_lower_tier(model, unserved)
+                    if not nxt:
+                        yield ev({"type": "error", "message":
+                                  f"leader failed: no miner is currently serving any tier ({e})"}); return
+                    yield ev({"type": "phase", "phase": "planning",
+                              "note": f"'{model}' isn't serving right now — retrying the plan on {nxt}…"})
+                    model = nxt
+                except Exception as e:   # noqa: BLE001
+                    yield ev({"type": "error", "message": f"leader failed: {e}"}); return
             plan = parse_action(_strip_fence(raw)) if "{" in (raw or "") else {}
-            clean, seen = [], set()
-            for f in (plan.get("files") or [])[:SWARM_MAX_FILES]:
-                p = str(f.get("path", "")).strip().lstrip("/")
-                if not p or p in seen or ".." in p:
-                    continue
-                seen.add(p); clean.append({"path": p, "spec": str(f.get("spec", ""))})
-            if not clean and not revise:
-                clean = [{"path": "index.html", "spec": "The complete single-page app for: " + prompt}]
+            clean = _dedup_files(plan.get("files"))
             project = str(plan.get("project") or "app")[:60]
             desc = str(plan.get("description") or prompt[:100])[:200]
+            print(f"[swarm.leader] model={model} raw={len(raw or '')}B "
+                  f"parsed_files={len(clean)} project={project!r}", flush=True)
+
+            # Genuine decomposition: real apps want many focused files. If the first plan
+            # is thin (unparsed, or a single-file "everything in index.html" plan), re-ask
+            # ONCE with a narrow "split into many files" prompt (a task even smaller models
+            # do well), then — if still thin — guarantee a rich modular architecture.
+            if not revise and len(clean) < SWARM_MIN_FILES:
+                yield ev({"type": "phase", "phase": "planning",
+                          "note": "Breaking the app into focused modules…"})
+                try:
+                    raw2 = await llm(client, model, [
+                        {"role": "system", "content": DECOMPOSE_SYS},
+                        {"role": "user", "content": "App to build: " + prompt}], timeout=run_to, retries=1)
+                    plan2 = parse_action(_strip_fence(raw2)) if "{" in (raw2 or "") else {}
+                    clean2 = _dedup_files(plan2.get("files"))
+                    print(f"[swarm.decompose] model={model} parsed_files={len(clean2)}", flush=True)
+                    if len(clean2) > len(clean):
+                        clean = clean2
+                        project = str(plan2.get("project") or project)[:60]
+                        desc = str(plan2.get("description") or desc)[:200]
+                except InferenceUnavailable:
+                    pass   # tier dropped mid-plan; fall through to the rich default below
+            if not revise and len(clean) < SWARM_MIN_FILES:
+                clean = _rich_default_files(prompt, clean)
+                print(f"[swarm.leader] applied rich default architecture → {len(clean)} files", flush=True)
             yield ev({"type": "leader", "project": project, "description": desc,
                       "files": [f["path"] for f in clean], "revise": revise})
 
@@ -973,7 +1319,7 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                              f"spec, keeping what already works and improving the rest:\n{cur[:MAX_FILE_BYTES]}")
                 try:
                     return _strip_fence(await llm(client, model, [
-                        {"role": "system", "content": wsys}, {"role": "user", "content": umsg}], timeout=run_to))
+                        {"role": "system", "content": wsys}, {"role": "user", "content": umsg}], timeout=run_to, retries=1))
                 except InferenceUnavailable as e:
                     # rank 12: reactive downgrade so later files try a lower serving tier.
                     unserved.add(model)
@@ -1026,7 +1372,7 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                 try:
                     craw = await llm(client, model, [
                         {"role": "system", "content": CRITIC_SYS},
-                        {"role": "user", "content": _critic_user(project, desc, prompt, built)}], timeout=run_to)
+                        {"role": "user", "content": _critic_user(project, desc, prompt, built)}], timeout=run_to, retries=1)
                     cplan = parse_action(_strip_fence(craw)) if "{" in (craw or "") else {}
                 except InferenceUnavailable:
                     # rank 12: miner dropped mid-refine — downgrade for later work and stop refining.
@@ -1062,7 +1408,7 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                               "note": f"Critic: the build is good (pass {rnd}). Finishing."})
                     break
                 improvements, fseen = [], set()
-                for f in (cplan.get("files") or [])[:SWARM_MAX_FILES]:
+                for f in _cap_files(cplan.get("files") or []):
                     p = str(f.get("path", "")).strip().lstrip("/")
                     if not p or ".." in p or p in fseen:
                         continue
@@ -1091,11 +1437,11 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
             if vb and warm:
                 yield ev({"type": "phase", "phase": "verifying",
                           "note": "Repairing validation issues before finishing…"})
-                for bp in list(dict.fromkeys(p for p, _ in vb))[:SWARM_MAX_FILES]:
+                for bp in _cap_files(dict.fromkeys(p for p, _ in vb)):
                     notes = "; ".join(n for p, n in vb if p == bp)
                     spec = (f"The current {bp} has these problems: {notes}. Rewrite the COMPLETE file to fix "
-                            f"them, keeping every working feature. Plain HTML/CSS/JS only; index.html must "
-                            f"reference style.css and app.js by those exact names.")
+                            f"them, keeping every working feature. index.html must reference each local "
+                            f"stylesheet/script by its exact filename; vetted CDN libraries are allowed.")
                     paths = list(dict.fromkeys(list(built.keys()) + [bp]))
                     yield ev({"type": "worker", "path": bp, "status": "start"})
                     built[bp] = await _build_file(bp, spec, paths)
@@ -1117,6 +1463,139 @@ async def swarm(req: SwarmReq):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# ---------------- background builds (survive tab close / reconnect) ---------------- #
+# A build runs server-side as an asyncio task and appends its SSE events to an in-memory
+# job. Clients POST /agent/swarm/start to kick it off (returns a job_id), then stream
+# GET /agent/swarm/events/{id}?cursor=N — which replays the backlog from `cursor` and
+# follows live output — so closing the tab or dropping the connection never kills the
+# build, and reopening the page resumes it. Jobs are GC'd by TTL / count.
+_JOBS: dict[str, dict] = {}
+_JOB_TTL_S = float(os.environ.get("ANIMICA_SWARM_JOB_TTL_S", "5400"))   # keep finished jobs 90 min
+_JOB_MAX = int(os.environ.get("ANIMICA_SWARM_JOB_MAX", "200"))
+# Cap CONCURRENTLY-RUNNING builds so an unauthenticated flood of /start calls can't spawn
+# unbounded tasks / burn the miner (running jobs are never GC-evicted). Also bound the
+# request payload at the app layer (nginx already caps the body at 40 MB).
+_JOB_MAX_RUNNING = int(os.environ.get("ANIMICA_SWARM_JOB_MAX_RUNNING", "6"))
+_SWARM_MAX_PROMPT = int(os.environ.get("ANIMICA_SWARM_MAX_PROMPT", "16000"))
+_SWARM_MAX_INPUT_BYTES = int(os.environ.get("ANIMICA_SWARM_MAX_INPUT_BYTES", "2000000"))  # 2 MB of revise files
+
+
+def _gc_jobs() -> None:
+    now = time.monotonic()
+    for jid in [j for j, v in _JOBS.items()
+                if v.get("done") and (now - v.get("updated", now)) > _JOB_TTL_S]:
+        _JOBS.pop(jid, None)
+    if len(_JOBS) > _JOB_MAX:   # evict oldest finished jobs first
+        for jid, _v in sorted(_JOBS.items(), key=lambda kv: kv[1].get("updated", 0)):
+            if len(_JOBS) <= _JOB_MAX:
+                break
+            if _JOBS[jid].get("done"):
+                _JOBS.pop(jid, None)
+
+
+async def _run_job(job_id: str, prompt: str, model: Optional[str], files: Optional[dict]) -> None:
+    job = _JOBS.get(job_id)
+    if job is None:
+        return
+    try:
+        async for chunk in _swarm_events(prompt, model, files):
+            evs = job["events"]
+            # Coalesce heavy preview payloads so a long build's backlog can't grow
+            # without bound: when a new preview arrives, blank the PREVIOUS one IN PLACE
+            # (replace it with an ignorable SSE comment). Blanking-in-place — rather than
+            # popping — keeps every index stable, so concurrent streamers and reconnect
+            # cursors never skip or duplicate an event. The latest preview stays intact,
+            # and the final `done` event also carries the full preview.
+            if '"type": "preview"' in chunk:
+                prev = job.get("last_preview_idx")
+                if prev is not None and 0 <= prev < len(evs) and '"type": "preview"' in evs[prev]:
+                    # Replace with a same-index `data:` gap event (NOT a comment): every
+                    # evs entry is a `data:` frame, so a reconnecting client counts frames
+                    # unambiguously (keepalive `:` comments are the only non-indexed lines).
+                    evs[prev] = "data: " + json.dumps({"type": "_gap"}) + "\n\n"
+                job["last_preview_idx"] = len(evs)
+            evs.append(chunk)
+            job["updated"] = time.monotonic()
+            if '"type": "done"' in chunk:
+                job["result"] = chunk
+    except asyncio.CancelledError:
+        job["events"].append("data: " + json.dumps(
+            {"type": "error", "message": "build was cancelled"}) + "\n\n")
+        raise
+    except Exception as e:   # noqa: BLE001
+        job["events"].append("data: " + json.dumps(
+            {"type": "error", "message": f"build crashed: {type(e).__name__}: {e}"}) + "\n\n")
+    finally:
+        job["done"] = True
+        job["updated"] = time.monotonic()
+
+
+@app.post("/agent/swarm/start")
+async def swarm_start(req: SwarmReq):
+    """Start a build server-side and return its job_id. The build keeps running even if
+    the client disconnects; stream it from /agent/swarm/events/{job_id}."""
+    _gc_jobs()
+    prompt = (req.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(400, "prompt is required")
+    if len(prompt) > _SWARM_MAX_PROMPT:
+        raise HTTPException(413, f"prompt too long (max {_SWARM_MAX_PROMPT} chars)")
+    if req.files:
+        total = sum(len(str(k)) + len(str(v or "")) for k, v in req.files.items())
+        if total > _SWARM_MAX_INPUT_BYTES:
+            raise HTTPException(413, "revise payload too large")
+    running = sum(1 for v in _JOBS.values() if not v.get("done"))
+    if running >= _JOB_MAX_RUNNING:
+        raise HTTPException(429, "too many builds are in progress right now — please try again shortly")
+    job_id = uuid.uuid4().hex[:16]
+    _JOBS[job_id] = {"events": [], "done": False, "created": time.monotonic(),
+                     "updated": time.monotonic(), "prompt": prompt, "result": None,
+                     "last_preview_idx": None}
+    task = asyncio.create_task(_run_job(job_id, prompt, req.model, req.files))
+    _JOBS[job_id]["task"] = task
+    return {"job_id": job_id}
+
+
+@app.get("/agent/swarm/events/{job_id}")
+async def swarm_job_events(job_id: str, cursor: int = 0):
+    """Replay a job's events from `cursor`, then follow live until it finishes. Safe to
+    reconnect: pass the count of events already seen as `cursor` to resume seamlessly."""
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown or expired build job")
+
+    async def gen():
+        i = max(0, cursor)
+        idle = 0.0
+        while True:
+            evs = job["events"]
+            while i < len(evs):
+                yield evs[i]
+                i += 1
+                idle = 0.0
+            if job.get("done") and i >= len(job["events"]):
+                break
+            await asyncio.sleep(0.4)
+            idle += 0.4
+            if idle >= 20.0:      # heartbeat comment keeps proxies/clients from timing out
+                idle = 0.0
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/agent/swarm/status/{job_id}")
+async def swarm_job_status(job_id: str):
+    """Lightweight JSON snapshot of a background build (for polling / reconnection)."""
+    job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown or expired build job")
+    return {"job_id": job_id, "done": bool(job.get("done")), "events": len(job["events"]),
+            "has_result": job.get("result") is not None,
+            "age_s": round(time.monotonic() - job.get("created", 0), 1)}
+
+
 @app.post("/agent/publish")
 async def publish(req: PublishReq):
     """Open a PR containing a set of built files (used by agents-mode 'Open PR')."""
@@ -1136,3 +1615,44 @@ async def publish(req: PublishReq):
                                       f"The Animica agent swarm built **{req.project}** from a single prompt.\n\nFiles: "
                                       + ", ".join(files))
         return {"pr_url": pr_url, "files": list(files)}
+
+
+_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_ZIP_MAX_FILES = 1000
+_ZIP_MAX_TOTAL_BYTES = 40 * 1024 * 1024   # 40 MB uncompressed
+
+
+def _safe_zip_name(project: Optional[str]) -> str:
+    base = _SAFE_NAME_RE.sub("-", (project or "animica-app").strip()).strip("-.") or "animica-app"
+    return base[:60]
+
+
+@app.post("/agent/zip")
+async def agent_zip(req: ZipReq):
+    """Bundle a built file set into a downloadable .zip. Pure zipfile — no inference,
+    no disk: the archive is assembled in memory and streamed back. Paths are sanitized
+    (no traversal / absolute paths) and total size is capped."""
+    clean: dict[str, str] = {}
+    total = 0
+    for k, v in (req.files or {}).items():
+        p = str(k or "").strip().replace("\\", "/").lstrip("/")
+        if not p or ".." in p.split("/"):
+            continue
+        c = v if isinstance(v, str) else ("" if v is None else str(v))
+        total += len(c.encode("utf-8", "replace"))
+        if total > _ZIP_MAX_TOTAL_BYTES or len(clean) >= _ZIP_MAX_FILES:
+            raise HTTPException(413, "project too large to zip")
+        clean[p] = c
+    if not clean:
+        raise HTTPException(400, "no files to zip")
+    name = _safe_zip_name(req.project)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p, c in clean.items():
+            zf.writestr(f"{name}/{p}", c)   # nest under a project folder
+    data = buf.getvalue()
+    return Response(content=data, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{name}.zip"',
+        "Content-Length": str(len(data)),
+        "Cache-Control": "no-store",
+    })
