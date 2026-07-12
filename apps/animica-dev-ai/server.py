@@ -154,8 +154,31 @@ def _worker_complete(content) -> bool:
     return "<!-- worker error" not in c and "<!-- no-miner" not in c
 
 
+# A worker that "punts" — writing `// rest of the implementation omitted` instead of the
+# real code — technically produces non-empty content but violates the no-placeholders
+# contract. Detection is deliberately TIGHT: these exact phrasings essentially never occur
+# in genuine production code, so matching one triggers a BOUNDED re-ask (then the file is
+# accepted regardless, so a false positive only costs a couple of extra attempts).
+_PLACEHOLDER_RE = re.compile(
+    r"\b(?:rest of (?:the )?(?:code|implementation|file|logic|function)\b"
+    r"|implementation (?:goes here|omitted for brevity|not shown)"
+    r"|(?:your|the) code (?:goes|here)\b"
+    r"|code omitted for brevity"
+    r"|remaining (?:code|implementation|logic) (?:omitted|unchanged|here)"
+    r"|(?:\.\.\.|…)\s*(?:rest|remaining|and so on|etc\.?)\b"
+    r"|to be implemented\b"
+    r"|placeholder implementation)\b",
+    re.I)
+
+
+def _looks_placeholder(content) -> bool:
+    c = content if isinstance(content, str) else ""
+    return bool(_PLACEHOLDER_RE.search(c))
+
+
 async def llm(client: httpx.AsyncClient, model: str, messages: list[dict], *,
-              retries: int = 2, timeout: float = 90.0, refusal_downgrade: bool = True) -> str:
+              retries: int = 2, timeout: float = 90.0, refusal_downgrade: bool = True,
+              max_tokens: int = 4096) -> str:
     """Call the AICF gateway. A stub (no miner claimed the job) or a timeout/5xx is
     treated as a transient no-serve and retried with backoff; if inference stays
     unavailable we raise InferenceUnavailable rather than hanging or feeding a stub
@@ -167,7 +190,7 @@ async def llm(client: httpx.AsyncClient, model: str, messages: list[dict], *,
     headers = {"Content-Type": "application/json"}
     if GATEWAY_KEY:
         headers["Authorization"] = f"Bearer {GATEWAY_KEY}"
-    payload = {"model": model, "messages": messages, "temperature": 0.2, "max_tokens": 4096}
+    payload = {"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens}
     for attempt in range(retries + 1):
         try:
             r = await client.post(
@@ -923,13 +946,13 @@ _SWARM_SAFETY_CAP = int(os.environ.get("ANIMICA_SWARM_SAFETY_CAP", "120"))
 # rich modular architecture. Real apps want many focused files, not one monolith.
 SWARM_MIN_FILES = int(os.environ.get("ANIMICA_SWARM_MIN_FILES", "5"))
 
-# The swarm's starting tier. Flagship gives dramatically better decomposition and
-# richer files, and the miner serves it FAST once warm — so the swarm PREWARMS this
-# tier (loads the model with a 1-token call) before the leader step, then runs the
-# whole build on it. If the tier can't load in time or refuses, the leader/worker/
-# critic loops downgrade through the ladder (animica-chat -> small), so the swarm is
-# never worse than the reliably-served standard tier. Override with ANIMICA_SWARM_MODEL.
-SWARM_DEFAULT_MODEL = os.environ.get("ANIMICA_SWARM_MODEL", "animica-chat-flagship")
+# The swarm's starting tier. Defaults to the STANDARD tier, which the miner serves
+# reliably and fast — the priority is that big multi-file builds COMPLETE. The premium/
+# flagship tier gives richer files but, on the current single flaky miner, tends to burn a
+# long cold-start and then downgrade anyway, so it's opt-in: set ANIMICA_SWARM_MODEL=
+# animica-chat-flagship once a miner reliably serves it. The leader/worker/critic loops
+# still downgrade (standard -> small) on any no-serve.
+SWARM_DEFAULT_MODEL = os.environ.get("ANIMICA_SWARM_MODEL", "animica-chat")
 # Per-call floor for swarm llm() timeouts: a warm flagship writing a full 4096-token
 # file can run longer than the latency-EWMA-derived value (which the tiny keep-warm
 # pings bias downward). Builds run in the background, so a generous floor is fine.
@@ -939,6 +962,52 @@ _SWARM_CALL_FLOOR_S = float(os.environ.get("ANIMICA_SWARM_CALL_FLOOR_S", "240"))
 # and would disqualify a tier that the real (retried) leader/worker calls could still load
 # and serve. Kept a bit above the floor to cover a genuinely cold big-model load.
 _COLD_START_S = max(float(os.environ.get("ANIMICA_SWARM_COLD_START_S", "300")), _SWARM_CALL_FLOOR_S)
+# Prewarm is probed in slices this long so a slow cold-load emits a heartbeat each slice.
+_PREWARM_SLICE_S = float(os.environ.get("ANIMICA_SWARM_PREWARM_SLICE_S", "25"))
+
+# ---- Large / multi-domain project support (hierarchical decomposition) ----
+# A single flat leader plan can't hold 30+ files-with-specs inside one bounded JSON
+# response, so a big, multi-domain request (backend + frontend + infra + tests + docs)
+# is planned in TWO levels: an architect lists the MODULES (top-level areas), then a
+# sub-architect expands EACH module into concrete files. This keeps every planning call's
+# output small and valid while still producing a genuinely large, well-organized codebase.
+_LARGE_MIN_FILES = int(os.environ.get("ANIMICA_SWARM_LARGE_MIN_FILES", "12"))   # below this, fall back to flat
+_LARGE_MAX_FILES = int(os.environ.get("ANIMICA_SWARM_LARGE_MAX_FILES", "40"))   # keep a huge build completable
+_MAX_MODULES = int(os.environ.get("ANIMICA_SWARM_MAX_MODULES", "12"))
+_MODULE_MAX_FILES = int(os.environ.get("ANIMICA_SWARM_MODULE_MAX_FILES", "8"))
+_WORKER_MAX_TOKENS = int(os.environ.get("ANIMICA_SWARM_WORKER_MAX_TOKENS", "6144"))  # richer files on big builds
+_PLACEHOLDER_MAX_RETRY = int(os.environ.get("ANIMICA_SWARM_PLACEHOLDER_RETRY", "2"))
+
+# Distinct domain signals. A request that spans several of these implies a big system that
+# warrants hierarchical (module-first) decomposition rather than one flat file list.
+_LARGE_SIGNALS = {
+    "backend": r"back[- ]?end|server[- ]?side|api server|rest api|graphql|grpc\b",
+    "database": r"\b(?:postgres|postgresql|mysql|mongodb|redis|database schema|sql migrations?|prisma|sqlalchemy|orm)\b",
+    "auth": r"\b(?:authentication|authorization|oauth|openid|passkeys?|webauthn|rbac|jwt|sso|\bmfa\b|2fa)\b",
+    "infra": r"\b(?:docker|dockerfile|docker[- ]?compose|kubernetes|k8s|terraform|helm|ci/?cd|github actions|deployment pipeline)\b",
+    "queue": r"\b(?:message queue|rabbitmq|kafka|celery|bullmq|worker queue|background jobs?|job queue)\b",
+    "observability": r"\b(?:observability|opentelemetry|otel|prometheus|grafana|sentry|structured logging|distributed tracing)\b",
+    "testing": r"\b(?:unit tests?|integration tests?|e2e|end[- ]to[- ]end|playwright|cypress|test coverage|visual regression|a11y tests?)\b",
+    "frontend": r"\b(?:front[- ]?end|monaco|design system|component library|dashboard ui)\b",
+    "scale": r"\b(?:production[- ]ready|production[- ]quality|enterprise|full[- ]stack|micro[- ]?services?|multi[- ]tenant|scalable|platform|monorepo)\b",
+    "ai": r"\b(?:multi[- ]provider|\bllm\b|openai|anthropic|autonomous agents?|\brag\b|embeddings?|inference)\b",
+    "docs": r"\b(?:openapi|swagger|\bsdk\b|documentation site|api docs|architecture docs?|runbooks?)\b",
+}
+_LARGE_SIGNAL_RES = {k: re.compile(v, re.I) for k, v in _LARGE_SIGNALS.items()}
+
+
+def _large_signal_hits(prompt: str) -> int:
+    p = prompt or ""
+    return sum(1 for rx in _LARGE_SIGNAL_RES.values() if rx.search(p))
+
+
+def _is_large_project(prompt: str) -> bool:
+    """True when a request implies a big, multi-domain system that should be decomposed
+    module-first. Conservative: a normal single-page-app request stays on the fast flat
+    path; only genuinely broad, cross-cutting briefs trip hierarchical planning."""
+    hits = _large_signal_hits(prompt or "")
+    n = len(prompt or "")
+    return hits >= 4 or (hits >= 3 and n > 1200)
 
 
 def _cap_files(items):
@@ -1102,6 +1171,53 @@ DECOMPOSE_SYS = (
 )
 
 
+# ---- Hierarchical (module-first) planning for big, multi-domain projects ----
+ARCHITECT_MODULES_SYS = (
+    "You are the LEAD ARCHITECT of a build swarm designing a BIG, multi-domain software "
+    "project. Break the WHOLE system the request implies into MODULES — top-level areas / "
+    "directories. Output ONLY one JSON object and nothing else:\n"
+    '{"project":"<short name>","description":"<one sentence>","modules":[{"name":"<dir-slug>",'
+    '"summary":"<what this module contains, its responsibilities, and how it fits the whole>",'
+    '"file_count":<int 2-8>}]}\n'
+    "Rules:\n"
+    "- List 5-10 modules that COVER the whole system — do NOT omit the backend, data layer, "
+    "infrastructure (Docker/compose/CI), tests, or documentation when the request implies "
+    "them. Typical slugs: backend, api, frontend, agents, shared, infra, tests, docs, config.\n"
+    "- `name` is a lowercase directory slug (letters, digits, '-', '/'). Use \".\" for "
+    "root-level files (README.md, docker-compose.yml, index.html).\n"
+    "- `file_count` is how many files that module genuinely needs (2-8).\n"
+    "- Cover real production concerns: source code, config, schema/migrations, tests, CI, and docs.\n"
+    "Output ONLY the JSON — no prose, no markdown fences."
+)
+
+MODULE_FILES_SYS = (
+    "You are a software architect expanding ONE module of a larger project into concrete, "
+    "production-quality files. Output ONLY one JSON object and nothing else:\n"
+    '{"files":[{"path":"<filename within this module>","spec":"<precise 1-3 sentence brief '
+    'for the worker who writes ONLY this file: its purpose, the key contents/exports/APIs, '
+    'and how it integrates with the rest of the project>"}]}\n'
+    "Rules: list the real files this module needs — source, config, schema, tests, or docs "
+    "as appropriate. `path` is RELATIVE to the module directory (just the filename, or a "
+    "sub-path like `handlers/auth.js`); the module prefix is added for you. Every file must "
+    "be genuinely implementable with NO placeholders or TODOs. Keep each spec to 1-3 "
+    "sentences. Output ONLY the JSON — no prose, no fences."
+)
+
+
+def _prefix_module_path(slug: str, path: str) -> Optional[str]:
+    """Join a module slug with a file path the sub-architect returned, tolerating a model
+    that already included the prefix. Returns None for empty/traversing paths."""
+    p = re.sub(r"^(?:\./|/)+", "", str(path or "").strip())
+    if not p or ".." in p.split("/"):
+        return None
+    slug = re.sub(r"^(?:\./|/)+", "", str(slug or "").strip()).strip("/")
+    if slug in ("", ".", "root"):
+        return p
+    if p == slug or p.startswith(slug + "/"):
+        return p
+    return f"{slug}/{p}"
+
+
 def _worker_sys(project: str, desc: str, paths: list[str]) -> str:
     return (f"You are ONE worker in a build swarm building a COMPLEX, production-quality web app. "
             f"Project: {project} — {desc}. The project files are: {', '.join(paths)}. You write "
@@ -1179,6 +1295,127 @@ def _inline_preview(files: dict[str, str]) -> str:
     return html
 
 
+def _looks_web_app(files: dict[str, str]) -> bool:
+    """A build is previewable as a running app only if it has a ROOT index.html — that's
+    the entry point the srcdoc iframe folds siblings into. A multi-directory project whose
+    HTML lives under frontend/ (or that has no HTML at all) is shown as a file tree."""
+    idx = files.get("index.html") or files.get("index.htm") or ""
+    return bool(idx.strip())
+
+
+def _html_escape(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _render_readme(md: str) -> str:
+    """Very small, safe Markdown→HTML for the tree preview's README pane: headings, fenced
+    code, inline `code`, and paragraphs. Everything is escaped first, so no raw HTML runs."""
+    out, in_code = [], False
+    for line in _html_escape(md).split("\n"):
+        if line.strip().startswith("```"):
+            out.append("<pre><code>" if not in_code else "</code></pre>")
+            in_code = not in_code
+            continue
+        if in_code:
+            out.append(line)
+            continue
+        m = re.match(r"(#{1,4})\s+(.*)", line)
+        if m:
+            lvl = len(m.group(1))
+            out.append(f"<h{lvl}>{m.group(2)}</h{lvl}>")
+            continue
+        line = re.sub(r"`([^`]+)`", r"<code>\1</code>", line)
+        out.append(f"<p>{line}</p>" if line.strip() else "")
+    if in_code:
+        out.append("</code></pre>")
+    return "\n".join(out)
+
+
+def _build_tree(paths: list[str]) -> str:
+    """Render a sorted directory tree as nested <ul> for the file-tree preview."""
+    root: dict = {}
+    for p in sorted(paths):
+        node = root
+        for part in p.split("/"):
+            node = node.setdefault(part, {})
+
+    def walk(node: dict) -> str:
+        items = []
+        for name in sorted(node, key=lambda k: (not node[k], k.lower())):  # dirs first
+            child = node[name]
+            if child:  # directory
+                items.append(f'<li class="dir">📁 {_html_escape(name)}<ul>{walk(child)}</ul></li>')
+            else:
+                items.append(f'<li class="file">📄 {_html_escape(name)}</li>')
+        return "".join(items)
+
+    return f"<ul class=tree>{walk(root)}</ul>"
+
+
+def _build_tree_preview(project: str, desc: str, files: dict[str, str]) -> str:
+    """A self-contained preview for a multi-file / multi-directory project that has no
+    single runnable index.html: the directory tree, a per-file size list, and the rendered
+    README. It stays compact (no file bodies) so a huge build's preview payload is small."""
+    paths = [p for p in files if p]
+    readme_key = next((k for k in files if _basename(k).lower() in ("readme.md", "readme", "readme.txt")), None)
+    readme_html = _render_readme(files.get(readme_key, "")[:20000]) if readme_key else (
+        f"<p class=muted>{_html_escape(desc)}</p>")
+    total = sum(len(c or "") for c in files.values())
+    tree = _build_tree(paths)
+    proj = _html_escape(project or "project")
+    return (
+        "<!doctype html><html><head><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<style>"
+        ":root{color-scheme:light dark}"
+        "*{box-sizing:border-box}"
+        "body{margin:0;font:14px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
+        "color:#1a1a2e;background:#f7f8fb}"
+        ".wrap{max-width:1000px;margin:0 auto;padding:28px 22px}"
+        "header h1{margin:0 0 4px;font-size:22px}"
+        "header .desc{color:#555;margin:0 0 6px}"
+        ".badges{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 22px}"
+        ".badge{background:#eef1f8;border:1px solid #dde3f0;border-radius:999px;padding:3px 11px;font-size:12px;color:#334}"
+        ".cols{display:grid;grid-template-columns:minmax(220px,340px) 1fr;gap:26px;align-items:start}"
+        "@media(max-width:720px){.cols{grid-template-columns:1fr}}"
+        ".panel{background:#fff;border:1px solid #e6e8ef;border-radius:12px;padding:16px 18px}"
+        ".panel h2{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#8890a6}"
+        "ul.tree,ul.tree ul{list-style:none;margin:0;padding-left:16px}"
+        "ul.tree{padding-left:0}"
+        "ul.tree li{padding:2px 0}"
+        "li.dir{font-weight:600}li.file{color:#3a4}"
+        ".readme h1,.readme h2,.readme h3,.readme h4{margin:.7em 0 .3em}"
+        ".readme p{margin:.4em 0}.readme code{background:#f0f2f7;padding:1px 5px;border-radius:5px;font-size:13px}"
+        ".readme pre{background:#0f1020;color:#e6e6f0;padding:12px;border-radius:9px;overflow:auto}"
+        ".readme pre code{background:none;padding:0;color:inherit}"
+        ".muted{color:#888}"
+        "@media(prefers-color-scheme:dark){body{color:#e8e8f2;background:#12131c}"
+        ".panel{background:#1a1b26;border-color:#2a2b3a}.badge{background:#22232f;border-color:#33344a;color:#c8cbe0}"
+        "header .desc,.muted{color:#9aa0b5}li.file{color:#8fd8a0}.readme code{background:#22232f}}"
+        "</style></head><body><div class=wrap>"
+        f"<header><h1>{proj}</h1><p class=desc>{_html_escape(desc)}</p></header>"
+        f"<div class=badges><span class=badge>{len(paths)} files</span>"
+        f"<span class=badge>{total:,} chars</span>"
+        "<span class=badge>Multi-file project — download the ZIP to run it</span></div>"
+        "<div class=cols>"
+        f"<div class=panel><h2>Project files</h2>{tree}</div>"
+        f"<div class='panel readme'><h2>README</h2>{readme_html}</div>"
+        "</div></div></body></html>"
+    )
+
+
+def _swarm_preview(project: str, desc: str, files: dict[str, str]) -> str:
+    """Choose the right preview for a build: a runnable single-page app is folded into an
+    iframe srcdoc; a multi-directory project is shown as a file tree + README. Never raises
+    (a pathological file falls back to the app inliner)."""
+    try:
+        if _looks_web_app(files):
+            return _inline_preview(files)
+        return _build_tree_preview(project, desc, files)
+    except Exception:   # noqa: BLE001
+        return _inline_preview(files)
+
+
 CRITIC_SYS = (
     "You are the QUALITY CRITIC of an AI build swarm building a genuinely COMPLEX web app "
     "(plain HTML/CSS/JS plus, optionally, these vetted CDN libraries: " + _CDN_ALLOW + "). "
@@ -1254,78 +1491,187 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
         unserved: set[str] = set()            # rank 12: tiers that returned no-serve this run
 
         async with _keepwarm(client) as warm:   # rank 2: hold the miner warm across the whole build
-            # Prewarm the chosen tier (load the model with a 1-token call) so the leader's
-            # first real call runs warm and fast. If the tier can't load in the cold-start
-            # window, skip straight to the next tier instead of timing the leader out.
+            # Prewarm the chosen tier so the leader's first call is fast. Probe in short
+            # slices and emit a heartbeat each slice, so a slow cold-load shows continuous
+            # progress instead of dead-air. If a tier can't warm within its budget it's
+            # effectively unserved right now → drop to the next tier.
             yield ev({"type": "phase", "phase": "planning",
                       "note": f"Warming up the {model} model on the mining network…"})
-            while model and not await _prewarm(client, model, timeout=_COLD_START_S):
+            while model:
+                t_warm = time.monotonic()
+                warmed = False
+                while time.monotonic() - t_warm < _COLD_START_S:
+                    remaining = _COLD_START_S - (time.monotonic() - t_warm)
+                    if await _prewarm(client, model, timeout=min(_PREWARM_SLICE_S, remaining)):
+                        warmed = True
+                        break
+                    yield ev({"type": "phase", "phase": "planning",
+                              "note": f"Still warming {model}… {int(time.monotonic() - t_warm)}s "
+                                      f"(waiting for a miner to load it)"})
+                if warmed:
+                    break
                 unserved.add(model)
                 nxt = _next_lower_tier(model, unserved)
                 if not nxt:
                     break
                 yield ev({"type": "phase", "phase": "planning",
-                          "note": f"{model} could not load — falling back to {nxt}…"})
+                          "note": f"{model} didn't warm in time — falling back to {nxt}…"})
                 model = nxt
-            yield ev({"type": "phase", "phase": "planning",
-                      "note": "Leader agent is planning the revision…" if revise else "Leader agent is decomposing your request…"})
-            if revise:
-                cur = "\n".join(f"- {p} ({len(c)} chars)" for p, c in existing.items())
-                lead_msgs = [{"role": "system", "content": REVISE_LEADER_SYS},
-                             {"role": "user", "content": f"Current files:\n{cur}\n\nChange request: {prompt}"}]
-            else:
-                lead_msgs = [{"role": "system", "content": LEADER_SYS}, {"role": "user", "content": prompt}]
-            # Leader downgrade-and-retry: if the chosen tier only advertised serving and
-            # then returns stubs/timeouts, walk down the tier ladder instead of aborting
-            # the whole build (workers/critic already self-heal this way).
-            raw = None
-            while True:
-                try:
-                    raw = await llm(client, model, lead_msgs, timeout=run_to, retries=1)
-                    break
-                except InferenceUnavailable as e:
-                    unserved.add(model)
-                    nxt = _next_lower_tier(model, unserved)
-                    if not nxt:
-                        yield ev({"type": "error", "message":
-                                  f"leader failed: no miner is currently serving any tier ({e})"}); return
-                    yield ev({"type": "phase", "phase": "planning",
-                              "note": f"'{model}' isn't serving right now — retrying the plan on {nxt}…"})
-                    model = nxt
-                except Exception as e:   # noqa: BLE001
-                    yield ev({"type": "error", "message": f"leader failed: {e}"}); return
-            plan = parse_action(_strip_fence(raw)) if "{" in (raw or "") else {}
-            clean = _dedup_files(plan.get("files"))
-            project = str(plan.get("project") or "app")[:60]
-            desc = str(plan.get("description") or prompt[:100])[:200]
-            print(f"[swarm.leader] model={model} raw={len(raw or '')}B "
-                  f"parsed_files={len(clean)} project={project!r}", flush=True)
-
-            # Genuine decomposition: real apps want many focused files. If the first plan
-            # is thin (unparsed, or a single-file "everything in index.html" plan), re-ask
-            # ONCE with a narrow "split into many files" prompt (a task even smaller models
-            # do well), then — if still thin — guarantee a rich modular architecture.
-            if not revise and len(clean) < SWARM_MIN_FILES:
+            # Big, multi-domain requests (a whole platform: backend + frontend + infra +
+            # tests + docs) are planned MODULE-FIRST — one flat leader JSON can't hold 30+
+            # files-with-specs. An architect lists the modules, then a sub-architect expands
+            # each into concrete files. Falls through to the flat leader path if the request
+            # is a normal single app or the hierarchical plan comes back thin.
+            large = (not revise) and _is_large_project(prompt)
+            planned = False
+            clean: list = []
+            project = "app"
+            desc = str(prompt[:200])
+            if large:
                 yield ev({"type": "phase", "phase": "planning",
-                          "note": "Breaking the app into focused modules…"})
-                try:
-                    raw2 = await llm(client, model, [
-                        {"role": "system", "content": DECOMPOSE_SYS},
-                        {"role": "user", "content": "App to build: " + prompt}], timeout=run_to, retries=1)
-                    plan2 = parse_action(_strip_fence(raw2)) if "{" in (raw2 or "") else {}
-                    clean2 = _dedup_files(plan2.get("files"))
-                    print(f"[swarm.decompose] model={model} parsed_files={len(clean2)}", flush=True)
-                    if len(clean2) > len(clean):
-                        clean = clean2
-                        project = str(plan2.get("project") or project)[:60]
-                        desc = str(plan2.get("description") or desc)[:200]
-                except InferenceUnavailable:
-                    pass   # tier dropped mid-plan; fall through to the rich default below
-            if not revise and len(clean) < SWARM_MIN_FILES:
-                clean = _rich_default_files(prompt, clean)
-                print(f"[swarm.leader] applied rich default architecture → {len(clean)} files", flush=True)
+                          "note": "Large multi-domain project detected — planning the module architecture…"})
+                mods_msgs = [{"role": "system", "content": ARCHITECT_MODULES_SYS},
+                             {"role": "user", "content": prompt}]
+                mraw = None
+                while True:   # level-1 downgrade-and-retry, like the flat leader
+                    try:
+                        mraw = await llm(client, model, mods_msgs, timeout=run_to, retries=1, max_tokens=2000)
+                        break
+                    except InferenceUnavailable:
+                        unserved.add(model)
+                        nxt = _next_lower_tier(model, unserved)
+                        if not nxt:
+                            break
+                        yield ev({"type": "phase", "phase": "planning",
+                                  "note": f"'{model}' isn't serving — planning modules on {nxt}…"})
+                        model = nxt
+                    except Exception:   # noqa: BLE001
+                        break
+                mplan = parse_action(_strip_fence(mraw)) if "{" in (mraw or "") else {}
+                modules = mplan.get("modules") if isinstance(mplan, dict) else None
+                modules = [m for m in (modules or [])
+                           if isinstance(m, dict) and str(m.get("name", "")).strip()][:_MAX_MODULES]
+                if modules:
+                    project = str(mplan.get("project") or project)[:60]
+                    desc = str(mplan.get("description") or desc)[:200]
+                    mod_list = ", ".join(str(m.get("name")) for m in modules)
+                    print(f"[swarm.arch] model={model} modules={len(modules)}: {mod_list}", flush=True)
+                    all_files: list = []
+                    for m in modules:   # level-2: expand each module into files
+                        if len(all_files) >= _LARGE_MAX_FILES:
+                            break
+                        slug = str(m.get("name")).strip()
+                        summary = str(m.get("summary") or "")[:400]
+                        try:
+                            fc = max(1, min(_MODULE_MAX_FILES, int(m.get("file_count") or 4)))
+                        except (TypeError, ValueError):
+                            fc = 4
+                        yield ev({"type": "phase", "phase": "planning",
+                                  "note": f"Designing the {slug} module ({len(all_files)} files so far)…"})
+                        umsg = (f"Project: {project} — {desc}\nAll modules: {mod_list}\n\n"
+                                f"Expand THIS module into about {fc} files.\nModule: {slug}\n"
+                                f"Responsibilities: {summary}")
+                        fraw = None
+                        try:
+                            fraw = await llm(client, model, [
+                                {"role": "system", "content": MODULE_FILES_SYS},
+                                {"role": "user", "content": umsg}], timeout=run_to, retries=1, max_tokens=2000)
+                        except InferenceUnavailable:
+                            unserved.add(model)
+                            nxt = _next_lower_tier(model, unserved)
+                            if nxt:
+                                model = nxt
+                        except Exception:   # noqa: BLE001
+                            pass
+                        fplan = parse_action(_strip_fence(fraw)) if "{" in (fraw or "") else {}
+                        mfiles = fplan.get("files") if isinstance(fplan, dict) else None
+                        got = []
+                        for f in (mfiles or [])[:_MODULE_MAX_FILES]:
+                            if not isinstance(f, dict):
+                                continue
+                            fp = _prefix_module_path(slug, f.get("path", ""))
+                            if fp:
+                                got.append({"path": fp, "spec": str(f.get("spec", ""))})
+                        if not got:
+                            # Module expansion didn't serve/parse — synthesize a couple of
+                            # files from its summary so the module isn't dropped entirely.
+                            base = slug if slug not in (".", "root", "") else "src"
+                            got = [{"path": _prefix_module_path(slug, "README.md") or f"{base}/README.md",
+                                    "spec": f"Documentation for the {slug} module: {summary}"},
+                                   {"path": _prefix_module_path(slug, "index.js") or f"{base}/index.js",
+                                    "spec": f"Primary implementation for the {slug} module: {summary}. "
+                                            "Export its public API for the rest of the project."}]
+                        all_files.extend(got)
+                    clean = _dedup_files(all_files)
+                    if len(clean) >= _LARGE_MIN_FILES:
+                        planned = True
+                        print(f"[swarm.arch] hierarchical plan → {len(clean)} files "
+                              f"across {len(modules)} modules", flush=True)
+                    else:
+                        yield ev({"type": "phase", "phase": "planning",
+                                  "note": "Module plan was thin — falling back to a single-pass architecture…"})
+
+            if not planned:
+                yield ev({"type": "phase", "phase": "planning",
+                          "note": "Leader agent is planning the revision…" if revise else "Leader agent is decomposing your request…"})
+                if revise:
+                    cur = "\n".join(f"- {p} ({len(c)} chars)" for p, c in existing.items())
+                    lead_msgs = [{"role": "system", "content": REVISE_LEADER_SYS},
+                                 {"role": "user", "content": f"Current files:\n{cur}\n\nChange request: {prompt}"}]
+                else:
+                    lead_msgs = [{"role": "system", "content": LEADER_SYS}, {"role": "user", "content": prompt}]
+                # Leader downgrade-and-retry: if the chosen tier only advertised serving and
+                # then returns stubs/timeouts, walk down the tier ladder instead of aborting
+                # the whole build (workers/critic already self-heal this way).
+                raw = None
+                while True:
+                    try:
+                        raw = await llm(client, model, lead_msgs, timeout=run_to, retries=1)
+                        break
+                    except InferenceUnavailable as e:
+                        unserved.add(model)
+                        nxt = _next_lower_tier(model, unserved)
+                        if not nxt:
+                            yield ev({"type": "error", "message":
+                                      f"leader failed: no miner is currently serving any tier ({e})"}); return
+                        yield ev({"type": "phase", "phase": "planning",
+                                  "note": f"'{model}' isn't serving right now — retrying the plan on {nxt}…"})
+                        model = nxt
+                    except Exception as e:   # noqa: BLE001
+                        yield ev({"type": "error", "message": f"leader failed: {e}"}); return
+                plan = parse_action(_strip_fence(raw)) if "{" in (raw or "") else {}
+                clean = _dedup_files(plan.get("files"))
+                project = str(plan.get("project") or "app")[:60]
+                desc = str(plan.get("description") or prompt[:100])[:200]
+                print(f"[swarm.leader] model={model} raw={len(raw or '')}B "
+                      f"parsed_files={len(clean)} project={project!r}", flush=True)
+
+                # Genuine decomposition: real apps want many focused files. If the first plan
+                # is thin (unparsed, or a single-file "everything in index.html" plan), re-ask
+                # ONCE with a narrow "split into many files" prompt (a task even smaller models
+                # do well), then — if still thin — guarantee a rich modular architecture.
+                if not revise and len(clean) < SWARM_MIN_FILES:
+                    yield ev({"type": "phase", "phase": "planning",
+                              "note": "Breaking the app into focused modules…"})
+                    try:
+                        raw2 = await llm(client, model, [
+                            {"role": "system", "content": DECOMPOSE_SYS},
+                            {"role": "user", "content": "App to build: " + prompt}], timeout=run_to, retries=1)
+                        plan2 = parse_action(_strip_fence(raw2)) if "{" in (raw2 or "") else {}
+                        clean2 = _dedup_files(plan2.get("files"))
+                        print(f"[swarm.decompose] model={model} parsed_files={len(clean2)}", flush=True)
+                        if len(clean2) > len(clean):
+                            clean = clean2
+                            project = str(plan2.get("project") or project)[:60]
+                            desc = str(plan2.get("description") or desc)[:200]
+                    except InferenceUnavailable:
+                        pass   # tier dropped mid-plan; fall through to the rich default below
+                if not revise and len(clean) < SWARM_MIN_FILES:
+                    clean = _rich_default_files(prompt, clean)
+                    print(f"[swarm.leader] applied rich default architecture → {len(clean)} files", flush=True)
+
             yield ev({"type": "leader", "project": project, "description": desc,
-                      "files": [f["path"] for f in clean], "revise": revise})
+                      "files": [f["path"] for f in clean], "revise": revise, "large": bool(planned)})
 
             built: dict[str, str] = dict(existing)
 
@@ -1339,8 +1685,9 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                     umsg += (f"\n\nCurrent contents of {path} — rewrite the WHOLE file to satisfy the "
                              f"spec, keeping what already works and improving the rest:\n{cur[:MAX_FILE_BYTES]}")
                 try:
-                    return _strip_fence(await llm(client, mdl, [
-                        {"role": "system", "content": wsys}, {"role": "user", "content": umsg}], timeout=run_to, retries=1))
+                    return _strip_fence(await llm(
+                        client, mdl, [{"role": "system", "content": wsys}, {"role": "user", "content": umsg}],
+                        timeout=run_to, retries=1, max_tokens=(_WORKER_MAX_TOKENS if large else 4096)))
                 except InferenceUnavailable:
                     return None
                 except Exception:   # noqa: BLE001
@@ -1355,11 +1702,29 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                 nonlocal model
                 yield ev({"type": "worker", "path": path, "status": "start"})
                 attempt = 0
+                ph_retries = 0
                 content = None
                 while True:
                     attempt += 1
                     content = await _build_file_once(path, spec, paths, model)
                     if _worker_complete(content):
+                        # Complete, but did the worker punt with a placeholder? Re-ask a
+                        # BOUNDED number of times for the real code (then accept regardless,
+                        # so a false positive costs only a couple of extra attempts).
+                        if _looks_placeholder(content) and ph_retries < _PLACEHOLDER_MAX_RETRY:
+                            ph_retries += 1
+                            unserved.add(model)
+                            nxt = _next_lower_tier(model, unserved)
+                            if nxt:
+                                model = nxt
+                            else:
+                                unserved.clear()
+                                model = await pick_serving_model(client, preferred)
+                            yield ev({"type": "worker", "path": path, "status": "retry", "attempt": attempt,
+                                      "note": f"{path} came back with placeholder content — asking for the "
+                                              f"full implementation (attempt {attempt}) on {model}…"})
+                            await asyncio.sleep(min(_FILE_RETRY_BACKOFF_MAX, 4 + attempt * 2))
+                            continue
                         break
                     if SWARM_FILE_MAX_ATTEMPTS and attempt >= SWARM_FILE_MAX_ATTEMPTS:
                         break
@@ -1384,7 +1749,7 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                 if not ok:
                     done_ev["incomplete"] = True
                 yield ev(done_ev)
-                yield ev({"type": "preview", "preview": _inline_preview(built)})
+                yield ev({"type": "preview", "preview": _swarm_preview(project, desc, built)})
 
             # Round 0 — initial build from the leader's plan. Each file retries until a
             # miner produces complete content, so round 0 never leaves an incomplete file.
@@ -1504,8 +1869,17 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                 yield ev({"type": "validation", "ok": True})
 
             yield ev({"type": "phase", "phase": "assembling", "note": "Finalizing the build…"})
+            # The done event MUST always fire so the client isn't left hanging on
+            # "assembling". Build the preview defensively — a pathological file must never
+            # block finalization (ship the files regardless).
+            try:
+                preview = _swarm_preview(project, desc, built)
+            except Exception as e:   # noqa: BLE001
+                preview = ("<!doctype html><meta charset=utf-8><body style='font:15px system-ui;padding:24px'>"
+                           "Preview could not be rendered, but your files are ready to download."
+                           f"<!-- {type(e).__name__} --></body>")
             yield ev({"type": "done", "project": project, "description": desc, "files": built,
-                      "preview": _inline_preview(built)})
+                      "preview": preview, "file_count": len(built)})
 
 
 @app.post("/agent/swarm")
