@@ -2232,16 +2232,31 @@ class BlockImporter:
                 except Exception:
                     pass
 
-        # Purge snapshot-cache entries captured for the failed / rolled-back branch —
-        # heights ABOVE the restored head. A failed multi-block reorg overwrites the
-        # height-keyed _state_snapshots with rejected-branch state (via
-        # _capture_state_snapshot) before it fails; left in place, one could later be
-        # selected as a _rebuild_state_from_canonical baseline and silently corrupt the
-        # rebuild — or cause an HONEST block to be recomputed against the wrong base and
-        # false-rejected, wedging the head. (Adversarial review: corruption F2 / liveness A.)
-        if old_head is not None:
-            _oh = int(old_head[0])
-            for _hgt in [k for k in list(self._state_snapshots.keys()) if int(k) > _oh]:
+        # Purge snapshot-cache entries the FAILED reorg may have overwritten with
+        # rejected-branch state. A failed reorg's apply loop captures a snapshot for
+        # every attached block it applies BEFORE the one that fails, so the poisoned
+        # heights span the WHOLE affected range [fork_point+1 .. best]. A DEEP reorg
+        # (fork point below old_head) therefore poisons heights <= old_head too — so
+        # purging only >old_head is INSUFFICIENT: a later reorg whose LCA lands on a
+        # poisoned <=old_head height fetches it on the primary `_state_snapshots.get(
+        # lca_height)` path (which bypasses the rebuild ancestor-cap), reverts to
+        # rejected-branch state, and false-rejects an honest block (post-activation) or
+        # silently diverges (pre-activation). (Adversarial review rounds 1-3:
+        # corruption F2 / liveness A / final blocker.) Purge every height the reorg
+        # touched — its low bound is min(old_canonical_hashes), the affected_start
+        # _apply_reorg computed; fall back to >old_head only if that is unavailable.
+        # old_head's own snapshot is re-established just below (revert or rebuild). Any
+        # purged height is re-derivable from canonical with a true-ancestor baseline.
+        _purge_from: Optional[int] = None
+        if old_canonical_hashes:
+            try:
+                _purge_from = min(int(k) for k in old_canonical_hashes)
+            except ValueError:
+                _purge_from = None
+        if _purge_from is None and old_head is not None:
+            _purge_from = int(old_head[0]) + 1
+        if _purge_from is not None:
+            for _hgt in [k for k in list(self._state_snapshots.keys()) if int(k) >= _purge_from]:
                 self._state_snapshots.pop(_hgt, None)
 
         if self.state_db is not None:

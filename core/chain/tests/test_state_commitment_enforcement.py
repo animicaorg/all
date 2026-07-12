@@ -146,6 +146,27 @@ def test_restore_purges_poisoned_snapshots_above_head(tmp_path: Path) -> None:
     assert 6 not in imp._state_snapshots
 
 
+def test_restore_purges_full_affected_range_below_head(tmp_path: Path) -> None:
+    # Final re-review BLOCKER: a failed DEEP reorg poisons snapshots at heights
+    # BELOW old_head too (down to fork_point+1), and the primary get(lca_height)
+    # path fetches them bypassing the ancestor cap. Purge must clear the WHOLE
+    # affected range (from min(old_canonical_hashes)), not just > old_head.
+    imp, g = _mk(tmp_path)
+    good = imp.state_db.snapshot()
+    imp._state_snapshots[3] = object()   # poisoned, <= old_head (the bug)
+    imp._state_snapshots[4] = object()   # poisoned, <= old_head
+    imp._state_snapshots[7] = object()   # poisoned, > old_head
+    old_canon = {3: b"\x33" * 32, 4: b"\x44" * 32, 5: b"\x55" * 32}  # affected_start=3
+    imp._restore_pre_reorg_state(
+        old_head=(5, b"\x55" * 32), old_canonical_height=5,
+        old_canonical_hashes=old_canon, old_state_snapshot=good,
+    )
+    assert 3 not in imp._state_snapshots   # <= old_head, now purged (was the hole)
+    assert 4 not in imp._state_snapshots
+    assert 7 not in imp._state_snapshots
+    assert imp._state_snapshots.get(5) is good  # old_head re-established
+
+
 def test_restore_self_heals_state_when_snapshot_is_none(tmp_path: Path) -> None:
     # Corruption F1 (CRITICAL): if the in-memory snapshot is None, restore must
     # self-heal state from canonical instead of leaving the rejected branch applied
