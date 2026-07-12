@@ -161,6 +161,23 @@ def test_restore_self_heals_state_when_snapshot_is_none(tmp_path: Path) -> None:
     assert imp.state_db.get_balance(SENDER) == 10_000_000
 
 
+def test_rebuild_baseline_is_constrained_to_ancestor(tmp_path: Path) -> None:
+    # Re-review HIGH fix: _rebuild_state_from_canonical must not revert to a
+    # height-keyed snapshot that isn't a true ancestor of the target (an old-branch
+    # snapshot from a prior reorg) — that would recompute an honest block against the
+    # wrong pre-state and false-reject it. With max_baseline_height=LCA it refuses the
+    # non-ancestor baseline and drops to a <=LCA ancestor (genesis here).
+    imp, g = _mk(tmp_path)
+    imp._state_snapshots.setdefault(0, imp.state_db.snapshot())  # genesis baseline
+    imp._state_snapshots[10] = imp.state_db.snapshot()           # poisoned high snapshot
+
+    # Unconstrained: picks baseline=10 (empty replay) → True.
+    assert imp._rebuild_state_from_canonical(10) is True
+    # Constrained to ancestor (LCA=3): rejects the height-10 baseline, falls to
+    # genesis(0), then needs canonical hashes 1..10 which don't exist here → False.
+    assert imp._rebuild_state_from_canonical(10, max_baseline_height=3) is False
+
+
 def test_invalid_blocks_set_is_bounded(tmp_path: Path) -> None:
     # Liveness B: the durable invalid set is capped (eviction is safe — re-import
     # re-rejects deterministically).

@@ -2524,7 +2524,7 @@ class BlockImporter:
                 "state: missing snapshot for reorg; rebuilding from canonical chain",
                 extra={"lca_height": lca_height, "best_height": best.height},
             )
-            return self._rebuild_state_from_canonical(best.height)
+            return self._rebuild_state_from_canonical(best.height, max_baseline_height=lca_height)
 
         try:
             self.state_db.revert(snap)
@@ -2533,7 +2533,7 @@ class BlockImporter:
                 "state: failed to revert snapshot; rebuilding",
                 extra={"error": str(exc), "lca_height": lca_height},
             )
-            return self._rebuild_state_from_canonical(best.height)
+            return self._rebuild_state_from_canonical(best.height, max_baseline_height=lca_height)
 
         applied = 0
         for h in sorted(attached, key=self._block_height_for_hash):
@@ -2543,7 +2543,7 @@ class BlockImporter:
                     "state: missing block payload during reorg apply",
                     extra={"hash": h.hex(), "best_height": best.height},
                 )
-                return self._rebuild_state_from_canonical(best.height)
+                return self._rebuild_state_from_canonical(best.height, max_baseline_height=lca_height)
             if not self._apply_block_state(block):
                 # _apply_block_state now enforces FORK_STATE_COMMITMENT internally and,
                 # on a committed-root mismatch, records the block in _invalid_blocks.
@@ -2568,7 +2568,7 @@ class BlockImporter:
                         "hash": h.hex(),
                     },
                 )
-                return self._rebuild_state_from_canonical(best.height)
+                return self._rebuild_state_from_canonical(best.height, max_baseline_height=lca_height)
             height = _height_of(block.header)
             self._capture_state_snapshot(height)
             applied += 1
@@ -3248,16 +3248,29 @@ class BlockImporter:
             for height in sorted(missing_heights)[:3]:  # Create max 3 at a time
                 self._create_disk_snapshot(height)
 
-    def _rebuild_state_from_canonical(self, target_height: int) -> bool:
+    def _rebuild_state_from_canonical(
+        self, target_height: int, *, max_baseline_height: Optional[int] = None
+    ) -> bool:
         if self.state_db is None:
             return False
         target = max(0, int(target_height))
 
-        candidate_heights = [h for h in self._state_snapshots.keys() if int(h) <= target]
+        # Constrain the baseline to a GUARANTEED ANCESTOR of the target. Height-keyed
+        # _state_snapshots are overwritten across reorgs, so a snapshot at height h is
+        # NOT necessarily the canonical block at h after a reorg. When rebuilding for a
+        # reorg the caller passes max_baseline_height=LCA: every height <= the fork point
+        # is on the shared pre-fork chain and IS a true ancestor of the new canonical
+        # target, so replaying canonical blocks on top of it reconstructs the correct
+        # state — and correct committed roots. Without this, rebuild could revert to an
+        # OLD-branch baseline and, under FORK_STATE_COMMITMENT, false-reject an HONEST
+        # block on a restarted/sparse-cache node (adversarial re-review, HIGH: honest-
+        # reorg split + head stall). Genesis (height 0) is always an eligible ancestor.
+        _cap = target if max_baseline_height is None else min(target, int(max_baseline_height))
+        candidate_heights = [h for h in self._state_snapshots.keys() if int(h) <= _cap]
         if not candidate_heights:
             log.error(
                 "state: rebuild requested without any available snapshot",
-                extra={"target_height": target},
+                extra={"target_height": target, "max_baseline_height": max_baseline_height},
             )
             return False
 
