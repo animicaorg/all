@@ -141,6 +141,19 @@ def _looks_refusal(text: str) -> bool:
     return bool(_REFUSAL_RE.search(t[:400]))
 
 
+def _worker_complete(content) -> bool:
+    """A worker file counts as COMPLETE only if a miner actually produced real content:
+    non-empty, not a no-miner stub, not a leaked worker-error placeholder, not a refusal.
+    An incomplete result is retried (see the swarm's persistent per-file build loop) so a
+    build never ships a blank/stub file just because no miner happened to pick it up."""
+    c = content if isinstance(content, str) else ("" if content is None else str(content))
+    if not c.strip():
+        return False
+    if _is_stub(c) or _looks_refusal(c):
+        return False
+    return "<!-- worker error" not in c and "<!-- no-miner" not in c
+
+
 async def llm(client: httpx.AsyncClient, model: str, messages: list[dict], *,
               retries: int = 2, timeout: float = 90.0, refusal_downgrade: bool = True) -> str:
     """Call the AICF gateway. A stub (no miner claimed the job) or a timeout/5xx is
@@ -984,6 +997,13 @@ def _rich_default_files(prompt: str, extra: list) -> list:
     return [{"path": p, "spec": s} for p, s in core] + extra
 
 
+# Retry a worker file that came back incomplete/unserved until a miner actually produces
+# it. 0 = UNLIMITED (retry forever, cycling tiers, until served) — safe because builds run
+# in the background and keep-warm holds the miner; set a positive cap to bound it.
+SWARM_FILE_MAX_ATTEMPTS = int(os.environ.get("ANIMICA_SWARM_FILE_MAX_ATTEMPTS", "0"))
+_FILE_RETRY_BACKOFF_MAX = float(os.environ.get("ANIMICA_SWARM_FILE_BACKOFF_MAX_S", "20"))
+
+
 # Refinement runs until the critic judges the product genuinely good (score >=
 # bar / done) or proposes no further changes, bounded by a round/time budget so a
 # slow miner can't run forever. Complex apps get a generous budget. 0 = unlimited.
@@ -1309,34 +1329,69 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
 
             built: dict[str, str] = dict(existing)
 
-            async def _build_file(path: str, spec: str, paths: list[str]) -> str:
-                nonlocal model
+            async def _build_file_once(path: str, spec: str, paths: list[str], mdl: str):
+                """One worker attempt on tier `mdl`. Returns the file text, or None if no
+                miner served / it errored (so the caller can retry)."""
                 wsys = _worker_sys(project, desc, paths)
                 umsg = f"Write the file `{path}`.\nSpec: {spec}"
                 cur = built.get(path) or existing.get(path, "")
-                if cur:
+                if cur and _worker_complete(cur):
                     umsg += (f"\n\nCurrent contents of {path} — rewrite the WHOLE file to satisfy the "
                              f"spec, keeping what already works and improving the rest:\n{cur[:MAX_FILE_BYTES]}")
                 try:
-                    return _strip_fence(await llm(client, model, [
+                    return _strip_fence(await llm(client, mdl, [
                         {"role": "system", "content": wsys}, {"role": "user", "content": umsg}], timeout=run_to, retries=1))
-                except InferenceUnavailable as e:
-                    # rank 12: reactive downgrade so later files try a lower serving tier.
+                except InferenceUnavailable:
+                    return None
+                except Exception:   # noqa: BLE001
+                    return None
+
+            async def _emit_build(path: str, spec: str, paths: list[str]):
+                """Build ONE file, retrying until a miner actually produces complete content
+                (SWARM_FILE_MAX_ATTEMPTS=0 → unlimited), cycling down the tier ladder and,
+                when it's exhausted, resetting to the best currently-serving tier (a miner
+                may have woken). Yields worker/preview SSE events, including per-retry notes
+                so the reconnectable UI shows it waiting for a miner. Sets built[path]."""
+                nonlocal model
+                yield ev({"type": "worker", "path": path, "status": "start"})
+                attempt = 0
+                content = None
+                while True:
+                    attempt += 1
+                    content = await _build_file_once(path, spec, paths, model)
+                    if _worker_complete(content):
+                        break
+                    if SWARM_FILE_MAX_ATTEMPTS and attempt >= SWARM_FILE_MAX_ATTEMPTS:
+                        break
+                    # this tier didn't serve a complete file — advance the ladder; when it's
+                    # exhausted, reset and re-pick the best serving tier so we keep cycling.
                     unserved.add(model)
                     nxt = _next_lower_tier(model, unserved)
                     if nxt:
                         model = nxt
-                    return built.get(path) or existing.get(path) or f"<!-- worker error for {path}: {e} -->"
-                except Exception as e:   # noqa: BLE001
-                    return built.get(path) or existing.get(path) or f"<!-- worker error for {path}: {e} -->"
+                    else:
+                        unserved.clear()
+                        model = await pick_serving_model(client, preferred)
+                    yield ev({"type": "worker", "path": path, "status": "retry", "attempt": attempt,
+                              "note": f"no miner has produced {path} yet — retrying (attempt {attempt}) on {model}…"})
+                    await asyncio.sleep(min(_FILE_RETRY_BACKOFF_MAX, 4 + attempt * 2))
+                ok = _worker_complete(content)
+                built[path] = content if ok else (
+                    built.get(path) or existing.get(path)
+                    or f"<!-- worker error for {path}: not served after {attempt} attempts -->")
+                done_ev = {"type": "worker", "path": path, "status": "done",
+                           "bytes": len(built[path]), "attempts": attempt}
+                if not ok:
+                    done_ev["incomplete"] = True
+                yield ev(done_ev)
+                yield ev({"type": "preview", "preview": _inline_preview(built)})
 
-            # Round 0 — initial build from the leader's plan.
+            # Round 0 — initial build from the leader's plan. Each file retries until a
+            # miner produces complete content, so round 0 never leaves an incomplete file.
             for f in clean:
                 paths = list(dict.fromkeys([x["path"] for x in clean] + list(built.keys())))
-                yield ev({"type": "worker", "path": f["path"], "status": "start"})
-                built[f["path"]] = await _build_file(f["path"], f["spec"], paths)
-                yield ev({"type": "worker", "path": f["path"], "status": "done", "bytes": len(built[f["path"]])})
-                yield ev({"type": "preview", "preview": _inline_preview(built)})
+                async for e in _emit_build(f["path"], f["spec"], paths):
+                    yield e
 
             # Refinement — a critic agent reviews the assembled app and dispatches
             # improvement workers, so the swarm keeps making the product better
@@ -1423,10 +1478,8 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                           "note": str(cplan.get("summary") or "")[:200]})
                 for f in improvements:
                     paths = list(dict.fromkeys(list(built.keys()) + [f["path"]]))
-                    yield ev({"type": "worker", "path": f["path"], "status": "start"})
-                    built[f["path"]] = await _build_file(f["path"], f["spec"], paths)
-                    yield ev({"type": "worker", "path": f["path"], "status": "done", "bytes": len(built[f["path"]])})
-                    yield ev({"type": "preview", "preview": _inline_preview(built)})
+                    async for e in _emit_build(f["path"], f["spec"], paths):
+                        yield e
                 round_times.append(time.monotonic() - r_start)
 
             # rank 8: FREE structural validation; a single repair pass ONLY while
@@ -1443,10 +1496,8 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                             f"them, keeping every working feature. index.html must reference each local "
                             f"stylesheet/script by its exact filename; vetted CDN libraries are allowed.")
                     paths = list(dict.fromkeys(list(built.keys()) + [bp]))
-                    yield ev({"type": "worker", "path": bp, "status": "start"})
-                    built[bp] = await _build_file(bp, spec, paths)
-                    yield ev({"type": "worker", "path": bp, "status": "done", "bytes": len(built[bp])})
-                    yield ev({"type": "preview", "preview": _inline_preview(built)})
+                    async for e in _emit_build(bp, spec, paths):
+                        yield e
                 for p, n in _validate_build(built, web=True):
                     yield ev({"type": "validation", "ok": False, "path": p, "note": n})
             elif not vb:
