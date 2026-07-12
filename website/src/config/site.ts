@@ -78,7 +78,7 @@ export const SITE: SiteConfig = {
       wordmark: '/icons/wordmark.svg',
     },
     theme: {
-      color: '#16d9c3',
+      color: '#6ea8fe',
       bg: '#070b16',
     },
   },
@@ -96,6 +96,8 @@ export const SITE: SiteConfig = {
 
   nav: {
     top: [
+      { label: 'AI API', href: 'https://console.animica.org' },
+      { label: 'Free AI', href: 'https://animica.dev', external: true, target: '_blank', rel: 'noopener' },
       { label: 'ENA', href: '/ena' },
       { label: 'Developers', href: '/developers' },
       { label: 'Mine', href: '/mine' },
@@ -106,6 +108,13 @@ export const SITE: SiteConfig = {
     ],
     footer: [
       {
+        title: 'Trade ANM',
+        items: [
+          { label: 'Buy & Trade ANM/USDT', href: 'https://nonkyc.io/market/ANM_USDT', external: true, target: '_blank', rel: 'noopener' },
+          { label: 'ANM/USDT Liquidity Pool', href: 'https://nonkyc.io/pool/ANM_USDT', external: true, target: '_blank', rel: 'noopener' },
+        ],
+      },
+      {
         title: 'Platform',
         items: [
           { label: 'Developers', href: '/developers' },
@@ -114,6 +123,7 @@ export const SITE: SiteConfig = {
           { label: 'Mine', href: '/mine' },
           { label: 'Downloads', href: '/downloads' },
           { label: 'Compute Pricing', href: '/compute-pricing' },
+          { label: 'Free AI & Coding Agent', href: 'https://animica.dev', external: true, target: '_blank', rel: 'noopener' },
         ],
       },
       {
