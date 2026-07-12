@@ -2477,7 +2477,13 @@ class BlockImporter:
         except Exception:
             return None
 
-    def _apply_block_state(self, block: Block) -> bool:
+    def _apply_block_state(self, block: Block, *, seal_only: bool = False) -> bool:
+        # seal_only=True is a dry-run used by compute_sealed_state_root(): it
+        # applies the identical state transition (txs + rewards + AICF, which drive
+        # the state root) but suppresses the NON-state side effects a candidate
+        # block must not cause — receipt persistence to block_db, the process
+        # coinbase metric, and shadow root logging. The caller snapshots and
+        # reverts around it, so the live state is unchanged.
         if self.state_db is None:
             return False
 
@@ -2543,13 +2549,14 @@ class BlockImporter:
             # stitch them into a new (frozen) Block, re-store it, and
             # write the receipt-pointer index that RPC reads.
             try:
-                self._persist_receipts(
-                    block=block,
-                    block_hash=block.header.hash(),
-                    height=int(getattr(block.header, "height", 0) or 0),
-                    non_coinbase_txs=non_coinbase_txs,
-                    block_result=block_result,
-                )
+                if not seal_only:
+                    self._persist_receipts(
+                        block=block,
+                        block_hash=block.header.hash(),
+                        height=int(getattr(block.header, "height", 0) or 0),
+                        non_coinbase_txs=non_coinbase_txs,
+                        block_result=block_result,
+                    )
             except Exception as persist_exc:
                 # Receipt persistence is best-effort; we don't want a
                 # serialization quirk to fail the whole block apply.
@@ -2670,7 +2677,8 @@ class BlockImporter:
                     callsite="core.chain.block_import._apply_block_state",
                 )
                 global _BLOCK_COINBASE_CREDIT_TOTAL
-                _BLOCK_COINBASE_CREDIT_TOTAL += miner_total
+                if not seal_only:
+                    _BLOCK_COINBASE_CREDIT_TOTAL += miner_total
                 log.info(
                     "STATE_CREDIT miner=%s reward=%d fees=%d total=%d height=%d new_balance=%d",
                     block_env.coinbase.hex(),
@@ -2737,7 +2745,8 @@ class BlockImporter:
                     height=height,
                     callsite="core.chain.block_import._apply_block_state",
                 )
-                _BLOCK_COINBASE_CREDIT_TOTAL += treasury_total
+                if not seal_only:
+                    _BLOCK_COINBASE_CREDIT_TOTAL += treasury_total
                 log.info(
                     "STATE_CREDIT treasury=%s reward=%d height=%d new_balance=%d",
                     treasury_addr_bytes.hex(),
@@ -2779,7 +2788,7 @@ class BlockImporter:
             # AICF) is finalized above, so this observes the canonical root that a
             # future miner-seal must commit. Exceptions are swallowed: observability
             # must never break block apply.
-            if _root_commitment_shadow():
+            if not seal_only and _root_commitment_shadow():
                 try:
                     from core.chain.state_commit import compute_state_root
 
@@ -2846,6 +2855,33 @@ class BlockImporter:
                 },
             )
             return False
+
+    def compute_sealed_state_root(self, block: Block) -> bytes:
+        """Post-execution ``stateRoot`` a 7.1.9 miner must seal into ``block``.
+
+        Applies ``block`` to a snapshot of the CURRENT (parent) state via the
+        exact validator path (``_apply_block_state``), reads ``compute_state_root``
+        over the finalized post-block state, then reverts — the live state is left
+        byte-identical (snapshot/revert covers accounts AND PFX_AICF). Because it
+        runs the identical apply a validator runs at import, the sealed root equals
+        what every FORK_STATE_COMMITMENT node computes, by construction — there is
+        no second implementation of the transition to drift out of agreement.
+
+        ``seal_only`` suppresses the apply's non-state side effects (receipt
+        persistence, coinbase metric, shadow logging). Raises if the block would
+        not apply — a miner must never seal a block it cannot execute.
+        """
+        if self.state_db is None:
+            raise RuntimeError("compute_sealed_state_root: no state_db")
+        snap = self.state_db.snapshot()
+        try:
+            if not self._apply_block_state(block, seal_only=True):
+                raise RuntimeError("compute_sealed_state_root: block did not apply")
+            from core.chain.state_commit import compute_state_root
+
+            return compute_state_root(self.state_db)
+        finally:
+            self.state_db.revert(snap)
 
     def _capture_state_snapshot(self, height: int) -> None:
         if self.state_db is None:
