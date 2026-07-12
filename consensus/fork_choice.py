@@ -162,6 +162,13 @@ class ForkChoice:
         )
         self.max_reorg_depth = max_reorg_depth
         self.max_orphans = max_orphans  # Maximum orphans to prevent DoS
+        self._genesis: bytes = g
+        # Blocks proven invalid at application time (e.g. a committed stateRoot that
+        # does not match the recomputed post-execution root under
+        # FORK_STATE_COMMITMENT), plus all their descendants. Excluded from best-tip
+        # selection so a rejected block is not re-selected forever (head stall).
+        # Empty by default → zero behavior change until mark_invalid() is called.
+        self.invalid: set[bytes] = set()
 
         self.nodes[g] = Node(
             h=g,
@@ -312,6 +319,10 @@ class ForkChoice:
         )
         self.nodes[hh] = node
         parent_node.children.add(hh)
+        if ph in self.invalid or hh in self.invalid:
+            # Invalidity is closed under descendants (and honors a pre-mark of hh
+            # that arrived before the block itself). Such a node can never be best.
+            self.invalid.add(hh)
         return node
 
     def _connect_orphans(self, parent: bytes) -> None:
@@ -345,6 +356,9 @@ class ForkChoice:
     def _maybe_update_best(
         self, candidate: Node
     ) -> Tuple[bool, int, List[bytes], List[bytes]]:
+        if candidate.h in self.invalid:
+            # A block proven invalid (or descended from one) never becomes best.
+            return False, 0, [], []
         old_best = self._collect_tip(self._best.h)
         if not self._better(candidate, old_best):
             return False, 0, [], []
@@ -362,6 +376,56 @@ class ForkChoice:
             cum_weight_micro=candidate.cum_weight_micro,
         )
         return True, depth, detached, attached
+
+    def is_invalid(self, h: str | bytes) -> bool:
+        return _hex_to_bytes(h) in self.invalid
+
+    def mark_invalid(self, h: str | bytes) -> BestTip:
+        """Exclude a block (and all its descendants) from best-tip selection.
+
+        Called when block application proves the block invalid — e.g. under
+        FORK_STATE_COMMITMENT a committed non-zero stateRoot that does not equal
+        the recomputed post-execution root. Without this the rejected block would
+        remain the heaviest tip and be re-selected every round, stalling the head.
+
+        Genesis can never be marked invalid. Records ``h`` even if it has not
+        attached yet (pre-mark), so it is excluded the moment it arrives.
+        Idempotent; recomputes and returns the new best tip.
+        """
+        hh = _hex_to_bytes(h)
+        if hh == self._genesis:
+            return self._best
+        self.invalid.add(hh)
+        # Close over known descendants (BFS over children).
+        stack = [hh]
+        while stack:
+            cur = stack.pop()
+            node = self.nodes.get(cur)
+            if node is None:
+                continue
+            for c in node.children:
+                if c not in self.invalid:
+                    self.invalid.add(c)
+                    stack.append(c)
+        self._recompute_best()
+        return self._best
+
+    def _recompute_best(self) -> None:
+        """Re-select the heaviest eligible (non-invalid) node as best. Genesis is
+        always eligible, so a best always exists."""
+        best_node: Optional[Node] = None
+        for node in self.nodes.values():
+            if node.h in self.invalid:
+                continue
+            if best_node is None or self._better(node, best_node):
+                best_node = node
+        if best_node is None:
+            best_node = self.nodes[self._genesis]
+        self._best = BestTip(
+            h=best_node.h,
+            height=best_node.height,
+            cum_weight_micro=best_node.cum_weight_micro,
+        )
 
     # LCA & reorg path
     def reorg_path(

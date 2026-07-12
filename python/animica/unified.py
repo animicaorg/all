@@ -114,9 +114,20 @@ def _detect_gpu_via_torch() -> Optional[tuple[str, float, str]]:
     # set torch.version.hip. Covers the overwhelming majority of discrete GPUs.
     try:
         if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            n = torch.cuda.device_count()
             name = torch.cuda.get_device_name(0)
-            vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            # Pool VRAM across ALL visible GPUs so a multi-GPU rig can serve a larger
+            # tier (the inference engine shards via device_map="auto"). But discount a
+            # per-GPU overhead on multi-GPU rigs: the naive sum overstates usable
+            # memory and would let a rig advertise a tier it can only OOM/offload on.
+            vram_sum = sum(
+                torch.cuda.get_device_properties(i).total_memory for i in range(n)
+            ) / (1024 ** 3)
+            vram = vram_sum - n * _MULTI_GPU_OVERHEAD_GB if n > 1 else vram_sum
+            vram = max(0.0, vram)
             hip = getattr(getattr(torch, "version", None), "hip", None)
+            if n > 1:
+                name = f"{n}x {name}"
             return name, round(float(vram), 1), ("rocm" if hip else "cuda")
     except Exception:
         pass
@@ -143,12 +154,37 @@ def _detect_gpu_via_smi() -> Optional[tuple[str, float, str]]:
                 [exe, "--query-gpu=name,memory.total",
                  "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=10)
-            line = (out.stdout or "").strip().splitlines()[:1]
-            if out.returncode == 0 and line:
-                parts = [p.strip() for p in line[0].split(",")]
-                name = parts[0]
-                vram = (float(parts[1]) / 1024.0
-                        if len(parts) > 1 and parts[1] else 0.0)
+            lines = (out.stdout or "").strip().splitlines()
+            if out.returncode == 0 and lines:
+                # Aggregate VRAM across every GPU nvidia-smi reports (one line per
+                # card), not just the first — a multi-GPU rig pools its cards to
+                # serve a larger, sharded model. Parse each line independently so one
+                # malformed value (e.g. "[N/A]" on some MIG/vGPU configs) skips that
+                # card instead of aborting the whole rig to CPU-only.
+                total = 0.0
+                valid = 0
+                first_name = None
+                for ln in lines:
+                    parts = [p.strip() for p in ln.split(",")]
+                    if not parts or not parts[0]:
+                        continue
+                    try:
+                        if len(parts) > 1 and parts[1]:
+                            total += float(parts[1]) / 1024.0
+                            valid += 1
+                            # name the rig after the first card we actually counted,
+                            # not a skipped [N/A] one
+                            if first_name is None:
+                                first_name = parts[0]
+                    except (ValueError, TypeError):
+                        continue
+                if valid == 0:
+                    return None
+                # Discount per-GPU overhead on multi-GPU rigs (see torch path).
+                vram = total - valid * _MULTI_GPU_OVERHEAD_GB if valid > 1 else total
+                vram = max(0.0, vram)
+                name = (f"{valid}x {first_name}" if valid > 1 and first_name
+                        else (first_name or "NVIDIA GPU"))
                 return name, round(vram, 1), "cuda"
         except Exception:
             pass
@@ -390,6 +426,60 @@ def _cli_device_flag(caps: Capabilities) -> Optional[str]:
     return {"cuda": "cuda", "rocm": "rocm", "mps": "metal"}.get(kind)
 
 
+# Rough accelerator-memory (GB) a machine needs to actually LOAD + serve each
+# tier's default coder model. Sized to the real serving footprint (quantized
+# weights — 4/8-bit MLX/GGUF — plus KV/activations and an OS reserve), NOT a
+# strict fp16 load: fp16 weights alone are ~2x these numbers (Coder-7B ~15 GB,
+# Coder-32B ~65 GB), which is why `elite` needs an 80 GB-class accelerator.
+# Advertising a tier the box can't load just wastes a multi-GB download and then
+# fails at serve time — e.g. an M2 Mac mini should not claim `elite` (Coder-32B)
+# merely because Metal counts as a GPU.
+_TIER_MIN_MEM_GB: tuple[tuple[str, float], ...] = (
+    ("free",     3.0),    # ~0.5B
+    ("standard", 7.0),    # ~3B  coder
+    ("premium",  15.0),   # ~7B  coder
+    ("elite",    72.0),   # ~32B coder — needs an 80 GB-class card (fp16 ~65 GB)
+)
+
+# Per-GPU usable-VRAM overhead (GB) subtracted from a MULTI-GPU rig's pooled total
+# before tier-gating. A naive sum overstates what the rig can serve: each card holds
+# its own CUDA context/reserve, fragmentation isn't shared across cards, and
+# device_map sharding concentrates KV-cache/activations on whichever card runs a
+# layer. Without this discount a rig of small cards (e.g. 3×24=72 GB) would cross the
+# elite gate calibrated for one coherent 80 GB card, then OOM or silently CPU-offload
+# the 32B model (serving at 10-100× slowdown). Single-GPU rigs are NOT discounted.
+_MULTI_GPU_OVERHEAD_GB = 1.5
+
+
+def _eligible_aicf_tiers(caps: Capabilities) -> list[str]:
+    """Which AICF tiers this machine can actually serve, gated by memory.
+
+    GPUs use VRAM (Apple Silicon uses unified/system memory); CPU-only boxes use
+    system RAM and are capped at ``standard`` because larger models are
+    impractically slow to decode on CPU. An explicit ``ANIMICA_AICF_TIERS``
+    overrides this. Always returns at least ``["free"]`` so the miner still
+    serves something.
+
+    Scope: this governs the tiers the pool/stratum-facing worker advertises
+    (``reference_cpu_miner`` reads ``ANIMICA_AICF_TIERS``). The separate
+    ``agent_runtime`` AICF-broker worker gates its own tiers by hardware via its
+    model catalog and does not read this env — its tier vocabulary differs
+    (unifying the two is tracked separately).
+    """
+    override = os.environ.get("ANIMICA_AICF_TIERS", "").strip()
+    if override:
+        return [t.strip() for t in override.split(",") if t.strip()]
+    mem_gb = float(caps.vram_gb or 0.0) if caps.gpu else _system_memory_gb()
+    cpu_ceiling = None if caps.gpu else "standard"
+    tiers: list[str] = []
+    for tier, need in _TIER_MIN_MEM_GB:
+        if mem_gb + 1e-6 >= need:
+            tiers.append(tier)
+        if cpu_ceiling and tier == cpu_ceiling:
+            break
+    return tiers or ["free"]
+
+
 def _coordinator_endpoint(pool_host: str) -> str:
     """ENA coordinator base URL for a pool host: ``pool.animica.org`` →
     ``https://pool.animica.org/api/ena`` (the nginx route fronting the
@@ -511,9 +601,14 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
     if cfg.threads:
         miner_argv += ["--threads", str(cfg.threads)]
     miner_env = dict(base_env)
-    miner_env["ANIMICA_AICF_TIERS"] = "standard,premium,elite" if gpu else "free,standard"
+    # Gate the pool/stratum worker's serving tiers by the memory this machine
+    # actually has, so it only advertises models it can load (e.g. an M2 mini
+    # serves standard/premium but not elite/32B). ANIMICA_AICF_TIERS overrides.
+    aicf_tiers = _eligible_aicf_tiers(caps)
+    miner_env["ANIMICA_AICF_TIERS"] = ",".join(aicf_tiers)
     plan.append(Component("miner", miner_argv, enabled=True,
-                          reason="SHA3 proof-of-work + AICF inference", env=miner_env))
+                          reason=f"SHA3 proof-of-work + AICF inference (tiers: {','.join(aicf_tiers)})",
+                          env=miner_env))
 
     # The ENA coordinator (pools, shards, useful-work queue) lives on the pool
     # host, not this box. Point every ENA component at it over HTTP so workers

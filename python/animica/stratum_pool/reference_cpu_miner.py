@@ -903,6 +903,23 @@ class StratumCpuMiner:
                 tiers = ["standard"]
             if tiers:
                 aicf_features["tiers"] = tiers
+                # Pre-download the models for the advertised tiers so the first
+                # inference job serves immediately instead of stalling minutes on
+                # a multi-GB fetch. Background + guarded so it runs once and never
+                # blocks the PoW loop; disable with ANIMICA_AICF_PREFETCH=0.
+                if not getattr(self, "_aicf_prefetched", False):
+                    self._aicf_prefetched = True
+                    try:
+                        import threading as _threading
+                        from animica.stratum_pool.aicf_inference import prefetch_tier_models as _prefetch
+                        _threading.Thread(
+                            target=_prefetch, args=(list(tiers),),
+                            kwargs={"log": self.log.info}, daemon=True,
+                            name="aicf-prefetch",
+                        ).start()
+                        self.log.info("aicf-prefetch: ensuring models for tiers %s are downloaded", ",".join(tiers))
+                    except Exception as _pf_exc:   # noqa: BLE001
+                        self.log.debug("aicf prefetch not started: %s", _pf_exc)
                 hardware: dict = {}
                 for key, env in (
                     ("gpu", "ANIMICA_AICF_GPU"),

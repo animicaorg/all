@@ -132,6 +132,18 @@ const ecosystemProducts = [
       "github.com/animicaorg — the node, wallets, pool, and tooling are public and open to contributions.",
     href: "https://github.com/animicaorg/all",
   },
+  {
+    title: "AI API · Console",
+    description:
+      "For businesses & AI agents: an OpenAI-compatible API — point the OpenAI SDK at api.animica.org/v1 and your code just works. Free monthly tokens, real streaming, spend caps, usage analytics, and HMAC webhooks. Sign up at console.animica.org.",
+    href: "https://console.animica.org",
+  },
+  {
+    title: "Free AI · animica.dev",
+    description:
+      "Free, keyless AI for developers and their agents — an OpenAI-compatible /v1 you can call with no signup and no API key, plus a GitHub coding agent that turns a prompt into a pull request. Served on-chain by the miner network at animica.dev.",
+    href: "https://animica.dev",
+  },
 ];
 ---
 
@@ -142,17 +154,25 @@ const ecosystemProducts = [
 
   <section class="aicf-section aicf-hero">
     <div class="aicf-container">
-      <span class="aicf-kicker">Live mainnet · Post-quantum L1 · Native coin ANM</span>
-      <h1 class="aicf-heading">The post-quantum chain where mining does useful work</h1>
-      <p class="aicf-subheading">
-        Animica mainnet is live: Dilithium3 + SPHINCS+ signatures, smart contracts in
-        deterministic Python, and PoIES consensus that rewards useful compute instead of
-        wasted hashes.
-      </p>
+      <div class="aicf-hero-beacon anm-reveal" role="status" aria-label="Mainnet status">
+        <span class="anm-verify">MAINNET LIVE</span>
+        <a class="aicf-beacon-link anm-mono" href="https://explorer.animica.org">explorer.animica.org</a>
+      </div>
+      <div class="aicf-hero-spine anm-spine">
+        <span class="aicf-kicker anm-reveal">Live mainnet · Post-quantum L1 · Native coin ANM</span>
+        <h1 class="aicf-heading anm-reveal-2">The post-quantum chain where mining does <span class="anm-grad-text">useful work</span></h1>
+        <p class="aicf-subheading anm-reveal-2">
+          Animica mainnet is live: Dilithium3 + SPHINCS+ signatures, smart contracts in
+          deterministic Python, and PoIES consensus that rewards useful compute — including
+          attested, <span class="anm-grad-text">verifiable quantum randomness</span> — instead of
+          wasted hashes.
+        </p>
+      </div>
 
-      <div class="aicf-btn-row">
+      <div class="aicf-btn-row anm-reveal-3">
         <a class="aicf-btn" href="/mine">Start Mining</a>
         <a class="aicf-ghost-btn" href="/docs">Read the Docs</a>
+        <anm-price-ticker variant="hero" aria-label="Live ANM price — trade on NonKYC"></anm-price-ticker>
       </div>
 
       <div class="aicf-pip-chip">
@@ -186,6 +206,142 @@ const ecosystemProducts = [
         ))}
       </ul>
     </div>
+  </section>
+
+<section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">New · Animica AI · for businesses &amp; AI agents · Live</span>
+      <h2 class="aicf-heading aicf-h2">An OpenAI-compatible API for your SaaS &amp; AI agents.</h2>
+      <p class="aicf-subheading">
+        Businesses and agent builders ship on Animica AI — a drop-in, OpenAI-compatible API.
+        Point the official OpenAI SDK at our base URL, swap in an Animica key, and your existing
+        chat, streaming, tool-calling, and embeddings code runs unchanged — exactly what autonomous
+        agents need. Go to production with per-key spend caps, usage analytics, and signed webhooks.
+        Start free with monthly free tokens; pay with card, PayPal, or crypto. Manage it all at
+        <a href="https://console.animica.org">console.animica.org</a>.
+      </p>
+
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="https://console.animica.org">Open the console — get an API key</a>
+        <a class="aicf-ghost-btn" href="https://console.animica.org/pricing">Pricing</a>
+        <a class="aicf-ghost-btn" href="https://api.animica.org/api/docs">API reference</a>
+      </div>
+
+      <div class="aicf-pip-chip">
+        <code data-api-cmd>base_url="https://api.animica.org/v1"</code>
+        <button
+          type="button"
+          class="aicf-pip-copy"
+          data-copy-api
+          aria-label="Copy base URL: https://api.animica.org/v1"
+        >Copy</button>
+      </div>
+      <p class="aicf-pip-note">
+        Two lines change: <code>base_url</code> → <code>https://api.animica.org/v1</code> and
+        <code>api_key</code> → your Animica key — no rewrites. Or use the native SDKs:
+        <code>npm i @animica/sdk</code> and <code>pip install animica-ai</code>. Businesses sign up,
+        mint keys, and watch usage and billing at <a href="https://console.animica.org">console.animica.org</a>.
+      </p>
+
+      <ul class="aicf-ai-models" aria-label="Model lineup">
+        <li class="aicf-ai-model"><code>anm-fast-8b</code><span>Low-latency chat</span></li>
+        <li class="aicf-ai-model"><code>anm-code-7b</code><span>Code generation</span></li>
+        <li class="aicf-ai-model"><code>anm-pro-70b</code><span>Frontier reasoning</span></li>
+        <li class="aicf-ai-model"><code>anm-bittensor-router</code><span>Routes to Bittensor subnets</span></li>
+        <li class="aicf-ai-model"><code>anm-embed</code><span>Embeddings</span></li>
+      </ul>
+
+      <div class="aicf-grid-4" style="margin-top:1.5rem;">
+        <article class="aicf-card">
+          <h3>Real streaming</h3>
+          <p class="aicf-muted" style="margin-top:0.6rem;">
+            Token-by-token SSE on <code>/chat/completions</code> with <code>stream=true</code>
+            — first tokens in milliseconds, not after the full response lands. Wire it straight
+            into your existing chat UI.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <h3>Spend controls</h3>
+          <p class="aicf-muted" style="margin-top:0.6rem;">
+            Per-key rate limits and monthly spend caps, org-level budgets with auto-recharge,
+            and idempotency keys so retries never double-bill. Fund it with ANM or crypto
+            credits — no surprise overages.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <h3>Usage analytics</h3>
+          <p class="aicf-muted" style="margin-top:0.6rem;">
+            Break usage down per key, per model, and per day in the console, or export the raw
+            numbers to CSV for finance and customer billing.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <h3>Signed webhooks</h3>
+          <p class="aicf-muted" style="margin-top:0.6rem;">
+            HMAC-signed webhooks for usage, billing, and budget events — verify the signature
+            and react inside your own backend.
+          </p>
+        </article>
+      </div>
+    </div>
+
+    <style>
+      /* model lineup chips — mono, matches the hero fact-strip / pip-chip look */
+      .aicf-ai-models {
+        list-style: none;
+        margin: 1.4rem 0 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+      }
+
+      .aicf-ai-model {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 0.18rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 0.7rem;
+        background: rgba(255, 255, 255, 0.02);
+        padding: 0.55rem 0.85rem;
+      }
+
+      .aicf-ai-model code {
+        font-family: var(--font-mono);
+        font-size: 0.86rem;
+        color: var(--brand-200);
+        white-space: nowrap;
+      }
+
+      .aicf-ai-model span {
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+        color: rgba(241, 246, 255, 0.6);
+      }
+    </style>
+
+    <script>
+      // Copy-to-clipboard for the OpenAI drop-in base_url chip. Distinct
+      // data-attributes keep it independent of the hero pip-install chip.
+      // Without JS the value stays plain, selectable text and the button is inert.
+      const apiCopyBtn = document.querySelector<HTMLButtonElement>("[data-copy-api]");
+      const apiCmd = document.querySelector<HTMLElement>("[data-api-cmd]");
+      if (apiCopyBtn && apiCmd) {
+        apiCopyBtn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(apiCmd.textContent?.trim() ?? "");
+            apiCopyBtn.textContent = "Copied";
+            apiCopyBtn.classList.add("is-copied");
+            window.setTimeout(() => {
+              apiCopyBtn.textContent = "Copy";
+              apiCopyBtn.classList.remove("is-copied");
+            }, 1600);
+          } catch {
+            // Clipboard API unavailable — leave the value selectable by hand.
+          }
+        });
+      }
+    </script>
   </section>
 
   <StudioBanner href="https://studio.animica.org" />
@@ -299,6 +455,34 @@ const ecosystemProducts = [
     }
 
     /* ── hero ───────────────────────────────────────────────────── */
+    .aicf-hero-beacon {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.7rem;
+      margin-bottom: 1.1rem;
+    }
+
+    .aicf-beacon-link {
+      font-size: 0.8rem;
+      color: var(--anm-ink-2, #aeb7ce);
+      text-decoration: none;
+      border-bottom: 1px solid color-mix(in oklab, var(--brand-400), transparent 60%);
+    }
+
+    .aicf-beacon-link:hover {
+      color: #fff;
+      border-bottom-color: var(--brand-400);
+    }
+
+    /* hash-chain spine threading the hero's core message */
+    .aicf-hero-spine {
+      margin-block: 0.25rem 0.5rem;
+    }
+
+    .aicf-hero-spine > * + * {
+      margin-top: 1rem;
+    }
+
     .aicf-pip-chip {
       display: inline-flex;
       align-items: center;
@@ -440,7 +624,7 @@ const ecosystemProducts = [
       border: 1px solid color-mix(in oklab, var(--brand-400), transparent 60%);
       border-left: 3px solid var(--brand-400);
       border-radius: 0.85rem;
-      background: rgba(22, 217, 195, 0.05);
+      background: rgba(110, 168, 254, 0.06);
       padding: 0.85rem 1.1rem;
       font-size: 0.95rem;
       color: rgba(241, 246, 255, 0.85);

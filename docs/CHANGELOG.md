@@ -8,6 +8,101 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [7.1.7] - 2026-07-11
+### Changed — AICF inference uses every GPU on a multi-GPU rig
+Worker-side; non-consensus. Especially benefits agent/coding workloads, which get
+the largest model the hardware can serve.
+
+- `animica up` now pools the VRAM of **all** visible GPUs (CUDA via torch, or every
+  line of `nvidia-smi`) when choosing which serving tiers to advertise, instead of
+  reading only GPU 0. A multi-GPU rig therefore qualifies for the larger tiers and
+  serves a bigger model — e.g. a 4×24 GB rig reaches the elite (32B) tier.
+- The inference engine shards that model across every card via `device_map="auto"`
+  (set `ANIMICA_AICF_DEVICE_MAP=balanced` to spread evenly), and the load log prints
+  `gpus_used=N/M` so operators can confirm all GPUs are engaged.
+- Honest gating: the pooled VRAM is discounted a small per-GPU overhead (multi-GPU
+  only) so a rig of small cards can't advertise a tier it would only OOM or silently
+  CPU-offload on; `nvidia-smi` parsing tolerates a bad per-card line, and CPU/disk
+  offload is logged loudly instead of serving at 10-100× slowdown.
+
+### Fixed — Node Docker image builds again (PQ backend self-test)
+Node operators / CI only; non-consensus, no on-box or on-chain behaviour change.
+
+- `ops/docker/scripts/pq_backend_selftest.py` failed the node image build at the
+  final `RUN` step. It required a working **SPHINCS+-SHAKE-128s** keypair, but
+  SPHINCS+ (scheme id 2) is a forgeable stub that is **disabled on mainnet**
+  (`coretx.schemes`, ANM-C01/L06) and has no backend other than the *insecure*
+  pure-Python fallback (gated behind `ANIMICA_ALLOW_PQ_PURE_FALLBACK=1`). A mainnet
+  build leaves that flag unset, so the self-test raised `NotImplementedError` and
+  `docker build` exited 1.
+- The self-test now **requires `ml_dsa_65`** — scheme id 11, the only
+  mainnet-enabled signature scheme, which the old test did not cover at all — with a
+  keypair/sign/verify round-trip **plus tamper-rejection** (a modified message or
+  signature must fail to verify), and **asserts SPHINCS+ is gated off** instead of
+  demanding it mint forgeable keys. The disabled, forgeable `dilithium3` (id 1) is no
+  longer exercised. No production node ever enables the insecure pure-Python fallback.
+
+## [7.1.6] - 2026-07-11
+### Fixed — AICF inference uses the Apple Metal (MPS) GPU, not the CPU
+Non-consensus, worker-side.
+
+- The inference engine (`aicf_inference._try_load`) only ever loaded models on
+  `cuda` or `cpu`. On an Apple Silicon Mac (M1/M2/M3) `torch.cuda.is_available()`
+  is False, so it silently ran **every model on the CPU cores** — the Metal GPU
+  went unused. It now auto-detects the accelerator (CUDA → Apple Metal/MPS → CPU)
+  and loads on MPS in fp16, so Mac miners actually serve on the GPU. Pin with
+  `ANIMICA_AICF_DEVICE=cpu|cuda|mps` to override.
+
+## [7.1.5] - 2026-07-11
+### Fixed — `animica up` gates AICF serving tiers by memory
+Non-consensus, worker-side.
+
+- `animica up` previously advertised `standard,premium,elite` for **any** GPU box,
+  so an Apple Silicon Mac (Metal counts as a GPU) would claim `elite` and try to
+  fetch/serve **Coder-32B (~65 GB)** — which won't fit an M2 mini's unified memory,
+  wasting a huge download and failing at serve time. It now picks tiers from the
+  machine's actual memory (GPU VRAM / Apple unified memory; CPU boxes use system
+  RAM and cap at `standard`, since larger models are impractically slow on CPU):
+  `free` ≥3 GB, `standard` ≥7 GB, `premium` ≥15 GB, `elite` ≥72 GB (Coder-32B
+  needs an 80 GB-class accelerator). So a typical M2 mini serves
+  `standard`+`premium` and skips `elite`. Explicit `ANIMICA_AICF_TIERS` still
+  overrides the pool-facing worker's tiers. The chosen tiers show in `animica up --plan`.
+
+## [7.1.4] - 2026-07-11
+### Added — miners pre-install their models; `animica up` is ready-to-serve
+Non-consensus, worker-side.
+
+- **`animica up` (and `miner start --aicf` / `aicf-worker start`) now pre-download
+  the models for the tiers the miner advertises**, in the background, so the first
+  inference job serves immediately instead of stalling minutes on a multi-GB fetch.
+  Idempotent and best-effort (a failure just falls back to lazy download). Disable
+  with `ANIMICA_AICF_PREFETCH=0`.
+- **New `animica miner install [--tiers …]`** to pre-fetch the tier models up front
+  with visible progress (defaults to `ANIMICA_AICF_TIERS`, else all tiers).
+
+## [7.1.3] - 2026-07-11
+### Improved — much better AI coding, served by miners
+Non-consensus. All changes live in the miner-served AICF worker and the edge
+gateway; no chain fork, no node changes. A miner picks these up simply by
+running `animica up` or `animica miner aicf-worker start` on 7.1.3.
+
+- **Dynamic, capability-based token cap.** The old fixed 128-token cap truncated
+  almost every code file mid-function. The worker now sizes each job to *what it
+  can actually handle* — derived from the loaded model's context window and the
+  device class (CPU vs CUDA/MPS), recomputed per job. "As large as the network
+  can handle at any given time." Pin a hard ceiling with `ANIMICA_AICF_MAX_TOKENS`.
+- **Coder-tuned tier defaults.** `standard`→`Qwen2.5-Coder-3B`, `premium`→
+  `Qwen2.5-Coder-7B`, `elite`→`Qwen2.5-Coder-32B` (was general Qwen 1.5B/3B/7B).
+  `free` stays a small general model. Auto-detection still upgrades to any larger
+  cached/bundled model; per-tier overrides (`ANIMICA_AICF_MODEL_<TIER>`) unchanged.
+- **Code-aware prompting.** Generic coding requests get a lean coding system
+  prompt (and skip Animica RAG injection, which was derailing small models);
+  Animica-specific questions keep their doc grounding. Override with
+  `ANIMICA_AICF_CODING_PROMPT`.
+- **Edge gateway + agents** default to a high output budget so the *worker's*
+  dynamic cap is the real limit, and the animica.dev coding agents run on any
+  serving tier (best available) instead of a single pinned model.
+
 ## [7.1.1] - 2026-07-10
 ### Added — the Verifiable Inference Engine (VIE)
 A **non-consensus** AI-engine upgrade. No chain fork, no genesis, the node never

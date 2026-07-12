@@ -14,9 +14,22 @@ matches the architecture-miners-as-aicf-workers note.
 
 Activation:
 - ANIMICA_AICF_TIERS=standard,premium      (advertise these to the pool)
-- ANIMICA_AICF_MODEL=Qwen/Qwen2.5-0.5B-Instruct   (HF repo id)
-- ANIMICA_AICF_MAX_TOKENS=128              (cap per job; default 128)
-- ANIMICA_AICF_DEVICE=cpu                  (cpu|cuda; default auto)
+- ANIMICA_AICF_MODEL=Qwen/Qwen2.5-Coder-7B-Instruct   (HF repo id)
+- ANIMICA_AICF_MAX_TOKENS=4096             (hard per-job cap; default: dynamic —
+                                            sized to this worker's device + the
+                                            model's context window, see
+                                            _dynamic_token_cap)
+- ANIMICA_AICF_CODING_PROMPT=...           (system prompt for code tasks)
+- ANIMICA_AICF_DEVICE=cpu                  (cpu|cuda|mps; default auto —
+                                            CUDA → Apple Metal (MPS) → CPU)
+- ANIMICA_AICF_DEVICE_MAP=auto             (multi-GPU: how HF accelerate spreads a
+                                            model across CUDA cards; "auto" fills
+                                            GPUs in order, "balanced" spreads evenly)
+
+Multi-GPU: on a CUDA rig every visible GPU is used — the model is sharded across
+all cards via device_map (see ANIMICA_AICF_DEVICE_MAP), and `animica up` pools the
+VRAM of all GPUs so the rig advertises the largest tier its combined memory can
+serve. The load log prints `gpus_used=N/M` so you can confirm full engagement.
 
 If `transformers` and `torch` aren't importable, the engine still
 produces output (the stub), so chat round-trips work without the
@@ -44,10 +57,16 @@ log = logging.getLogger("animica.stratum_pool.aicf_inference")
 # replaces these with larger models from the HF cache or a local bundle
 # dir whenever they're available.
 _FALLBACK_TIER_MODEL: dict[str, str] = {
+    # Coder-tuned defaults from `standard` up: the network is used heavily for
+    # code (animica.dev agents, chat), and the Coder-Instruct models are far
+    # stronger at programming while still competent at general chat. `free`
+    # stays a small general model for cheap Q&A. Operators override per-tier
+    # with ANIMICA_AICF_MODEL[_<TIER>]; auto-detection still upgrades to any
+    # larger cached/bundled model.
     "free":     "Qwen/Qwen2.5-0.5B-Instruct",
-    "standard": "Qwen/Qwen2.5-1.5B-Instruct",
-    "premium":  "Qwen/Qwen2.5-3B-Instruct",
-    "elite":    "Qwen/Qwen2.5-7B-Instruct",
+    "standard": "Qwen/Qwen2.5-Coder-3B-Instruct",
+    "premium":  "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "elite":    "Qwen/Qwen2.5-Coder-32B-Instruct",
 }
 _DEFAULT_MODEL = _FALLBACK_TIER_MODEL["standard"]
 
@@ -291,6 +310,51 @@ _TIER_DEFAULT_MODEL: dict[str, str] = {
 }
 
 
+def prefetch_tier_models(tiers, *, log=None) -> list[str]:
+    """Pre-download the HF weights for each advertised tier.
+
+    So a freshly-started worker serves its first job immediately instead of
+    stalling minutes on a multi-GB download. Idempotent (``snapshot_download``
+    skips already-cached files) and best-effort — any failure just means that
+    model downloads lazily on first use. Disable with ``ANIMICA_AICF_PREFETCH=0``.
+    Returns the list of model ids that are now present locally.
+    """
+    _log = log or (lambda _m: None)
+    if os.environ.get("ANIMICA_AICF_PREFETCH", "1").strip().lower() in ("0", "false", "no", "off"):
+        return []
+    ready: list[str] = []
+    seen: set[str] = set()
+    for tier in tiers:
+        try:
+            model_id = resolve_tier_model(tier)
+        except Exception as exc:   # noqa: BLE001
+            _log(f"aicf-prefetch: cannot resolve tier {tier!r}: {exc}")
+            continue
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        # A resolved local bundle / directory is already "installed".
+        try:
+            if Path(model_id).expanduser().exists():
+                ready.append(model_id)
+                continue
+        except Exception:   # noqa: BLE001
+            pass
+        try:
+            from huggingface_hub import snapshot_download
+        except Exception as exc:   # noqa: BLE001
+            _log(f"aicf-prefetch: huggingface_hub unavailable ({exc}); models will load lazily")
+            return ready
+        try:
+            _log(f"aicf-prefetch: downloading {model_id} (tier {tier}) …")
+            snapshot_download(model_id)
+            _log(f"aicf-prefetch: {model_id} ready")
+            ready.append(model_id)
+        except Exception as exc:   # noqa: BLE001
+            _log(f"aicf-prefetch: {model_id} download failed ({exc}); will retry on first job")
+    return ready
+
+
 # System prompt prepended to every chat turn so off-the-shelf small
 # models (Qwen 0.5B, etc.) have factual grounding about Animica instead
 # of hallucinating a "mobile games division" or a generic
@@ -348,6 +412,92 @@ def _resolve_system_prompt() -> str:
     return raw
 
 
+# System prompt used when the request is a plain coding task (no Animica
+# grounding needed). Keeping it short leaves the model's whole budget for
+# the answer, and it explicitly forbids the truncation/"...rest of code"
+# behavior that makes small models look broken. Override with
+# ANIMICA_AICF_CODING_PROMPT.
+_DEFAULT_CODING_PROMPT = (
+    "You are an expert programming assistant served by an Animica AICF miner. "
+    "Write correct, complete, runnable code. Output the ENTIRE solution — never "
+    "truncate, never elide with '...' or 'rest of code unchanged'. Put code in a "
+    "single fenced block with all required imports. When editing a file, return "
+    "the full updated file (or a precise unified diff if asked). Keep prose "
+    "minimal; if the request is ambiguous, make a reasonable assumption and note "
+    "it in one line."
+)
+
+
+def _resolve_coding_system_prompt() -> str:
+    raw = os.environ.get("ANIMICA_AICF_CODING_PROMPT")
+    if raw is None:
+        return _DEFAULT_CODING_PROMPT
+    return raw
+
+
+# Signals that a prompt is a generic coding task (→ coding prompt, no RAG).
+# Deliberately inclusive: a coding prompt on a borderline request is harmless,
+# whereas injecting Animica RAG into a real code task derails small models.
+_CODE_SIGNALS = (
+    "```", "def ", "class ", "import ", "#include", "public static", "=>",
+    "console.log", "print(", "function", "</", "select ", "create table",
+    "algorithm", "regex", "endpoint", " api", "unit test", "refactor",
+    "implement", "compile", "debug", "stack trace", "traceback", "syntax error",
+    "code", "script", "leetcode", "docker", "kubernetes", "html", "css",
+    # languages / frameworks
+    "python", "javascript", "typescript", "java ", "c++", "c#", "rust",
+    "golang", "kotlin", "swift", "php", "ruby", "bash", "shell", "sql",
+    "react", "vue", "svelte", "next.js", "node.js", "fastapi", "flask",
+    # animica.dev agent ReAct schema tokens — these are always code work
+    '"action"', "list_files", "write_file", "read_file", "finalize",
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".cpp", ".sql", ".html", ".css",
+)
+# Animica-specific signals: keep the RAG grounding even if the prompt is
+# code-ish (e.g. "write an Animica smart contract").
+_ANIMICA_SIGNALS = (
+    "animica", "aicf", "poies", "ml-dsa", "dilithium", "sphincs",
+    "stratum", "pool.animica", "rpc.animica", "anm ", "$anm",
+)
+
+
+def _looks_like_code_task(prompt: str) -> bool:
+    p = prompt.lower()
+    return any(sig in p for sig in _CODE_SIGNALS)
+
+
+def _is_animica_query(prompt: str) -> bool:
+    p = prompt.lower()
+    return any(sig in p for sig in _ANIMICA_SIGNALS)
+
+
+def _dynamic_token_cap(model: Any, device: Optional[str]) -> int:
+    """Largest sane `max_new_tokens` for THIS worker right now.
+
+    "As large as the network can handle at any given time": derived from the
+    loaded model's context window and the device class, so a GPU miner serves
+    long completions while a CPU miner stays responsive. Recomputed every job
+    (the model can change between jobs) and always overridable by pinning
+    ANIMICA_AICF_MAX_TOKENS.
+    """
+    is_gpu = bool(device and str(device).startswith(("cuda", "mps")))
+    # Device ceiling — CPU decoding is slow, so cap lower to keep jobs bounded;
+    # accelerators can afford long generations.
+    ceiling = 8192 if is_gpu else 3072
+    ctx = 0
+    cfg = getattr(model, "config", None)
+    if cfg is not None:
+        for attr in ("max_position_embeddings", "n_positions", "max_sequence_length", "seq_length"):
+            v = getattr(cfg, attr, None)
+            if isinstance(v, int) and v > 0:
+                ctx = v
+                break
+    if ctx:
+        # Reserve ~1/3 of the context window for the incoming prompt+system.
+        room = max(256, int(ctx * 2 // 3))
+        return max(256, min(room, ceiling))
+    return ceiling if is_gpu else 2048
+
+
 @dataclass
 class InferenceResult:
     text: str
@@ -378,10 +528,14 @@ class InferenceEngine:
         *,
         model_id: Optional[str] = None,
         device: Optional[str] = None,
-        max_new_tokens_cap: int = 128,
+        max_new_tokens_cap: int = 0,
     ) -> None:
         self._model_id = (model_id or os.environ.get("ANIMICA_AICF_MODEL") or "").strip()
         self._device = (device or os.environ.get("ANIMICA_AICF_DEVICE") or "").strip().lower()
+        # 0 (the default) means "no fixed cap — size each job to what this
+        # worker can actually handle right now" (see _dynamic_token_cap).
+        # An explicit ANIMICA_AICF_MAX_TOKENS pins a hard ceiling for operators
+        # who want a predictable per-job cost.
         try:
             self._max_new_tokens_cap = int(
                 os.environ.get("ANIMICA_AICF_MAX_TOKENS", str(max_new_tokens_cap))
@@ -416,21 +570,95 @@ class InferenceEngine:
         except Exception as exc:
             return f"ml_stack_unavailable: {exc}"
         try:
-            device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
+            # Auto-detect the best accelerator when not pinned: CUDA, then Apple
+            # Metal (MPS), then CPU. Without the MPS branch an Apple Silicon box
+            # (M-series Mac) silently ran every model on the CPU cores because
+            # torch.cuda.is_available() is False there.
+            device = self._device
+            if not device:
+                if torch.cuda.is_available():
+                    device = "cuda"
+                elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+                    device = "mps"
+                else:
+                    device = "cpu"
             self._tokenizer = AutoTokenizer.from_pretrained(model_id)
             kwargs: dict[str, Any] = {}
             # startswith so an explicit "cuda:0"/"cuda:1" also GPU-loads
             # (a bare `== "cuda"` left those on CPU).
             if device.startswith("cuda"):
                 kwargs["torch_dtype"] = torch.float16
-                kwargs["device_map"] = "auto"
+                # Shard across ALL visible CUDA GPUs. device_map lets HF accelerate
+                # split a model too big for one card across every GPU (with CPU
+                # offload as a last resort) — this is how a multi-GPU rig serves the
+                # large premium/elite tiers. "auto" fills GPUs in order; set
+                # ANIMICA_AICF_DEVICE_MAP=balanced to spread evenly across all cards.
+                kwargs["device_map"] = (
+                    (os.environ.get("ANIMICA_AICF_DEVICE_MAP") or "auto").strip()
+                    or "auto"
+                )
+            elif device.startswith("mps"):
+                # Run any op unimplemented on Metal on the CPU instead of raising
+                # (an uncaught error here would silently stub-fallback forever).
+                os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+                # fp16 by default: fp32 is 2x the memory and a 7B won't fit a
+                # 16-24 GB Mac. fp16 on MPS is fine for Qwen-class models but can
+                # be numerically off for some architectures — set
+                # ANIMICA_AICF_MPS_DTYPE=float32 if output is garbage (needs RAM).
+                _mps_dtype = os.environ.get("ANIMICA_AICF_MPS_DTYPE", "float16").strip().lower()
+                kwargs["torch_dtype"] = (
+                    torch.float32 if _mps_dtype in ("float32", "fp32") else torch.float16
+                )
+                # device_map="auto" is not for MPS — we load then move onto the
+                # GPU below with .to("mps").
             self._model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
             if device == "cpu":
                 self._model = self._model.to("cpu")
+            elif device.startswith("mps"):
+                self._model = self._model.to("mps")
             self._loaded = True
             self._effective_model = model_id
+            # Report how many GPUs the model actually landed on so operators can
+            # confirm a multi-GPU rig is fully engaged (e.g. "gpus_used=3/4").
+            gpu_note = ""
+            try:
+                if device.startswith("cuda"):
+                    try:
+                        ndev = torch.cuda.device_count()
+                    except Exception:
+                        ndev = 1
+                    used: set[str] = set()
+                    offloaded = False
+                    spread = getattr(self._model, "hf_device_map", None)
+                    if spread:
+                        for v in spread.values():
+                            s = str(v)
+                            if s.startswith("cuda"):
+                                used.add(s if ":" in s else "cuda:0")
+                            elif s.isdigit():
+                                used.add(f"cuda:{s}")
+                            elif s in ("cpu", "disk"):
+                                offloaded = True
+                    gpu_note = " gpus_used=%d/%d" % (len(used) or 1, ndev)
+                    if offloaded:
+                        # The model didn't fit GPU VRAM and accelerate spilled layers
+                        # to CPU/disk. It "loads" but serves at 10-100x slowdown —
+                        # make that loud instead of a silent slow-serve, so the
+                        # operator drops to a smaller tier or adds VRAM.
+                        gpu_note += " OFFLOAD=cpu/disk(SLOW)"
+                        log.warning(
+                            "aicf inference: model %s did not fit GPU VRAM and was "
+                            "partially offloaded to CPU/disk — serving will be very "
+                            "slow; advertise a smaller tier or add VRAM.",
+                            model_id,
+                        )
+            except Exception:  # a logging-note error must never discard a loaded model
+                gpu_note = ""
             log.info(
-                "aicf inference engine ready: model=%s device=%s", model_id, device
+                "aicf inference engine ready: model=%s device=%s%s",
+                model_id,
+                device,
+                gpu_note,
             )
             return None
         except Exception as exc:
@@ -468,23 +696,45 @@ class InferenceEngine:
                     )
             try:
                 import torch  # type: ignore
-                max_out = int(spec.get("max_output_tokens") or 64)
-                max_out = max(1, min(max_out, self._max_new_tokens_cap))
+                # Effective per-job token cap. An explicit ANIMICA_AICF_MAX_TOKENS
+                # pin wins; otherwise size the job to what THIS worker can handle
+                # right now (device + model context window). A client that omits
+                # max_output_tokens gets the full cap so complete files aren't cut.
+                try:
+                    _dev = str(next(self._model.parameters()).device)
+                except (StopIteration, AttributeError):
+                    _dev = self._device or "cpu"
+                cap = (
+                    self._max_new_tokens_cap
+                    if self._max_new_tokens_cap > 0
+                    else _dynamic_token_cap(self._model, _dev)
+                )
+                requested = spec.get("max_output_tokens")
+                max_out = int(requested) if requested else cap
+                max_out = max(1, min(max_out, cap))
                 # Use the tokenizer's chat template when available so the
                 # system + user roles are honored. Without this, the
                 # model sees a raw string with no context and happily
                 # hallucinates (e.g. "Animica's mobile games division").
-                system_prompt = _resolve_system_prompt()
-                # RAG: pull top-k relevant doc chunks for this query and
-                # prepend them to the system message. The retriever is
-                # silent-noop when the index or encoder isn't available,
-                # so this stays cheap and safe on minimal installs.
-                try:
-                    from .aicf_rag import retrieve_context
-                    rag_block = retrieve_context(prompt, top_k=3)
-                except Exception as rag_exc:
-                    log.debug("aicf-rag: retrieve_context unavailable: %s", rag_exc)
+                # Generic coding tasks get a lean coding prompt and NO RAG:
+                # injecting Animica docs into "write a merge_intervals function"
+                # is pure noise that derails small models and wastes budget.
+                # Animica-specific questions (even code ones) keep the grounding.
+                if _looks_like_code_task(prompt) and not _is_animica_query(prompt):
+                    system_prompt = _resolve_coding_system_prompt()
                     rag_block = ""
+                else:
+                    system_prompt = _resolve_system_prompt()
+                    # RAG: pull top-k relevant doc chunks for this query and
+                    # prepend them to the system message. The retriever is
+                    # silent-noop when the index or encoder isn't available,
+                    # so this stays cheap and safe on minimal installs.
+                    try:
+                        from .aicf_rag import retrieve_context
+                        rag_block = retrieve_context(prompt, top_k=3)
+                    except Exception as rag_exc:
+                        log.debug("aicf-rag: retrieve_context unavailable: %s", rag_exc)
+                        rag_block = ""
                 if rag_block:
                     system_prompt = (
                         (system_prompt + "\n\n" if system_prompt else "")

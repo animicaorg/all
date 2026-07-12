@@ -1188,17 +1188,69 @@ def _decode_tx_defensive(raw: bytes) -> tuple[t.Any, dict]:
     )
 
 
+def _authoritative_sender_balance(sender_addr: str) -> int | None:
+    """Read the sender's confirmed balance (base units) via the SAME path the
+    ``state.getBalance`` RPC uses, so the pre-mempool sufficiency check sees the
+    real chain state even when THIS handler's ctx does not carry ``state_db``
+    (the original bug: ``deps.get_ctx().state_db`` was None on the live node, so
+    the check skipped and every unfundable tx sailed through). Returns None only
+    if state is genuinely unavailable — never for a merely unknown/zero account,
+    which correctly reads as 0."""
+    # 1) Authoritative: rpc.state_service.get_balance (backs state.getBalance).
+    try:
+        from rpc.state_service import get_balance as _svc_get_balance
+
+        return int(_svc_get_balance(sender_addr))
+    except Exception as e:  # noqa: BLE001 - fall through to the direct path
+        log.debug("_authoritative_sender_balance: state_service path failed: %s", e)
+    # 2) Fallback: this handler's ctx.state_db, if it happens to carry one.
+    try:
+        ctx = deps.get_ctx()
+        state_db = getattr(ctx, "state_db", None)
+        if state_db is not None and _parse_address is not None:
+            sender_bytes = _parse_address(sender_addr)
+            for method_name in ("get_balance", "read_balance", "balance_of"):
+                fn = getattr(state_db, method_name, None)
+                if callable(fn):
+                    return int(fn(sender_bytes))
+    except Exception as e:  # noqa: BLE001
+        log.debug("_authoritative_sender_balance: ctx.state_db path failed: %s", e)
+    return None
+
+
 def _validate_sufficient_balance(obj: dict) -> None:
+    """Reject an unfundable transaction BEFORE it can enter the mempool or be
+    force-chained into a block — the node-local guard that closes the phantom-
+    deposit hole. The executor silently turns an unfundable transfer into an
+    in-block REVERT (execution/runtime/executor.py::apply_block) that moves no
+    funds while staying in the block, so an integrator crediting on tx-in-block is
+    spoofed. The only robust fix is to never admit or mine such a tx here.
+
+    Balance is read via the authoritative path (``state.getBalance``'s reader),
+    not the frequently-empty ``ctx.state_db`` this handler used to consult.
+
+    Fail-CLOSED on the force-chain path (ANIMICA_TX_SEND_FORCE_CHAIN=1), where an
+    admitted tx is mined immediately: an unresolvable sender or unverifiable
+    balance is REJECTED, not skipped, so nothing unverified can become a phantom
+    deposit. On the plain-mempool path a known-insufficient balance is still
+    rejected; only genuine state-unavailability is skipped (e.g. a stateless RPC
+    front-end that never mines). This is a pure balance READ — it cannot fork or
+    halt the chain; at worst it declines to admit a tx."""
     tx_obj = obj.get("body", obj.get("tx", obj))
 
     sender_addr = _extract_sender_address(obj)
     if sender_addr is None:
+        if _TX_SEND_FORCE_CHAIN:
+            raise rpc_errors.InvalidTx(
+                "cannot determine sender for balance validation",
+                data={"mempoolError": {"code": 1005, "reason": "unresolved_sender"}},
+            )
         log.debug("_validate_sufficient_balance: cannot determine sender address, skipping")
         return
 
     try:
         value = _coerce_tx_int("value", tx_obj.get("value", 0) or 0)
-        
+
         # Handle gasLimit - may be int or dict {"limit": int, "price": int}
         gas_limit_raw = tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas") or 0
         if isinstance(gas_limit_raw, dict):
@@ -1206,7 +1258,7 @@ def _validate_sufficient_balance(obj: dict) -> None:
             gas_limit = _coerce_tx_int("gasLimit", gas_limit_raw.get("limit", 0) or 0)
         else:
             gas_limit = _coerce_tx_int("gasLimit", gas_limit_raw or 0)
-        
+
         # Handle maxFee - may be in gasLimit dict as "price"
         max_fee_raw = tx_obj.get("maxFee") or tx_obj.get("max_fee") or tx_obj.get("gasPrice") or tx_obj.get("gas_price")
         if max_fee_raw is None and isinstance(gas_limit_raw, dict):
@@ -1230,42 +1282,22 @@ def _validate_sufficient_balance(obj: dict) -> None:
 
     required = value + (gas_limit * max_fee)
 
-    try:
-        ctx = deps.get_ctx()
-        state_db = getattr(ctx, "state_db", None)
-        if state_db is None:
-            log.debug("_validate_sufficient_balance: state_db not available, skipping")
-            return
-        if _parse_address is None:
-            log.debug("_validate_sufficient_balance: parse_address not available, skipping")
-            return
-
-        try:
-            sender_bytes = _parse_address(sender_addr)
-        except Exception as e:
-            log.debug("_validate_sufficient_balance: failed to parse sender %s: %s", sender_addr, e)
-            return
-
-        balance = None
-        for method_name in ("get_balance", "read_balance", "balance_of"):
-            if hasattr(state_db, method_name):
-                try:
-                    balance = int(getattr(state_db, method_name)(sender_bytes))
-                    break
-                except Exception:
-                    continue
-
-        if balance is None:
-            log.debug("_validate_sufficient_balance: could not retrieve balance, skipping")
-            return
-
-        if balance < required:
-            raise rpc_errors.InsufficientFunds(required=required, available=balance)
-    except rpc_errors.InsufficientFunds:
-        raise
-    except Exception as e:
-        log.debug("_validate_sufficient_balance: unexpected error, skipping: %s", e)
+    balance = _authoritative_sender_balance(sender_addr)
+    if balance is None:
+        # State genuinely unavailable. Fail-closed on the force-chain path (the tx
+        # would be mined immediately); skip on a non-mining front-end.
+        if _TX_SEND_FORCE_CHAIN:
+            log.warning(
+                "_validate_sufficient_balance: balance unverifiable for %s; rejecting "
+                "(force-chain fail-closed)",
+                sender_addr,
+            )
+            raise rpc_errors.InsufficientFunds(required=int(required), available=0)
+        log.debug("_validate_sufficient_balance: balance unverifiable, skipping (no force-chain)")
         return
+
+    if balance < required:
+        raise rpc_errors.InsufficientFunds(required=int(required), available=int(balance))
 
 
 def _pending_put(tx_hash_hex: str, raw: bytes) -> None:

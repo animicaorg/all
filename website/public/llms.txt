@@ -50,6 +50,28 @@ Animica ships a Model Context Protocol server exposing Studio + chain tools:
 - Chain tools: balance, send, contract call, job status.
 - Config example: https://github.com/animicaorg/all/tree/main/animica-mcp/config-examples
 
+## Free AI API — keyless, OpenAI-compatible (animica.dev)
+
+https://animica.dev serves a FREE, OpenAI-compatible chat API that needs no API
+key and no signup — inference is served on-chain by the Animica miner network.
+Point any OpenAI SDK at the base URL and it just works.
+
+- Base URL: https://animica.dev/v1  (no Authorization header required)
+- Models: `animica-chat` (default), `animica-chat-small` (fast), `animica-chat-flagship` (best)
+- CORS is open and the endpoint is rate-limited; every response carries a signed
+  proof-of-inference receipt.
+  ```bash
+  curl -s https://animica.dev/v1/chat/completions \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"animica-chat","messages":[{"role":"user","content":"hello"}]}'
+  ```
+- Coding agent: https://animica.dev turns a prompt into a GitHub pull request
+  (a ReAct loop that reads/writes files, searches the web, and opens the PR). Your
+  GitHub token is passed per-request and never stored.
+- Bot/agent discovery on that host: https://animica.dev/llms.txt,
+  https://animica.dev/openapi.json, https://animica.dev/.well-known/ai-plugin.json,
+  https://animica.dev/.well-known/agents.json
+
 ## RPC compatibility (connect existing tooling)
 
 Animica is a post-quantum PoIES L1 that also speaks Ethereum and Bitcoin JSON-RPC
@@ -72,6 +94,7 @@ Both facades answer at the node root `/` (and native namespaces at `/rpc`).
 
 ## Key links
 
+- Free AI API (keyless, OpenAI-compatible): https://animica.dev  (base URL https://animica.dev/v1, no key)
 - Studio: https://studio.animica.org
 - Studio docs: https://animica.org/docs/studio
 - Docs index: https://animica.org/docs
