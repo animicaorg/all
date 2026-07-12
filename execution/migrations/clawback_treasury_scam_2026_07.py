@@ -1,8 +1,8 @@
 """ANM-2026-07 treasury-scam clawback — height-gated state migration.
 
-Context: two accounts obtained foundation-treasury funds by scamming the
+Context: three accounts obtained foundation-treasury funds by scamming the
 operator. The funds now sit where they cannot be recovered by a normal
-transaction:
+transaction (total ~5,653,662.648 ANM):
 
   * anim1zqpuzgv9away6yyttjxrl957epvgsg3pdyl3hmcavhmc443n2gqgjjq8k0ers
     (account 0xc12185eb…, ml_dsa_65 / 0x1003) — the bulk, ~4,000,799.837 ANM.
@@ -10,6 +10,8 @@ transaction:
     (account 0x3e79d533…, SPHINCS+ / 0x1002 *stranded* scheme) — ~9,248.762
     ANM. A 0x1002 wallet cannot spend at all on this chain, so this balance is
     permanently frozen otherwise; recovery is the only way it ever moves.
+  * 0x9b4da8ae7f7385da48b2fffcf45ad3216834615100185dbb68f4db5b774a8352
+    — ~1,643,614.049 ANM (third scam recipient).
 
 Both balances are REAL executed state (read from the authoritative
 state.getBalance at build time), so moving them is value-preserving recovery —
@@ -47,6 +49,8 @@ _SCAM_SOURCES: tuple[bytes, ...] = (
     bytes.fromhex("c12185ebba4d108b5c8c3f969ec858882221693f1bef1d65f78ad63352008948"),
     # anim1zqpru7w4…  SPHINCS+ 0x1002 stranded (unspendable), ~9,248.762 ANM
     bytes.fromhex("3e79d53343a4161560daf8553e204c75306bcc92a9d7524029ae2ba5385fc658"),
+    # 0x9b4da8ae…  ~1,643,614.049 ANM (third scam recipient)
+    bytes.fromhex("9b4da8ae7f7385da48b2fffcf45ad3216834615100185dbb68f4db5b774a8352"),
 )
 
 # Mainnet (chain_id 1) activation height. Forward-only: MUST be above the head

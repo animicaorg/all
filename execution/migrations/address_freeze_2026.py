@@ -55,6 +55,7 @@ _FROZEN_HEX: tuple[tuple[str, int], ...] = (
     # already unspendable; the freeze additionally blocks inbound re-use.
     ("c12185ebba4d108b5c8c3f969ec858882221693f1bef1d65f78ad63352008948", 44_444),
     ("3e79d53343a4161560daf8553e204c75306bcc92a9d7524029ae2ba5385fc658", 44_444),
+    ("9b4da8ae7f7385da48b2fffcf45ad3216834615100185dbb68f4db5b774a8352", 44_444),
 )
 
 
