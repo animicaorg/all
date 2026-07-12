@@ -186,8 +186,10 @@
   .snode{display:flex;align-items:center;gap:11px;padding:11px 14px;border:1px solid var(--line);border-radius:12px;background:var(--paper);font-size:14px}
   .snode.leader{border-color:rgba(46,99,255,.35);background:rgba(46,99,255,.05)}
   .snode.worker{margin-left:24px}
+  .snode.group{margin-left:12px;padding:6px 12px;border:none;background:transparent;font-family:"JetBrains Mono";font-size:12px;color:var(--muted-2);letter-spacing:.02em}
+  .snode.group .ic{width:16px}
   .snode .ic{flex:0 0 auto;width:20px;display:grid;place-items:center}
-  .snode .t{flex:1}
+  .snode .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .snode .st{font-family:"JetBrains Mono";font-size:11.5px;color:var(--muted-2)}
   .snode.done .st{color:var(--ok)}
   .spin{width:15px;height:15px;border:2px solid var(--line-2);border-top-color:var(--clay);border-radius:50%;animation:anmspin .8s linear infinite}
@@ -581,7 +583,21 @@ curl https://animica.dev/v1/chat/completions \
   // ---- background build: runs server-side; survives tab close / reconnect ----
   var buildCtx=null;
   function sleep(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
-  function finishRun(){ running=false; if(buildGo) buildGo.disabled=false; }
+  // Live heartbeat: block-gated builds can go quiet for a while between steps, so a ticker
+  // keeps a visible "working… Ns" line updating every second — silence never looks stalled.
+  var buildBeat={last:0,t0:0,timer:null};
+  function beatStart(){ buildBeat.t0=Date.now(); buildBeat.last=Date.now();
+    if(buildBeat.timer) clearInterval(buildBeat.timer);
+    buildBeat.timer=setInterval(function(){ if(!running){ return; }
+      var total=Math.round((Date.now()-buildBeat.t0)/1000), idle=Math.round((Date.now()-buildBeat.last)/1000);
+      if(buildNote) buildNote.textContent='Building on the free CPU network — working… '+total+'s'
+        +(idle>=8?' · waiting on a miner ('+idle+'s since last step)':'')+'. You can leave and come back.';
+    },1000); }
+  function beatBump(){ buildBeat.last=Date.now(); }
+  function beatStop(){ if(buildBeat.timer){ clearInterval(buildBeat.timer); buildBeat.timer=null; } }
+  function resolveSpinners(){ try{ Array.prototype.forEach.call(swarmTree.querySelectorAll('.spin'),
+    function(s){ if(s.parentNode) s.parentNode.removeChild(s); }); }catch(e){} }
+  function finishRun(){ running=false; beatStop(); if(buildGo) buildGo.disabled=false; }
   function saveJob(jobId,prompt){ try{ localStorage.setItem('anmBuildJob',JSON.stringify({jobId:jobId,prompt:prompt})); }catch(e){} }
   function clearJob(){ try{ localStorage.removeItem('anmBuildJob'); }catch(e){} }
   function resetTree(revise){
@@ -591,11 +607,21 @@ curl https://animica.dev/v1/chat/completions \
   }
   function renderEvent(d){
     if(!buildCtx||!d||d.type==='_gap') return;
+    beatBump();   // any event = live progress; reset the idle counter
     var leaderNode=buildCtx.leaderNode, wnodes=buildCtx.wnodes;
     if(d.type==='leader'){
-      if(d.refine){ snode('','🔁','Refinement pass '+(d.round||'')+(d.note?' — '+d.note:''),(d.files||[]).length+' agents'); }
-      else { leaderNode.querySelector('.t').textContent='Leader — '+(d.project||'build'); setSt(leaderNode,(d.files||[]).length+' agents dispatched',true); }
-      (d.files||[]).forEach(function(fp){ if(!wnodes[fp]) wnodes[fp]=snode('worker','⚙','Worker — '+fp,'queued'); }); }
+      var flist=d.files||[];
+      if(d.refine){ snode('','🔁','Refinement pass '+(d.round||'')+(d.note?' — '+d.note:''),flist.length+' agents'); }
+      else { leaderNode.querySelector('.t').textContent='Leader — '+(d.project||'build');
+        setSt(leaderNode,(d.large?'📦 '+flist.length+' files across modules':flist.length+' agents dispatched'),true); }
+      // Large multi-directory builds: insert a folder header before each new top-level
+      // directory so 30+ files across modules stay scannable (files arrive dir-grouped).
+      var lastDir=buildCtx.lastDir||'';
+      flist.forEach(function(fp){
+        if(d.large){ var slash=fp.indexOf('/'); var dir=slash>0?fp.slice(0,slash):'(root)';
+          if(dir!==lastDir){ lastDir=dir; snode('group','📁',dir+'/',''); } }
+        if(!wnodes[fp]) wnodes[fp]=snode('worker','⚙','Worker — '+fp,'queued'); });
+      buildCtx.lastDir=lastDir; }
     else if(d.type==='worker'){ var wn=wnodes[d.path]||(wnodes[d.path]=snode('worker','⚙','Worker — '+d.path,''));
       if(d.status==='start') setSt(wn,'<span class="spin"></span> writing…');
       else if(d.status==='streaming') setSt(wn,'<span class="spin"></span> '+(d.bytes||0)+' B');
@@ -607,10 +633,13 @@ curl https://animica.dev/v1/chat/completions \
     else if(d.type==='phase'&&d.phase==='verifying'){ snode('','🔧',d.note||'Verifying…','<span class="spin"></span>'); }
     else if(d.type==='phase'&&d.phase==='assembling'){ snode('','🧩','Assembling…','<span class="spin"></span>'); }
     else if(d.type==='validation'&&!d.ok){ snode('','⚠','Fixing '+(d.path||'')+' — '+(d.note||''),''); }
-    else if(d.type==='done'){ lastBuild={project:d.project,description:d.description,files:d.files,preview:d.preview};
+    else if(d.type==='done'){ beatStop(); resolveSpinners();
+      lastBuild={project:d.project,description:d.description,files:d.files,preview:d.preview};
       livePreview(d.preview); renderCode(d.files); persistBuild(); refreshPrBtn(); ensureSteer();
+      snode('','✅','Build complete — '+(Object.keys(d.files||{}).length)+' files','done');
       buildNote.textContent='✅ Build complete — preview it, download .html/.zip, or open a PR.'; clearJob(); finishRun(); }
-    else if(d.type==='error'){ buildNote.textContent='Swarm error: '+(d.message||''); clearJob(); finishRun(); }
+    else if(d.type==='error'){ beatStop(); resolveSpinners();
+      buildNote.textContent='Swarm error: '+(d.message||''); clearJob(); finishRun(); }
   }
   // Stream a background job from buildCtx.cursor; auto-reconnect on a dropped
   // connection until the job finishes. Every `data:` frame is one server event
@@ -645,7 +674,7 @@ curl https://animica.dev/v1/chat/completions \
     }
   }
   async function runSwarm(prompt, existingFiles){
-    resetTree(!!existingFiles); running=true; if(buildGo) buildGo.disabled=true;
+    resetTree(!!existingFiles); running=true; if(buildGo) buildGo.disabled=true; beatStart();
     buildNote.textContent=(existingFiles?'The leader is revising the build':'The agent swarm is building')
       +' on the free CPU network. This runs in the background — you can close this tab and come back, it keeps going. Complex apps can take a few minutes…';
     var res=null;
@@ -694,6 +723,7 @@ curl https://animica.dev/v1/chat/completions \
       if(st.done && !st.has_result){ clearJob(); return; }  // finished (likely errored) and gone
       if(buildResult) buildResult.style.display='block';
       resetTree(false);                                     // rebuild the tree; replay from cursor 0
+      running=true; if(!st.done) beatStart();
       buildNote.textContent=st.done?'Loading your finished build…':'Reconnecting to your build — it kept running in the background…';
       streamJob(raw.jobId);
     }).catch(function(){});
