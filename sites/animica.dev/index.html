@@ -585,12 +585,12 @@ curl https://animica.dev/v1/chat/completions \
   function sleep(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
   // Live heartbeat: block-gated builds can go quiet for a while between steps, so a ticker
   // keeps a visible "working… Ns" line updating every second — silence never looks stalled.
-  var buildBeat={last:0,t0:0,timer:null};
-  function beatStart(){ buildBeat.t0=Date.now(); buildBeat.last=Date.now();
+  var buildBeat={last:0,t0:0,timer:null,prog:''};
+  function beatStart(){ buildBeat.t0=Date.now(); buildBeat.last=Date.now(); buildBeat.prog='';
     if(buildBeat.timer) clearInterval(buildBeat.timer);
     buildBeat.timer=setInterval(function(){ if(!running){ return; }
       var total=Math.round((Date.now()-buildBeat.t0)/1000), idle=Math.round((Date.now()-buildBeat.last)/1000);
-      if(buildNote) buildNote.textContent='Building on the free CPU network — working… '+total+'s'
+      if(buildNote) buildNote.textContent=(buildBeat.prog||'Building on the free CPU network')+' — working… '+total+'s'
         +(idle>=8?' · waiting on a miner ('+idle+'s since last step)':'')+'. You can leave and come back.';
     },1000); }
   function beatBump(){ buildBeat.last=Date.now(); }
@@ -613,7 +613,8 @@ curl https://animica.dev/v1/chat/completions \
       var flist=d.files||[];
       if(d.refine){ snode('','🔁','Refinement pass '+(d.round||'')+(d.note?' — '+d.note:''),flist.length+' agents'); }
       else { leaderNode.querySelector('.t').textContent='Leader — '+(d.project||'build');
-        setSt(leaderNode,(d.large?'📦 '+flist.length+' files across modules':flist.length+' agents dispatched'),true); }
+        setSt(leaderNode,(d.large?'📦 '+flist.length+' files across modules':flist.length+' agents dispatched'),true);
+        buildCtx.planTotal=flist.length; buildCtx.doneCount=buildCtx.doneCount||0; }
       // Large multi-directory builds: insert a folder header before each new top-level
       // directory so 30+ files across modules stay scannable (files arrive dir-grouped).
       var lastDir=buildCtx.lastDir||'';
@@ -626,7 +627,10 @@ curl https://animica.dev/v1/chat/completions \
       if(d.status==='start') setSt(wn,'<span class="spin"></span> writing…');
       else if(d.status==='streaming') setSt(wn,'<span class="spin"></span> '+(d.bytes||0)+' B');
       else if(d.status==='retry') setSt(wn,'<span class="spin"></span> waiting for a miner… (try '+(d.attempt||1)+')');
-      else if(d.status==='done') setSt(wn,(d.incomplete?'⚠ ':'✓ ')+(d.bytes||0)+' B'+((d.attempts||1)>1?' · '+d.attempts+' tries':''),true); }
+      else if(d.status==='done'){ setSt(wn,(d.incomplete?'⚠ ':'✓ ')+(d.bytes||0)+' B'+((d.attempts||1)>1?' · '+d.attempts+' tries':''),true);
+        buildCtx.doneCount=(buildCtx.doneCount||0)+1;
+        var pt=buildCtx.planTotal||0;
+        buildBeat.prog=(pt&&buildCtx.doneCount<=pt)?('Built '+buildCtx.doneCount+'/'+pt+' files'):('Built '+buildCtx.doneCount+' files'); } }
     else if(d.type==='preview'){ livePreview(d.preview); }
     else if(d.type==='phase'&&d.phase==='planning'&&d.note){ setSt(leaderNode,d.note+' <span class="spin"></span>'); }
     else if(d.type==='phase'&&d.phase==='reviewing'){ snode('','🧐',d.note||'Critic is reviewing…','<span class="spin"></span>'); }
