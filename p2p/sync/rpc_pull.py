@@ -215,10 +215,15 @@ class RpcPullSync:
                     consecutive_failures = 0
                 except Exception as exc:
                     consecutive_failures += 1
+                    # %r, not %s: many httpx/network exceptions stringify to ""
+                    # which left operators staring at "tick failed:" with no
+                    # cause during the 38728 outage. Include a traceback on the
+                    # first failure of each streak.
                     log.warning(
-                        "rpc-pull tick failed (consecutive=%d): %s",
+                        "rpc-pull tick failed (consecutive=%d): %r",
                         consecutive_failures,
                         exc,
+                        exc_info=consecutive_failures == 1,
                     )
                     advanced = False
 
