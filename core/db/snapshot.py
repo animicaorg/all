@@ -921,9 +921,9 @@ def _import_blocks_chunk(
 
     with open_fn(chunk_file, "rb") as f:
         for entry in _iter_chunk_entries(f, max_decompressed):
+            entry_type = entry.get("type")
+            height = entry.get("height")
             try:
-                entry_type = entry.get("type")
-                height = entry.get("height")
                 data = entry.get("data")
 
                 if entry_type == "header":
@@ -948,7 +948,43 @@ def _import_blocks_chunk(
                     _log.info(f"Imported {imported_count} entries from {chunk_file.name}")
 
             except Exception as e:
-                _log.warning(f"Error importing entry: {e}")
+                # An entry the DB already holds is a SUCCESSFUL restore of that
+                # entry, not a drop — e.g. block 0: a fresh node finalizes its
+                # own genesis before the snapshot lands, some stores then
+                # reject the duplicate put, and the completeness gate below
+                # aborted EVERY bootstrap with "imported N != manifest N+1"
+                # even though nothing was missing. Only count entries the DB
+                # provably does not hold.
+                recovered = False
+                try:
+                    if entry_type == "block" and height is not None:
+                        bh = block_db.get_canonical_hash(int(height))
+                        if bh is not None and block_db.get_block_by_hash(bh) is not None:
+                            counts["block"] += 1
+                            imported_count += 1
+                            recovered = True
+                    elif entry_type == "header" and height is not None:
+                        bh = block_db.get_canonical_hash(int(height))
+                        if bh is not None and block_db.get_header_by_hash(bh) is not None:
+                            counts["header"] += 1
+                            imported_count += 1
+                            recovered = True
+                except Exception:
+                    recovered = False
+                if recovered:
+                    _log.info(
+                        "Snapshot entry already present locally (type=%s height=%s): %r",
+                        entry_type,
+                        height,
+                        e,
+                    )
+                    continue
+                _log.warning(
+                    "Error importing snapshot entry (type=%s height=%s): %r",
+                    entry_type,
+                    height,
+                    e,
+                )
                 counts["dropped"] += 1
                 continue
 
