@@ -50,9 +50,9 @@ def _svc() -> P2PService:
     svc._sync_wakeup = asyncio.Event()
     svc._has_block = lambda h: False
     svc._needs_local_block_replay = lambda h, height_hint=None: False
-    # wedge-recovery telemetry
+    # wedge-recovery telemetry/limits
     svc._sync_overlap_full_batches = 0
-    svc._sync_max_seen_header_height = 0
+    svc._sibling_enqueue_counts = {}
     return svc
 
 
@@ -97,6 +97,16 @@ def test_enqueue_missing_blocks_fetches_sibling_at_head_height():
     assert queued == 1
     assert SIBLING_38728 in svc._sync_block_queue_set
     assert CANON[HEAD_HEIGHT - 1] not in svc._sync_block_queue_set
+
+
+def test_sibling_enqueue_capped_per_height():
+    svc = _svc()
+    fakes = [
+        _hdr(HEAD_HEIGHT, bytes([0xF0 + i]) * 32, CANON[HEAD_HEIGHT - 1])
+        for i in range(6)
+    ]
+    queued = svc._enqueue_missing_blocks(fakes)
+    assert queued == 4, "fabricated sibling floods must be capped per height"
 
 
 def test_reuse_known_headers_marks_sibling_actionable():
