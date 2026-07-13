@@ -10070,8 +10070,11 @@ class P2PService:
                 # so fork choice can weigh the branch (38728 wedge — reused
                 # headers at local height were never actionable, so the winning
                 # sibling was dropped here even when a peer kept re-serving it).
+                # Deliberately does NOT set recovered_missing_headers: progress
+                # is only credited when the enqueue below actually queues the
+                # block, so a re-served sibling whose fetch keeps failing can't
+                # keep resetting the stall clock.
                 actionable.append(header)
-                recovered_missing_headers = True
             elif not was_buffered and self._needs_local_block_replay(
                 header.hash, height_hint=header.height
             ):
