@@ -921,6 +921,13 @@ def _import_blocks_chunk(
 
     with open_fn(chunk_file, "rb") as f:
         for entry in _iter_chunk_entries(f, max_decompressed):
+            if not isinstance(entry, dict):
+                _log.warning(
+                    "Error importing snapshot entry: non-mapping chunk item (%s)",
+                    type(entry).__name__,
+                )
+                counts["dropped"] += 1
+                continue
             entry_type = entry.get("type")
             height = entry.get("height")
             try:
@@ -948,27 +955,47 @@ def _import_blocks_chunk(
                     _log.info(f"Imported {imported_count} entries from {chunk_file.name}")
 
             except Exception as e:
-                # An entry the DB already holds is a SUCCESSFUL restore of that
-                # entry, not a drop — e.g. block 0: a fresh node finalizes its
-                # own genesis before the snapshot lands, some stores then
-                # reject the duplicate put, and the completeness gate below
-                # aborted EVERY bootstrap with "imported N != manifest N+1"
-                # even though nothing was missing. Only count entries the DB
-                # provably does not hold.
+                # The GENESIS entry is the one legitimate per-entry failure: a
+                # fresh node finalizes its own genesis before the snapshot
+                # lands, and Block.from_obj rejects the genesis txsRoot shape
+                # (it commits sha3('') while the zero-tx recompute yields
+                # 0x00…), so EVERY fresh-node bootstrap dropped exactly one
+                # entry and the completeness gate aborted with
+                # 'block: imported N != manifest N+1'. Recover ONLY that case,
+                # and only when the block-0 the DB already holds matches the
+                # network's PINNED genesis hash — crediting by height alone
+                # could count a DIFFERENT block as the missing entry and mask
+                # a genuinely incomplete restore. Everything else stays
+                # fail-closed.
                 recovered = False
                 try:
-                    if entry_type == "block" and height is not None:
-                        bh = block_db.get_canonical_hash(int(height))
-                        if bh is not None and block_db.get_block_by_hash(bh) is not None:
-                            counts["block"] += 1
-                            imported_count += 1
-                            recovered = True
-                    elif entry_type == "header" and height is not None:
-                        bh = block_db.get_canonical_hash(int(height))
-                        if bh is not None and block_db.get_header_by_hash(bh) is not None:
-                            counts["header"] += 1
-                            imported_count += 1
-                            recovered = True
+                    if (
+                        entry_type in ("block", "header")
+                        and height is not None
+                        and int(height) == 0
+                    ):
+                        bh = block_db.get_canonical_hash(0)
+                        hdr = (
+                            block_db.get_header_by_hash(bh)
+                            if bh is not None
+                            else None
+                        )
+                        if hdr is not None and int(hdr.height) == 0:
+                            from core.network_params import get_pinned_genesis_hash
+
+                            pinned = get_pinned_genesis_hash(
+                                chain_id=int(getattr(hdr, "chainId", 0) or 0)
+                            )
+                            if pinned is None or bytes(pinned) == bytes(bh):
+                                if entry_type == "block":
+                                    if block_db.get_block_by_hash(bh) is not None:
+                                        counts["block"] += 1
+                                        imported_count += 1
+                                        recovered = True
+                                else:
+                                    counts["header"] += 1
+                                    imported_count += 1
+                                    recovered = True
                 except Exception:
                     recovered = False
                 if recovered:

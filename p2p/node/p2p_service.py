@@ -169,10 +169,11 @@ STALL_VERIFY_BACKPRESSURE = "STALL_VERIFY_BACKPRESSURE"
 
 def _max_reorg_depth() -> int:
     """Reorg-depth bound shared with the importer (core.chain.block_import
-    DEFAULT_MAX_REORG_DEPTH reads the same env). Used to bound how far below
-    the local head a fork-sibling header is still worth ingesting."""
+    DEFAULT_MAX_REORG_DEPTH reads the same env, and accepts 0 = never reorg).
+    Used to bound how far below the local head a fork-sibling header is still
+    worth ingesting; 0 disables sibling ingest entirely to match the importer."""
     try:
-        return max(1, int(os.environ.get("ANIMICA_MAX_REORG_DEPTH", "96")))
+        return max(0, int(os.environ.get("ANIMICA_MAX_REORG_DEPTH", "96")))
     except (TypeError, ValueError):
         return 96
 
@@ -1294,12 +1295,12 @@ class P2PService:
         self._sync_last_not_anchored_at = 0.0
         self._sync_recovery_attempts = 0
         self._sync_last_recovery_action: Optional[str] = None
-        # 38728-wedge telemetry: consecutive full-window overlap-only header
-        # batches (see _process_headers), and the highest header height ever
-        # seen from any peer — a network-best fallback for recovery decisions
-        # when no responsive peer height survives _network_best_height().
+        # 38728-wedge telemetry/limits: consecutive full-window overlap-only
+        # header batches (see _process_headers), and per-height counts of
+        # fork-sibling block enqueues (anti-spam cap in
+        # _enqueue_missing_blocks).
         self._sync_overlap_full_batches = 0
-        self._sync_max_seen_header_height = 0
+        self._sibling_enqueue_counts: dict[int, int] = {}
         self._sync_last_recovery_at: Optional[float] = None
         self._sync_last_recovery_reason: Optional[str] = None
         self._sync_last_locator_summary: Optional[dict[str, Any]] = None
@@ -5256,16 +5257,15 @@ class P2PService:
             # 38728 wedge: every stuck node reported network_best_height=null
             # (no peer survived the responsive-peer filter), which disarmed
             # this recovery even while a seed kept serving it full header
-            # batches. Fall back to hard evidence we've already collected:
-            # the highest header ever seen and the heights of blocks queued
-            # above our head both prove the network extends past us.
-            seen = int(self._sync_max_seen_header_height or 0)
+            # batches. Fall back to the heights of blocks already QUEUED for
+            # download — concrete, pipeline-vetted evidence the network
+            # extends past us (the live stuck nodes held ~10 queued blocks).
+            # Deliberately NOT raw header heights: those are peer-claimed and
+            # unvalidated, so a single malicious peer could arm resets at tip.
             queued = self._sync_block_queue_heights.values()
-            if queued:
-                seen = max(seen, max(queued))
-            if seen <= 0:
+            if not queued:
                 return False
-            network_best_height = seen
+            network_best_height = max(queued)
         # Only reset if we're at least 2 blocks behind to avoid false positives
         # when verifier+1 allows miners but no one is at that height yet
         if int(network_best_height) <= int(head_height) + 1:
@@ -10001,7 +10001,8 @@ class P2PService:
             local_height_int = int(local_height or 0)
             if height > local_height_int:
                 return False
-            if (local_height_int - height) > _max_reorg_depth():
+            depth = _max_reorg_depth()
+            if depth <= 0 or (local_height_int - height) >= depth:
                 return False
             if self._header_on_local_chain(header.hash, height=height):
                 return False
@@ -10055,8 +10056,6 @@ class P2PService:
             header = self._sync_header_by_hash(header_hash)
             if header is None:
                 header = self._header_from_compact(hc)
-            if int(header.height) > self._sync_max_seen_header_height:
-                self._sync_max_seen_header_height = int(header.height)
             if header.hash not in self._sync_headers:
                 self._sync_headers[header.hash] = header
                 recovered_missing_headers = True
@@ -10183,14 +10182,21 @@ class P2PService:
                     },
                 )
                 break
-            if hdr.height <= int(local_height or 0) and not self._is_fork_sibling_header(
-                hdr
-            ):
+            if hdr.height <= int(local_height or 0):
                 # At/below-head headers are normally already ours — but a fork
                 # SIBLING (same height, different hash, parent on our chain) is
                 # the base of a competing branch and must be fetched or a node
                 # on the losing side of a fork can never reorg (38728 wedge).
-                continue
+                if not self._is_fork_sibling_header(hdr):
+                    continue
+                # A sibling claim is cheap to fabricate (compact headers carry
+                # no verifiable PoW at this layer), so cap how many DISTINCT
+                # candidates per height we will fetch: junk blocks fail import
+                # anyway, this just bounds the wasted downloads. A real fork
+                # has one winning sibling; 4 leaves room for deeper races.
+                h_key = int(hdr.height)
+                if self._sibling_enqueue_counts.get(h_key, 0) >= 4:
+                    continue
             if self._has_block(hdr.hash) and not self._needs_local_block_replay(
                 hdr.hash, height_hint=hdr.height
             ):
@@ -10204,6 +10210,17 @@ class P2PService:
             self._sync_block_queue.append(hdr.hash)
             self._sync_block_queue_set.add(hdr.hash)
             self._sync_block_queue_heights[hdr.hash] = hdr.height
+            if hdr.height <= int(local_height or 0):
+                h_key = int(hdr.height)
+                self._sibling_enqueue_counts[h_key] = (
+                    self._sibling_enqueue_counts.get(h_key, 0) + 1
+                )
+                if len(self._sibling_enqueue_counts) > 256:
+                    floor = int(local_height or 0) - _max_reorg_depth()
+                    for k in [
+                        k for k in self._sibling_enqueue_counts if k < floor
+                    ]:
+                        del self._sibling_enqueue_counts[k]
             added += 1
         if added:
             self._sync_wakeup.set()
@@ -11236,8 +11253,6 @@ class P2PService:
 
         for idx, hc in enumerate(headers):
             header = self._header_from_compact(hc)
-            if int(header.height) > self._sync_max_seen_header_height:
-                self._sync_max_seen_header_height = int(header.height)
             if header.hash in seen_hashes:
                 discard_reason_counts["duplicate_headers"] = (
                     discard_reason_counts.get("duplicate_headers", 0) + 1
