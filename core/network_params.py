@@ -89,6 +89,20 @@ PINNED_CHECKPOINTS_BY_NETWORK: dict[tuple[str, int], dict[int, bytes]] = {
         28167: bytes.fromhex(
             "00000022379a38be2a2bd6e410a8a720044305483ccf239c4a385b29dfcd08f8"
         ),
+        # Fork point of the 2026-07-07 natural 1-block fork. Canonical block B =
+        # 0x00000000190117cd… (the head at 38729+ descends from it via
+        # 38729.parentHash == B); the orphan sibling A =
+        # 0x000000000ccc40684b6b2552666f3ad6ac89a3914bfac9f276bde5b033357b27
+        # wedged every node that accepted it first: the headers pipeline
+        # discarded the winning sibling at every layer (overlap trim /
+        # anchor_mismatch / not-actionable reuse / below-head enqueue skip), so
+        # the losing branch could never reorg and nodes sat at 38728 for days
+        # while the network advanced. 7.2.0 also ships the generic fork-sibling
+        # ingest in p2p_service; this pin force-converges already-wedged nodes
+        # at boot (same remedy as 28167).
+        38728: bytes.fromhex(
+            "00000000190117cd360d56179f88d8d03474e1ab396d90d4ecdc69e6d1e4bc45"
+        ),
     },
 }
 
