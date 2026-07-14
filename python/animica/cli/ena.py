@@ -379,6 +379,21 @@ def ds_contribute(file: Optional[str] = typer.Argument(None, help="JSONL file of
                  curate=not no_curate), title="contributed")
 
 
+@ds_app.command("feedback")
+def ds_feedback(prompt: str = typer.Option(..., "--prompt", help="the user prompt"),
+                chosen: str = typer.Option(..., "--chosen", help="the preferred (better) response"),
+                rejected: str = typer.Option(..., "--rejected", help="the dispreferred response"),
+                source: Optional[str] = typer.Option("cli", "--source"),
+                contributor: Optional[str] = typer.Option(None, "--contributor")):
+    """Submit a preference (DPO triple) as self-improvement training data.
+
+    This is the same flywheel animica.dev uses: a {prompt, chosen, rejected} pair from real usage
+    is added to the canonical feedback corpus, ready for a DPO training pool to learn from."""
+    e = _ena()
+    _emit(_guard(e.submit_feedback, prompt=prompt, chosen=chosen, rejected=rejected,
+                 source=source, contributor=contributor), title="feedback")
+
+
 @ds_app.command("list")
 def ds_list():
     e = _ena()

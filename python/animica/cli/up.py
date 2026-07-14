@@ -194,4 +194,60 @@ def up(ctx: typer.Context,
     if summary["enabled_but_pending"]:
         console.print(f"[yellow]enabled but not yet runnable: "
                       f"{', '.join(summary['enabled_but_pending'])}[/yellow]")
+    _ensure_media_models(caps, components, console)
     Supervisor(components).run()
+
+
+def _ensure_media_models(caps, components, console) -> None:
+    """Auto-install the generative-media model matched to this rig, in the BACKGROUND.
+
+    Runs before the supervisor but never blocks it (a daemon thread downloads if missing). Disk-guarded
+    and env-gated. Only fires when a miner/AICF-serving component is enabled and the media extra is
+    present. Picks a model by VRAM tier; CPU rigs still get sd-turbo (slow but functional).
+    """
+    import os
+    import shutil
+    import threading
+
+    if os.environ.get("ANIMICA_MEDIA_AUTOINSTALL", "1") == "0":
+        return
+    if os.environ.get("ANIMICA_AICF_PREFETCH", "1") == "0":
+        return
+    # Only relevant if this node serves work (miner / aicf-worker / provider-ish component enabled).
+    enabled = {getattr(c, "name", "") for c in components if getattr(c, "enabled", True)}
+    if not (enabled & {"miner", "aicf-worker", "server", "provider", "useful-work"}):
+        return
+    try:
+        from animica.media.base import media_available
+    except Exception:
+        return
+    avail, _why = media_available()
+    if not avail:
+        console.print("[dim]media: install 'animica[media]' to serve image/video jobs[/dim]")
+        return
+
+    # Pick a model + footprint by VRAM (CPU rigs -> sd-turbo).
+    vram = float(getattr(caps, "vram_gb", 0) or 0)
+    if vram >= 24:
+        model_id, gb = "stabilityai/sdxl-turbo", 7.0  # keep it modest; FLUX is opt-in via `animica media install --tier elite`
+    elif vram >= 10:
+        model_id, gb = "stabilityai/sdxl-turbo", 7.0
+    else:
+        model_id, gb = "stabilityai/sd-turbo", 5.0
+    model_id = os.environ.get("ANIMICA_IMAGE_MODEL", model_id)
+
+    total, used, free = shutil.disk_usage(os.path.expanduser("~"))
+    if free / 1e9 < gb * 1.3:
+        console.print(f"[yellow]media: skipping model prefetch — only {round(free/1e9,1)}GB free "
+                      f"(need ~{round(gb*1.3,1)}GB for {model_id})[/yellow]")
+        return
+
+    def _dl():
+        try:
+            from huggingface_hub import snapshot_download
+            snapshot_download(model_id, allow_patterns=["*.json", "*.txt", "*.safetensors", "*.png"])
+        except Exception:
+            pass  # non-fatal; `animica media doctor` will report status
+
+    console.print(f"[dim]media: ensuring image model {model_id} (~{gb}GB) in background…[/dim]")
+    threading.Thread(target=_dl, name="animica-media-prefetch", daemon=True).start()

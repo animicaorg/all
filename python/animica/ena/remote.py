@@ -126,17 +126,23 @@ class RemotePool:
     ``endpoint`` is the coordinator base (e.g. ``https://pool.animica.org/api/ena``).
     """
 
-    def __init__(self, endpoint: str, *, timeout: float = 120.0) -> None:
+    def __init__(self, endpoint: str, *, timeout: float = 120.0,
+                 token: Optional[str] = None) -> None:
         self.base = (endpoint or "").rstrip("/")
         self.timeout = timeout
+        # Sent as Authorization: Bearer for coordinators with ANIMICA_ENA_API_TOKEN set.
+        import os as _os
+        self.token = token or _os.environ.get("ANIMICA_ENA_API_TOKEN", "") or None
 
     def _call(self, path: str, method: str = "GET",
               body: Optional[dict] = None) -> Any:
         data = json.dumps(body).encode("utf-8") if body is not None else None
+        headers = {"content-type": "application/json",
+                   "user-agent": "animica-ena-trainer"}
+        if self.token:
+            headers["authorization"] = "Bearer " + self.token
         req = urllib.request.Request(
-            self.base + path, data=data, method=method,
-            headers={"content-type": "application/json",
-                     "user-agent": "animica-ena-trainer"})
+            self.base + path, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310
                 return json.loads(resp.read().decode("utf-8") or "null")
