@@ -8,6 +8,32 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [8.0.3] - 2026-07-15
+### Verified & hardened — sync self-heals natural 1-block forks (no behavior change)
+An adversarial investigation (four independent code traces + an end-to-end
+reproduction) confirmed that the default P2P sync path **already self-heals** a
+natural 1-block fork on any node running ≥7.2.0: a node that accepted the losing
+orphan sibling at height N re-requests the fork height **by hash**, ingests the
+winning sibling, and reorgs onto it (depth 1) — **no pinned checkpoint and no HTTP
+fallback required**. The recurring per-fork pins (28167/38728/44854) were only ever
+needed to rescue nodes running **pre-7.2.0** software (the self-heal lives in code
+they weren't running); for ≥7.2.0 nodes they are now a fast-converge safety net, not
+a requirement.
+
+- **No runtime change.** The one non-self-healing case — a node that mined >96
+  blocks onto the *losing* branch — is left as-is on purpose: the reorg-depth cap is
+  a deliberate deep-reorg / long-range defense, and relaxing it would be
+  split-unsafe. That candidate "fix" was explicitly rejected.
+- **Added regression coverage** locking in the self-heal so a refactor can't silently
+  reintroduce the 28167/38728-class wedge:
+  - `p2p/tests/test_sync_fork_selfheal_repro.py` — drives the real `_process_headers`;
+    proves the winning sibling at the fork height is enqueued (not dropped) and the
+    reuse path surfaces it too.
+  - `core/chain/tests/test_fork_choice_height_index_selfheal.py` — real `BlockImporter`
+    proofs: depth-1 sibling reorg fires and repairs the by-height index; an
+    equal-height tie does **not** prematurely reorg; and the deep-loser-extension
+    reorg cap **holds** (documents the deliberate guard).
+
 ## [8.0.2] - 2026-07-14
 ### Fixed — un-wedge nodes stuck syncing at block 44,854
 A natural 1-block fork at mainnet height **44,854** on 2026-07-14 left some nodes
