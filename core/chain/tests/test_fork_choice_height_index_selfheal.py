@@ -324,3 +324,40 @@ def test_already_stored_orphan_at_pinned_height_rejected_not_duplicate(tmp_path,
         res.code == ImportErrorCode.INVALID
     ), "re-import of an already-stored orphan at a pinned height must be rejected, not DUPLICATE"
     assert "checkpoint" in (res.reason or "").lower()
+
+
+def test_mainnet_pinned_checkpoints_are_wellformed() -> None:
+    """Guard the hardcoded mainnet checkpoint hashes against typos.
+
+    Each pin is the CANONICAL block hash at a natural-fork height; enforcement is
+    generic (validate_head_against_checkpoint + import rejection), so a wrong hash
+    here would force upgrading nodes onto the wrong fork. Assert the known set,
+    32-byte length, and the PoW leading-zero prefix.
+    """
+    import core.network_params as np
+
+    pins = np.get_pinned_checkpoints(chain_id=1)
+    # every historical fork remedy must remain present
+    for h in (28167, 38728, 44854):
+        assert h in pins, f"mainnet checkpoint {h} missing"
+        assert len(pins[h]) == 32, f"checkpoint {h} is not a 32-byte hash"
+        assert pins[h][:3] == b"\x00\x00\x00", f"checkpoint {h} lacks PoW prefix"
+    # exact value of the 2026-07-14 fork pin (44854)
+    assert pins[44854].hex() == (
+        "0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9"
+    )
+
+
+def test_pinned_checkpoints_killswitch_disables_all() -> None:
+    import os
+    import core.network_params as np
+
+    prev = os.environ.get("ANIMICA_DISABLE_PINNED_CHECKPOINTS")
+    os.environ["ANIMICA_DISABLE_PINNED_CHECKPOINTS"] = "1"
+    try:
+        assert np.get_pinned_checkpoints(chain_id=1) == {}
+    finally:
+        if prev is None:
+            os.environ.pop("ANIMICA_DISABLE_PINNED_CHECKPOINTS", None)
+        else:
+            os.environ["ANIMICA_DISABLE_PINNED_CHECKPOINTS"] = prev

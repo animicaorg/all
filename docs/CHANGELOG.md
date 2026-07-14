@@ -8,6 +8,20 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [8.0.2] - 2026-07-14
+### Fixed — un-wedge nodes stuck syncing at block 44,854
+A natural 1-block fork at mainnet height **44,854** on 2026-07-14 left some nodes
+stuck on the losing (orphan) sibling — the same headers-pipeline class as the
+28,167 and 38,728 wedges. Added a pinned canonical checkpoint at 44,854 →
+`0x0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9` (the block the
+live majority-hashpower head at 45,204+ descends from). At boot a node wedged on the
+orphan rolls its head back below 44,854 and re-pulls the canonical block; the orphan
+is also rejected at import. Kill-switch: `ANIMICA_DISABLE_PINNED_CHECKPOINTS=1`.
+
+**Operators stuck at 44,854: upgrade to 8.0.2 and restart** — the node converges on
+boot. No genesis reset, no state change; nodes already on the canonical chain are
+unaffected (the pin is a no-op for them).
+
 ## [8.0.1] - 2026-07-14
 ### Added — Animica dVPN (decentralized VPN) + one-click `.anm` access
 A decentralized VPN built into the node. Anyone can run an **exit** and (once settlement

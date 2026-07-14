@@ -103,6 +103,19 @@ PINNED_CHECKPOINTS_BY_NETWORK: dict[tuple[str, int], dict[int, bytes]] = {
         38728: bytes.fromhex(
             "00000000190117cd360d56179f88d8d03474e1ab396d90d4ecdc69e6d1e4bc45"
         ),
+        # Fork point of the 2026-07-14 natural 1-block fork. Canonical block B =
+        # 0x0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9 (the
+        # live head at 45204+ descends from it via 44855.parentHash == B, verified
+        # against the pool-backed mainnet node on the majority-hashpower chain); the
+        # orphan sibling A wedged nodes that accepted it first — same headers-pipeline
+        # class as 38728 but recurring on each new natural fork because the fix only
+        # covered the live p2p_service gossip path, not initial block download.
+        # This pin force-converges already-wedged nodes at boot (rolls the head back
+        # below 44854 so the canonical block is re-pulled) and rejects the orphan at
+        # import. Kill-switch: ANIMICA_DISABLE_PINNED_CHECKPOINTS=1.
+        44854: bytes.fromhex(
+            "0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9"
+        ),
     },
 }
 
