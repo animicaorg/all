@@ -8,6 +8,51 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [8.0.1] - 2026-07-14
+### Added — Animica dVPN (decentralized VPN) + one-click `.anm` access
+A decentralized VPN built into the node. Anyone can run an **exit** and (once settlement
+lands) earn ANM for the bandwidth carried; anyone can route their device or just their
+browser through a chosen exit location.
+
+- **Client (system VPN):** `animica vpn exits | up | status | doctor | down`. Real
+  WireGuard tunnel (kernel `wg-quick`, `boringtun`/`wireguard-go` fallback) with a
+  **fail-closed killswitch** and a `doctor` leak self-test that **gates** the "connected"
+  claim (handshake live, apparent IP changed, no IPv6 leak, killswitch present).
+- **Exit operator:** `animica vpn exit register | serve`. Off by default, opt-in, gated
+  behind a wallet-signed ToS. Installs an **isolated** nftables table that MASQUERADEs the
+  tunnel subnet and blocks LAN / loopback / link-local / cloud-metadata / abuse ports —
+  never touching the host or docker firewall. Two-sided **signed** byte accounting; the
+  registry reconciles client vs. exit counts (min, >10% divergence flagged).
+- **Browser proxy (extension v1.2.0):** the Animica Internet extension gains a **VPN** tab
+  that lists exit locations by country and routes *just that browser* via `chrome.proxy`.
+  Base install adds only the `proxy` permission; token-gated exits request more at pick
+  time. Honestly labeled browser-proxy — **not** a system VPN, **not** Tor, single-hop.
+- **Easy `.anm`:** `animica.dev/browser` zero-install gateway + one-click extension
+  download (`animica.dev/extension`); new `animica.dev/vpn` landing.
+
+### Added — VPN relay block rewards (consensus, gated + inert)
+- `FORK_VPN_RELAY_REWARDS`: forward-only, height-gated to **mainnet block 50,000**. When
+  live, a capped slice of each block's subsidy is paid straight from the coinbase to relay
+  operators (node operators), carved from the miner's share — **never more than 50 ANM per
+  block**, and the cap **decays with the halving**. Emission-conserving (never mints above
+  schedule).
+- Ships **INERT**: the on-chain distribution source returns empty, so at/after height
+  50,000 the block reward is **byte-identical to no-fork** — verified by three independent
+  adversarial reviews (mint / split / inertness) and a runtime stress test. Going live
+  requires sealing a relay-contribution root behind a fresh gated activation. Until then,
+  dVPN rewards are **off-chain IOUs** (no spendable balance).
+
+### Note
+Non-mandatory for consensus (the reward fork is inert), but recommended so nodes carry the
+dVPN + reward code ahead of block 50,000.
+
+## [8.0.0] - 2026-07-14
+### Added — Marketplace, agent economy, generative media & the sovereign `.anm` internet
+ANM-native AI marketplace (PQ-signed commerce/escrow/reputation), free image generation,
+audio + video job types served by miners, ENA media-model training + checkpoint
+distribution, the ANS `.anm` registry + gateway + browser extension, and node
+content-serving with CID/hosting rewards. See the release notes for the full surface.
+
 ## [7.1.7] - 2026-07-11
 ### Changed — AICF inference uses every GPU on a multi-GPU rig
 Worker-side; non-consensus. Especially benefits agent/coding workloads, which get

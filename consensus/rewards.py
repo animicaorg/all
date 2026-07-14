@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Mapping, Tuple
 # Imported at module top on purpose: if this core module ever failed to import, a
 # node must fail LOUDLY at startup rather than silently skip the split at runtime
 # (which would under-credit the foundation — the exact silent-divergence hazard).
-from core.network_params import is_fork_active, FORK_FOUNDATION_SPLIT
+from core.network_params import is_fork_active, FORK_FOUNDATION_SPLIT, FORK_VPN_RELAY_REWARDS
 
 log = logging.getLogger("consensus.rewards")
 
@@ -82,6 +82,45 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
 # subsidy funds the Animica Foundation treasury from block 42,001 onward.
 FOUNDATION_TREASURY_ADDRESS = "anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga"
 FOUNDATION_TREASURY_SPLIT_PCT = 15
+
+# FORK_VPN_RELAY_REWARDS (8.0.1) — dVPN relay/exit-operator block rewards.
+# The per-block relay pool is capped at 50 ANM and HALVES on the subsidy schedule
+# (halving h -> cap >> h), so it is never more than 50 ANM/block and decays with emission.
+# It is CARVED from the miner subsidy (emission-conserving: relay total is subtracted from
+# the miner output, never minted above the block subsidy), and is distributed ONLY from a
+# sealed, on-chain relay-contribution root for the settled epoch. That root does not exist
+# in 8.0.1 (the on-chain relay-registration + usage-anchoring mechanism is designed but
+# NOT enabled + is pending adversarial review of its Sybil/inflation surface), so
+# `sealed_relay_distribution` returns [] and the fork emits ZERO relay outputs — activation
+# at height 50,000 is byte-identical to no-fork until the mechanism ships and is re-gated.
+VPN_RELAY_REWARD_CAP = 50 * COIN
+
+
+def vpn_relay_pool_cap(height_for_halving: int, schedule) -> int:
+    """Max relay pool for this block: 50 ANM, decaying with the subsidy (never more).
+
+    Scales the 50 ANM cap by current_subsidy/initial_subsidy, so it halves/decays exactly
+    on the emission schedule and is always <= 50 ANM. Deterministic (integer-only)."""
+    try:
+        start = int(schedule["start_nANM_per_block"])
+        m, a, t = compute_subsidy_for_height(height_for_halving, schedule)
+        cur_total = int(m) + int(a) + int(t)
+    except Exception:
+        return 0
+    if start <= 0 or cur_total <= 0:
+        return 0
+    cap = (VPN_RELAY_REWARD_CAP * cur_total) // start
+    return min(cap, VPN_RELAY_REWARD_CAP)
+
+
+def sealed_relay_distribution(height_for_halving: int, chain_id: int) -> List[Tuple[str, int]]:
+    """The on-chain-sealed relay reward distribution for this block's settled epoch.
+
+    INERT in 8.0.1: no relay-contribution root is ever sealed (the on-chain mechanism is
+    not enabled), so this returns [] and no relay output is emitted. This is the single
+    self-gating point — until it can return a verified, Sybil-resistant distribution, the
+    fork cannot mint or change emission. Deterministic (no I/O, no clock)."""
+    return []
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)
 def _validate_premine_distribution() -> None:
@@ -313,6 +352,38 @@ def compute_block_reward(
                     for idx, (addr, amt) in enumerate(rewards)
                 ]
                 rewards.append((dev_fee_addr, dev_fee_amount))
+
+        # FORK_VPN_RELAY_REWARDS (8.0.1): carve up to 50 ANM (decaying with emission)
+        # from the miner subsidy and pay it to dVPN relay operators per the sealed,
+        # on-chain relay-contribution distribution. SELF-GATING + INERT: in 8.0.1
+        # sealed_relay_distribution() always returns [], so this branch adds no output,
+        # carves nothing, and leaves `rewards` byte-identical to the pre-fork result.
+        # It can never mint (relay total is capped AND subtracted from the miner output).
+        if (
+            chain_id == 1
+            and rewards
+            and is_fork_active(FORK_VPN_RELAY_REWARDS, height_for_halving, chain_id=1)
+        ):
+            dist = sealed_relay_distribution(height_for_halving, chain_id)
+            if dist:
+                pool_cap = vpn_relay_pool_cap(height_for_halving, schedule)
+                relay_total = sum(max(0, int(a)) for _, a in dist)
+                miner_addr0, miner_amt0 = rewards[0]
+                # Emission-conserving: never pay relays more than the cap or the miner has.
+                relay_total = min(relay_total, pool_cap, miner_amt0)
+                if relay_total > 0:
+                    # Scale each relay share to the affordable total (deterministic floor;
+                    # remainder stays with the miner so miner + relays == original miner amt).
+                    paid = 0
+                    scaled: List[Tuple[str, int]] = []
+                    denom = sum(max(0, int(a)) for _, a in dist) or 1
+                    for addr, amt in dist:
+                        share = (relay_total * max(0, int(amt))) // denom
+                        if share > 0:
+                            scaled.append((addr, share))
+                            paid += share
+                    rewards[0] = (miner_addr0, miner_amt0 - paid)
+                    rewards.extend(scaled)
 
         return rewards
     except (KeyError, ValueError, TypeError) as e:

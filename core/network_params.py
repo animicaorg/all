@@ -240,6 +240,24 @@ FORK_FOUNDATION_SPLIT = "foundation_split"
 # adversarial review. Retunable via ANIMICA_FORK_STATE_COMMITMENT_HEIGHT.
 FORK_STATE_COMMITMENT = "state_commitment"
 
+# FORK_VPN_RELAY_REWARDS (8.0.1) — pay dVPN relay/exit operators (node operators)
+# directly from blocks. From H, each block MAY emit up to VPN_RELAY_REWARD_CAP (50 ANM,
+# halving on the subsidy schedule) to relay operators, split proportionally by their
+# on-chain-anchored, dual-attested bandwidth contribution for the settled epoch.
+#
+# SAFETY — this is a real-ANM emission whose *input* (bandwidth) is measured off-chain,
+# so a naive version is a Sybil/inflation MINTING surface (self-dealt receipts → minted
+# ANM). It therefore ships SELF-GATING + INERT, exactly like FORK_STATE_COMMITMENT:
+# the reward is distributed ONLY from a sealed, on-chain relay-contribution root for the
+# epoch. In 8.0.1 no such root is ever sealed (the on-chain relay-registration + usage-
+# anchoring mechanism is designed but NOT enabled), so at/after H the fork emits ZERO
+# relay outputs and consensus behaviour is byte-identical to no-fork. It becomes live
+# ONLY after: (1) the on-chain contribution mechanism ships, (2) an adversarial review
+# clears the Sybil/inflation vectors, and (3) a coordinated re-gate. Emission-conserving
+# (carved from the subsidy, never minted above it) and forward-only; grandfathered below
+# H. Retunable via ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT.
+FORK_VPN_RELAY_REWARDS = "vpn_relay_rewards"
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
     # This MUST match on every node — the live node and every operator's pip install
@@ -276,6 +294,14 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_STATE_COMMITMENT_HEIGHT. Self-gating on non-zero root means a
         # premature activation cannot split honest zero-root miners.
         FORK_STATE_COMMITMENT: 44_444,
+        # dVPN relay block rewards (8.0.1). Operator-chosen height 50,000 (shared with
+        # the consensus ANS fork gate). SELF-GATING + INERT: emits zero relay outputs
+        # until an on-chain relay-contribution root is sealed, which requires the
+        # (designed, not-yet-enabled) on-chain relay-registration + usage-anchoring
+        # mechanism AND an adversarial review to clear Sybil/inflation. Retune via
+        # ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT. Until sealed, activation cannot mint
+        # or change emission — behaviour is byte-identical to no-fork.
+        FORK_VPN_RELAY_REWARDS: 50_000,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {
