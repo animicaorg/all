@@ -154,6 +154,34 @@ class ENA:
         self.store.upsert_dataset(rec)
         return {"mode": "rows", **rec}
 
+    def submit_feedback(self, *, prompt: str, chosen: str, rejected: str,
+                        source: Optional[str] = None,
+                        contributor: Optional[str] = None) -> dict[str, Any]:
+        """Ingest a human/agent preference from animica.dev (chat regenerate, thumbs up/down,
+        image A/B) as a DPO triple {prompt, chosen, rejected}. Appends to a canonical, append-only
+        feedback corpus and registers a normalized+deduped snapshot, so a DPO pool can train the
+        model further from real usage. This is the animica.dev -> training self-improvement loop."""
+        import json as _json
+        from .errors import DatasetError
+        prompt = (prompt or "").strip()
+        chosen = (chosen or "").strip()
+        rejected = (rejected or "").strip()
+        if not prompt or not chosen or not rejected:
+            raise DatasetError("feedback requires non-empty prompt, chosen and rejected")
+        if chosen == rejected:
+            raise DatasetError("chosen and rejected must differ")
+        row = {"prompt": prompt[:8000], "chosen": chosen[:8000], "rejected": rejected[:8000]}
+        fdir = self.cfg.artifacts_dir() / "feedback"
+        fdir.mkdir(parents=True, exist_ok=True)
+        corpus = fdir / "animica-dev-dpo.jsonl"
+        with corpus.open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(row) + "\n")
+        total = sum(1 for _ in corpus.open(encoding="utf-8"))
+        reg = self.contribute_dataset(rows=[row], kind="dpo", curate=True,
+                                      contributor=contributor or source or "animica.dev")
+        return {"ok": True, "corpus": str(corpus), "total_feedback": total,
+                "dataset_id": reg.get("dataset_id"), "source": source}
+
     # -- memory -----------------------------------------------------------
     def memory_add(self, text: str, source: Optional[str] = None) -> dict[str, Any]:
         from .models import new_uuid, now_ts

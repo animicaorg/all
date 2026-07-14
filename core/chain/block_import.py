@@ -599,13 +599,25 @@ def _verify_block_frozen_addresses_gated(
 
 def _root_commitment_shadow() -> bool:
     """ANM-C03: opt-in post-execution state-root observability. When
-    ANIMICA_ROOT_COMMITMENT_SHADOW=1, block import computes the full state root
-    after applying each block and logs it (vs any committed header.stateRoot)
-    WITHOUT rejecting — the validation window that must confirm every node agrees
-    on the root before the miner seals stateRoot and enforcement is turned on at
-    FORK_ROOT_COMMITMENT. Off by default: computing the root every block is costly.
+    ANIMICA_ROOT_COMMITMENT_SHADOW=1 (or a ``state_shadow.on`` sentinel exists in the
+    data dir), block import computes the full state root after applying each block and
+    logs it (vs any committed header.stateRoot) WITHOUT rejecting — the validation
+    window that must confirm every node agrees on the root before the miner seals
+    stateRoot and enforcement is turned on at FORK_ROOT_COMMITMENT. Off by default:
+    computing the root every block is costly.
+
+    The file toggle lets an operator start/stop the shadow window on a running node via
+    ``docker restart`` (which reloads bind-mounted code) — no container recreation, so a
+    node whose image env is fixed can still opt in. Observability-only: never rejects.
     """
-    return os.getenv("ANIMICA_ROOT_COMMITMENT_SHADOW") == "1"
+    if os.getenv("ANIMICA_ROOT_COMMITMENT_SHADOW") == "1":
+        return True
+    try:
+        from pathlib import Path as _Path
+        base = _Path(os.environ.get("ANIMICA_DATA_DIR", "~/.animica")).expanduser()
+        return (base / "state_shadow.on").exists()
+    except Exception:
+        return False
 
 
 def _is_coinbase_tx(tx: Any) -> bool:

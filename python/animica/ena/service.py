@@ -26,10 +26,21 @@ GET  /training/runs/<id>
 
 from __future__ import annotations
 
+import hmac
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+# State-changing / economic routes that must be operator-authorized when a token is configured.
+# Everything else (worker participation: claim/submit/heartbeat/serve, and read-only GETs) stays
+# open so the training network remains permissionless. Gate = env ANIMICA_ENA_API_TOKEN.
+_SENSITIVE_ROUTES = frozenset({
+    "/pool/create", "/pool/fund/confirm", "/demand/confirm",
+    "/pool/aggregate", "/pool/payout", "/feedback",
+})
+_ENA_API_TOKEN_ENV = "ANIMICA_ENA_API_TOKEN"
 
 
 def _make_handler(facade):
@@ -62,6 +73,18 @@ def _make_handler(facade):
                 return json.loads(raw) if raw else {}
             except ValueError:
                 return {}
+
+        def _authorized(self) -> bool:
+            """Constant-time bearer-token check. Backward-compatible: if no token is configured,
+            the route stays open (matches the tools-approval pattern) — set ANIMICA_ENA_API_TOKEN
+            to lock the sensitive/economic routes down. Reachable publicly via pool.animica.org."""
+            token = os.environ.get(_ENA_API_TOKEN_ENV, "")
+            if not token:
+                return True
+            hdr = self.headers.get("authorization", "") or ""
+            if hdr.lower().startswith("bearer "):
+                hdr = hdr[7:].strip()
+            return bool(hdr) and hmac.compare_digest(hdr, token)
 
         def do_GET(self):  # noqa: N802
             parsed = urlparse(self.path)
@@ -162,6 +185,16 @@ def _make_handler(facade):
             path = parsed.path.rstrip("/") or "/"
             body = self._body()
             try:
+                if path in _SENSITIVE_ROUTES and not self._authorized():
+                    return self._send(401, {"error": f"unauthorized: {path} requires a bearer token "
+                                                     f"(set {_ENA_API_TOKEN_ENV} + send Authorization: Bearer …)"})
+                if path == "/feedback":
+                    return self._send(200, facade.submit_feedback(
+                        prompt=body.get("prompt", ""),
+                        chosen=body.get("chosen", ""),
+                        rejected=body.get("rejected", ""),
+                        source=body.get("source"),
+                        contributor=body.get("contributor")))
                 if path == "/jobs":
                     return self._send(200, facade.jobs.create(
                         body["type"], body.get("params", {}),
