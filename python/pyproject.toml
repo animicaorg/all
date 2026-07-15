@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "8.3.0"
+version = "8.4.0"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -59,7 +59,9 @@ dependencies = [
   # (torch is ~GB); the `ai`/`gpu` extras below remain as explicit aliases and are
   # now redundant with the base. bitsandbytes (QLoRA) is Linux-only, so it is
   # environment-gated and simply skipped elsewhere.
-  "torch>=2.2.0",
+  # >=2.6.0: generative media (diffusers 0.39+/SVD) ships in the base install now,
+  # so the base torch floor matches what the media stack needs (was 2.2.0).
+  "torch>=2.6.0",
   "accelerate>=1.3.0,<2.0.0",
   "transformers>=4.44.0,<5.0.0",
   # datasets>=3.0 is REQUIRED: the <3 line ships datasets/utils/_dill.py with a

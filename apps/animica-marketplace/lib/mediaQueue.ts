@@ -128,6 +128,24 @@ export async function onlineMinerCount(kind?: string): Promise<number> {
   return prisma.mediaMiner.count({ where });
 }
 
+// Online miner count for EVERY media kind in one pass (the public capabilities
+// endpoint is polled by every homepage visitor, so avoid one COUNT per kind).
+// Pulls each online miner's capabilities once and tallies in-process.
+export async function onlineCapabilityCounts(): Promise<Record<string, number>> {
+  const rows = await prisma.mediaMiner.findMany({
+    where: { online: true, lastSeenAt: { gte: new Date(Date.now() - MEDIA_MINER_STALE_SECS * 1000) } },
+    select: { capabilities: true },
+  });
+  const counts: Record<string, number> = {};
+  for (const k of MEDIA_KINDS) counts[k] = 0;
+  for (const r of rows) {
+    for (const cap of r.capabilities || []) {
+      if (cap in counts) counts[cap] += 1;
+    }
+  }
+  return counts;
+}
+
 // ── Poll (requester) ───────────────────────────────────────────────────────────
 // Returns a safe view of the job. On first delivery of a DONE PRIVATE result, hands the
 // bytes over exactly once and then wipes them (privacy). Never returns inputB64.
