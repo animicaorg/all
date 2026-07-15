@@ -51,7 +51,7 @@ import typer
 
 # Import subcommand apps
 from . import (vpn,  # dVPN
-    ai, aicf, beacon, bittensor, chain, chat, contract, da, debug, ena, faucet, gui, key,
+    ai, aicf, animal, beacon, bittensor, chain, chat, contract, da, debug, ena, faucet, growth, gui, key,
                mcp, media, mempool, mining, network, node, p2p, peer, phase2, quantum,
                rpc, script, snapshot, stratum, studio, sync, tx, up, wallet)
 
@@ -220,6 +220,8 @@ app.add_typer(vpn.app, name="vpn")
 app.add_typer(mcp.app, name="mcp")
 app.add_typer(ai.app, name="ai")
 app.add_typer(media.app, name="media")
+app.add_typer(growth.app, name="growth")
+app.add_typer(animal.app, name="animal")
 app.add_typer(up.app, name="up")
 
 

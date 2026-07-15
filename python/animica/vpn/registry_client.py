@@ -121,6 +121,15 @@ class RegistryClient:
         # challenge -> sign -> register to mint a 'vpn'-scoped key
         ch = self._req("GET", f"/auth/challenge?address={urllib.parse.quote(self.wallet.address)}", auth=False)
         challenge = ch["challenge"]
+        # Never let the registry use us as a blind signing oracle. The wallet signs under the
+        # generic "animica:signMessage:" domain, so we must only ever sign a challenge that is
+        # provably a fresh login challenge BOUND TO OUR OWN ADDRESS — never arbitrary text the
+        # server chose. Marketplace format: animica-login|<address>|<ts_ms>|<mac>.
+        parts = (challenge or "").split("|")
+        if (len(parts) != 4 or parts[0] != "animica-login"
+                or parts[1].lower() != self.wallet.address.lower()
+                or not parts[2].isdigit()):
+            raise RegistryError("registry returned a malformed/foreign login challenge — refusing to sign")
         sig = "0x" + self.wallet.sign_login(challenge)
         reg = self._req("POST", "/accounts/register", auth=False, body={
             "address": self.wallet.address, "challenge": challenge, "signature": sig,

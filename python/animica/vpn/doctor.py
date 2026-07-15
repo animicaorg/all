@@ -62,22 +62,59 @@ def run() -> Report:
     live = any(v > 0 for v in hs.values())
     r.add("handshake", live, "tunnel handshake live" if live else "no WireGuard handshake yet")
 
+    # egress-ip: it is NOT enough that some IP was returned — a full plaintext leak also returns
+    # an IP (the user's real one). Prove the apparent IP actually CHANGED from the pre-tunnel IP.
+    before = sess.get("beforeIp")
     ip = apparent_ip()
-    r.add("egress-ip", bool(ip), f"apparent public IP: {ip}" if ip else "could not determine apparent IP")
+    if not ip:
+        r.add("egress-ip", False, "could not determine apparent public IP — cannot confirm egress")
+    elif before and ip == before:
+        r.add("egress-ip", False,
+              f"apparent IP {ip} is unchanged from before the tunnel — traffic is NOT egressing via the exit (leak)")
+    elif before and ip != before:
+        r.add("egress-ip", True, f"egress IP changed {before} -> {ip} (tunnel confirmed)")
+    else:
+        # no baseline recorded (older session): we can report the IP but not that it changed
+        r.add("egress-ip", False, f"apparent IP {ip}, but no pre-tunnel baseline to prove it changed — unverified")
 
     v6_leak = _has_v6_default_route_outside_tunnel()
     r.add("ipv6-leak", not v6_leak,
           "no IPv6 default outside the tunnel" if not v6_leak
           else "IPv6 default route bypasses the tunnel — v6 traffic may leak; disable IPv6 or use a v6-capable exit")
 
-    try:
-        socket.getaddrinfo("example.com", 443)
-        r.add("dns", True, "DNS resolves")
-    except Exception as e:
-        r.add("dns", False, f"DNS resolution failed: {e}")
+    # dns: resolution working proves nothing about WHERE the query went. Check the active
+    # resolver is the tunnel-forced DNS; a LAN/ISP resolver in resolv.conf is a DNS leak.
+    want_dns = {s.strip() for s in str(sess.get("dns") or "").split(",") if s.strip()}
+    active = _active_resolvers()
+    if not want_dns:
+        r.add("dns", True, f"resolver(s): {', '.join(active) or 'unknown'} (no forced DNS configured)")
+    elif active and active.issubset(want_dns):
+        r.add("dns", True, f"resolver is the tunnel DNS ({', '.join(sorted(active))}) — no DNS leak")
+    elif active:
+        leaked = active - want_dns
+        r.add("dns", False,
+              f"active resolver(s) {', '.join(sorted(leaked))} are NOT the tunnel DNS {', '.join(sorted(want_dns))} — DNS may leak")
+    else:
+        r.add("dns", False, "could not read the active resolver — DNS leak status unverified")
 
     if sess.get("killswitch"):
         present = subprocess.run(["nft", "list", "tables"], capture_output=True, text=True).stdout
         ks = f"inet {KILLSWITCH_TABLE}" in present
         r.add("killswitch", ks, "fail-closed killswitch active" if ks else "killswitch table missing")
     return r
+
+
+def _active_resolvers() -> set[str]:
+    """The nameservers the OS will actually use, from /etc/resolv.conf."""
+    servers: set[str] = set()
+    try:
+        with open("/etc/resolv.conf") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("nameserver"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        servers.add(parts[1])
+    except OSError:
+        pass
+    return servers

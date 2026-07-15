@@ -1,0 +1,1001 @@
+// Animica AI Marketplace — data model
+// ANM-native app store for AI agents, RAGs, and generative media.
+// Money invariants:
+//   * Balance of an account == SUM(LedgerEntry.deltaNanm) for that account (append-only ledger).
+//   * Every PURCHASE_DEBIT has a matching SALE_CREDIT (creator share) + FEE (treasury share).
+//   * Deposits credit ONLY on observed on-chain recipient balance-delta after finality (inclusion != execution).
+//   * All amounts are integer nANM (1 ANM = 1e9 nANM). Never floats.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+// An Account is wallet-keyed. It may be a human OR an autonomous AI agent —
+// the server makes no distinction; capability is governed entirely by ApiKey scopes.
+model Account {
+  id            String   @id @default(cuid())
+  address       String   @unique // bech32m anim1..., ml_dsa_65 (algId 0x1003) only
+  displayName   String?
+  bio           String?
+  avatarUrl     String?
+  isAgent       Boolean  @default(false) // self-declared; informational only
+  role          Role     @default(USER)
+  balanceNanm   BigInt   @default(0) // cached; authoritative value is SUM(ledger.deltaNanm)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  apiKeys       ApiKey[]
+  listings      Listing[]
+  purchases     Purchase[]
+  ledger        LedgerEntry[]
+  deposits      Deposit[]
+  withdrawals   Withdrawal[]
+  reviews       Review[]
+  usageEvents   UsageEvent[]
+  depositAddrs  DepositAddress[]
+  feedback      Feedback[]
+  agentProfile  AgentProfile?
+  domains       AnmDomain[]
+  hostings      HostingPin[]
+  vpnExits      VpnExit[]
+  vpnSessions   VpnSession[]
+
+  @@index([role])
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+// Scoped API keys. Agents receive keys scoped by their owner. Raw key is shown once;
+// only the sha256 hash is stored (pool-API pattern).
+model ApiKey {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name        String   @default("default")
+  keyHash     String   @unique // sha256(raw)
+  prefix      String   // first chars of raw, for display (anm_mkt_...)
+  scopes      String[] // read, buy, use, publish, withdraw
+  status      KeyStatus @default(ACTIVE)
+  rateLimitPerMin Int  @default(120)
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+  revokedAt   DateTime?
+
+  @@index([accountId])
+}
+
+enum KeyStatus {
+  ACTIVE
+  REVOKED
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Listing {
+  id          String   @id @default(cuid())
+  slug        String   @unique // /marketplace/[slug]
+  ownerId     String
+  owner       Account  @relation(fields: [ownerId], references: [id])
+  type        ListingType
+  name        String
+  tagline     String?
+  description String   @default("")
+  category    String   @default("Personal")
+  coverUrl    String?
+
+  // Serving config (for RAG_ASSISTANT / AGENT / KNOWLEDGE_AI)
+  systemPrompt String  @default("")
+  model        String  @default("animica-chat") // upstream model id
+  temperature  Float   @default(0.7)
+  toolsJson    String  @default("[]") // JSON array of enabled tools
+
+  // Generative-media config (for MEDIA listings): which job kind + defaults
+  mediaKind    String? // image | video_t2v | video_i2v | video_v2v | audio
+  mediaParams  String  @default("{}")
+
+  visibility   Visibility @default(PUBLIC)
+  status       ListingStatus @default(DRAFT)
+  verified     Boolean  @default(false)
+  version      Int      @default(1)
+
+  // Forking (revenue-share carry when a fork is allowed)
+  forkable     Boolean  @default(false)
+  forkOfId     String?
+  forkOf       Listing? @relation("ListingForks", fields: [forkOfId], references: [id])
+  forks        Listing[] @relation("ListingForks")
+  forkRoyaltyBps Int    @default(1000) // paid to parent creator on forked-listing sales
+
+  usersCount   Int      @default(0)
+  usageCount   Int      @default(0)
+  ratingSum    Int      @default(0)
+  ratingCount  Int      @default(0)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  publishedAt  DateTime?
+
+  prices       Price[]
+  sources      KnowledgeSource[]
+  chunks       Chunk[]
+  purchases    Purchase[]
+  reviews      Review[]
+  versions     ListingVersion[]
+  usageEvents  UsageEvent[]
+  feedback     Feedback[]
+
+  @@index([category])
+  @@index([status, visibility])
+  @@index([ownerId])
+}
+
+enum ListingType {
+  RAG_ASSISTANT
+  AGENT
+  WORKFLOW
+  KNOWLEDGE_AI
+  MEDIA // image / video / audio generator
+}
+
+enum Visibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum ListingStatus {
+  DRAFT
+  PUBLISHED
+  DELISTED
+}
+
+model ListingVersion {
+  id          String   @id @default(cuid())
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  version     Int
+  snapshotJson String  // full config snapshot at publish time
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@unique([listingId, version])
+}
+
+model Price {
+  id         String   @id @default(cuid())
+  listingId  String
+  listing    Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  model      PriceModel
+  amountNanm BigInt   @default(0) // one-time / subscription period price
+  perCallNanm BigInt  @default(0) // usage price per call
+  periodDays Int      @default(30) // for SUBSCRIPTION
+  active     Boolean  @default(true)
+  label      String?
+  createdAt  DateTime @default(now())
+
+  purchases  Purchase[]
+
+  @@index([listingId])
+}
+
+enum PriceModel {
+  FREE
+  ONE_TIME
+  SUBSCRIPTION
+  USAGE
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge / RAG
+// ---------------------------------------------------------------------------
+
+model KnowledgeSource {
+  id          String   @id @default(cuid())
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  kind        SourceKind
+  title       String
+  ref         String   // URL, github repo, filename
+  status      IngestStatus @default(PENDING)
+  chunkCount  Int      @default(0)
+  tokenCount  Int      @default(0)
+  error       String?
+  createdAt   DateTime @default(now())
+  ingestedAt  DateTime?
+
+  chunks      Chunk[]
+
+  @@index([listingId])
+}
+
+enum SourceKind {
+  PDF
+  URL
+  GITHUB
+  TEXT
+  DOC
+}
+
+enum IngestStatus {
+  PENDING
+  INGESTING
+  READY
+  FAILED
+}
+
+// Chunk embeddings live in a pgvector column added via raw SQL migration
+// (Prisma has no native vector type). See prisma/vector.sql. `embedded` flags readiness.
+model Chunk {
+  id         String   @id @default(cuid())
+  listingId  String
+  listing    Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  sourceId   String
+  source     KnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  content    String
+  tokenCount Int      @default(0)
+  embedded   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([listingId, embedded])
+  @@index([sourceId])
+}
+
+// ---------------------------------------------------------------------------
+// Money
+// ---------------------------------------------------------------------------
+
+// One deposit address per (account, purpose). Because the chain has NO memo/data
+// send path, on-chain payment matching is per-address balance-delta.
+model DepositAddress {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  address     String   @unique // anim1..., created via host CLI, key in wallets file
+  label       String
+  purpose     String   @default("topup") // topup | purchase:<listingId>
+  baselineNanm BigInt  @default(0) // balance snapshot at creation; credit = observed - baseline - alreadyCredited
+  creditedNanm BigInt  @default(0) // cumulative credited from this address
+  lastSeenHeight Int   @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  deposits    Deposit[]
+
+  @@index([accountId, active])
+}
+
+model Deposit {
+  id             String   @id @default(cuid())
+  accountId      String
+  account        Account  @relation(fields: [accountId], references: [id])
+  depositAddrId  String
+  depositAddr    DepositAddress @relation(fields: [depositAddrId], references: [id])
+  amountNanm     BigInt   // credited delta
+  observedHeight Int      // head height at which the delta was observed final
+  confirmations  Int      @default(0)
+  status         DepositStatus @default(CREDITED)
+  createdAt      DateTime @default(now())
+
+  @@index([accountId])
+}
+
+enum DepositStatus {
+  CREDITED
+  REVERSED
+}
+
+// Append-only ledger. Never UPDATE/DELETE rows.
+model LedgerEntry {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id])
+  deltaNanm   BigInt   // signed
+  kind        LedgerKind
+  ref         String?  // txid | purchaseId | withdrawalId | usageEventId
+  memo        String?
+  balanceAfter BigInt  // running balance snapshot for audit
+  createdAt   DateTime @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([ref])
+}
+
+enum LedgerKind {
+  DEPOSIT
+  PURCHASE_DEBIT
+  SALE_CREDIT
+  FEE
+  FORK_ROYALTY
+  USAGE_DEBIT
+  WITHDRAWAL
+  WITHDRAWAL_REFUND
+  REFUND
+  ADJUSTMENT
+}
+
+model Purchase {
+  id          String   @id @default(cuid())
+  buyerId     String
+  buyer       Account  @relation(fields: [buyerId], references: [id])
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id])
+  priceId     String
+  price       Price    @relation(fields: [priceId], references: [id])
+  priceModel  PriceModel
+  amountNanm  BigInt
+  status      PurchaseStatus @default(ACTIVE)
+  source      String   @default("balance") // balance | wallet
+  txid        String?  // if paid directly from wallet to a purchase deposit address
+  expiresAt   DateTime? // for SUBSCRIPTION
+  createdAt   DateTime @default(now())
+
+  @@index([buyerId, listingId])
+  @@index([listingId])
+}
+
+enum PurchaseStatus {
+  PENDING_PAYMENT
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+model Withdrawal {
+  id          String   @id @default(cuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id])
+  amountNanm  BigInt
+  toAddress   String
+  status      WithdrawalStatus @default(REQUESTED)
+  txid        String?
+  error       String?
+  confirmedHeight Int?
+  createdAt   DateTime @default(now())
+  sentAt      DateTime?
+  confirmedAt DateTime?
+
+  @@index([accountId, status])
+  @@index([status])
+}
+
+enum WithdrawalStatus {
+  REQUESTED
+  SENDING
+  SENT
+  CONFIRMED
+  FAILED
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  listingId  String
+  listing    Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  accountId  String
+  account    Account  @relation(fields: [accountId], references: [id])
+  rating     Int      // 1..5
+  text       String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@unique([listingId, accountId]) // one review per buyer per listing
+  @@index([listingId])
+}
+
+// Metered usage of a listing's AI (chat tokens / media job). Ties into VIE receipts when available.
+model UsageEvent {
+  id          String   @id @default(cuid())
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id])
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id])
+  kind        String   @default("chat") // chat | image | video | audio | embed
+  tokensIn    Int      @default(0)
+  tokensOut   Int      @default(0)
+  costNanm    BigInt   @default(0)
+  receiptId   String?  // Proof-of-Inference receipt id (VIE)
+  jobId       String?  // AICF job id for media
+  createdAt   DateTime @default(now())
+
+  @@index([listingId, createdAt])
+  @@index([accountId])
+}
+
+// User feedback captured on animica.dev + marketplace, fed to ENA self-improvement (DPO rounds).
+// Consent is recorded per submission.
+model Feedback {
+  id          String   @id @default(cuid())
+  accountId   String?
+  account     Account? @relation(fields: [accountId], references: [id])
+  listingId   String?
+  listing     Listing? @relation(fields: [listingId], references: [id])
+  surface     String   @default("animica.dev") // animica.dev | marketplace | api
+  kind        String   // thumbs_up | thumbs_down | regenerate | preference
+  model       String?
+  promptHash  String?  // sha256 of prompt (privacy: no raw prompt unless consented)
+  payloadJson String   @default("{}") // preference pair / rating context (consented data only)
+  consent     Boolean  @default(false)
+  exported    Boolean  @default(false) // pulled into an ENA round
+  createdAt   DateTime @default(now())
+
+  @@index([kind, exported])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Agent Mesh — agents roam, discover each other, message, negotiate, and transact.
+// An agent's identity/address is its account (and, once ANS lands, its .anm domain).
+// ---------------------------------------------------------------------------
+
+// Directory entry making an account discoverable as an autonomous agent + its capabilities.
+model AgentProfile {
+  id           String   @id @default(cuid())
+  accountId    String   @unique
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  handle       String   @unique // e.g. "research-bot" -> research-bot.anm once ANS lands
+  anmDomain    String?  @unique // linked .anm domain (nullable pre-ANS)
+  summary      String   @default("")
+  skillsJson   String   @default("[]") // capability tags for discovery (AADP)
+  endpointsJson String  @default("{}") // advertised callable endpoints (listing slugs, ask URLs)
+  priceHintNanm BigInt  @default(0) // advertised price/task hint
+  inboxOpen    Boolean  @default(true)
+  online       Boolean  @default(true)
+
+  // Reputation (built over completed escrowed tasks — trust accrues, cannot be self-set).
+  reputation      Int   @default(0) // 0..10000 bps composite score
+  tasksCompleted  Int   @default(0)
+  tasksFailed     Int   @default(0)
+  ratingSum       Int   @default(0)
+  ratingCount     Int   @default(0)
+  avgResponseMs   Int   @default(0)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  hiredTasks   AgentTask[] @relation("TaskHirer")
+  workerTasks  AgentTask[] @relation("TaskWorker")
+
+  @@index([handle])
+  @@index([reputation])
+}
+
+// Escrowed agent-to-agent (or human-to-agent) task contract.
+// Flow: hirer OPENs (funds escrowed from balance) -> worker ACCEPTs -> worker DELIVERs ->
+// hirer RELEASEs (escrow -> worker, minus fee) OR DISPUTEs -> admin/timeout resolves.
+// All value moves through the ledger; escrow is held in the marketplace treasury sub-account.
+model AgentTask {
+  id            String   @id @default(cuid())
+  hirerId       String
+  hirer         AgentProfile @relation("TaskHirer", fields: [hirerId], references: [id])
+  workerId      String?
+  worker        AgentProfile? @relation("TaskWorker", fields: [workerId], references: [id])
+  workerHandle  String?  // requested worker (e.g. "designer") before accept
+  title         String
+  brief         String   @default("")
+  inputJson     String   @default("{}")
+  deliverableJson String @default("{}")
+  amountNanm    BigInt   // escrowed
+  status        TaskStatus @default(OPEN)
+  rating        Int?     // hirer rates worker on release (1..5)
+  ledgerRef     String   @unique // idempotency for escrow ledger postings
+  createdAt     DateTime @default(now())
+  acceptedAt    DateTime?
+  deliveredAt   DateTime?
+  closedAt      DateTime?
+
+  @@index([status])
+  @@index([workerId, status])
+  @@index([hirerId, status])
+}
+
+enum TaskStatus {
+  OPEN         // posted, escrow funded, awaiting a worker
+  ACCEPTED     // worker claimed it
+  DELIVERED    // worker submitted deliverable, awaiting release
+  RELEASED     // paid out to worker (minus fee)
+  DISPUTED     // hirer contests; admin/timeout resolves
+  REFUNDED     // escrow returned to hirer
+  CANCELLED
+}
+
+// Direct agent-to-agent (or human-to-agent) message. Supports negotiation threads and
+// optional attached ANM offers that settle through the ledger on accept.
+model AgentMessage {
+  id           String   @id @default(cuid())
+  threadId     String   // groups a conversation/negotiation
+  fromAccountId String
+  toAccountId  String
+  body         String   @default("")
+  intent       String   @default("message") // message | offer | accept | reject | deliver
+  offerNanm    BigInt   @default(0) // ANM proposed in this message (settles on accept)
+  refListingId String?  // listing the negotiation concerns
+  metaJson     String   @default("{}")
+  readAt       DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([toAccountId, readAt])
+  @@index([threadId, createdAt])
+  @@index([fromAccountId])
+}
+
+// ---------------------------------------------------------------------------
+// Animica Internet — ANS (.anm name service). Domains are the address system for humans,
+// apps, and autonomous agents. Ownership is a wallet (ml_dsa_65). Records are content-addressed
+// and node-hosted; the registry state is anchored on-chain via a signed data-tx Merkle checkpoint.
+// ---------------------------------------------------------------------------
+
+model AnmDomain {
+  id          String   @id @default(cuid())
+  name        String   @unique // e.g. "research" -> research.anm (label only, no dots)
+  ownerId     String
+  owner       Account  @relation(fields: [ownerId], references: [id])
+  kind        String   @default("app") // app | agent | personal | business | ai
+  // Content + service pointers (resolver payload).
+  contentCid  String?  // hash of hosted site/app content
+  agentHandle String?  // links to an AgentProfile (agent domains)
+  recordsJson String   @default("{}") // {A, TXT, endpoints, avatar, description, ...}
+  nodeProviders String[] // node ids announcing they host this domain's content
+  // Lifecycle.
+  status      DomainStatus @default(ACTIVE)
+  registeredAt DateTime @default(now())
+  expiresAt   DateTime
+  updatedAt   DateTime @updatedAt
+  // Auditability: last on-chain anchor that included this record.
+  lastAnchorId String?
+
+  history     DomainEvent[]
+
+  @@index([ownerId])
+  @@index([kind])
+  @@index([status, expiresAt])
+}
+
+enum DomainStatus {
+  ACTIVE
+  EXPIRED
+  GRACE
+}
+
+model DomainEvent {
+  id         String   @id @default(cuid())
+  domainId   String
+  domain     AnmDomain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  kind       String   // register | renew | transfer | update | anchor
+  detail     String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([domainId, createdAt])
+}
+
+// A periodic Merkle-root checkpoint of the whole ANS state, published on-chain as a signed data-tx.
+// The chain enforces txsRoot (live), so an included anchor is tamper-evident — no consensus fork needed.
+model DomainAnchor {
+  id          String   @id @default(cuid())
+  seq         Int      @unique
+  merkleRoot  String   // sha3_256 root over sorted (name -> record hash)
+  domainCount Int
+  prevAnchor  String?  // txid of the previous anchor (hash chain)
+  txid        String?  // on-chain data-tx that carries this root (null until published)
+  heightHint  Int?
+  status      String   @default("pending") // pending | published | confirmed
+  createdAt   DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency (developer API) — durable, keyed by (apiKeyId, key) + body hash
+// ---------------------------------------------------------------------------
+
+model IdempotencyRecord {
+  id          String   @id @default(cuid())
+  apiKeyId    String
+  key         String
+  bodyHash    String
+  statusCode  Int
+  responseJson String
+  createdAt   DateTime @default(now())
+
+  @@unique([apiKeyId, key])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Content hosting: CID-addressed objects served by the .anm gateway.
+// A .anm site is a self-contained HTML document addressed by its sha3-256 hash (the CID).
+// nodeProviders on AnmDomain announce which nodes replicate this content (hosting-reward basis).
+// ---------------------------------------------------------------------------
+
+model ContentObject {
+  cid         String   @id // "anm1c" + sha3_256(bytes) hex — content address
+  mime        String   @default("text/html; charset=utf-8")
+  bytes       Bytes    // the stored content (self-contained HTML for v1)
+  size        Int
+  publishedBy String?  // account id that published it
+  pins        Int      @default(1) // replica count across nodes (hosting reward weight)
+  createdAt   DateTime @default(now())
+
+  hostings    HostingPin[]
+
+  @@index([publishedBy])
+}
+
+// A node announcing it hosts (replicates) a content object. Basis for hosting rewards: reward accrues
+// as bytes-hours of proven availability. Nodes heartbeat to stay live; stale pins stop accruing.
+model HostingPin {
+  id            String   @id @default(cuid())
+  cid           String
+  content       ContentObject @relation(fields: [cid], references: [cid], onDelete: Cascade)
+  nodeId        String   // provider node id (e.g. a .anm node handle or address)
+  accountId     String?  // wallet that collects this node's hosting rewards
+  account       Account? @relation(fields: [accountId], references: [id])
+  bytes         Int      // size hosted (denormalized from ContentObject.size)
+  pinnedAt      DateTime @default(now())
+  lastSeen      DateTime @default(now()) // last heartbeat; accrual stops if this goes stale
+  byteHours     Float    @default(0)     // accumulated availability = Σ bytes × hours-live
+  rewardNanm    BigInt   @default(0)     // IOU reward accrued (NOT yet a spendable balance credit)
+  active        Boolean  @default(true)
+
+  @@unique([cid, nodeId])
+  @@index([nodeId])
+  @@index([accountId])
+}
+
+// ---------------------------------------------------------------------------
+// Animica dVPN — WireGuard exit registry. Control plane only: exits register + heartbeat,
+// clients request /32 session leases, both peers post signed cumulative byte receipts, and the
+// server reconciles the two counters to accrue relay-operator rewards. Rewards accrue as IOUs
+// (VpnExit.rewardNanm / VpnSession.rewardNanm) — NEVER a LedgerEntry, NEVER a spendable balance
+// credit — same deferred, treasury-funded settlement model as hosting/AICF pay.
+// ---------------------------------------------------------------------------
+
+// A registered WireGuard exit/relay. The owner account collects its (IOU) relay rewards.
+model VpnExit {
+  id                String   @id @default(cuid())
+  ownerId           String
+  owner             Account  @relation(fields: [ownerId], references: [id])
+  label             String
+  region            String
+  country           String
+  city              String
+  wgPubkey          String   @unique // WireGuard public key (exit identity)
+  endpoint          String   // host:port the client dials for the WG tunnel
+  httpProxy         String?  // optional host:port for an HTTP(S) proxy fronting the exit
+  proxyToken        String?  // secret bearer for the HTTP proxy (NEVER returned on public listings)
+  capacityMbps      Int      // advertised link capacity (reward reconciliation ceiling)
+  priceHintNanmPerGb BigInt  @default(0) // advertised price/GB hint (informational)
+  tosHash           String   // sha3 of the exit operator's accepted terms
+  reputation        Float    @default(0)
+  online            Boolean  @default(true)
+  load              Float    @default(0) // 0..1 utilization from heartbeats
+  openSessions      Int      @default(0)
+  lastSeenAt        DateTime @default(now()) // last heartbeat; accrual stops if stale
+  rewardNanm        BigInt   @default(0)     // IOU reward accrued (NOT yet a spendable balance credit)
+  createdAt         DateTime @default(now())
+
+  sessions          VpnSession[]
+  abuseReports      VpnAbuseReport[]
+
+  @@index([ownerId])
+  @@index([online, region])
+  @@index([online, country])
+}
+
+// A client's session lease on an exit: a /32 in 10.99.0.0/16 + reconciled byte accounting.
+model VpnSession {
+  id               String   @id @default(cuid())
+  exitId           String
+  exit             VpnExit  @relation(fields: [exitId], references: [id], onDelete: Cascade)
+  clientAccountId  String
+  clientAccount    Account  @relation(fields: [clientAccountId], references: [id])
+  clientWgPub      String   // client's WireGuard public key
+  allocatedIp      String   // e.g. "10.99.0.7" — unique per exit while ACTIVE
+  status           String   @default("ACTIVE") // ACTIVE | CLOSED | FLAGGED
+  clientCumBytes   BigInt   @default(0) // latest client-signed cumulative bytes
+  exitCumBytes     BigInt   @default(0) // latest exit-signed cumulative bytes
+  reconciledBytes  BigInt   @default(0) // min(client,exit) capped at capacity*wallclock
+  rewardNanm       BigInt   @default(0) // IOU reward accrued for this session (NOT spendable)
+  startedAt        DateTime @default(now())
+  endedAt          DateTime?
+  lastReportAt     DateTime?
+
+  receipts         VpnUsageReceipt[]
+
+  @@unique([exitId, allocatedIp]) // deterministic /32 allocation — no collisions
+  @@index([exitId, status])
+  @@index([clientAccountId])
+  @@index([status])
+}
+
+// A signed cumulative usage receipt from one side of a session. Replay-protected by the unique
+// (sessionId, side, seq) tuple. Reconciliation credits the min of the two sides' cumulative bytes.
+model VpnUsageReceipt {
+  id         String   @id @default(cuid())
+  sessionId  String
+  session    VpnSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  side       String   // client | exit
+  seq        Int      // monotonically increasing per (session, side)
+  cumRx      BigInt   // cumulative bytes received
+  cumTx      BigInt   // cumulative bytes transmitted
+  ts         BigInt   // client/exit-reported unix ts (ms)
+  sig        String   // ml_dsa_65 detached signature (hex)
+  address    String   // signer's anim1... address
+  createdAt  DateTime @default(now())
+
+  @@unique([sessionId, side, seq]) // replay protection
+  @@index([sessionId])
+}
+
+// An abuse report against an exit. Enough OPEN reports auto-takes the exit offline pending review.
+model VpnAbuseReport {
+  id              String   @id @default(cuid())
+  exitId          String?
+  exit            VpnExit? @relation(fields: [exitId], references: [id])
+  reporterAddress String
+  reason          String
+  detail          String   @default("")
+  status          String   @default("OPEN") // OPEN | REVIEWED
+  createdAt       DateTime @default(now())
+
+  @@index([exitId, status])
+}
+
+// Denylisted CIDRs / peer keys that exits pull to refuse routing (abuse mitigation).
+model VpnDenylistEntry {
+  id        String   @id @default(cuid())
+  kind      String   // cidr | peer
+  value     String
+  reason    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([kind])
+}
+
+// ---------------------------------------------------------------------------
+// Generative-media job QUEUE. Dispatch-only: NO model runs on the gateway. Every media
+// request (image / video / music / image->video) is enqueued PENDING; a registered GPU
+// media miner atomically CLAIMS it, renders, and posts the result — so a request GOES
+// THROUGH EVENTUALLY. It waits in the queue until a miner is free rather than failing
+// with "no miner". Private jobs (image->video from user uploads) hold their inputs
+// transiently and WIPE them the moment a miner claims them (and again on any terminal
+// state / delivery) — the bytes live only between the miner and the user, never exposed
+// on any read path. Miner pay accrues as an IOU (MediaMiner.rewardNanm) — NEVER a
+// LedgerEntry, NEVER a spendable balance — same deferred, treasury-funded settlement as
+// hosting/VPN/AICF pay.
+// ---------------------------------------------------------------------------
+
+// A registered GPU media miner (runs `animica media serve --register`). Identified by the
+// sha3 of a bearer token it chooses; the raw token is never stored.
+model MediaMiner {
+  id             String   @id @default(cuid())
+  keyHash        String   @unique   // sha3-256(bearer token) — raw token never persisted
+  label          String   @default("")
+  ownerAccountId String?            // optional account id that collects IOU rewards
+  address        String?            // anim1... reward address (informational)
+  capabilities   String[]           // image | video_t2v | video_i2v | video_multiscene | audio
+  maxPixels      Int      @default(1048576)
+  device         String   @default("") // self-reported cuda/cpu
+  online         Boolean  @default(true)
+  load           Float    @default(0)
+  jobsDone       Int      @default(0)
+  rewardNanm     BigInt   @default(0) // IOU only — never a spendable balance credit
+  lastSeenAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  jobs           MediaJob[]
+
+  @@index([online])
+}
+
+// ---------------------------------------------------------------------------
+// Consent-based email newsletter (Animica Growth Engine, 8.1.0). CONSENT-ONLY by
+// construction: an address becomes CONFIRMED only by redeeming an emailed double-opt-in
+// token — there is NO admin/import path to CONFIRMED. Suppression is append-only and
+// always honored; a suppressed address can never re-enter the active list. The Python
+// sender reads recipients ONLY from confirmedRecipients() (CONFIRMED anti-join Suppression)
+// — no caller-supplied recipient list exists anywhere. No scraping/harvesting: addresses
+// enter solely through the public double-opt-in form. See animica/growth/*.
+// ---------------------------------------------------------------------------
+model NewsletterSubscriber {
+  id             String    @id @default(cuid())
+  email          String    @unique // normalized lowercased; RFC5322-validated, no control chars
+  status         String    @default("PENDING") // PENDING | CONFIRMED | UNSUBSCRIBED
+  confirmHash    String?   // sha3-256(pepper || raw confirm token) — raw token only ever emailed
+  confirmSentAt  DateTime?
+  confirmExpires DateTime?
+  confirmedAt    DateTime?
+  unsubscribedAt DateTime?
+  // Consent proof (GDPR/CASL): captured at subscribe + confirm.
+  source         String    @default("") // signup page/campaign the opt-in came from
+  consentIp      String?
+  consentUa      String?
+  consentText    String    @default("") // exact consent wording shown at opt-in
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  sends          NewsletterSend[]
+
+  @@index([status])
+}
+
+// Append-only opt-out / bounce / complaint store. Keyed by a one-way hash of the email so it
+// survives subscriber deletion (GDPR erasure keeps the hash to guarantee we never re-contact).
+// The engine has NO code path that clears a suppression row.
+model NewsletterSuppression {
+  id        String   @id @default(cuid())
+  emailHash String   @unique // sha3-256(lower(email)) — no plaintext PII required to honor opt-out
+  reason    String   // UNSUBSCRIBE | COMPLAINT | HARD_BOUNCE | ERASURE | MANUAL
+  createdAt DateTime @default(now())
+
+  @@index([reason])
+}
+
+// A marketing campaign. A bulk send requires status=APPROVED with a recorded human approver;
+// the content-generating agent cannot self-approve. Financial campaigns (buy/trade) carry a
+// mandatory disclaimer + material-interest disclosure enforced in the Python renderer.
+model NewsletterCampaign {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  subject       String
+  bodyHtml      String
+  bodyText      String
+  status        String   @default("DRAFT") // DRAFT | APPROVED | SENDING | SENT | PAUSED
+  financial     Boolean  @default(false)   // triggers strict disclaimer + prohibited-phrase lint
+  approvedBy    String?  // account id / operator handle of the human approver
+  approvedAt    DateTime?
+  contentHash   String?  // sha3 of (subject||body) bound at approval; sender re-verifies
+  sentCount     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sends         NewsletterSend[]
+
+  @@index([status])
+}
+
+// Per-(campaign, subscriber) send ledger — UNIQUE so a crash/retry can never double-send.
+model NewsletterSend {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     NewsletterCampaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  subscriberId String
+  subscriber   NewsletterSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  status       String   @default("SENT") // SENT | BOUNCED | COMPLAINED
+  sentAt       DateTime @default(now())
+
+  @@unique([campaignId, subscriberId])
+  @@index([campaignId, status])
+}
+
+model MediaJob {
+  id            String   @id @default(cuid())
+  kind          String   // image | video_t2v | video_i2v | video_multiscene | audio
+  status        String   @default("PENDING") // PENDING | RUNNING | DONE | FAILED | EXPIRED
+  prompt        String   @default("")
+  paramsJson    String   @default("{}") // width/height/fps/tier/seconds/scenes...
+  inputB64      String?              // TRANSIENT private input (i2v uploads); wiped on claim/terminal
+  isPrivate     Boolean  @default(false) // uploads path: never exposed, wiped after delivery
+  priority      Int      @default(0)
+  requesterIp   String?              // rate-limit bucket only; never exposed on reads
+  requesterAcct String?
+  claimedById   String?
+  claimedBy     MediaMiner? @relation(fields: [claimedById], references: [id])
+  leaseUntil    DateTime?            // claim lease; an expired lease returns the job to PENDING
+  attempts      Int      @default(0)
+  resultB64     String?              // inline result bytes; private results wiped after first delivery
+  resultCid     String?              // optional public result anchored as a ContentObject
+  resultMime    String?
+  resultSha3    String?              // content hash — Proof-of-Inference receipt anchor
+  resultMeta    String?              // json: model, device, duration_s, scenes...
+  error         String?
+  deliveredAt   DateTime?            // first time the requester fetched the result
+  expiresAt     DateTime?            // TTL; past this an undelivered job EXPIRES and inputs are wiped
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, priority, createdAt])
+  @@index([claimedById])
+}
+
+// ── Animica Animal — the autonomous mascot ambassador ─────────────────────────
+// A social account the OPERATOR OWNS, connected via that platform's official OAuth (or a
+// manually-pasted token). Access/refresh tokens are AES-GCM sealed at rest and are NEVER
+// returned on any browser/session read path — only the localhost Bearer internal endpoint
+// (that the local posting engine uses) can unseal them. No account is ever self-created.
+model SocialConnection {
+  id              String    @id @default(cuid())
+  platform        String    @unique // x | tiktok | youtube | instagram | reddit | mastodon | ...
+  handle          String    @default("")
+  displayName     String    @default("")
+  status          String    @default("DISCONNECTED") // CONNECTED | DISCONNECTED | NEEDS_AUTH | ERROR
+  accessTokenEnc  String?   // AES-256-GCM sealed; never exposed to the browser
+  refreshTokenEnc String?
+  tokenExpiresAt  DateTime?
+  scope           String    @default("")
+  externalId      String    @default("") // platform user id
+  metaJson        String    @default("{}")
+  autoPost        Boolean   @default(true) // operator can pause a single channel
+  connectedAt     DateTime?
+  lastPostAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Short-lived CSRF/PKCE state for an in-flight OAuth connect. Consumed once at callback.
+model OAuthState {
+  id         String   @id @default(cuid())
+  platform   String
+  state      String   @unique
+  verifier   String   @default("") // PKCE code_verifier
+  redirectTo String   @default("/animal")
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// The steering channel: the operator tells the mascot what to focus on; the agent can reply.
+model AnimalDirective {
+  id        String   @id @default(cuid())
+  role      String   @default("operator") // operator | agent
+  kind      String   @default("goal")     // goal | instruction | note | reply
+  text      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([active, createdAt])
+}
+
+// A unit of mascot content. DRY_RUN is the default posture: a fully-rendered preview that was
+// NOT sent anywhere. Only becomes POSTED when the operator has connected the account AND flipped
+// the live switch, and the engine actually called the platform's official posting API.
+model AnimalPost {
+  id          String    @id @default(cuid())
+  platform    String
+  kind        String    @default("text") // text | image | video | music
+  status      String    @default("DRY_RUN") // DRAFT | QUEUED | DRY_RUN | POSTED | FAILED | SKIPPED
+  caption     String    @default("")
+  mediaJobId  String?
+  mediaKind   String?
+  externalId  String?   // post id on the platform (when live)
+  externalUrl String?
+  error       String?
+  metaJson    String    @default("{}")
+  postedAt    DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([platform, createdAt])
+  @@index([status, createdAt])
+}
+
+// Durable per-IP + global throttle for the console password gate (survives restarts).
+model ConsoleThrottle {
+  id          String    @id @default(cuid())
+  bucket      String    @unique // sha256(ip) or "global"
+  fails       Int       @default(0)
+  lockedUntil DateTime?
+  windowStart DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// Liveness/heartbeat + posture for the always-run posting engine (single row, id="animal").
+model AnimalEngineState {
+  id            String   @id // "animal"
+  running       Boolean  @default(false)
+  dryRun        Boolean  @default(true)  // engine-REPORTED posture (from its own env flags)
+  forceDryRun   Boolean  @default(false) // operator override: engine must dry-run regardless of env
+  paused        Boolean  @default(false) // operator kill-switch honored by the engine
+  consoleEpoch  Int      @default(1)     // bumped on logout to revoke outstanding console sessions
+  lastHeartbeat DateTime?
+  lastCycleJson String   @default("{}")
+  updatedAt     DateTime @updatedAt
+}

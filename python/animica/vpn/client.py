@@ -132,18 +132,38 @@ def connect(wallet: Wallet, *, exit_id: Optional[str] = None, region: Optional[s
     if r.returncode != 0:
         raise ClientError(f"wg-quick up failed: {r.stderr.strip()}")
 
-    if killswitch and allowed_ips.strip() in ("0.0.0.0/0", "0.0.0.0/0, ::/0"):
+    # Full-tunnel? Parse the CIDR list rather than string-matching a formatting: the CLI
+    # strips spaces, so "0.0.0.0/0, ::/0" arrives as "0.0.0.0/0,::/0" and the old exact-match
+    # silently skipped the killswitch (leak). Any list containing 0.0.0.0/0 is full-tunnel.
+    cidrs = {c.strip() for c in allowed_ips.split(",") if c.strip()}
+    is_full_tunnel = "0.0.0.0/0" in cidrs
+    ks_active = False
+    if killswitch and is_full_tunnel:
         ep_ip = exit_ep.rsplit(":", 1)[0]
         ep_port = int(exit_ep.rsplit(":", 1)[1])
         try:
             nftables.apply_killswitch(WG_IFACE, ep_ip, ep_port)
-        except Exception:
-            pass  # best-effort; wg-quick already routed everything into the tunnel
+            ks_active = True
+        except Exception as e:
+            # FAIL CLOSED. The user explicitly asked for leak protection; if we cannot install
+            # it, tearing the tunnel down is safer than running unprotected while status() would
+            # have falsely reported killswitch=true. Opt out explicitly with --no-killswitch.
+            subprocess.run(["wg-quick", "down", path], capture_output=True, env={**os.environ, **env})
+            nftables.remove_killswitch()
+            raise ClientError(
+                f"killswitch could not be installed ({e}); tunnel torn down (fail-closed). "
+                f"Re-run with --no-killswitch to connect without leak protection."
+            ) from e
 
     with open(_session_path(), "w") as f:
         json.dump({"sessionId": session_id, "exitId": ex.id, "allocatedIp": allocated,
                    "started": int(time.time()), "confPath": path,
-                   "exitEndpoint": exit_ep, "killswitch": killswitch}, f)
+                   "exitEndpoint": exit_ep,
+                   "beforeIp": before_ip,   # so the doctor can prove egress actually changed
+                   "dns": dns,              # so the doctor can check the active resolver
+                   # record the REAL state, never the mere request (no fail-open claim)
+                   "killswitch": ks_active,
+                   "killswitchRequested": bool(killswitch)}, f)
 
     after_ip = apparent_ip()
     return {
@@ -185,8 +205,12 @@ def status() -> dict:
         sess = json.load(f)
     hs = wg.latest_handshakes(WG_IFACE)
     xfer = wg.transfer(WG_IFACE)
+    now = int(time.time())
+    # "connected" requires a RECENT handshake. A peer present with a 0 / stale timestamp means
+    # the interface exists but no live tunnel — don't claim a protected connection.
+    live = any(ts and (now - int(ts)) < 180 for ts in (hs or {}).values())
     return {
-        "connected": bool(hs),
+        "connected": live,
         "sessionId": sess.get("sessionId"),
         "exitId": sess.get("exitId"),
         "apparentIp": apparent_ip(),

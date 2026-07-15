@@ -212,6 +212,34 @@ def solo_devices_available(device: str) -> list:
     return []
 
 
+# Peak device memory per in-flight nonce for one sha3_256_batch pass (state lanes +
+# message buffer + Keccak round intermediates), measured conservatively high so the
+# auto-sizer leaves headroom. Override the whole heuristic with ANIMICA_MINER_GPU_BATCH.
+_BYTES_PER_NONCE = 1536
+_AUTO_VRAM_FRACTION = 0.35
+_AUTO_BATCH_CAP = 1 << 23  # 8.4M nonces/launch — plenty to saturate a big card
+
+
+def auto_batch_size(dev: "torch.device", requested: int) -> int:
+    """Pick a per-launch batch. An explicit positive ``requested`` is honored as-is
+    (operator override). Otherwise, on CUDA, size the batch to a fraction of FREE VRAM
+    so a big card (e.g. a 5090) gets a big batch and actually saturates — the old fixed
+    2^18 batch left the GPU stalling on Python/launch overhead between micro-batches."""
+    if requested and requested > 0:
+        return int(requested)
+    if dev.type == "cuda":
+        try:
+            free, _total = torch.cuda.mem_get_info(dev)
+            vram_batch = int(free * _AUTO_VRAM_FRACTION / _BYTES_PER_NONCE)
+            # Round down to a multiple of 65536 and clamp to a sane window.
+            vram_batch = (vram_batch // 65536) * 65536
+            return max(1 << 18, min(vram_batch, _AUTO_BATCH_CAP))
+        except Exception:
+            return 1 << 22  # can't probe — still much larger than the old default
+    # CPU / MPS: no VRAM query; a moderate batch keeps overhead amortized.
+    return 1 << 18
+
+
 def scan_solo(
     header,
     target_int: int,
@@ -219,58 +247,80 @@ def scan_solo(
     start_nonce: int,
     iterations: int,
     device: str = "cuda",
-    batch_size: int = 1 << 18,
+    batch_size: int = 0,
     stats: Optional[dict] = None,
 ) -> Tuple[Optional[int], Optional[bytes]]:
     """Search nonces in ``[start_nonce, start_nonce+iterations)`` (clamped to the
     4-byte band) for one with ``Header(nonce).hash() <= target_int`` using the
     batched torch Keccak on ``device``.  Returns (nonce, digest) or (None, None).
 
+    ``batch_size <= 0`` auto-sizes the per-launch batch to the device's free VRAM
+    (see :func:`auto_batch_size`); a positive value is honored verbatim.
+
     Every candidate is re-verified on the host with ``hashlib`` against the real
-    target before being returned, so the result is always node-acceptable.
+    target before being returned, so the result is always node-acceptable — the
+    on-device compare below is only a fast pre-filter, never the source of truth.
     """
     dev = torch.device(device)
+    b_cfg = auto_batch_size(dev, batch_size)
     prefix, suffix, off = derive_prefix_suffix(header)
     base = bytearray(_pad101(prefix + b"\x00\x00\x00\x00" + suffix))
-    L = len(base)
     base_t = torch.tensor(list(base), dtype=torch.uint8, device=dev)
-    target_be = target_int.to_bytes(32, "big")
-    target_np = torch.tensor(list(target_be), dtype=torch.int16)  # cpu compare
+    # Target stays ON DEVICE so the compare never round-trips the whole digest batch to
+    # the host (the previous per-batch ``.cpu()`` copy was the dominant GPU stall).
+    target_dev = torch.tensor(list(target_int.to_bytes(32, "big")), dtype=torch.int16, device=dev)
 
     lo = max(int(start_nonce), NONCE_BAND_LO)
     hi = min(int(start_nonce) + int(iterations), NONCE_BAND_HI)
     n = lo
     scanned = 0
+    msgs = None  # reused message buffer; reallocated only when the batch width changes
     while n < hi:
-        b = min(batch_size, hi - n)
-        nonces = torch.arange(n, n + b, dtype=torch.int64, device=dev)
-        msgs = base_t.unsqueeze(0).repeat(b, 1)
-        be = torch.stack([
-            ((nonces >> 24) & 0xFF),
-            ((nonces >> 16) & 0xFF),
-            ((nonces >> 8) & 0xFF),
-            (nonces & 0xFF),
-        ], dim=1).to(torch.uint8)
-        msgs[:, off:off + 4] = be
-        digests = sha3_256_batch(msgs)  # [b, 32]
-        # Lexicographic (big-endian) compare digests <= target.
-        d = digests.to(torch.int16).cpu()
-        diff = d - target_np  # [b, 32]
+        b = min(b_cfg, hi - n)
+        try:
+            if msgs is None or msgs.shape[0] != b:
+                msgs = base_t.unsqueeze(0).repeat(b, 1)
+            nonces = torch.arange(n, n + b, dtype=torch.int64, device=dev)
+            be = torch.stack([
+                ((nonces >> 24) & 0xFF),
+                ((nonces >> 16) & 0xFF),
+                ((nonces >> 8) & 0xFF),
+                (nonces & 0xFF),
+            ], dim=1).to(torch.uint8)
+            msgs[:, off:off + 4] = be
+            digests = sha3_256_batch(msgs)  # [b, 32]
+        except torch.cuda.OutOfMemoryError:
+            # The VRAM estimate was optimistic — halve the launch batch and retry the same
+            # window from here. Never drops nonces (n is unchanged); just shrinks the batch.
+            if b_cfg > (1 << 16):
+                b_cfg = b_cfg // 2
+                msgs = None
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                continue
+            raise
+        # Lexicographic (big-endian) compare digests <= target, entirely on device.
+        d = digests.to(torch.int16)
+        diff = d - target_dev  # [b, 32]
         nz = diff != 0
         any_nz = nz.any(dim=1)
         first_idx = torch.argmax(nz.to(torch.int8), dim=1)
-        firstval = diff[torch.arange(d.shape[0]), first_idx]
-        le = (~any_nz) | (firstval < 0)
-        hit_rows = torch.nonzero(le, as_tuple=False).flatten().tolist()
+        firstval = diff[torch.arange(b, device=dev), first_idx]
+        le = (~any_nz) | (firstval < 0)  # [b] bool, on device
         scanned += b
-        for row in hit_rows:
-            cand = n + row
-            # Host re-verification against the canonical node digest.
-            digest = replace(header, nonce=cand).hash()
-            if int.from_bytes(digest, "big") <= target_int:
-                if stats is not None:
-                    stats["hashes"] = stats.get("hashes", 0) + scanned
-                return cand, digest
+        # Single-scalar sync: only touch the host when the pre-filter fired. In the
+        # common (no-solution) batch this is one bool, not a b*32 transfer.
+        if bool(le.any()):
+            for row in torch.nonzero(le, as_tuple=False).flatten().tolist():
+                cand = n + row
+                # Host re-verification against the canonical node digest.
+                digest = replace(header, nonce=cand).hash()
+                if int.from_bytes(digest, "big") <= target_int:
+                    if stats is not None:
+                        stats["hashes"] = stats.get("hashes", 0) + scanned
+                    return cand, digest
         n += b
     if stats is not None:
         stats["hashes"] = stats.get("hashes", 0) + scanned

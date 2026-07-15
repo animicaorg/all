@@ -3,6 +3,7 @@ import Onboarding from './pages/Onboarding';
 import Unlock from './pages/Unlock';
 import Home from './pages/Home';
 import ConnectApprove from './pages/ConnectApprove';
+import SignApprove from './pages/SignApprove';
 
 interface PendingAccount { address: string; label: string; }
 interface PendingConnect {
@@ -11,19 +12,32 @@ interface PendingConnect {
   createdAt: number;
   accounts: PendingAccount[];
 }
+interface PendingSignature {
+  requestId: string;
+  origin: string;
+  address: string;
+  message: string;
+  createdAt: number;
+}
 
 function App() {
   const [hasVault, setHasVault] = useState<boolean | null>(null);
   const [isLocked, setIsLocked] = useState<boolean>(true);
   const [pending, setPending] = useState<PendingConnect | null>(null);
+  const [pendingSig, setPendingSig] = useState<PendingSignature | null>(null);
 
   const refreshPending = useCallback(async () => {
     try {
-      const res = await chrome.runtime.sendMessage({ method: 'wallet_connectGetPending' });
-      setPending(res?.pending || null);
+      const [conn, sig] = await Promise.all([
+        chrome.runtime.sendMessage({ method: 'wallet_connectGetPending' }),
+        chrome.runtime.sendMessage({ method: 'wallet_signGetPending' }),
+      ]);
+      setPending(conn?.pending || null);
+      setPendingSig(sig?.pending || null);
     } catch {
       // Background unreachable — treat as no pending request.
       setPending(null);
+      setPendingSig(null);
     }
   }, []);
 
@@ -73,6 +87,11 @@ function App() {
   // Pending connect request takes priority — block until the user decides.
   if (pending) {
     return <ConnectApprove pending={pending} onResolved={() => setPending(null)} />;
+  }
+
+  // Pending signature request also blocks — the user must see and approve the exact bytes.
+  if (pendingSig) {
+    return <SignApprove pending={pendingSig} onResolved={() => setPendingSig(null)} />;
   }
 
   return <Home onLock={() => setIsLocked(true)} />;

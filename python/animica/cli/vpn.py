@@ -124,9 +124,11 @@ def doctor():
     for c in rep.checks:
         console.print(f"  {'[green]OK[/green]' if c.ok else '[red]FAIL[/red]'} {c.name}: {c.detail}")
     if rep.healthy:
-        console.print("[green]✔ tunnel healthy — no leaks detected[/green]")
+        console.print("[green]✔ all leak checks passed: egress IP changed, resolver is the tunnel DNS, "
+                      "no IPv6 default outside the tunnel[/green]")
+        console.print("[dim]note: single-hop VPN — this hides traffic from your ISP/LAN, not from the exit operator.[/dim]")
     else:
-        console.print("[red]✗ tunnel NOT verified — do not treat traffic as protected[/red]")
+        console.print("[red]✗ tunnel NOT verified — a check failed above; do not treat traffic as protected[/red]")
         raise typer.Exit(2)
 
 

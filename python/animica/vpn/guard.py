@@ -30,42 +30,64 @@ class GuardReport:
     reasons: list[str]
 
 
-def _udp_port_in_use(port: int) -> bool:
+# Tri-state helpers: True = condition holds, False = provably does not, None = COULD NOT CHECK.
+# Per the conservative posture, None is treated as a refusal by preflight — never a silent pass.
+
+def _udp_port_in_use(port: int):
     if not shutil.which("ss"):
-        return False
+        return None
     out = subprocess.run(["ss", "-lun"], capture_output=True, text=True).stdout
     return any(f":{port} " in line or line.rstrip().endswith(f":{port}") for line in out.splitlines())
 
 
-def _nft_table_exists(table: str) -> bool:
+def _nft_table_exists(table: str):
     if not shutil.which("nft"):
-        return False
+        return None
     out = subprocess.run(["nft", "list", "tables"], capture_output=True, text=True).stdout
     return f"inet {table}" in out
 
 
-def _looks_like_validator_host() -> bool:
-    """Best-effort: is a mainnet node / miner process running here?"""
+def _looks_like_validator_host():
+    """Best-effort: is a mainnet node / miner process running here? None if we can't enumerate."""
+    if not shutil.which("ps"):
+        return None
     try:
         out = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout.lower()
     except Exception:
-        return False
+        return None
     markers = ("animica-mainnet-node", "animica node", "animica up", "animica miner", "stratum_pool")
     return any(m in out for m in markers)
 
 
 def preflight(*, port: int = WG_LISTEN_PORT, allow_validator: bool = False) -> GuardReport:
     reasons: list[str] = []
-    if _udp_port_in_use(port):
+
+    used = _udp_port_in_use(port)
+    if used is None:
+        reasons.append(f"cannot verify UDP port {port} is free ('ss'/iproute2 not found) — refusing "
+                       f"rather than risk stealing the node's port. Install iproute2.")
+    elif used:
         reasons.append(f"UDP port {port} is already in use — refusing to steal a port "
                        f"(the mainnet node owns 443/udp; the exit must have {port} free).")
-    if _nft_table_exists(NFT_TABLE):
+
+    exists = _nft_table_exists(NFT_TABLE)
+    if exists is None:
+        reasons.append("cannot verify the isolated nft table is absent ('nft'/nftables not found) — refusing. "
+                       "Install nftables.")
+    elif exists:
         reasons.append(f"nft table 'inet {NFT_TABLE}' already exists — refusing to clobber it. "
                        f"Run `animica vpn exit stop` first, or remove it manually.")
-    if _looks_like_validator_host() and not allow_validator:
-        reasons.append("this host appears to run the mainnet node/miner. Running an exit here "
-                       "co-locates third-party egress with consensus. If you accept that, re-run "
-                       "with --i-am-not-the-validator.")
+
+    if not allow_validator:
+        vh = _looks_like_validator_host()
+        if vh is None:
+            reasons.append("cannot determine whether the mainnet node/miner runs on this host ('ps' unavailable) — "
+                           "refusing to co-locate exit egress with consensus by accident. If this host is NOT a "
+                           "validator, re-run with --i-am-not-the-validator.")
+        elif vh:
+            reasons.append("this host appears to run the mainnet node/miner. Running an exit here "
+                           "co-locates third-party egress with consensus. If you accept that, re-run "
+                           "with --i-am-not-the-validator.")
     return GuardReport(ok=not reasons, reasons=reasons)
 
 
