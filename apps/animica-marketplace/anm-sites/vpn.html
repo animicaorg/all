@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>vpn.anm — the decentralized VPN</title>
+<meta name="description" content="Pick an exit anywhere and route your traffic through it; relays earn ANM for the bandwidth they carry." />
+<style>
+:root{
+  --ink:#070b16;--surface:#0b1224;--card:#111c38;--line:#1b2748;--line2:#26355f;
+  --text:#e8ecf6;--muted:#93a1c0;--muted2:#66739a;
+  --iris:#6d5ef6;--cyan:#37e0d8;--amber:#ffb020;--green:#34e5a0;--r:14px;
+}
+*{box-sizing:border-box}html,body{margin:0;padding:0}
+body{background:
+  radial-gradient(1100px 620px at 50% -8%,rgba(109,94,246,.20),transparent 62%),
+  radial-gradient(760px 460px at 88% 8%,rgba(55,224,216,.10),transparent 60%),var(--ink);
+  color:var(--text);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;min-height:100vh}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:940px;margin:0 auto;padding:0 18px}
+header{display:flex;align-items:center;gap:10px;padding:16px 0 4px}
+.mark{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--iris),var(--cyan));
+  display:grid;place-items:center;font-weight:800;color:#050914;font-size:15px;flex:0 0 auto}
+.brand{font-weight:650;letter-spacing:-.01em}
+header .sp{flex:1}
+.chip{font-size:11.5px;color:var(--muted);border:1px solid var(--line2);border-radius:999px;padding:4px 10px;white-space:nowrap}
+.live{display:inline-flex;align-items:center;gap:6px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(52,229,160,.15)}
+.hero{text-align:center;padding:min(8vh,60px) 0 6px}
+.emoji{font-size:40px;line-height:1;margin-bottom:8px}
+h1{font-size:clamp(28px,7vw,46px);line-height:1.04;letter-spacing:-.035em;margin:0 0 10px;text-wrap:balance}
+h1 .g{background:linear-gradient(110deg,var(--cyan),var(--iris));-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--muted);font-size:clamp(14px,3.4vw,17px);margin:0 auto;max-width:58ch}
+.cta{display:inline-flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:18px}
+.btn{border:0;border-radius:999px;padding:11px 18px;font-weight:650;font-size:14px;cursor:pointer;color:#04122a;
+  background:linear-gradient(180deg,var(--cyan),#2bb6cf);display:inline-block}
+.btn.alt{background:transparent;color:var(--text);border:1px solid var(--line2)}
+.btn:active{transform:translateY(1px)}
+section{margin:34px 0}
+h2{font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted2);margin:0 0 12px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:block;transition:border-color .15s,transform .15s}
+.card:hover{border-color:var(--iris);transform:translateY(-2px)}
+.card .t{display:flex;align-items:center;gap:9px;margin-bottom:7px}
+.card .n{font-size:14.5px;color:var(--cyan)}
+.card p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.5}
+.pill{font-size:10.5px;color:var(--muted);border:1px solid var(--line2);border-radius:999px;padding:1px 7px;flex:0 0 auto}
+.native{font-size:10.5px;color:var(--green);border:1px solid rgba(52,229,160,.35);background:rgba(52,229,160,.08);border-radius:999px;padding:1px 7px}
+.empty{color:var(--muted2);text-align:center;padding:18px;font-size:13.5px}
+.steps{counter-reset:s;display:grid;gap:10px}
+.step{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px 13px 46px;position:relative}
+.step::before{counter-increment:s;content:counter(s);position:absolute;left:12px;top:12px;width:24px;height:24px;border-radius:7px;
+  background:linear-gradient(135deg,var(--iris),var(--cyan));color:#050914;font-weight:800;font-size:13px;display:grid;place-items:center}
+.step b{font-size:14px}.step p{margin:4px 0 0;color:var(--muted);font-size:12.5px}
+pre{background:#060b18;border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto;margin:8px 0 0;
+  font:12.5px/1.55 ui-monospace,Menlo,Consolas,monospace;color:#cdd6ee}
+pre .c{color:var(--green)}
+footer{border-top:1px solid var(--line);margin-top:36px;padding:18px 0 30px;color:var(--muted2);font-size:12.5px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+footer .sp{flex:1}footer a{color:var(--muted)}footer a:hover{color:var(--cyan)}
+@media (max-width:520px){.hero{padding-top:24px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head><body>
+<div class="wrap">
+  <header>
+    <a class="mark" href="https://animica.dev/anm/animica" title="animica.anm">A</a>
+    <div class="brand">vpn<span style="color:var(--amber)">.anm</span></div>
+    <div class="sp"></div>
+    <span class="chip live"><span class="dot"></span><span id="stat">exits online</span></span>
+  </header>
+
+  <div class="hero">
+    <div class="emoji">🛡️</div>
+    <h1>Browse from <span class="g">anywhere</span></h1>
+    <p class="lede">A real WireGuard tunnel to an exit you choose — or a browser-only proxy. Single-hop: it hides your traffic from your ISP and LAN, not from the exit operator. Relays earn ANM.</p>
+    <div class="cta">
+      <a class="btn" href="https://animica.dev/vpn" target="_blank" rel="noopener">Pick an exit</a>
+      <a class="btn alt" href="https://animica.dev/browser" target="_blank" rel="noopener">Get the extension</a>
+    </div>
+  </div>
+
+  <section><h2>Exit locations</h2><div class="grid" id="grid"><div class="empty">Loading…</div></div></section>
+  <section><h2>Get connected</h2><div class="steps"><div class="step"><b>Install the client</b><p>The native client is the only system-wide tunnel; the browser extension is a proxy for just your browser.</p><pre>pip install -U animica
+<span class="c"># then</span>
+animica vpn up --region eu</pre></div><div class="step"><b>It is fail-closed</b><p>A killswitch drops all egress if the tunnel dies, DNS is forced through the tunnel, and `animica vpn doctor` proves your IP actually changed before it calls you protected.</p></div><div class="step"><b>Run an exit, earn ANM</b><p>Opt in to relay traffic and accrue bandwidth rewards (IOUs, treasury-settled). Off by default and isolated from any node.</p><pre>animica vpn exit --region us --i-am-not-the-validator</pre></div></div></section>
+  <section><h2>Explore</h2><div class="grid"><a class="card" href="https://animica.dev/browser" target="_blank" rel="noopener"><div class="t"><span>🧩</span><span class="n">Browser extension</span></div><p>A location picker that proxies just your browser.</p></a><a class="card" href="https://animica.dev/docs#vpn" target="_blank" rel="noopener"><div class="t"><span>📖</span><span class="n">dVPN docs</span></div><p>CLI reference, killswitch, running an exit safely.</p></a></div></section>
+
+  <footer>
+    <span>vpn.anm — a native site on the Animica Internet, served from its content ID.</span>
+    <span class="sp"></span>
+    <a href="https://animica.dev/anm/animica" target="_blank" rel="noopener">Home</a>
+    <a href="https://animica.dev/docs" target="_blank" rel="noopener">Docs</a>
+    <a href="https://animica.dev/portal" target="_blank" rel="noopener">Portal</a>
+  </footer>
+</div>
+<script>(function(){
+  var GW='https://animica.dev', API=GW+'/api/mkt/v1';
+  function G(i){return document.getElementById(i);}
+  function E(s){var d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
+  function rec(r){try{return JSON.parse(r.recordsJson)||{};}catch(e){return {};}}
+  function desc(r){var x=rec(r);return x.description||(r.kind?('A '+r.kind+' on the Animica Internet.'):'');}
+  function av(r){var x=rec(r);return x.avatar||(r.kind==='agent'?'\uD83E\uDD16':(r.kind==='ai'?'\u2728':'\uD83C\uDF10'));}
+  function U(n){return GW+'/anm/'+encodeURIComponent(n);}
+  
+  fetch(API+'/vpn/locations').then(r=>r.json()).then(d=>{
+    var rows=(d.exits||[]);
+    G('grid').innerHTML = rows.length? rows.slice(0,12).map(function(e){
+      var loc=[e.city,e.country||e.region].filter(Boolean).join(', ')||e.label||e.id;
+      return '<div class="card"><div class="t"><span>\uD83D\uDEE1\uFE0F</span><span class="n">'+E(loc)+'</span>'
+        +(e.proxyAuth?'<span class="pill">token</span>':'<span class="pill">open</span>')+'</div>'
+        +'<p>load '+Math.round((e.load||0)*100)+'% \u00b7 rep '+((e.reputation||0).toFixed(2))+'</p></div>';
+    }).join('') : '<div class="empty">No exits online right now.</div>';
+    var s=G('stat'); if(s) s.textContent=(rows.length||0)+' exits online';
+  }).catch(()=>{G('grid').innerHTML='<div class="empty">Could not reach the exit registry.</div>';});
+})();</script>
+</body></html>

@@ -651,6 +651,12 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     case 'wallet_connectRespond':
       return handleConnectRespond(params);
 
+    // Signature-approval popup messages (from popup → background).
+    case 'wallet_signGetPending':
+      return handleSignGetPending();
+    case 'wallet_signRespond':
+      return handleSignRespond(params);
+
     // Provider API
     case 'eth_requestAccounts':
     case 'animica_requestAccounts':
@@ -1602,6 +1608,66 @@ function nextConnectRequestId(): string {
   return `connect_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// ── Per-request signature approval ────────────────────────────────────────────
+// signMessage is a signing oracle over the wallet's post-quantum key: a connected dapp could
+// otherwise silently obtain a signature over a marketplace login challenge (→ account takeover)
+// or any other Animica-domain message. Every signMessage from a dapp origin now BLOCKS on an
+// explicit Approve/Deny in the popup, showing the exact bytes. It FAILS CLOSED: if the user
+// closes the popup or it times out, the request is rejected, never signed.
+interface PendingSignature {
+  requestId: string;
+  origin: string;
+  address: string;
+  message: string;
+  createdAt: number;
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+const pendingSignatures = new Map<string, PendingSignature>();
+
+function nextSignRequestId(): string {
+  return `sign_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Present a signature request to the user and resolve only if they approve. Rejects (fail-closed)
+// on deny, popup-close, or a 5-minute timeout.
+async function awaitSignatureApproval(origin: string, address: string, message: string): Promise<void> {
+  const requestId = nextSignRequestId();
+  const stored = { requestId, origin, address, message: message.slice(0, 4096), createdAt: Date.now() };
+  // Session storage so the popup can read it even if it opens before the background is reachable.
+  await chrome.storage.session.set({ pendingSignature: stored });
+  await maybeOpenWalletPopup('signMessage');
+
+  return new Promise<void>((resolve, reject) => {
+    pendingSignatures.set(requestId, { requestId, origin, address, message, createdAt: Date.now(), resolve, reject });
+    setTimeout(() => {
+      const entry = pendingSignatures.get(requestId);
+      if (!entry) return;
+      pendingSignatures.delete(requestId);
+      chrome.storage.session.remove('pendingSignature').catch(() => {});
+      entry.reject(new Error('Signature request timed out'));
+    }, 5 * 60 * 1000);
+  });
+}
+
+async function handleSignGetPending(): Promise<any> {
+  const data = await chrome.storage.session.get('pendingSignature');
+  return { pending: data.pendingSignature || null };
+}
+
+async function handleSignRespond(params: { requestId: string; approved: boolean }): Promise<{ ok: boolean }> {
+  const entry = pendingSignatures.get(params.requestId);
+  if (!entry) {
+    await chrome.storage.session.remove('pendingSignature');
+    return { ok: false };
+  }
+  pendingSignatures.delete(params.requestId);
+  await chrome.storage.session.remove('pendingSignature');
+  if (params.approved) entry.resolve();
+  else entry.reject(new Error('User rejected the signature request'));
+  return { ok: true };
+}
+
 async function handleRequestAccounts(origin: string): Promise<string[]> {
   if (origin === 'unknown') {
     throw new Error('Unable to determine requesting origin');
@@ -1913,7 +1979,11 @@ async function handleProviderSignMessage(origin: string, method: string, params:
     throw new Error('Cannot sign: account is watch-only or missing secret key');
   }
 
-  await maybeOpenWalletPopup('signMessage');
+  // BLOCK on explicit user approval before signing. This is the guard that turns signMessage from
+  // a silent oracle into a consented action: the popup shows the origin + the exact message, and we
+  // only proceed if the user approves. Fails closed (throws) on deny / close / timeout.
+  await awaitSignatureApproval(origin, matchedSignerAddress, request.message);
+
   permissions.updateLastUsed(origin);
   vaultData.permissions = permissions.toJSON();
   await saveVaultData(vaultData);
