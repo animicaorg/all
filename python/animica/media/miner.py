@@ -52,6 +52,17 @@ def _have_cuda() -> bool:
         return False
 
 
+def _have_audio_backend() -> bool:
+    """True when the MusicGen audio backend can load (audio_gen.py needs transformers+torch).
+    A box must never advertise `audio` it can't actually render — VRAM alone is not enough."""
+    try:
+        import importlib.util
+        return (importlib.util.find_spec("transformers") is not None
+                and importlib.util.find_spec("torch") is not None)
+    except Exception:
+        return False
+
+
 def _vram_gb() -> float:
     """Total VRAM of the primary CUDA device in GiB (0.0 if no CUDA)."""
     try:
@@ -141,6 +152,11 @@ def probe_capabilities() -> List[str]:
     audio_on = _env_flag("ANIMICA_MEDIA_AUDIO_ENABLED")
     if audio_on is None:
         audio_on = cuda and vram >= _AUDIO_MIN_VRAM_GB
+    # Qualify the model, not just the VRAM: only advertise `audio` when the MusicGen backend
+    # is actually present, so an auto-enabled (or env-forced) box never claims an audio job
+    # it will fail. Proper model for the proper kind.
+    if audio_on and not _have_audio_backend():
+        audio_on = False
     if audio_on:
         caps.append("audio")
 

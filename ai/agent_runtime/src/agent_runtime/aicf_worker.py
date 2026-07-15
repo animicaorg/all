@@ -100,6 +100,30 @@ def is_disabled() -> bool:
     return os.environ.get("ANIMICA_DISABLE_AICF_WORKER") == "1"
 
 
+def _has_servable_bundle(tier: str) -> bool:
+    """True when an installed flagship bundle exists for ``tier``.
+
+    Mirrors the lookup in ``AICFWorker._load_runner``: a usable bundle is a
+    subdirectory of ``$ANIMICA_DATA_DIR/models/<tier>`` that carries both a
+    manifest.json and an inference.json. Used to qualify a worker before it
+    advertises serving capacity for animica.dev's AICF queue — advertising a
+    tier we can't actually load just forces the node to grace-fallback to the
+    stub bridge on every claim.
+    """
+    try:
+        base = Path(os.environ.get(
+            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models" / str(tier)
+        if not base.is_dir():
+            return False
+        for bundle in base.iterdir():
+            if (bundle / "manifest.json").is_file() and \
+                    (bundle / "inference.json").is_file():
+                return True
+        return False
+    except OSError:
+        return False
+
+
 def resolve_tiers(profile: HardwareProfile, catalog: dict,
                   *, override: Optional[list[str]] = None) -> list[str]:
     if override:
@@ -167,6 +191,38 @@ class AICFWorker:
         )
         if self.pipeline_enabled and "pipeline" not in self.tiers:
             self.tiers = [*self.tiers, "pipeline"]
+        # ---- Serving qualification --------------------------------------
+        # Only advertise tiers we can actually serve. A tier with no installed
+        # flagship bundle would claim jobs off animica.dev's AICF queue and
+        # then fail every one with BundleError, forcing the node to
+        # grace-fallback to the stub bridge (wasted claims + degraded chat
+        # answers). Gate un-servable tiers out of what we register.
+        #
+        # Skipped when the worker serves via a pipeline/layer-range model
+        # instead of local bundles (ANIMICA_AICF_PIPELINE_MODEL_ID), or when
+        # the operator explicitly opts into advertising bare capacity. The
+        # synthetic "pipeline" tier is always kept — pipeline stages run via
+        # the layer-range/reference path, not a local bundle.
+        _skip_qual = (
+            os.environ.get("ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE", "0")
+            .strip().lower() in {"1", "true", "yes", "on"}
+            or bool(os.environ.get(
+                "ANIMICA_AICF_PIPELINE_MODEL_ID", "").strip())
+        )
+        if not _skip_qual:
+            real_before = [t for t in self.tiers if t != "pipeline"]
+            servable = [t for t in self.tiers
+                        if t == "pipeline" or _has_servable_bundle(t)]
+            if real_before and not any(t != "pipeline" for t in servable):
+                log.warning(
+                    "[aicf-worker] no installed flagship bundle for eligible "
+                    "tier(s) %s; not advertising AICF serving capacity. Run "
+                    "`animica miner aicf-worker pull --tier <tier>` to serve "
+                    "chat/inference, or set "
+                    "ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE=1 to override.",
+                    real_before,
+                )
+            self.tiers = servable
         # Direct worker-to-worker activation transport (optional). When
         # pipeline mode is on AND ANIMICA_AICF_PIPELINE_DIRECT_PORT is
         # set, the worker spins up a small HTTP server that peers can
@@ -276,10 +332,32 @@ class AICFWorker:
         self.state.stopping = True
 
     def run(self, *, idle_sleep_ms: int = 1500,
-            heartbeat_interval_sec: int = 30) -> None:
+            heartbeat_interval_sec: int = 30,
+            max_idle_sleep_ms: int = 20000) -> None:
         """Main loop. Returns when self.state.stopping is set."""
+        import random
+        if not self.tiers:
+            log.warning(
+                "[aicf-worker] no servable tiers to advertise; worker idle. "
+                "Install a bundle with `animica miner aicf-worker pull` to "
+                "participate in AICF serving."
+            )
+            return
         self.register()
         last_hb = time.time()
+        idle_streak = 0
+
+        def _idle_wait() -> None:
+            # Exponential backoff + jitter on consecutive empty claims so a
+            # large fleet of idle workers doesn't poll the shared node RPC in
+            # lockstep (thundering herd). Reset to the base interval as soon
+            # as any job/stage is handled.
+            nonlocal idle_streak
+            idle_streak += 1
+            step = min(idle_sleep_ms * (2 ** min(idle_streak - 1, 5)),
+                       max_idle_sleep_ms)
+            time.sleep((step / 1000.0) * (0.5 + random.random()))
+
         # Lazy-load a runner per bundle; we keep a cache by tier.
         runners: dict[str, "LocalBundleRunner"] = {}     # noqa: F821
         while not self.state.stopping:
@@ -301,6 +379,7 @@ class AICFWorker:
                     self._process_pipeline_stage(stage, runners)
                     stage_handled = True
             if stage_handled:
+                idle_streak = 0
                 self._write_state()
                 continue
             try:
@@ -309,10 +388,10 @@ class AICFWorker:
                                                          if t != "pipeline"])
             except AgentRuntimeError as exc:
                 _eprint(f"[aicf-worker] claim failed: {exc.message}")
-                time.sleep(idle_sleep_ms / 1000.0)
+                _idle_wait()
                 continue
             if not job:
-                time.sleep(idle_sleep_ms / 1000.0)
+                _idle_wait()
                 if time.time() - last_hb > heartbeat_interval_sec:
                     try:
                         self.client.worker_status(self.address)
@@ -322,6 +401,7 @@ class AICFWorker:
                     self.state.last_heartbeat_at = last_hb
                     self._write_state()
                 continue
+            idle_streak = 0
             tier = str(job.get("tier", self.tiers[0]))
             job_id = str(job.get("job_id", ""))
             prompt = str(job.get("prompt", ""))
