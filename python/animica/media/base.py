@@ -8,11 +8,12 @@ from enum import Enum
 
 
 class MediaKind(str, Enum):
-    IMAGE = "image"          # text -> image
-    VIDEO_T2V = "video_t2v"  # text -> video
-    VIDEO_I2V = "video_i2v"  # image + text -> video
-    VIDEO_V2V = "video_v2v"  # video + text -> video
-    AUDIO = "audio"          # text -> audio (music / sfx / tts)
+    IMAGE = "image"                      # text -> image
+    VIDEO_T2V = "video_t2v"              # text -> video
+    VIDEO_I2V = "video_i2v"              # image(s) -> video (ffmpeg Ken Burns)
+    VIDEO_MULTISCENE = "video_multiscene"  # per-scene stills -> stitched video
+    VIDEO_V2V = "video_v2v"              # video + text -> video (standalone service)
+    AUDIO = "audio"                      # text -> audio (music / sfx / tts)
 
     @classmethod
     def parse(cls, value: str) -> "MediaKind":
@@ -86,3 +87,38 @@ def media_available() -> tuple[bool, str]:
     except Exception as e:  # pragma: no cover - env dependent
         return False, f"media extra not installed: {e}"
     return True, "ok"
+
+
+_FFMPEG_EXE: "tuple[bool, str | None] | None" = None
+
+
+def resolve_ffmpeg() -> "str | None":
+    """Return a usable ffmpeg executable path, or None.
+
+    Prefers a system ``ffmpeg`` on PATH; otherwise falls back to the static
+    binary bundled by ``imageio-ffmpeg`` — which ``pip install animica`` already
+    pulls in via the base ``imageio[ffmpeg]`` dependency. This is why a plain
+    ``pip install animica`` box can serve image->video / multi-scene jobs with no
+    system ffmpeg package. (imageio-ffmpeg bundles ffmpeg only, not ffprobe; the
+    media pipeline never calls ffprobe, so this is sufficient.)
+
+    Cached: the lookup (and the one-time imageio-ffmpeg download, if any) runs at
+    most once per process.
+    """
+    global _FFMPEG_EXE
+    if _FFMPEG_EXE is not None:
+        return _FFMPEG_EXE[1]
+    import shutil
+
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        try:
+            import imageio_ffmpeg  # provided by imageio[ffmpeg] (base dep)
+
+            cand = imageio_ffmpeg.get_ffmpeg_exe()
+            if cand and os.path.exists(cand):
+                exe = cand
+        except Exception:
+            exe = None
+    _FFMPEG_EXE = (True, exe)
+    return exe
