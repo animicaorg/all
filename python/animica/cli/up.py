@@ -195,6 +195,8 @@ def up(ctx: typer.Context,
         console.print(f"[yellow]enabled but not yet runnable: "
                       f"{', '.join(summary['enabled_but_pending'])}[/yellow]")
     _ensure_media_models(caps, components, console)
+    _ensure_media_miner(components, console)
+    _ensure_animal(console)
     Supervisor(components).run()
 
 
@@ -251,3 +253,73 @@ def _ensure_media_models(caps, components, console) -> None:
 
     console.print(f"[dim]media: ensuring image model {model_id} (~{gb}GB) in background…[/dim]")
     threading.Thread(target=_dl, name="animica-media-prefetch", daemon=True).start()
+
+
+def _ensure_media_miner(components, console) -> None:
+    """Serve generative-media jobs for the network from this node, in the BACKGROUND.
+
+    `animica up` should serve media: when this node runs work and can render at least one media
+    kind, join the Animica media QUEUE (register + claim loop) so image/video/multi-scene/
+    image->video/music jobs GO THROUGH — rendered here, dispatched from the gateway. No model
+    runs on the gateway. Env: ANIMICA_MEDIA_MINER=0 disables; ANIMICA_MEDIA_GATEWAY overrides the
+    gateway (default https://animica.dev). Even a CPU box with ffmpeg serves image->video.
+    """
+    import os
+    import threading
+
+    if os.environ.get("ANIMICA_MEDIA_MINER", "1") == "0":
+        return
+    # `animica up` serves media by default: any node that CAN render (a GPU, or even a CPU with
+    # ffmpeg for image->video) joins the media queue. Set ANIMICA_MEDIA_MINER=0 to opt out.
+    try:
+        from animica.media.miner import probe_capabilities, run_miner
+    except Exception:
+        return
+    caps = probe_capabilities()
+    if not caps:
+        return  # nothing installed to render with; `animica media doctor` explains how to enable
+    gateway = os.environ.get("ANIMICA_MEDIA_GATEWAY", "https://animica.dev")
+
+    def _run():
+        try:
+            run_miner(gateway, caps=caps, poll_interval=float(os.environ.get("ANIMICA_MEDIA_POLL", "4")),
+                      log=lambda m: console.print(f"[dim]media-miner: {m}[/dim]"))
+        except Exception as e:  # never take down `up`
+            console.print(f"[dim]media-miner: stopped ({e})[/dim]")
+
+    console.print(f"[dim]media: serving jobs to {gateway} — capabilities: {', '.join(caps)}[/dim]")
+    threading.Thread(target=_run, name="animica-media-miner", daemon=True).start()
+
+
+def _ensure_animal(console) -> None:
+    """Keep Animica Animal — the autonomous mascot — running, in the BACKGROUND.
+
+    The mascot posts to the OWNED social accounts connected in the console (animica.dev/animal). It
+    only makes sense on the box that runs the console, so it starts ONLY when ANIMAL_INTERNAL_TOKEN
+    is configured (the gateway); miner rigs skip it. It is DRY-RUN by default — it renders previews
+    until the operator connects accounts and flips ANIMAL_DRY_RUN=0 + ANIMAL_ALLOW_LIVE_POST=1.
+    Env: ANIMICA_UP_ANIMAL=0 disables.
+    """
+    import os
+    import threading
+
+    if os.environ.get("ANIMICA_UP_ANIMAL", "1") == "0":
+        return
+    if not os.environ.get("ANIMAL_INTERNAL_TOKEN"):
+        return  # no console link on this box — nothing for the mascot to read
+    try:
+        from animica.animal.engine import run_forever
+        from animica.animal.config import load as _aload
+    except Exception:
+        return
+    cfg = _aload()
+
+    def _run():
+        try:
+            run_forever(cfg, log=lambda m: console.print(f"[dim]animal: {m}[/dim]"))
+        except Exception as e:  # never take down `up`
+            console.print(f"[dim]animal: stopped ({e})[/dim]")
+
+    posture = "LIVE" if (not cfg.dry_run and cfg.allow_live_post) else "dry-run"
+    console.print(f"[dim]animal: mascot ambassador running ({posture}, every {cfg.interval_secs}s)[/dim]")
+    threading.Thread(target=_run, name="animica-animal", daemon=True).start()
