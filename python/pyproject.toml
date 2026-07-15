@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "8.2.0"
+version = "8.2.1"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -78,6 +78,16 @@ dependencies = [
   "scipy>=1.11.0",
   "einops>=0.7.0",
   "bitsandbytes>=0.43.0 ; platform_system == 'Linux'",
+  # Generative-media backend — INCLUDED IN BASE (2026-07-15) so a plain
+  # `pip install animica` can render image/video/music jobs and serve the media
+  # QUEUE out of the box (no extra `animica[media]` step). torch/transformers/
+  # accelerate/safetensors are already pulled in by the ENA stack above; media
+  # only adds diffusers + imageio(ffmpeg) + Pillow. imageio[ffmpeg] bundles an
+  # ffmpeg binary so even a bare CPU box serves image->video. The `media` extra
+  # below is now a redundant alias (kept for compatibility).
+  "diffusers>=0.39.0,<1.0.0",
+  "imageio[ffmpeg]>=2.34.0",
+  "Pillow>=10.0.0",
   # Native SHA3-256 CPU-miner fast path — shipped BY DEFAULT so `pip install
   # animica` + `animica up` (and the miner archives) get native hashrate with no
   # extra step. Its build is tolerant: on a platform with no prebuilt wheel and

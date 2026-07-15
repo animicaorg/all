@@ -168,8 +168,13 @@ def _mine_header_gpu(
     from mining.gpu_torch_sha3 import NONCE_BAND_HI, NONCE_BAND_LO, scan_solo
     import secrets
 
-    batch = max(1, int(os.getenv("ANIMICA_MINER_GPU_BATCH", str(1 << 18))))
-    window = max(batch, int(os.getenv("ANIMICA_MINER_GPU_WINDOW", str(1 << 23))))
+    # 0 == auto: let scan_solo size each launch to free VRAM so big cards saturate
+    # (the old fixed 2^18 batch starved them). Set ANIMICA_MINER_GPU_BATCH to pin it.
+    batch = int(os.getenv("ANIMICA_MINER_GPU_BATCH", "0"))
+    # A larger default window means more big launches per scan_solo call, amortizing the
+    # per-call setup; keep it >= any explicit batch so a pinned huge batch still fits.
+    window = int(os.getenv("ANIMICA_MINER_GPU_WINDOW", str(1 << 26)))
+    window = max(window, batch, 1 << 20)
     max_total = max(window, int(os.getenv("ANIMICA_MINER_GPU_MAX_TOTAL", str(1 << 31))))
     total_windows = max(1, max_total // window)
 
