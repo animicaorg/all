@@ -89,6 +89,10 @@ def _env_flag(name: str):
 # whole decision per-kind with ANIMICA_MEDIA_VIDEO_ENABLED / _AUDIO_ENABLED.
 _T2V_MIN_VRAM_GB = 10.0   # ali-vilab/text-to-video-ms-1.7b fp16 ≈ 8 GiB
 _AUDIO_MIN_VRAM_GB = 6.0  # facebook/musicgen-small ≈ 3 GiB
+# Stable Video Diffusion img2vid with model-CPU-offload + VAE slicing fits ~10-12
+# GiB. Below this floor, i2v uses the CPU-friendly Ken Burns render instead of a
+# generative model it can't hold. Override with ANIMICA_MEDIA_I2V_MODEL_ENABLED.
+_I2V_MIN_VRAM_GB = 12.0
 
 # Approx VRAM (GiB) each tier's model needs. The JOB requester picks the tier, so
 # a box that merely clears the auto-enable floor could still be handed an
@@ -221,16 +225,47 @@ def render_job(job: dict) -> dict:
         frames = [_decode(s) for s in images if s]
         if not frames:
             raise MediaError("image->video requires at least one uploaded image")
-        from .scene_video import assemble_scene_video
         fps = int(params.get("fps", 24))
         seconds = float(params.get("seconds", 4))
+        # Prefer a REAL generative image->video model (Stable Video Diffusion): it
+        # actually TRANSFORMS the image's content — drifting clouds, rippling water,
+        # subtle subject motion — not just a camera move. Use it when the GPU can
+        # run it and the operator hasn't opted out; otherwise fall back to the Ken
+        # Burns pan/zoom (which runs anywhere, even CPU) so i2v ALWAYS returns real
+        # video. On a single uploaded image we animate it directly; SVD conditions
+        # on one frame, so multi-image uploads animate the first and Ken-Burns the
+        # rest would over-complicate — we animate the first when generative.
+        _disable = os.environ.get("ANIMICA_MEDIA_DISABLE", "")
+        want_gen = (_have_cuda()
+                    and _vram_gb() >= _I2V_MIN_VRAM_GB
+                    and os.environ.get("ANIMICA_MEDIA_I2V_MODEL_ENABLED", "1") != "0"
+                    and _disable not in ("1", "all", "i2v", "video"))
+        if want_gen:
+            try:
+                import io as _io
+                from PIL import Image
+                from . import video_gen
+                img = Image.open(_io.BytesIO(frames[0])).convert("RGB")
+                svfps = max(6, min(fps, 12))       # SVD clips read best at 6-12 fps
+                out = video_gen.generate_image_to_video(
+                    img, tier=_clamp_tier("video_i2v", tier),
+                    num_frames=int(params.get("num_frames", 25)), fps=svfps,
+                    seed=params.get("seed"),
+                )
+                return _pack(out["bytes"], out.get("mime", "video/mp4"),
+                             {"model": out.get("model"), "device": _device(),
+                              "mode": "generative-i2v"}, "mp4")
+            except Exception:      # noqa: BLE001 — OOM/model/load → graceful Ken Burns
+                pass               # fall through to the pan/zoom render below
+        from .scene_video import assemble_scene_video
         per = max(1.0, seconds / max(1, len(frames)))
         out = assemble_scene_video(
             frames, fps=fps, seconds_per_scene=per,
             transition=params.get("transition", "fade"), ken_burns=True,
         )
         return _pack(out["bytes"], out["mime"],
-                     {"model": "anm-i2v-kenburns", "device": _device(), "scenes": out["scenes"], "duration_s": out["duration_s"]}, "mp4")
+                     {"model": "anm-i2v-kenburns", "device": _device(),
+                      "mode": "kenburns", "scenes": out["scenes"], "duration_s": out["duration_s"]}, "mp4")
 
     if kind == "video_multiscene":
         from . import image_gen

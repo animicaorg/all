@@ -88,7 +88,28 @@ def _load_pipeline(mode: str, model_id: str):
         else:
             from diffusers import DiffusionPipeline
             pipe = DiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype)
-        pipe = pipe.to("cuda" if cuda else "cpu")
+        # Stable Video Diffusion is heavy (~16 GiB at full residency). Enable
+        # model CPU-offload + VAE slicing + UNet forward-chunking so it fits on
+        # ~10-12 GiB cards instead of only 24 GiB ones — offload also manages
+        # device placement, so do NOT also .to("cuda") in that path.
+        offloaded = False
+        if cuda and mode == "video_i2v" and \
+                os.environ.get("ANIMICA_VIDEO_NO_OFFLOAD", "") not in ("1", "true"):
+            try:
+                pipe.enable_model_cpu_offload()
+                offloaded = True
+                try:
+                    pipe.unet.enable_forward_chunking()
+                except Exception:
+                    pass
+                try:
+                    pipe.vae.enable_slicing()
+                except Exception:
+                    pass
+            except Exception:
+                offloaded = False
+        if not offloaded:
+            pipe = pipe.to("cuda" if cuda else "cpu")
         try:
             pipe.set_progress_bar_config(disable=True)
         except Exception:
