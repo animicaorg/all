@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "8.2.1"
+version = "8.3.0"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -166,6 +166,16 @@ ai = [
 gpu = [
   "animica[ai]",
   "bitsandbytes>=0.43.0 ; platform_system == 'Linux'",
+]
+# Fused CUDA solo-miner kernel (8.3.0). CuPy JIT-compiles the hand-written
+# Keccak-f RawModule at runtime via NVRTC — no CUDA toolkit/nvcc needed on the
+# host, only an NVIDIA driver. Opt-in and isolated: `mining/gpu_cuda_sha3.py` is
+# imported lazily and the miner falls back to the batched-torch scanner if CuPy or
+# a CUDA device is absent, so this never breaks a plain install. cupy-cuda12x
+# targets CUDA 12.x (e.g. an RTX 50-series / 5090); on a CUDA 11.x host install
+# `cupy-cuda11x` instead. Use: `pip install "animica[cuda]"`.
+cuda = [
+  "cupy-cuda12x>=13.0.0 ; platform_system == 'Linux'",
 ]
 # Generative media (image/video/audio) provider. Miners: pip install 'animica[media]'.
 media = [
