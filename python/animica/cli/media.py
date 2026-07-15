@@ -110,10 +110,32 @@ def gen(
 def serve(
     host: str = typer.Option("127.0.0.1"),
     port: int = typer.Option(4610),
+    register: bool = typer.Option(False, "--register", help="join the Animica media QUEUE and render jobs for the network (earns IOU rewards)"),
+    gateway: str = typer.Option("https://animica.dev", "--gateway", help="gateway hosting the media queue"),
+    token: str = typer.Option(None, "--token", help="reuse a miner token (else one is minted + saved to ~/.animica/media-miner.json)"),
+    poll: float = typer.Option(3.0, "--poll", help="seconds between queue polls when idle"),
+    once: bool = typer.Option(False, "--once", help="render a single job then exit (for testing)"),
 ):
-    """Run the media worker HTTP service (serve image/video/audio jobs)."""
-    from animica.media.service import main as serve_main
+    """Serve generative media.
 
+    --register (recommended): become a media MINER — poll the Animica queue, render jobs on this
+    box (image / video / multi-scene / image->video / music, per what's installed), and post them
+    back. No model ever runs on the gateway; jobs wait in the queue until a miner like this claims
+    them. Without --register this instead runs the standalone HTTP media worker on host:port.
+    """
+    if register:
+        from animica.media.miner import run_miner, probe_capabilities
+        caps = probe_capabilities()
+        if not caps:
+            typer.secho("This box can't serve any media kind yet.", fg="red")
+            typer.echo("  • image->video: install ffmpeg")
+            typer.echo("  • image + multi-scene: pip install 'animica[media]'")
+            typer.echo("  • text->video / music (GPU): set ANIMICA_MEDIA_VIDEO_ENABLED=1 / ANIMICA_MEDIA_AUDIO_ENABLED=1")
+            raise typer.Exit(1)
+        typer.echo(f"media miner starting — capabilities: {', '.join(caps)}")
+        run_miner(gateway, token=token, caps=caps, poll_interval=poll, once=once, log=typer.echo)
+        return
+    from animica.media.service import main as serve_main
     serve_main(host=host, port=port)
 
 
@@ -162,3 +184,42 @@ def pull(
         blob = resp.read()
     rec = ck.install_from_bytes(blob)
     typer.echo(f"installed {rec['adapter_id']} ({rec['size']} bytes) — serve with --adapter {rec['adapter_id']}")
+
+
+@app.command("ingest-music")
+def ingest_music(
+    url: str = typer.Option("https://soundcloud.com/emblade", "--url", help="SoundCloud artist/playlist URL"),
+    out: str = typer.Option("~/.animica/music-corpus/emblade", "--out", help="corpus output dir"),
+    i_own_this: bool = typer.Option(False, "--i-own-this", help="assert you own / are licensed to train on this catalogue (REQUIRED)"),
+    max_tracks: int = typer.Option(80, "--max-tracks"),
+    recipe: bool = typer.Option(True, "--recipe/--no-recipe", help="also write a fine-tune recipe.json"),
+):
+    """Ingest an OWNED SoundCloud catalogue into a captioned music training corpus (+ recipe).
+
+    Rights-gated: only ingest audio you own or are licensed to train on (--i-own-this). Defaults to
+    the emblade set, which the operator owns. Needs yt-dlp. Fail-closed — real audio or an error.
+    """
+    from animica.media.music_train import ingest_soundcloud, build_recipe
+    corpus = ingest_soundcloud(url, out, consent_owner=i_own_this, max_tracks=max_tracks, log=typer.echo)
+    typer.echo(f"corpus: {corpus['tracks']} tracks at {corpus['corpus_dir']} (sha3 {corpus['corpus_sha3'][:16]}…)")
+    if recipe:
+        r = build_recipe(corpus)
+        typer.echo(f"recipe: {r.name} · base={r.base_model} · rank={r.lora_rank} · steps={r.steps} → {corpus['corpus_dir']}/recipe.json")
+        typer.echo("train it on a GPU box: animica media train-music " + corpus['corpus_dir'])
+
+
+@app.command("train-music")
+def train_music(
+    corpus_dir: str = typer.Argument(..., help="a corpus dir produced by `ingest-music` (contains recipe.json)"),
+    out: str = typer.Option(None, "--out", help="adapter output dir"),
+):
+    """Fine-tune the music model on an ingested corpus (GPU; fail-closed). Prepares/uses recipe.json."""
+    import json
+    from animica.media.music_train import MusicRecipe, train_music_lora
+    rp = os.path.join(os.path.expanduser(corpus_dir), "recipe.json")
+    if not os.path.exists(rp):
+        typer.secho(f"no recipe.json in {corpus_dir} — run `animica media ingest-music` first", fg="red")
+        raise typer.Exit(1)
+    recipe = MusicRecipe(**json.load(open(rp)))
+    rec = train_music_lora(recipe, out=out, log=typer.echo)
+    typer.echo(f"trained music adapter: {rec}")
