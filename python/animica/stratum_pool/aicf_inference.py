@@ -121,6 +121,9 @@ _NON_GENERATIVE_PREFIXES = (
     "nomic-ai/nomic-embed",
     "thenlper/gte-",
     "jinaai/jina-embeddings",
+    "ali-vilab/",           # text-to-video diffusion (media worker), NOT an LLM
+    "black-forest-labs/",   # FLUX image diffusion
+    "stabilityai/stable-",  # stable-diffusion / stable-audio (keep StableLM allowed)
 )
 _NON_GENERATIVE_FRAGMENTS = (
     "minilm",       # sentence embeddings
@@ -131,6 +134,25 @@ _NON_GENERATIVE_FRAGMENTS = (
     "whisper",      # ASR
     "wav2vec",
     "clip-vit",     # vision encoder
+    # --- media-generation models: shared HF cache means the image/video/audio worker
+    #     downloads these, and they must never be auto-picked as the chat LLM. ---
+    "text-to-video",
+    "text-to-image",
+    "text2video",
+    "text2image",
+    "diffusion",    # stable-diffusion, latent-diffusion, …
+    "sd-turbo",
+    "sdxl",
+    "flux.1",
+    "flux-",
+    "zeroscope",
+    "animatediff",
+    "controlnet",
+    "musicgen",
+    "audioldm",
+    "stable-audio",
+    "bark",         # TTS
+    "vits",         # TTS
 )
 
 
@@ -688,12 +710,25 @@ class InferenceEngine:
             if not self._loaded or self._effective_model != requested_model:
                 err = self._try_load(requested_model)
                 if err is not None:
-                    return InferenceResult(
-                        text=_stub_response(prompt, used_model=requested_model, reason=err),
-                        latency_ms=int((time.perf_counter() - t0) * 1000),
-                        used_model=requested_model,
-                        used_backend="stub",
-                    )
+                    # The resolved model wouldn't load as a chat LLM — e.g. a media/diffusion
+                    # model wrongly auto-picked from the shared HF cache, or a bad env pin. Try a
+                    # known-good chat model before falling back to the echo stub, so a
+                    # misconfigured worker still answers instead of parroting the prompt.
+                    fallback = _DEFAULT_MODEL
+                    if requested_model != fallback:
+                        log.warning(
+                            "aicf: model %s failed to load (%s); falling back to %s",
+                            requested_model, err, fallback,
+                        )
+                        if self._try_load(fallback) is None:
+                            requested_model, err = fallback, None
+                    if err is not None:
+                        return InferenceResult(
+                            text=_stub_response(prompt, used_model=requested_model, reason=err),
+                            latency_ms=int((time.perf_counter() - t0) * 1000),
+                            used_model=requested_model,
+                            used_backend="stub",
+                        )
             try:
                 import torch  # type: ignore
                 # Effective per-job token cap. An explicit ANIMICA_AICF_MAX_TOKENS
