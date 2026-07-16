@@ -8,6 +8,7 @@ TikTok/Shorts) without posting anywhere. Going live needs ANIMAL_DRY_RUN=0 + ANI
 from __future__ import annotations
 
 import json
+import os
 
 import typer
 
@@ -201,7 +202,11 @@ def stream(
         if yt is None:
             typer.secho("YouTube not connected. Open animica.dev/animal → connect YouTube, then rerun.", fg="red")
             raise typer.Exit(2)
-        info = yt.go_live(title=f"{char.name} — 24/7 Animica Live")
+        # Reuse the same broadcast across restarts so the public watch URL stays stable.
+        state_path = os.environ.get("ANIMAL_BROADCAST_STATE") or os.path.join(
+            record_dir or "/root/anm-vods", ".broadcast.json")
+        info = yt.ensure_live(title=f"{char.name} — 24/7 Animica Live",
+                              record_dir=record_dir, state_path=state_path)
         cfg.rtmp_url = info["rtmp_url"]
         cfg.record_dir = record_dir or info["record_dir"]
         chat_source, chat_sink = yt.chat_source(), yt.chat_sink()
@@ -235,7 +240,10 @@ def stream(
             hb.stop()
         if uploader:
             uploader.stop()
-        if yt is not None:
+        # 24/7 default: DON'T end the broadcast on a restart — that is exactly what churns
+        # the watch URL. ensure_live() reuses it next start. Only end when explicitly asked
+        # (operator teardown) via ANIMAL_END_ON_STOP=1.
+        if yt is not None and os.environ.get("ANIMAL_END_ON_STOP") == "1":
             yt.end()
     if preview and rc == 0:
         typer.secho(f"wrote {preview}", fg="green")

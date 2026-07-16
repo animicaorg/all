@@ -8,6 +8,28 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [8.5.1] - 2026-07-16
+### Animica Animal — 24/7 livestream now goes live for real (non-consensus)
+The first real YouTube go-live surfaced (and this release fixes) three bugs that preview
+mode never exercised, plus makes the stream production-hardened and Momo's chat smarter:
+- **Live streaming actually works.** The `-f tee` (RTMP + 1-hour VOD segments) muxer now
+  maps streams explicitly (`-map 0:v:0 -map 1:a:0`); without it ffmpeg opened with zero
+  streams and crash-looped.
+- **No more "video output low."** All network / LLM / live-chat / TTS work moved off the
+  render loop onto a background worker, so a slow node RPC or model call can never stall
+  frame production. The render loop now only renders + mixes audio.
+- **Holds real time on a shared box.** Live defaults to 960×540 with the `ultrafast` x264
+  preset, and the cat's per-frame downscale switched LANCZOS→`Image.BOX` (an exact-2×
+  area-average) — ~2× the render throughput at identical quality.
+- **Stable watch URL across restarts.** The broadcast + reusable ingest stream are now
+  persisted and reused (`ensure_live`), so restarts/reboots keep the same URL instead of
+  minting a new one; a stale broadcast is ended before any fresh one is created.
+- **Smarter live-chat replies.** Momo talks to Animica's free AI network via the correct
+  local endpoint + `animica-chat` tier, with a circuit-breaker and a much richer, specific
+  in-character fallback (AI, mining, wallets, `.anm`, media, VPN) for when no worker serves.
+- Fixes: net-stats fetch no longer busy-retries a down node; local previews/VODs render
+  with their full voice track again.
+
 ## [8.5.0] - 2026-07-16
 ### Animica Animal — your own 24/7 AI livestreamer (new, non-consensus)
 A complete pipeline that runs an animated character **live on YouTube around the clock**,
