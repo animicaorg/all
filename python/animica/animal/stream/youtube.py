@@ -1,0 +1,262 @@
+"""YouTube Data API v3 client for the 24/7 livestream.
+
+Handles the full lifecycle: OAuth access-token refresh, creating a reusable ingest
+stream + a persistent broadcast (auto-start on data, no auto-stop = 24/7), binding
+them, reading + posting live-chat messages, ending the broadcast, and resumable VOD
+upload for the 1-hour segments. Tokens come from the console's localhost-only internal
+state route (the only path that unseals them); the Google OAuth client id/secret come
+from env (or, localhost-gated, from that same state payload).
+"""
+from __future__ import annotations
+
+import json as _json
+import os
+import tempfile
+import time
+
+import requests
+
+from .contract import ChatMessage
+
+API = "https://www.googleapis.com/youtube/v3"
+UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+
+class YouTubeLive:
+    def __init__(self, access_token: str, refresh_token: str,
+                 client_id: str, client_secret: str, log=print):
+        self.access = access_token
+        self.refresh = refresh_token
+        self.cid = client_id
+        self.csecret = client_secret
+        self.log = log
+        self.broadcast_id = None
+        self.stream_id = None
+        self.live_chat_id = None
+        self._chat_token = None
+        self._chat_primed = False
+        self._chat_next = 0.0
+        self._sess = requests.Session()
+
+    # ── construction ─────────────────────────────────────────────────────────
+    @classmethod
+    def from_console(cls, mkt_url: str = "", token: str = "", log=print):
+        mkt_url = mkt_url or os.environ.get("ANIMICA_MKT_URL", "http://127.0.0.1:4950")
+        token = token or os.environ.get("ANIMAL_INTERNAL_TOKEN", "")
+        if not token:
+            log("[youtube] ANIMAL_INTERNAL_TOKEN not set — cannot read the connected account")
+            return None
+        try:
+            r = requests.get(mkt_url.rstrip("/") + "/api/mkt/v1/animal/internal/state",
+                             headers={"authorization": f"Bearer {token}"}, timeout=8)
+            d = r.json()
+        except Exception as e:
+            log(f"[youtube] console unreachable: {e}")
+            return None
+        yt = next((c for c in d.get("channels", []) if c.get("platform") == "youtube"), None)
+        access = (yt or {}).get("accessToken") or (yt or {}).get("access_token") or ""
+        refresh = (yt or {}).get("refreshToken") or (yt or {}).get("refresh_token") or ""
+        creds = d.get("youtube") or {}
+        cid = os.environ.get("YOUTUBE_CLIENT_ID", "") or creds.get("clientId", "")
+        csec = os.environ.get("YOUTUBE_CLIENT_SECRET", "") or creds.get("clientSecret", "")
+        if not access:
+            log("[youtube] YouTube isn't connected in the console (open animica.dev/animal)")
+            return None
+        if not (refresh and cid and csec):
+            log("[youtube] WARNING: no refresh token / client creds — token will expire in ~1h "
+                "(set YOUTUBE_CLIENT_ID/SECRET and reconnect for 24/7)")
+        return cls(access, refresh, cid, csec, log=log)
+
+    # ── auth + request plumbing ──────────────────────────────────────────────
+    def _refresh_token(self) -> bool:
+        if not (self.refresh and self.cid and self.csecret):
+            return False
+        try:
+            r = self._sess.post(TOKEN_URL, timeout=15, data={
+                "client_id": self.cid, "client_secret": self.csecret,
+                "refresh_token": self.refresh, "grant_type": "refresh_token"})
+            j = r.json()
+            if r.ok and j.get("access_token"):
+                self.access = j["access_token"]
+                self.log("[youtube] refreshed access token")
+                return True
+            self.log(f"[youtube] refresh failed: {r.status_code} {str(j)[:160]}")
+        except Exception as e:
+            self.log(f"[youtube] refresh error: {e}")
+        return False
+
+    def _api(self, method: str, path: str, payload=None):
+        url = API + path if path.startswith("/") else path
+        body = _json.dumps(payload).encode() if payload is not None else None
+        for attempt in (0, 1):
+            headers = {"authorization": f"Bearer {self.access}"}
+            if body is not None:
+                headers["content-type"] = "application/json"
+            r = self._sess.request(method, url, headers=headers, data=body, timeout=30)
+            if r.status_code == 401 and attempt == 0 and self._refresh_token():
+                continue
+            if r.status_code >= 400:
+                raise RuntimeError(f"YT {method} {path.split('?')[0]} -> {r.status_code}: {r.text[:300]}")
+            return r.json() if r.content else {}
+        return {}
+
+    def verify(self) -> dict:
+        """Confirm the token works and return the channel (raises on failure)."""
+        d = self._api("GET", "/channels?part=snippet&mine=true")
+        items = d.get("items", [])
+        return items[0] if items else {}
+
+    # ── go live ──────────────────────────────────────────────────────────────
+    def go_live(self, title: str, description: str = "", privacy: str = "public",
+                record_dir: str = "") -> dict:
+        title = title[:100]
+        s = self._api("POST", "/liveStreams?part=snippet,cdn,contentDetails", {
+            "snippet": {"title": title},
+            "cdn": {"ingestionType": "rtmp", "resolution": "variable", "frameRate": "variable"},
+            "contentDetails": {"isReusable": True},
+        })
+        self.stream_id = s["id"]
+        ing = s["cdn"]["ingestionInfo"]
+        rtmp = ing["ingestionAddress"].rstrip("/") + "/" + ing["streamName"]
+
+        start = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + 15))
+        b = self._api("POST", "/liveBroadcasts?part=snippet,status,contentDetails", {
+            "snippet": {"title": title, "scheduledStartTime": start,
+                        "description": description or "24/7 interactive AI livestream on the Animica network."},
+            "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False},
+            # AI/synthetic content is disclosed here so YouTube labels it honestly.
+            "contentDetails": {"enableAutoStart": True, "enableAutoStop": False,
+                               "latencyPreference": "low", "enableDvr": True,
+                               "monitorStream": {"enableMonitorStream": False}},
+        })
+        self.broadcast_id = b["id"]
+        self.live_chat_id = b.get("snippet", {}).get("liveChatId")
+        self._api("POST", f"/liveBroadcasts/bind?id={self.broadcast_id}"
+                          f"&streamId={self.stream_id}&part=id,contentDetails")
+        rec = record_dir or os.path.join(tempfile.gettempdir(), f"anm-vod-{self.broadcast_id}")
+        os.makedirs(rec, exist_ok=True)
+        return {"rtmp_url": rtmp, "record_dir": rec, "broadcast_id": self.broadcast_id,
+                "live_chat_id": self.live_chat_id,
+                "watch_url": f"https://www.youtube.com/watch?v={self.broadcast_id}"}
+
+    def viewers(self) -> int:
+        """Current concurrent viewers (0 if unavailable / not yet counted by YouTube)."""
+        if not self.broadcast_id:
+            return 0
+        try:
+            d = self._api("GET", f"/videos?part=liveStreamingDetails&id={self.broadcast_id}")
+            items = d.get("items", [])
+            if items:
+                cv = items[0].get("liveStreamingDetails", {}).get("concurrentViewers")
+                return int(cv) if cv is not None else 0
+        except Exception:
+            pass
+        return 0
+
+    def end(self):
+        if not self.broadcast_id:
+            return
+        try:
+            self._api("POST", f"/liveBroadcasts/transition?broadcastStatus=complete"
+                              f"&id={self.broadcast_id}&part=status")
+            self.log("[youtube] broadcast ended")
+        except Exception as e:
+            self.log(f"[youtube] end failed: {e}")
+
+    # ── live chat ────────────────────────────────────────────────────────────
+    def _resolve_chat_id(self):
+        if not self.broadcast_id:
+            return
+        try:
+            d = self._api("GET", f"/liveBroadcasts?part=snippet&id={self.broadcast_id}")
+            items = d.get("items", [])
+            if items:
+                self.live_chat_id = items[0].get("snippet", {}).get("liveChatId")
+        except Exception:
+            pass
+
+    def chat_source(self):
+        """Return a poll() -> list[ChatMessage] callable (self-throttled to YouTube's
+        pollingInterval; first poll primes the page token and skips pre-live backlog)."""
+        def _poll():
+            if not self.live_chat_id:
+                self._resolve_chat_id()
+            if not self.live_chat_id:
+                return []
+            now = time.time()
+            if now < self._chat_next:
+                return []
+            try:
+                url = (f"/liveChat/messages?liveChatId={self.live_chat_id}"
+                       f"&part=snippet,authorDetails&maxResults=50")
+                if self._chat_token:
+                    url += f"&pageToken={self._chat_token}"
+                d = self._api("GET", url)
+                self._chat_token = d.get("nextPageToken")
+                self._chat_next = now + max(3.0, float(d.get("pollingIntervalMillis", 5000)) / 1000.0)
+                if not self._chat_primed:          # skip history from before we went live
+                    self._chat_primed = True
+                    return []
+                out = []
+                for it in d.get("items", []):
+                    sn = it.get("snippet", {})
+                    if sn.get("type") != "textMessageEvent":
+                        continue
+                    out.append(ChatMessage(
+                        id=it.get("id", ""),
+                        author=it.get("authorDetails", {}).get("displayName", "viewer"),
+                        text=sn.get("displayMessage", ""), ts=now))
+                return out
+            except Exception as e:
+                self.log(f"[youtube] chat poll: {e}")
+                self._chat_next = now + 10
+                return []
+        return _poll
+
+    def chat_sink(self):
+        def _post(text: str):
+            if not self.live_chat_id or not text:
+                return
+            try:
+                self._api("POST", "/liveChat/messages?part=snippet", {
+                    "snippet": {"liveChatId": self.live_chat_id, "type": "textMessageEvent",
+                                "textMessageDetails": {"messageText": text[:200]}}})
+            except Exception as e:
+                self.log(f"[youtube] chat post: {e}")
+        return _post
+
+    # ── VOD upload (resumable) ───────────────────────────────────────────────
+    def upload_video(self, path: str, title: str, description: str = "",
+                     privacy: str = "public", tags=None) -> str:
+        size = os.path.getsize(path)
+        meta = {
+            "snippet": {"title": title[:100], "description": description[:4900],
+                        "tags": tags or ["Animica", "ANM", "AI", "livestream", "VOD"]},
+            "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False},
+        }
+        loc = None
+        for attempt in (0, 1):
+            r = self._sess.post(
+                UPLOAD + "?uploadType=resumable&part=snippet,status",
+                headers={"authorization": f"Bearer {self.access}",
+                         "content-type": "application/json; charset=UTF-8",
+                         "x-upload-content-length": str(size),
+                         "x-upload-content-type": "video/mp4"},
+                data=_json.dumps(meta).encode(), timeout=30)
+            if r.status_code == 401 and attempt == 0 and self._refresh_token():
+                continue
+            if r.status_code >= 400:
+                raise RuntimeError(f"YT upload init -> {r.status_code}: {r.text[:200]}")
+            loc = r.headers.get("location")
+            break
+        if not loc:
+            raise RuntimeError("YT upload: no resumable session URL returned")
+        with open(path, "rb") as f:
+            put = self._sess.put(loc, data=f, timeout=None,
+                                 headers={"content-type": "video/mp4", "content-length": str(size)})
+        if put.status_code >= 400:
+            raise RuntimeError(f"YT upload PUT -> {put.status_code}: {put.text[:200]}")
+        vid = (put.json() if put.content else {}).get("id", "")
+        self.log(f"[youtube] uploaded VOD {vid} ({size // (1024*1024)} MiB)")
+        return vid

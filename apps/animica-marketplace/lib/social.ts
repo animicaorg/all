@@ -24,6 +24,9 @@ export interface PlatformDef {
   supportsMusic: boolean;
   manualOk: boolean; // allow pasting an existing owned-account token when OAuth app isn't set up
   note: string;
+  // Extra authorize-URL params (e.g. Google needs access_type=offline + prompt=consent to return a
+  // refresh_token — mandatory for the 24/7 livestream, which must refresh the access token hourly).
+  authExtra?: Record<string, string>;
 }
 
 export const PLATFORMS: Record<string, PlatformDef> = {
@@ -51,11 +54,16 @@ export const PLATFORMS: Record<string, PlatformDef> = {
     key: 'youtube', label: 'YouTube', emoji: '▶️',
     authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
-    scope: 'https://www.googleapis.com/auth/youtube.upload',
+    // Full youtube scope (create/manage live broadcasts + upload VOD segments) plus force-ssl
+    // (read/write live chat, so the mascot can read chat and reply in it).
+    scope: 'https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/youtube.force-ssl',
     flavor: 'oauth2', pkce: false,
     clientIdEnv: 'YOUTUBE_CLIENT_ID', clientSecretEnv: 'YOUTUBE_CLIENT_SECRET',
     media: ['video', 'music'], supportsMusic: true, manualOk: true,
-    note: 'YouTube Shorts (vertical video) with custom audio.',
+    // access_type=offline + prompt=consent → Google returns a refresh_token (needed for 24/7);
+    // include_granted_scopes keeps any previously granted scopes on re-consent.
+    authExtra: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' },
+    note: 'YouTube Live 24/7 + Shorts/VOD upload with custom audio.',
   },
   instagram: {
     key: 'instagram', label: 'Instagram', emoji: '📸',
@@ -128,6 +136,7 @@ export function buildAuthorizeUrl(p: PlatformDef, opts: { state: string; challen
     q.set('code_challenge_method', 'S256');
   }
   if (p.key === 'reddit') { q.set('duration', 'permanent'); }
+  if (p.authExtra) { for (const [k, v] of Object.entries(p.authExtra)) q.set(k, v); }
   return `${base}?${q.toString()}`;
 }
 
