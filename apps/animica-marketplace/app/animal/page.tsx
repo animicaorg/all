@@ -56,18 +56,61 @@ function Login({ onIn }: { onIn: () => void }) {
       <div className="loginwrap">
         <Mascot size={92} />
         <h1 className="brand">Animica Animal</h1>
-        <p className="tagline">The autonomous ambassador console</p>
+        <p className="tagline">Your own 24/7 AI livestreamer</p>
+      </div>
+      <Pitch />
+      <div className="loginwrap tight">
         <form onSubmit={submit} className="card login">
+          <div className="loglbl">Operator sign-in</div>
           <label>Operator</label>
           <input value={user} onChange={(e) => setUser(e.target.value)} autoComplete="username" />
           <label>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" autoFocus />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
           {err && <div className="error">{err}</div>}
           <button disabled={busy || !password} type="submit">{busy ? 'Signing in…' : 'Sign in'}</button>
-          <p className="fineprint">Password attempts are rate-limited. Access is for the mascot operator only.</p>
+          <p className="fineprint">Already subscribed? Password attempts are rate-limited.</p>
         </form>
       </div>
     </Shell>
+  );
+}
+
+// ── public product pitch + PayPal subscribe ─────────────────────────────────────
+function Pitch() {
+  const [price, setPrice] = useState<{ priceUsd: number; subscribeUrl: string; configured: boolean; contactEmail: string } | null>(null);
+  useEffect(() => { api('/pricing').then((r) => { if (r.ok) setPrice(r.data); }); }, []);
+  const usd = price?.priceUsd ?? 350;
+
+  const FEATURES: [string, string][] = [
+    ['🎥', '24/7 YouTube livestream of an animated character that never sleeps'],
+    ['💬', 'Reads your live chat and replies out loud, in-character, in real time'],
+    ['🐾', 'Design any character by chat, tune the palette, or upload your own PNG mascot'],
+    ['📚', 'Give it a private knowledge base so it answers with facts unique to your world'],
+    ['🎬', 'Auto-uploads every 1-hour segment as a VOD — your channel fills itself'],
+    ['🎛️', 'Steer topics live from the console; runs on your own GPU box'],
+  ];
+
+  return (
+    <section className="pitch">
+      <div className="pitchgrid">
+        {FEATURES.map(([e, t]) => (
+          <div className="feat" key={t}><span className="fe">{e}</span><span>{t}</span></div>
+        ))}
+      </div>
+      <div className="card pricecard">
+        <div className="pricetop">
+          <div className="priceamt">${usd}<span className="permo">/month</span></div>
+          <div className="muted xs">Everything above · unlimited streaming · cancel anytime</div>
+        </div>
+        {price?.configured
+          ? <a className="subbtn" href={price.subscribeUrl} target="_blank" rel="noreferrer">Subscribe with PayPal</a>
+          : <div className="subpending">
+              <button className="subbtn" disabled>Subscribe with PayPal</button>
+              <p className="fineprint">Checkout is being finalized. Email <b>{price?.contactEmail || 'ai@3vdc.com'}</b> to start now.</p>
+            </div>}
+        <p className="fineprint">Secure recurring billing via PayPal. Your channel, your accounts — Animica Animal posts only through official APIs to accounts you own.</p>
+      </div>
+    </section>
   );
 }
 
@@ -143,7 +186,200 @@ function Console({ onLogout }: { onLogout: () => void }) {
           </div>
         </section>
       </div>
+
+      <LiveStudio conns={conns} />
+      <CharacterStudio />
     </Shell>
+  );
+}
+
+// ── 24/7 livestream studio ──────────────────────────────────────────────────────
+function LiveStudio({ conns }: { conns: Conn[] }) {
+  const [live, setLive] = useState<any>({ live: false });
+  const yt = conns.find((c) => c.platform === 'youtube');
+  const ytConnected = yt?.status === 'CONNECTED';
+
+  useEffect(() => {
+    const poll = () => api('/live').then((r) => { if (r.ok) setLive(r.data.live || { live: false }); });
+    poll(); const t = setInterval(poll, 10000); return () => clearInterval(t);
+  }, []);
+
+  const hhmm = (s: number) => {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  return (
+    <section>
+      <h2>Live studio · YouTube 24/7</h2>
+      <p className="muted">A continuously rendered, chat-interactive livestream of your character — with automatic 1-hour VOD segment uploads. Connect YouTube above, then start the stream worker from any GPU box.</p>
+      <div className="studio card">
+        <div className="livehead">
+          <span className={`pill ${live.live ? 'live' : 'offline'}`}>{live.live ? '● LIVE' : '○ offline'}</span>
+          {live.live && <span className="livemeta">{Number(live.viewers) || 0} watching · up {hhmm(Number(live.uptime) || 0)}{live.character ? ` · ${live.character}` : ''}</span>}
+          {live.live && live.watchUrl && <a className="watchbtn" href={live.watchUrl} target="_blank" rel="noreferrer">Watch on YouTube ↗</a>}
+        </div>
+        <div className="studiobody">
+          <ol className="steps">
+            <li className={ytConnected ? 'done' : ''}>
+              <b>Connect YouTube</b> — {ytConnected ? <span className="ok">connected as {yt?.handle ? `@${yt.handle}` : 'your channel'} ✓</span> : <span className="warn">use the YouTube card above (grants live-broadcast + upload).</span>}
+            </li>
+            <li>
+              <b>Install the node</b> on a machine with a GPU (or CPU for a lighter render):
+              <pre className="cmd">pip install -U animica</pre>
+            </li>
+            <li>
+              <b>Go live</b> — the worker renders the character, reads YouTube live chat, replies with voice + on-screen captions, and streams over RTMP:
+              <pre className="cmd">animica animal stream --youtube --record-dir ./vods</pre>
+              <span className="stepnote">It pulls the live-editable character + your Google OAuth from this console automatically. Segments in <code>./vods</code> upload as hourly VODs and are deleted after upload. Preview locally first with <code>--preview --seconds 20 out.mp4</code>.</span>
+            </li>
+          </ol>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── character studio: chat editor + palette + sprite + knowledge ────────────────
+type Character = {
+  name: string; species: string; kind: 'cat' | 'sprite'; sprite_url: string; knowledge_ref: string;
+  personality: string; speaking_style: string; catchphrases: string[]; topics: string[];
+  fur: number[]; fur_dk: number[]; belly: number[]; iris: number[]; accent: number[];
+  default_emotion: string; voice_pitch: number; voice_wpm: number;
+};
+const hex = (rgb: number[]) => '#' + rgb.map((v) => Math.max(0, Math.min(255, v | 0)).toString(16).padStart(2, '0')).join('');
+const fromHex = (h: string): number[] => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) || 0);
+
+function CharacterStudio() {
+  const [ch, setCh] = useState<Character | null>(null);
+  const [prompt, setPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [kb, setKb] = useState<{ sources: string[]; chunks: number }>({ sources: [], chunks: 0 });
+  const [paste, setPaste] = useState('');
+  const [msg, setMsg] = useState('');
+  const spriteInput = useRef<HTMLInputElement>(null);
+  const docInput = useRef<HTMLInputElement>(null);
+
+  const loadCh = useCallback(async () => {
+    const r = await api('/character'); if (r.ok) setCh(r.data.character);
+    const k = await api('/character/knowledge'); if (k.ok) setKb({ sources: k.data.sources || [], chunks: k.data.chunks || 0 });
+  }, []);
+  useEffect(() => { loadCh(); }, [loadCh]);
+
+  const flash = (t: string) => { setMsg(t); setTimeout(() => setMsg(''), 3500); };
+
+  const send = async (body: any, ok = 'Saved.') => {
+    setBusy(true);
+    const r = await api('/character', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    setBusy(false);
+    if (r.ok) { setCh(r.data.character); flash(ok); } else flash(r.data?.error || 'Failed.');
+  };
+  const applyPrompt = async () => { if (!prompt.trim()) return; await send({ prompt: prompt.trim() }, 'Character updated.'); setPrompt(''); };
+  const patchColor = (field: string, h: string) => send({ patch: { [field]: fromHex(h) } });
+
+  const uploadSprite = async (f: File) => {
+    setBusy(true); setMsg('Uploading sprite…');
+    const fd = new FormData(); fd.append('file', f);
+    const res = await fetch(API + '/character/sprite', { method: 'POST', credentials: 'same-origin', body: fd });
+    const j = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) { setCh(j.character); flash('Custom sprite set.'); } else flash(j?.error || 'Upload failed.');
+  };
+  const uploadDoc = async (f: File) => {
+    setBusy(true); setMsg('Ingesting document…');
+    const fd = new FormData(); fd.append('file', f);
+    const res = await fetch(API + '/character/knowledge', { method: 'POST', credentials: 'same-origin', body: fd });
+    const j = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) { flash(`Added ${j.chunksAdded} chunks from ${j.source}.`); loadCh(); } else flash(j?.error || 'Upload failed.');
+  };
+  const addPaste = async () => {
+    if (!paste.trim()) return;
+    setBusy(true);
+    const r = await api('/character/knowledge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'pasted note', text: paste }) });
+    setBusy(false);
+    if (r.ok) { setPaste(''); flash(`Added ${r.data.chunksAdded} chunks.`); loadCh(); } else flash(r.data?.error || 'Failed.');
+  };
+  const clearKb = async () => {
+    if (!confirm('Clear this character\'s entire knowledge base?')) return;
+    const r = await api('/character/knowledge', { method: 'DELETE' });
+    if (r.ok) { flash(`Cleared ${r.data.cleared} chunks.`); loadCh(); }
+  };
+
+  if (!ch) return null;
+  const COLS: [string, keyof Character][] = [['Fur', 'fur'], ['Fur (dark)', 'fur_dk'], ['Belly', 'belly'], ['Eyes', 'iris'], ['Accent', 'accent']];
+
+  return (
+    <section>
+      <h2>Character studio</h2>
+      <p className="muted">Design who goes live. Animica ships with Momo the cat — end users can restyle her by chat, tweak the palette, upload a PNG mascot, and give the character its own knowledge base for grounded replies.</p>
+      {msg && <div className="flash">{msg}</div>}
+      <div className="charwrap">
+        <div className="card charmain">
+          <div className="chartop">
+            {ch.kind === 'sprite' && ch.sprite_url
+              ? <img className="spritepreview" src={ch.sprite_url} alt="character sprite" />
+              : <Mascot size={72} />}
+            <div>
+              <div className="charname">{ch.name} <span className="muted xs">· {ch.species} · {ch.kind === 'sprite' ? 'custom PNG' : 'built-in cat'} · {ch.default_emotion}</span></div>
+              <div className="muted xs charpers">{ch.personality}</div>
+            </div>
+          </div>
+
+          <label className="fieldlbl">Redesign by chat</label>
+          <div className="promptrow">
+            <input value={prompt} placeholder="e.g. make her a sassy blue dragon who loves DeFi" onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyPrompt(); }} />
+            <button disabled={busy || !prompt.trim()} onClick={applyPrompt}>Apply</button>
+          </div>
+
+          <label className="fieldlbl">Palette</label>
+          <div className="palette">
+            {COLS.map(([lbl, f]) => (
+              <label key={f} className="swatch">
+                <input type="color" value={hex(ch[f] as number[])} onChange={(e) => patchColor(f as string, e.target.value)} />
+                <span>{lbl}</span>
+              </label>
+            ))}
+          </div>
+
+          <div className="sliders">
+            <label>Voice pitch <b>{ch.voice_pitch.toFixed(2)}×</b>
+              <input type="range" min={0.5} max={2} step={0.05} value={ch.voice_pitch}
+                onChange={(e) => setCh({ ...ch, voice_pitch: Number(e.target.value) })}
+                onMouseUp={(e) => send({ patch: { voice_pitch: Number((e.target as HTMLInputElement).value) } }, 'Voice updated.')} />
+            </label>
+            <label>Speech pace <b>{ch.voice_wpm} wpm</b>
+              <input type="range" min={60} max={260} step={5} value={ch.voice_wpm}
+                onChange={(e) => setCh({ ...ch, voice_wpm: Number(e.target.value) })}
+                onMouseUp={(e) => send({ patch: { voice_wpm: Number((e.target as HTMLInputElement).value) } }, 'Voice updated.')} />
+            </label>
+          </div>
+
+          <div className="charact">
+            <input ref={spriteInput} type="file" accept="image/png" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadSprite(f); e.target.value = ''; }} />
+            <button className="ghost sm" disabled={busy} onClick={() => spriteInput.current?.click()}>Upload PNG mascot</button>
+            {ch.kind === 'sprite' && <button className="ghost sm" disabled={busy} onClick={() => send({ patch: { kind: 'cat', sprite_url: '' } }, 'Back to the cat.')}>Use built-in cat</button>}
+            <button className="ghost sm danger" disabled={busy} onClick={() => send({ reset: true }, 'Reset to Animica cat.')}>Reset to Momo</button>
+          </div>
+        </div>
+
+        <div className="card charkb">
+          <div className="kbhead"><b>Knowledge base</b><span className="muted xs">{kb.chunks} chunks · {kb.sources.length} sources</span></div>
+          <p className="muted xs">Upload docs (.txt/.md/.csv/.json) or paste notes. The livestream brain retrieves from these to answer chat in-character with facts unique to your world.</p>
+          <input ref={docInput} type="file" accept=".txt,.md,.markdown,.csv,.json,.text" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDoc(f); e.target.value = ''; }} />
+          <div className="kbact">
+            <button className="ghost sm" disabled={busy} onClick={() => docInput.current?.click()}>Upload document</button>
+            {kb.chunks > 0 && <button className="ghost sm danger" disabled={busy} onClick={clearKb}>Clear all</button>}
+          </div>
+          <textarea className="kbpaste" placeholder="…or paste knowledge/notes here" value={paste} onChange={(e) => setPaste(e.target.value)} />
+          <button className="sm" disabled={busy || !paste.trim()} onClick={addPaste}>Add note</button>
+          {kb.sources.length > 0 && (
+            <div className="kbsources">{kb.sources.slice(0, 8).map((s, i) => <span key={i} className="kbtag">{s}</span>)}</div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -310,7 +546,22 @@ function Style() {
       @media (prefers-reduced-motion:reduce){.mascot,.mascot .eye{animation:none}}
       /* login */
       .loginwrap{max-width:380px;margin:6vh auto 0;text-align:center;display:flex;flex-direction:column;align-items:center;gap:6px}
-      .tagline{color:var(--mut);margin:0 0 14px}
+      .loginwrap.tight{margin:8px auto 0}
+      .tagline{color:var(--mut);margin:0 0 14px;font-size:16px}
+      .loglbl{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin-bottom:2px}
+      /* pitch */
+      .pitch{max-width:760px;margin:6px auto 0;display:flex;flex-direction:column;gap:16px}
+      .pitchgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+      @media (max-width:620px){.pitchgrid{grid-template-columns:1fr}}
+      .feat{display:flex;gap:10px;align-items:flex-start;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.4}
+      .fe{font-size:20px;flex:none}
+      .pricecard{padding:20px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center}
+      .pricetop{display:flex;flex-direction:column;gap:2px}
+      .priceamt{font-size:42px;font-weight:800;letter-spacing:-.02em;background:linear-gradient(90deg,var(--cy),var(--vi));-webkit-background-clip:text;background-clip:text;color:transparent}
+      .permo{font-size:16px;color:var(--mut);-webkit-text-fill-color:var(--mut)}
+      .subbtn{display:inline-block;background:linear-gradient(90deg,#ffc439,#f0a500);color:#0a0b14;text-decoration:none;font-weight:800;font-size:16px;padding:13px 34px;border-radius:12px;border:0;cursor:pointer;box-shadow:0 6px 24px #f0a50033}
+      .subbtn:disabled{opacity:.5;cursor:default}
+      .subpending{display:flex;flex-direction:column;gap:6px;align-items:center}
       .login{padding:20px;text-align:left;display:flex;flex-direction:column;gap:8px;width:100%}
       .login label{font-size:12px;color:var(--mut);margin-top:6px}
       .login button{margin-top:12px}
@@ -366,6 +617,40 @@ function Style() {
       .tag{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
       .tag.POSTED{color:var(--ok)}.tag.DRY_RUN{color:var(--cy)}
       .cap{color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      /* live studio */
+      .studio{padding:16px}
+      .livehead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+      .livemeta{font-size:13px;color:var(--mut)}
+      .watchbtn{margin-left:auto;background:linear-gradient(90deg,#ff5b6e,#ff3d3d);color:#fff;text-decoration:none;padding:7px 14px;border-radius:10px;font-weight:700;font-size:13px}
+      .steps{margin:6px 0 0;padding-left:22px;display:flex;flex-direction:column;gap:14px}
+      .steps li{line-height:1.5}.steps li.done{opacity:.85}
+      .stepnote{display:block;font-size:12px;color:var(--mut);margin-top:4px}
+      .cmd{background:#05060c;border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin:6px 0 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--cy);overflow-x:auto}
+      code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#05060c;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px;color:var(--cy)}
+      /* character studio */
+      .flash{background:#0e2321;border:1px solid #173a38;color:var(--cy);border-radius:10px;padding:8px 12px;font-size:13px;margin-bottom:10px}
+      .charwrap{display:grid;grid-template-columns:1.25fr .75fr;gap:16px}
+      @media (max-width:820px){.charwrap{grid-template-columns:1fr}}
+      .charmain,.charkb{padding:16px;display:flex;flex-direction:column;gap:10px}
+      .chartop{display:flex;gap:14px;align-items:center}
+      .spritepreview{width:72px;height:72px;object-fit:contain;background:#05060c;border:1px solid var(--line);border-radius:12px;image-rendering:auto}
+      .charname{font-weight:800;font-size:17px}
+      .charpers{margin-top:3px;line-height:1.4}
+      .fieldlbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin-top:4px}
+      .promptrow{display:flex;gap:8px}
+      .palette{display:flex;gap:12px;flex-wrap:wrap}
+      .swatch{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:var(--mut)}
+      .swatch input[type=color]{width:40px;height:34px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}
+      .sliders{display:flex;gap:18px;flex-wrap:wrap}
+      .sliders label{font-size:12px;color:var(--mut);display:flex;flex-direction:column;gap:4px;flex:1;min-width:160px}
+      .sliders b{color:var(--tx)}
+      .sliders input[type=range]{width:100%;accent-color:var(--cy)}
+      .charact{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+      .kbhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+      .kbact{display:flex;gap:8px;flex-wrap:wrap}
+      .kbpaste{height:70px;resize:vertical}
+      .kbsources{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+      .kbtag{font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:6px;padding:2px 7px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     `}</style>
   );
 }

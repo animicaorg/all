@@ -8,6 +8,30 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [8.5.0] - 2026-07-16
+### Animica Animal — your own 24/7 AI livestreamer (new, non-consensus)
+A complete pipeline that runs an animated character **live on YouTube around the clock**,
+sold as a $350/month product at **animica.dev/animal** (front-and-center on the homepage).
+
+- **`animica animal stream`** renders the character in real time (PIL renderer + behavior
+  state machine + animalese/piper voice + audio mixer), muxes through a single bundled
+  ffmpeg, and streams to YouTube over RTMP — or renders a local `--preview` MP4 with no
+  account. Two-writer-thread FIFO feed with `-analyzeduration 0 -probesize 32` per input so
+  the encoder never stalls.
+- **Interactive brain** reads the YouTube live chat and replies **out loud** (voice + on-screen
+  caption + optional chat reply), grounded in real network facts and the character's knowledge
+  base; in-character rule-based fallback when no LLM is reachable.
+- **Hourly VOD segments**: the stream is teed to `seg_%05d.mp4` (1-hour chunks) and each
+  completed segment auto-uploads as an unlisted VOD, then is deleted to bound disk.
+- **Character studio** (console): restyle the character by chat, tune palette + voice, **upload a
+  custom PNG mascot** (PNGtuber-style animation), and give it a **private knowledge base** (RAG).
+  Animica keeps **Momo the cat** as the default.
+- **Live status** heartbeat drives a **● LIVE** badge (viewers, uptime, watch link) on the console
+  and homepage; auto-clears after 90s offline.
+- YouTube Data API v3 client with offline refresh tokens for unattended 24/7 operation. Honest by
+  design: owned accounts only, official APIs only, AI content disclosed on the broadcast; no AI
+  model runs on the gateway box.
+
 ## [8.0.3] - 2026-07-15
 ### Verified & hardened — sync self-heals natural 1-block forks (no behavior change)
 An adversarial investigation (four independent code traces + an end-to-end

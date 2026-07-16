@@ -997,5 +997,21 @@ model AnimalEngineState {
   consoleEpoch  Int      @default(1)     // bumped on logout to revoke outstanding console sessions
   lastHeartbeat DateTime?
   lastCycleJson String   @default("{}")
+  characterJson String   @default("{}")  // the live-editable Character sheet (personality + appearance)
+  liveJson      String   @default("{}")  // last livestream status reported by the stream worker
   updatedAt     DateTime @updatedAt
+}
+
+// Per-character knowledge base for the livestream brain (RAG). Embeddings are stored as
+// JSON and scored in-process (cosine), so no pgvector migration is needed for this small,
+// per-character corpus; falls back to keyword match when embeddings are unavailable.
+model AnimalKnowledgeChunk {
+  id            String   @id @default(cuid())
+  ref           String   // character knowledge-base id (Character.knowledge_ref)
+  source        String   @default("")
+  content       String
+  embeddingJson String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([ref])
 }

@@ -115,3 +115,137 @@ def say(text: str = typer.Argument(..., help="a goal/instruction for the mascot"
     cfg = _cfg()
     res = engine._internal(cfg, "/directive", "POST", {"text": text, "kind": "goal"})
     typer.echo("sent" if res and res.get("ok") else "failed (need ANIMAL_INTERNAL_TOKEN + marketplace up)")
+
+
+class _LiveHeartbeat:
+    """Background thread that reports live status to the console every ~20s (viewers, uptime),
+    and posts a final live:false on stop so the badge goes offline cleanly."""
+
+    def __init__(self, yt, watch_url: str, character: str, period: float = 20.0):
+        import threading
+        self.yt, self.watch_url, self.character, self.period = yt, watch_url, character, period
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, name="anm-live-heartbeat", daemon=True)
+        self._started = None
+
+    def _post(self, live: bool):
+        import time
+        from animica.animal import engine
+        cfg = _cfg()
+        uptime = int(time.time() - self._started) if self._started else 0
+        try:
+            viewers = self.yt.viewers() if live else 0
+        except Exception:
+            viewers = 0
+        engine._internal(cfg, "/live", "POST", {
+            "live": live, "watchUrl": self.watch_url, "viewers": viewers,
+            "uptime": uptime, "character": self.character,
+        }, timeout=10)
+
+    def _run(self):
+        import time
+        self._started = time.time()
+        while not self._stop.is_set():
+            try:
+                self._post(True)
+            except Exception:
+                pass
+            self._stop.wait(self.period)
+
+    def start(self):
+        self._t.start()
+
+    def stop(self):
+        self._stop.set()
+        try:
+            self._post(False)  # flip the badge offline immediately
+        except Exception:
+            pass
+
+
+@app.command()
+def stream(
+    preview: str = typer.Option("", help="Render to this local MP4 instead of going live (no YouTube needed)."),
+    seconds: float = typer.Option(0.0, help="Stop after N seconds (0 = run until Ctrl-C / forever)."),
+    rtmp: str = typer.Option("", help="YouTube RTMP ingest URL rtmp://a.rtmp.youtube.com/live2/<key> (manual)."),
+    youtube: bool = typer.Option(False, "--youtube", help="Auto-create a 24/7 YouTube broadcast from the connected account."),
+    record_dir: str = typer.Option("", help="Where to write 1-hour VOD segment files (auto with --youtube)."),
+    channel: str = typer.Option("Animica Animal", help="Channel name shown on the overlay."),
+    width: int = typer.Option(1280), height: int = typer.Option(720), fps: int = typer.Option(24),
+    voice: str = typer.Option("animalese", help="animalese | piper | off"),
+    music: str = typer.Option("auto", help="auto | <path to an audio file> | off"),
+    bitrate_k: int = typer.Option(4500, help="Video bitrate in kbps."),
+):
+    """Run the 24/7 interactive AI livestream (YouTube), or render a local preview MP4.
+
+    Preview (no account needed):  animica animal stream --preview out.mp4 --seconds 15
+    Go live (after connecting YouTube at animica.dev/animal):  animica animal stream --youtube
+    """
+    from animica.animal.stream import config as SC
+    from animica.animal.stream.brain import Brain, make_line_provider
+    from animica.animal.stream.contract import StreamConfig
+    from animica.animal.stream.pipeline import StreamPipeline
+
+    log = lambda m: typer.secho(m, dim=True)  # noqa: E731
+    char = SC.load_character()
+    cfg = StreamConfig(width=width, height=height, fps=fps, voice=voice, music=music,
+                       bitrate_k=bitrate_k, preview_path=preview, rtmp_url=rtmp,
+                       record_dir=record_dir, channel_name=channel)
+
+    chat_source = chat_sink = None
+    yt = None
+    go_youtube = youtube or (not preview and not rtmp)
+    if go_youtube:
+        from animica.animal.stream.youtube import YouTubeLive
+        yt = YouTubeLive.from_console(log=log)
+        if yt is None:
+            typer.secho("YouTube not connected. Open animica.dev/animal → connect YouTube, then rerun.", fg="red")
+            raise typer.Exit(2)
+        info = yt.go_live(title=f"{char.name} — 24/7 Animica Live")
+        cfg.rtmp_url = info["rtmp_url"]
+        cfg.record_dir = record_dir or info["record_dir"]
+        chat_source, chat_sink = yt.chat_source(), yt.chat_sink()
+        typer.secho(f"● LIVE: {info['watch_url']}", fg="green")
+
+    brain = Brain(cfg, char, chat_source=chat_source, chat_sink=chat_sink,
+                  rag=SC_rag_for(char), log=log)
+    pipe = StreamPipeline(cfg, char, net_provider=SC.default_net_provider,
+                          line_provider=make_line_provider(brain), log=log)
+
+    uploader = None
+    if yt is not None and cfg.record_dir:
+        from animica.animal.stream.segments import SegmentUploader
+        uploader = SegmentUploader(yt, cfg.record_dir, char, log=log)
+        uploader.start()
+
+    # Heartbeat the live status to the console so animica.dev/animal + the homepage can show
+    # "● LIVE" with a watch link, viewer count and uptime. Best-effort; never blocks the stream.
+    hb = None
+    if yt is not None:
+        hb = _LiveHeartbeat(yt, info["watch_url"], char.name)
+        hb.start()
+
+    try:
+        rc = pipe.run(max_seconds=seconds)
+    except KeyboardInterrupt:
+        pipe.stop()
+        rc = 0
+    finally:
+        if hb:
+            hb.stop()
+        if uploader:
+            uploader.stop()
+        if yt is not None:
+            yt.end()
+    if preview and rc == 0:
+        typer.secho(f"wrote {preview}", fg="green")
+    raise typer.Exit(rc)
+
+
+def SC_rag_for(char):
+    """Return a RAG query callable for this character's knowledge base, or None."""
+    try:
+        from animica.animal.stream.knowledge import rag_for
+        return rag_for(char)
+    except Exception:
+        return None
