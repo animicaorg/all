@@ -60,7 +60,7 @@ def encode_wav(samples, sample_rate: int) -> bytes:
 
 def _load(model_id: str):
     try:
-        import torch  # noqa: F401
+        import torch
         from transformers import AutoProcessor, MusicgenForConditionalGeneration
     except Exception as e:
         raise MediaBackendUnavailable(f"transformers/torch not installed: {e}") from e
@@ -68,7 +68,20 @@ def _load(model_id: str):
         return _MODEL_CACHE[model_id]
     try:
         proc = AutoProcessor.from_pretrained(model_id)
-        model = MusicgenForConditionalGeneration.from_pretrained(model_id)
+        # Run on the miner's GPU when present — MusicGen on CPU is minutes-slow.
+        # Default to fp32 even on CUDA: MusicGen's EnCodec audio decoder is known
+        # to emit silence/NaN in fp16 on several transformers versions, so fp32 is
+        # the reliable default (still far faster than CPU; musicgen-small ≈ 2.4 GiB
+        # / medium ≈ 6 fit the audio VRAM floor). Opt into fp16 with
+        # ANIMICA_AUDIO_FP16=1 to halve VRAM for the large model on tight cards.
+        cuda = torch.cuda.is_available() and \
+            os.environ.get("ANIMICA_AUDIO_FORCE_CPU", "") not in ("1", "true")
+        fp16 = cuda and os.environ.get("ANIMICA_AUDIO_FP16", "") in ("1", "true")
+        dtype = torch.float16 if fp16 else torch.float32
+        model = MusicgenForConditionalGeneration.from_pretrained(
+            model_id, torch_dtype=dtype)
+        model = model.to("cuda" if cuda else "cpu")
+        model.eval()
     except Exception as e:
         raise MediaError(f"failed to load audio model {model_id!r}: {e}") from e
     _MODEL_CACHE[model_id] = (proc, model)
@@ -84,14 +97,42 @@ def generate_audio(prompt: str, *, tier: str = "standard", seconds: float = 5.0,
     proc, mdl = _load(model_id)
     import torch
 
+    # Place inputs on the model's device (GPU on a miner) so generation actually
+    # runs there, not on CPU.
+    device = next(mdl.parameters()).device
     inputs = proc(text=[prompt], padding=True, return_tensors="pt")
+    inputs = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in inputs.items()}
     # MusicGen: ~50 tokens/sec of audio at the model's frame rate.
     max_new = max(64, int(seconds * 50))
-    try:
+
+    def _run() -> tuple:
         with torch.no_grad():
             audio = mdl.generate(**inputs, max_new_tokens=max_new)
         sr = mdl.config.audio_encoder.sampling_rate
-        samples = audio[0, 0].cpu().numpy()
+        # .float() so a half-precision (GPU fp16) tensor converts cleanly to WAV.
+        return audio[0, 0].float().cpu().numpy(), sr
+
+    try:
+        samples, sr = _run()
+    except RuntimeError as e:
+        # CUDA OOM (torch.cuda.OutOfMemoryError subclasses RuntimeError) / dtype
+        # issue → reclaim VRAM and retry on CPU (slow but reliable)
+        # so a claimed audio job still produces real audio instead of failing.
+        if device.type == "cuda":
+            try:
+                mdl_cpu = mdl.to("cpu").float()
+                _MODEL_CACHE[model_id] = (proc, mdl_cpu)
+                torch.cuda.empty_cache()
+                inputs_cpu = {k: (v.to("cpu") if hasattr(v, "to") else v)
+                              for k, v in inputs.items()}
+                with torch.no_grad():
+                    audio = mdl_cpu.generate(**inputs_cpu, max_new_tokens=max_new)
+                sr = mdl_cpu.config.audio_encoder.sampling_rate
+                samples = audio[0, 0].float().cpu().numpy()
+            except Exception as e2:
+                raise MediaError(f"audio generation failed (gpu+cpu): {e2}") from e2
+        else:
+            raise MediaError(f"audio generation failed: {e}") from e
     except Exception as e:
         raise MediaError(f"audio generation failed: {e}") from e
 
