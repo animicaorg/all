@@ -40,7 +40,42 @@ class YouTubeLive:
         # Live-chat reads are the dominant Data-API cost of a 24/7 stream (the default 10k
         # units/day is small). Poll no faster than this floor, and back off hard on quota.
         self._chat_poll_floor = float(os.environ.get("ANIMICA_STREAM_CHAT_POLL_SECS", "15"))
+        # Daily read BUDGET, spread across the whole quota day (resets ~midnight Pacific).
+        # A flat floor front-loads the 10k/day quota and chat goes dark by mid-day; instead
+        # pace reads so the budget lasts until the next reset. Empirically a flat 15s floor
+        # (~5,760 reads/day) drains the quota in well under a day, so default to ~2,400 —
+        # leaving headroom for chat replies (insert) and broadcast/VOD ops out of the 10k.
+        self._chat_daily_reads = float(os.environ.get("ANIMICA_STREAM_CHAT_DAILY_READS", "2400"))
+        self._chat_reads_today = 0.0
+        self._chat_quota_day = -1
         self._sess = requests.Session()
+
+    @staticmethod
+    def _quota_day(now: float) -> int:
+        """Integer index of the current YouTube-quota day. Quota resets at midnight
+        Pacific; approximate as 07:00 UTC (PDT). Used only to reset the read counter."""
+        return int((now - 7 * 3600) // 86400)
+
+    def _seconds_until_quota_reset(self, now: float) -> float:
+        reset_at = (self._quota_day(now) + 1) * 86400 + 7 * 3600
+        return max(60.0, reset_at - now)
+
+    def _paced_chat_interval(self, now: float, yt_polling_secs: float) -> float:
+        """Seconds until the next chat poll: never faster than YouTube's requested
+        pollingInterval or our floor, and never faster than the daily read budget allows
+        (spread evenly over the time remaining until the quota resets)."""
+        day = self._quota_day(now)
+        if day != self._chat_quota_day:      # new quota day → fresh budget
+            self._chat_quota_day = day
+            self._chat_reads_today = 0.0
+        reads_left = self._chat_daily_reads - self._chat_reads_today
+        if reads_left <= 0:                  # budget spent — idle until reset
+            return self._seconds_until_quota_reset(now)
+        # Spread the remaining reads evenly over the time left until reset. Never poll
+        # faster than our floor or than YouTube's requested pollingInterval (honoring the
+        # latter is required); adaptive naturally dominates once the even pace exceeds them.
+        adaptive = self._seconds_until_quota_reset(now) / reads_left
+        return max(self._chat_poll_floor, yt_polling_secs, adaptive)
 
     # ── construction ─────────────────────────────────────────────────────────
     @classmethod
@@ -274,9 +309,10 @@ class YouTubeLive:
                 if self._chat_token:
                     url += f"&pageToken={self._chat_token}"
                 d = self._api("GET", url)
+                self._chat_reads_today += 1
                 self._chat_token = d.get("nextPageToken")
-                self._chat_next = now + max(self._chat_poll_floor,
-                                            float(d.get("pollingIntervalMillis", 5000)) / 1000.0)
+                yt_secs = float(d.get("pollingIntervalMillis", 5000)) / 1000.0
+                self._chat_next = now + self._paced_chat_interval(now, yt_secs)
                 if not self._chat_primed:          # skip history from before we went live
                     self._chat_primed = True
                     return []
@@ -293,10 +329,15 @@ class YouTubeLive:
             except Exception as e:
                 msg = str(e)
                 if "403" in msg and "quota" in msg.lower():
-                    # Daily quota exhausted — stop hammering; it resets at ~midnight Pacific.
-                    self._chat_next = now + 1800
-                    self.log("[youtube] chat quota exhausted — pausing chat reads 30 min "
-                             "(request a YouTube API quota increase for sustained 24/7 chat)")
+                    # Daily quota exhausted — stop hammering entirely until it resets at
+                    # ~midnight Pacific (retrying every N minutes just fails N more times).
+                    self._chat_reads_today = self._chat_daily_reads      # mark budget spent
+                    wait = self._seconds_until_quota_reset(now)
+                    self._chat_next = now + wait
+                    self.log(f"[youtube] chat quota exhausted — pausing chat reads until reset "
+                             f"(~{wait/3600:.1f}h). Request a YouTube API quota increase for "
+                             f"sustained 24/7 chat; lower ANIMICA_STREAM_CHAT_DAILY_READS to "
+                             f"spread the current quota further.")
                 else:
                     self.log(f"[youtube] chat poll: {e}")
                     self._chat_next = now + 15

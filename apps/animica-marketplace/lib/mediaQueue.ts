@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { prisma } from './db';
 import { Prisma } from '@prisma/client';
+import { moderateMediaPrompt, MediaBlockedError } from './mediaModeration';
 
 // Generative-media job QUEUE (dispatch-only). No model runs on the gateway. Requests are
 // enqueued PENDING; a registered GPU media miner atomically CLAIMS + renders them; results
@@ -88,6 +89,10 @@ export interface SubmitInput {
 }
 
 export async function submitJob(inp: SubmitInput) {
+  // Content-safety backstop. Routes pre-check and return a friendly 422, but enforce here too
+  // so NO caller (present or future) can enqueue prohibited content. Throws MediaBlockedError.
+  const verdict = moderateMediaPrompt(inp.prompt ?? '', { hasImages: !!inp.inputB64, kind: inp.kind });
+  if (!verdict.allowed) throw new MediaBlockedError(verdict);
   await sweep();
   const isPrivate = !!inp.isPrivate;
   const ttl = isPrivate ? MEDIA_PRIVATE_TTL_SECS : MEDIA_JOB_TTL_SECS;

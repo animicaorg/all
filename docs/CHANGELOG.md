@@ -8,6 +8,39 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [8.5.2] - 2026-07-16
+### Media generator — content-safety gate (non-consensus)
+The public, keyless media queue had no content filter. A submit-time moderation gate now
+rejects prohibited prompts before any job is queued or dispatched to a miner, most-severe
+first: **(1) sexual content involving minors** (always hard-blocked), **(2) non-consensual
+"nudify"/undress or sexualizing an uploaded photo of a real person**, and **(3) explicit
+sexual/pornographic content** (blocked by policy on the public service). It is deterministic
+(no model call — the gateway runs no AI), obfuscation-aware (leetspeak + spaced letters), and
+tuned against false positives (analysis, cocktail, "the naked eye", etc.). Wired into every
+media entry point (`/media/jobs`, the OpenAI-compatible `/v1/{images,videos,audio}/generations`,
+per-listing generate/preview) with a backstop inside `submitJob` so no caller can bypass it.
+
+### Media generator — music/audio generation fixed
+Audio jobs were failing 100% with `'MusicgenDecoderConfig' object has no attribute 'decoder'`
+— the low-level `MusicgenForConditionalGeneration.from_pretrained` Auto path regresses on
+`transformers>=4.44` (the composite config resolves to the decoder sub-config). The loader now
+tries, in order, an **explicit-`MusicgenConfig` load** (the precise fix), then the **`text-to-audio`
+pipeline** (robust alternative), then the original Auto path — using whichever loads. Output is
+normalized across the mono/`(1,n)`/`(channels,n)` shapes each path returns, and the GPU-OOM→CPU
+retry is preserved. Music (lofi/hiphop/etc.) generates again.
+
+### Animica Animal — live chat that lasts the whole day (non-consensus)
+- **Quota-aware chat pacing.** A 24/7 stream's dominant YouTube Data-API cost is reading
+  live chat, and the default 10k-units/day quota is small — a flat poll interval front-loads
+  it and Momo goes silent in chat by mid-day. Chat reads are now spread as an even daily
+  *budget* (`ANIMICA_STREAM_CHAT_DAILY_READS`, default 2400) across the time remaining until
+  the quota resets, so chat stays responsive from reset to reset instead of dying early. The
+  stream still never polls faster than YouTube's requested `pollingInterval`, and on a hard
+  quota 403 it now waits until the actual reset rather than re-hammering every 30 min.
+  *Sustained 24/7 interactive chat + hourly VOD uploads still ultimately needs a YouTube API
+  quota increase (a one-time request to Google); this makes the default quota go as far as
+  possible.*
+
 ## [8.5.1] - 2026-07-16
 ### Animica Animal — 24/7 livestream now goes live for real (non-consensus)
 The first real YouTube go-live surfaced (and this release fixes) three bugs that preview

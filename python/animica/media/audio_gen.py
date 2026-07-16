@@ -19,7 +19,7 @@ _TIER_AUDIO_MODELS = {
     "elite": "facebook/musicgen-large",
 }
 
-_MODEL_CACHE: dict[str, object] = {}
+_MODEL_CACHE: dict[tuple, object] = {}
 
 
 def resolve_audio_model(tier: str | None) -> str:
@@ -58,34 +58,116 @@ def encode_wav(samples, sample_rate: int) -> bytes:
     return data
 
 
-def _load(model_id: str):
+def _cuda_on(force_cpu: bool) -> bool:
+    if force_cpu:
+        return False
     try:
         import torch
-        from transformers import AutoProcessor, MusicgenForConditionalGeneration
+    except Exception:
+        return False
+    return bool(torch.cuda.is_available()) and \
+        os.environ.get("ANIMICA_AUDIO_FORCE_CPU", "") not in ("1", "true")
+
+
+# Each loader strategy returns a `synth(prompt, max_new) -> (samples_ndarray, sample_rate)`
+# closure or raises. We try them in order because the low-level Auto path
+# (MusicgenForConditionalGeneration.from_pretrained WITHOUT an explicit config) regresses on
+# transformers>=4.44 with "'MusicgenDecoderConfig' object has no attribute 'decoder'" — the
+# Auto config resolves to the decoder sub-config instead of the composite MusicgenConfig.
+
+def _synth_lowlevel(model_id: str, cuda: bool, fp16: bool, explicit_config: bool):
+    import torch
+    from transformers import AutoProcessor, MusicgenForConditionalGeneration
+    # Default fp32 even on CUDA: MusicGen's EnCodec decoder emits silence/NaN in fp16 on
+    # several transformers versions; opt into fp16 with ANIMICA_AUDIO_FP16=1.
+    dtype = torch.float16 if fp16 else torch.float32
+    proc = AutoProcessor.from_pretrained(model_id)
+    kwargs = {"torch_dtype": dtype}
+    if explicit_config:
+        # Force the COMPOSITE config class so from_pretrained can't fall back to the
+        # decoder-only config (the root cause of the 4.44+ 'decoder' AttributeError).
+        from transformers import MusicgenConfig
+        kwargs["config"] = MusicgenConfig.from_pretrained(model_id)
+    model = MusicgenForConditionalGeneration.from_pretrained(model_id, **kwargs)
+    model = model.to("cuda" if cuda else "cpu")
+    model.eval()
+
+    def synth(prompt: str, max_new: int):
+        device = next(model.parameters()).device
+        inputs = proc(text=[prompt], padding=True, return_tensors="pt")
+        inputs = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in inputs.items()}
+        with torch.no_grad():
+            audio = model.generate(**inputs, max_new_tokens=max_new)
+        sr = model.config.audio_encoder.sampling_rate
+        return audio[0, 0].float().cpu().numpy(), int(sr)
+    return synth
+
+
+def _synth_pipeline(model_id: str, cuda: bool, fp16: bool):
+    # The high-level text-to-audio pipeline builds MusicGen's composite model correctly and
+    # is the officially documented entry point, so it sidesteps the low-level config bug.
+    import torch
+    from transformers import pipeline
+    kw: dict = {"device": 0 if cuda else -1}
+    if fp16:
+        kw["torch_dtype"] = torch.float16
+    pipe = pipeline("text-to-audio", model=model_id, **kw)
+
+    def synth(prompt: str, max_new: int):
+        out = pipe(prompt, forward_params={"max_new_tokens": max_new, "do_sample": True})
+        if isinstance(out, list):
+            out = out[0]
+        return out["audio"], int(out["sampling_rate"])
+    return synth
+
+
+# Order: explicit-config low-level (the precise fix, keeps our fp32/EnCodec handling) →
+# pipeline (robust alternative) → plain Auto low-level (original; works where un-regressed).
+_STRATEGIES = ("lowlevel_config", "pipeline", "lowlevel_auto")
+
+
+def _load(model_id: str, force_cpu: bool = False):
+    key = (model_id, force_cpu)
+    if key in _MODEL_CACHE:
+        return _MODEL_CACHE[key]
+    try:
+        import torch  # noqa: F401
+        import transformers  # noqa: F401
     except Exception as e:
         raise MediaBackendUnavailable(f"transformers/torch not installed: {e}") from e
-    if model_id in _MODEL_CACHE:
-        return _MODEL_CACHE[model_id]
-    try:
-        proc = AutoProcessor.from_pretrained(model_id)
-        # Run on the miner's GPU when present — MusicGen on CPU is minutes-slow.
-        # Default to fp32 even on CUDA: MusicGen's EnCodec audio decoder is known
-        # to emit silence/NaN in fp16 on several transformers versions, so fp32 is
-        # the reliable default (still far faster than CPU; musicgen-small ≈ 2.4 GiB
-        # / medium ≈ 6 fit the audio VRAM floor). Opt into fp16 with
-        # ANIMICA_AUDIO_FP16=1 to halve VRAM for the large model on tight cards.
-        cuda = torch.cuda.is_available() and \
-            os.environ.get("ANIMICA_AUDIO_FORCE_CPU", "") not in ("1", "true")
-        fp16 = cuda and os.environ.get("ANIMICA_AUDIO_FP16", "") in ("1", "true")
-        dtype = torch.float16 if fp16 else torch.float32
-        model = MusicgenForConditionalGeneration.from_pretrained(
-            model_id, torch_dtype=dtype)
-        model = model.to("cuda" if cuda else "cpu")
-        model.eval()
-    except Exception as e:
-        raise MediaError(f"failed to load audio model {model_id!r}: {e}") from e
-    _MODEL_CACHE[model_id] = (proc, model)
-    return proc, model
+    cuda = _cuda_on(force_cpu)
+    fp16 = cuda and os.environ.get("ANIMICA_AUDIO_FP16", "") in ("1", "true")
+    errors = []
+    for strat in _STRATEGIES:
+        try:
+            if strat == "lowlevel_config":
+                synth = _synth_lowlevel(model_id, cuda, fp16, explicit_config=True)
+            elif strat == "pipeline":
+                synth = _synth_pipeline(model_id, cuda, fp16)
+            else:
+                synth = _synth_lowlevel(model_id, cuda, fp16, explicit_config=False)
+            _MODEL_CACHE[key] = synth
+            return synth
+        except Exception as e:  # try the next strategy
+            errors.append(f"{strat}: {type(e).__name__}: {e}")
+    raise MediaError(f"failed to load audio model {model_id!r}: " + " | ".join(errors))
+
+
+def _to_wav_array(audio):
+    """Normalize a synth's audio output to what encode_wav expects: 1-D mono, or
+    2-D (samples, channels). The pipeline yields (1, n)/(channels, n); the low-level path
+    yields 1-D already."""
+    import numpy as np
+    a = np.asarray(audio)
+    a = np.squeeze(a)
+    if a.ndim == 2 and a.shape[0] < a.shape[1]:   # (channels, samples) -> (samples, channels)
+        a = a.T
+    return a
+
+
+def _is_gpu_error(e: Exception) -> bool:
+    s = str(e).lower()
+    return isinstance(e, RuntimeError) or "out of memory" in s or "cuda" in s or "cublas" in s
 
 
 def generate_audio(prompt: str, *, tier: str = "standard", seconds: float = 5.0,
@@ -94,48 +176,29 @@ def generate_audio(prompt: str, *, tier: str = "standard", seconds: float = 5.0,
     if not prompt or not prompt.strip():
         raise MediaError("empty prompt")
     model_id = model or resolve_audio_model(tier)
-    proc, mdl = _load(model_id)
-    import torch
-
-    # Place inputs on the model's device (GPU on a miner) so generation actually
-    # runs there, not on CPU.
-    device = next(mdl.parameters()).device
-    inputs = proc(text=[prompt], padding=True, return_tensors="pt")
-    inputs = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in inputs.items()}
     # MusicGen: ~50 tokens/sec of audio at the model's frame rate.
     max_new = max(64, int(seconds * 50))
-
-    def _run() -> tuple:
-        with torch.no_grad():
-            audio = mdl.generate(**inputs, max_new_tokens=max_new)
-        sr = mdl.config.audio_encoder.sampling_rate
-        # .float() so a half-precision (GPU fp16) tensor converts cleanly to WAV.
-        return audio[0, 0].float().cpu().numpy(), sr
-
+    synth = _load(model_id)
     try:
-        samples, sr = _run()
-    except RuntimeError as e:
-        # CUDA OOM (torch.cuda.OutOfMemoryError subclasses RuntimeError) / dtype
-        # issue → reclaim VRAM and retry on CPU (slow but reliable)
-        # so a claimed audio job still produces real audio instead of failing.
-        if device.type == "cuda":
+        samples, sr = synth(prompt, max_new)
+    except Exception as e:
+        # GPU OOM / dtype issue → reclaim VRAM and retry on CPU (slow but reliable) so a
+        # claimed audio job still produces real audio instead of failing.
+        if _cuda_on(force_cpu=False) and _is_gpu_error(e):
             try:
-                mdl_cpu = mdl.to("cpu").float()
-                _MODEL_CACHE[model_id] = (proc, mdl_cpu)
+                import torch
                 torch.cuda.empty_cache()
-                inputs_cpu = {k: (v.to("cpu") if hasattr(v, "to") else v)
-                              for k, v in inputs.items()}
-                with torch.no_grad():
-                    audio = mdl_cpu.generate(**inputs_cpu, max_new_tokens=max_new)
-                sr = mdl_cpu.config.audio_encoder.sampling_rate
-                samples = audio[0, 0].float().cpu().numpy()
+            except Exception:
+                pass
+            try:
+                samples, sr = _load(model_id, force_cpu=True)(prompt, max_new)
             except Exception as e2:
                 raise MediaError(f"audio generation failed (gpu+cpu): {e2}") from e2
         else:
             raise MediaError(f"audio generation failed: {e}") from e
-    except Exception as e:
-        raise MediaError(f"audio generation failed: {e}") from e
 
+    samples = _to_wav_array(samples)
     data = encode_wav(samples, sr)
+    n = samples.shape[0]
     return {"bytes": data, "mime": "audio/wav", "model": model_id, "sha3": sha3_hex(data),
-            "sample_rate": sr, "seconds": round(len(samples) / sr, 2)}
+            "sample_rate": sr, "seconds": round(n / sr, 2)}
