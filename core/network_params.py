@@ -253,23 +253,34 @@ FORK_FOUNDATION_SPLIT = "foundation_split"
 # adversarial review. Retunable via ANIMICA_FORK_STATE_COMMITMENT_HEIGHT.
 FORK_STATE_COMMITMENT = "state_commitment"
 
-# FORK_VPN_RELAY_REWARDS (8.0.1) — pay dVPN relay/exit operators (node operators)
-# directly from blocks. From H, each block MAY emit up to VPN_RELAY_REWARD_CAP (50 ANM,
-# halving on the subsidy schedule) to relay operators, split proportionally by their
-# on-chain-anchored, dual-attested bandwidth contribution for the settled epoch.
+# FORK_VPN_RELAY_REWARDS (8.0.1, REALIZED in 9.0.0 as IOU settlement) — from H,
+# each block MAY settle service IOUs (dVPN relay/exit, AICF inference, media,
+# hosting — any operator-issued IOU ledger) with REAL per-block payouts, capped
+# at VPN_RELAY_REWARD_CAP (50 ANM, halving exactly when the block subsidy
+# halves) and CARVED from the miner subsidy (emission-conserving: miner +
+# settlement == the pre-fork miner output; never minted above the subsidy).
 #
-# SAFETY — this is a real-ANM emission whose *input* (bandwidth) is measured off-chain,
-# so a naive version is a Sybil/inflation MINTING surface (self-dealt receipts → minted
-# ANM). It therefore ships SELF-GATING + INERT, exactly like FORK_STATE_COMMITMENT:
-# the reward is distributed ONLY from a sealed, on-chain relay-contribution root for the
-# epoch. In 8.0.1 no such root is ever sealed (the on-chain relay-registration + usage-
-# anchoring mechanism is designed but NOT enabled), so at/after H the fork emits ZERO
-# relay outputs and consensus behaviour is byte-identical to no-fork. It becomes live
-# ONLY after: (1) the on-chain contribution mechanism ships, (2) an adversarial review
-# clears the Sybil/inflation vectors, and (3) a coordinated re-gate. Emission-conserving
-# (carved from the subsidy, never minted above it) and forward-only; grandfathered below
-# H. Retunable via ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT.
+# MECHANISM (9.0.0, consensus/iou_settlement.py): a "settlement anchor" is an
+# ordinary signed TRANSFER from the code-committed settlement authority (the
+# foundation treasury account) carrying ANMSETL1 + a strict JSON distribution
+# in TxTransfer.data. A block containing valid anchors pays the anchored
+# entries in THAT block (cap-scaled). Pre-9.0.0 nodes accept the anchor tx as
+# a plain transfer, so inclusion itself never splits the chain.
+#
+# SAFETY — the Sybil/inflation surface of the 8.0.1 design is closed by
+# construction: consensus never measures off-chain contribution; it only
+# rate-limits (cap) and executes distributions signed by the code-committed
+# authority, which is settling ITS OWN off-chain IOU liabilities. SELF-GATING:
+# with no anchors posted, behaviour at/after H is byte-identical to 8.0.x, so
+# the operator arms settlement only after network adoption (the first anchor
+# is the activation switch, exactly like FORK_STATE_COMMITMENT's sealed roots).
+# Forward-only; grandfathered below H. NON-UPGRADED nodes credit the full
+# subsidy to the miner once anchors flow — operators MUST run >= 9.0.0 before
+# the first anchor posts. Retunable via ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT.
 FORK_VPN_RELAY_REWARDS = "vpn_relay_rewards"
+
+# Readable 9.0.0 alias (same fork key, same height, same env override).
+FORK_IOU_SETTLEMENT = FORK_VPN_RELAY_REWARDS
 
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).

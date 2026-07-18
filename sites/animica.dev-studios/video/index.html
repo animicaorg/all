@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Studio — GPU video tools, no key · Animica</title>
+<meta name="description" content="Upscale to 4K, smooth motion to 60 fps, auto-subtitle, remove backgrounds and cut vertical shorts — free GPU video tools processed by the Animica miner network. No key, no signup.">
+<meta name="theme-color" content="#f6f3ec">
+<link rel="canonical" href="https://animica.dev/video/">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="icon" href="/animica-mark.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="animica.dev">
+<meta property="og:title" content="Video Studio — your GPU fleet for video">
+<meta property="og:description" content="Upscale, smooth to 60 fps, subtitle, remove backgrounds, cut shorts. Processed by GPU miners, no key needed.">
+<meta property="og:url" content="https://animica.dev/video/">
+<meta property="og:image" content="https://animica.dev/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Video Studio — your GPU fleet for video">
+<meta name="twitter:description" content="Upscale, smooth to 60 fps, subtitle, remove backgrounds, cut shorts. Processed by GPU miners, no key needed.">
+<meta name="twitter:image" content="https://animica.dev/og.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication","name":"Animica Video Studio","url":"https://animica.dev/video/","applicationCategory":"MultimediaApplication","operatingSystem":"Any","description":"Free GPU video tools — upscaling, frame interpolation, subtitles, background removal and auto-shorts — processed by the Animica GPU-miner network.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"provider":{"@type":"Organization","name":"Animica","url":"https://animica.dev/"}}
+</script>
+<style>
+  :root{
+    --bg:#f6f3ec; --paper:#fbf9f3; --card:#ffffff; --ink:#1c1a17; --ink-2:#3a352d;
+    --muted:#6f685c; --muted-2:#938b7c; --line:#e6dfd0; --line-2:#d8cfbc;
+    --clay:#c8613f; --clay-ink:#a94e30; --blue:#2E63FF; --gold:#b9892f; --ok:#3f8f5b;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--clay-ink);text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3,h4{font-family:"Fraunces","Georgia",serif;font-weight:500;line-height:1.08;letter-spacing:-.01em;margin:0}
+  code,kbd,pre,.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+  :focus-visible{outline:2px solid var(--clay);outline-offset:3px;border-radius:6px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+
+  header{position:sticky;top:0;z-index:20;background:rgba(246,243,236,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;gap:14px;height:64px}
+  .brand{display:flex;align-items:center;gap:11px;font-family:"Fraunces",serif;font-weight:600;font-size:20px;color:var(--ink)}
+  .nav .links{display:flex;gap:22px;margin-left:12px}
+  .nav .links a{color:var(--ink-2);font-size:14.5px}
+  .nav .links a:hover{color:var(--clay-ink);text-decoration:none}
+  .nav .links a[aria-current]{color:var(--clay-ink);font-weight:600}
+  .nav .sp{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;color:var(--clay-ink);
+    background:rgba(200,97,63,.09);border:1px solid rgba(200,97,63,.25);padding:6px 12px;border-radius:999px}
+  .pill .d{width:7px;height:7px;border-radius:50%;background:var(--clay);box-shadow:0 0 0 3px rgba(200,97,63,.18)}
+  @media(max-width:760px){ .nav .links{display:none} }
+
+  .hero{padding:58px 0 10px}
+  .eyebrow{font-family:"JetBrains Mono";font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--clay-ink);margin-bottom:18px}
+  h1.title{font-size:clamp(36px,6.4vw,66px);font-weight:400;letter-spacing:-.02em}
+  h1.title em{font-style:italic;color:var(--clay-ink)}
+  .lede{font-size:clamp(16px,2.2vw,20px);color:var(--ink-2);max-width:660px;margin-top:18px}
+  .assur{display:flex;gap:20px;flex-wrap:wrap;margin-top:20px;color:var(--muted);font-size:13px;font-family:"JetBrains Mono"}
+  .assur span{display:inline-flex;align-items:center;gap:7px}
+  .assur b{color:var(--ink-2);font-weight:500}
+
+  section{padding:30px 0}
+  .kicker{font-family:"JetBrains Mono";font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--clay-ink);margin-bottom:12px}
+  h2{font-size:clamp(24px,3.6vw,34px);font-weight:400}
+  h2 .it{font-style:italic}
+  .sub{color:var(--muted);max-width:620px;margin:10px 0 0}
+  .btn{display:inline-flex;align-items:center;gap:8px;font-weight:500;font-size:15px;padding:12px 20px;border-radius:12px;cursor:pointer;border:1px solid transparent;font-family:inherit}
+  .btn.primary{background:var(--ink);color:var(--bg)}
+  .btn.primary:hover{background:var(--clay-ink);text-decoration:none;color:#fff}
+  .btn.ghost{background:transparent;border-color:var(--line-2);color:var(--ink)}
+  .btn.ghost:hover{border-color:var(--clay);color:var(--clay-ink);text-decoration:none}
+
+  /* studio panel */
+  .studio{margin-top:20px;background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:0 18px 50px -32px rgba(40,30,15,.45);overflow:hidden}
+  .studio-tabs{display:flex;gap:4px;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--paper);flex-wrap:wrap}
+  .stab{font:inherit;font-size:13.5px;font-weight:500;color:var(--muted);background:transparent;border:1px solid transparent;border-radius:10px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+  .stab:hover{color:var(--ink)}
+  .stab.active{color:var(--ink);background:var(--card);border-color:var(--line-2);box-shadow:0 1px 0 rgba(40,30,15,.04)}
+  .stab .em{font-size:15px}
+  .stab .cap{width:6px;height:6px;border-radius:50%;background:transparent;display:inline-block;margin-left:1px;transition:background .2s}
+  .stab.cap-on .cap{background:var(--ok)}
+  .stab.cap-off .cap{background:#cd9a3a}
+  .studio-body{padding:20px}
+  .studio-lede{font-size:13.5px;color:var(--muted);margin:0 0 12px}
+  .avail{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:8px;margin:0 0 14px;min-height:18px;line-height:1.4}
+  .avail .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:var(--muted-2);transition:background .2s,box-shadow .2s}
+  .avail.on .dot{background:var(--ok);box-shadow:0 0 0 3px rgba(63,143,91,.16)}
+  .avail.off .dot{background:#cd9a3a;box-shadow:0 0 0 3px rgba(205,154,58,.14)}
+
+  .dropzone{border:1.5px dashed var(--line-2);border-radius:14px;padding:26px 16px;text-align:center;color:var(--muted);font-size:13.5px;cursor:pointer;background:var(--paper);transition:border-color .15s,background .15s}
+  .dropzone:hover,.dropzone.drag{border-color:var(--clay);background:rgba(200,97,63,.05);color:var(--ink-2)}
+  .dropzone b{color:var(--clay-ink)}
+  .dropzone .dz-sub{display:block;margin-top:5px;font-family:"JetBrains Mono";font-size:11.5px;color:var(--muted-2)}
+  .filecard{display:none;background:var(--paper);border:1px solid var(--line-2);border-radius:14px;padding:14px 16px;gap:14px;align-items:center}
+  .filecard.show{display:flex}
+  .filecard .fi{width:42px;height:42px;border-radius:10px;background:rgba(200,97,63,.1);display:grid;place-items:center;font-size:19px;flex:0 0 auto}
+  .filecard .fmain{flex:1;min-width:0}
+  .filecard .fname{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .filecard .fmeta{font-family:"JetBrains Mono";font-size:11.5px;color:var(--muted)}
+  .fc-st{font-family:"JetBrains Mono";font-size:11.5px;color:var(--blue);margin-top:3px}
+  .fc-st.ok{color:var(--ok)} .fc-st.err{color:#b3492f}
+  .up-prog{height:5px;border-radius:99px;background:var(--line);overflow:hidden;margin-top:7px;display:none}
+  .up-bar{height:100%;width:0%;background:linear-gradient(90deg,var(--blue),#7aa0ff);border-radius:99px;transition:width .25s}
+  .fc-rm{flex:0 0 auto;font:inherit;font-size:12px;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:8px;padding:5px 10px;cursor:pointer}
+  .fc-rm:hover{color:#b3492f;border-color:#b3492f}
+  .durwarn{display:none;margin-top:10px;font-size:12.5px;color:#8a5a18;background:rgba(205,154,58,.1);border:1px solid rgba(205,154,58,.3);border-radius:10px;padding:8px 11px}
+
+  .opt-row{display:none;gap:14px;flex-wrap:wrap;align-items:center;margin-top:14px;font-family:"JetBrains Mono";font-size:12px;color:var(--muted)}
+  .opt-row label{display:inline-flex;align-items:center;gap:6px}
+  .opt-row select,.opt-row input[type=number]{font:inherit;font-size:12px;background:var(--paper);border:1px solid var(--line-2);border-radius:8px;padding:5px 8px;color:var(--ink-2)}
+  .opt-row input[type=checkbox]{accent-color:var(--clay)}
+  .gorow{display:flex;gap:12px;align-items:center;margin-top:16px;flex-wrap:wrap}
+  .studio-go{background:var(--clay);color:#fff;border:0;border-radius:12px;padding:13px 22px;font-weight:600;cursor:pointer;font-family:inherit;font-size:15px}
+  .studio-go:hover{background:var(--clay-ink)}
+  .studio-go:disabled{opacity:.5;cursor:default}
+  .gonote{font-size:12.5px;color:var(--muted-2);font-family:"JetBrains Mono"}
+
+  .gen-out{margin-top:16px;display:none}
+  .gen-out.show{display:block}
+  .gen-status{font-size:13.5px;color:var(--ink-2);display:flex;align-items:center;gap:9px;padding:2px 0}
+  .gen-status .spin{width:15px;height:15px;border:2px solid var(--line-2);border-top-color:var(--clay);border-radius:50%;animation:spin 1s linear infinite;flex:0 0 auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .gen-progress{height:9px;border-radius:99px;background:var(--line);overflow:hidden;margin:2px 0 11px;display:none}
+  .gen-progress.show{display:block}
+  .gen-bar{height:100%;width:0%;border-radius:99px;background:linear-gradient(90deg,var(--clay),#e6a765);transition:width .5s cubic-bezier(.22,.8,.34,1);position:relative}
+  .gen-bar.busy::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);background-size:220% 100%;animation:genshine 1.3s linear infinite}
+  .gen-progress.wait .gen-bar{background:repeating-linear-gradient(45deg,var(--clay) 0 11px,#dd9160 11px 22px);background-size:31px 31px;animation:genstripes .9s linear infinite}
+  .gen-progress.done .gen-bar{background:linear-gradient(90deg,var(--ok),#5cbd7e)}
+  .gen-progress.err .gen-bar{background:linear-gradient(90deg,#c0553e,#dd9160)}
+  @keyframes genshine{0%{background-position:220% 0}100%{background-position:-220% 0}}
+  @keyframes genstripes{0%{background-position:0 0}100%{background-position:31px 0}}
+  @media(prefers-reduced-motion:reduce){.gen-bar,.gen-bar.busy::after,.gen-progress.wait .gen-bar,.gen-status .spin{animation:none;transition:none}}
+  .gen-media{width:100%;border-radius:14px;border:1px solid var(--line);display:block;background:var(--paper)}
+  .gen-rcpt{margin-top:9px;font-family:"JetBrains Mono";font-size:11px;color:var(--ok);display:none;align-items:center;gap:6px}
+  .dlrow{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:12px}
+  .dlbtn{display:inline-flex;align-items:center;gap:8px;background:var(--ink);color:var(--bg);border-radius:12px;padding:12px 20px;font-weight:600;font-size:15px}
+  .dlbtn:hover{background:var(--clay-ink);color:#fff;text-decoration:none}
+  .dlmeta{font-family:"JetBrains Mono";font-size:11.5px;color:var(--muted)}
+  .zipcard{border:1px solid var(--line-2);border-radius:14px;background:var(--paper);padding:16px 18px}
+  .zipcard h4{margin:0 0 4px;font-weight:600;font-size:16px}
+  .zipcard ul{margin:8px 0 0;padding-left:20px;color:var(--ink-2);font-size:13.5px}
+
+  .nomine{margin-top:14px;border:1px solid var(--line-2);border-radius:14px;background:linear-gradient(180deg,var(--paper),var(--card));padding:18px;display:none}
+  .nomine h4{margin:0 0 6px;font-weight:600;font-size:16px;color:var(--ink)}
+  .nomine p{margin:0 0 12px;font-size:13.5px;color:var(--ink-2)}
+  .nomine .cmd{display:flex;align-items:center;gap:10px;background:#141b2e;border-radius:11px;padding:11px 14px;overflow:auto}
+  .nomine .cmd code{color:#cfe;font-size:13px;white-space:nowrap}
+  .nomine .cmd button{margin-left:auto;flex:0 0 auto;font:inherit;font-size:12px;background:rgba(255,255,255,.1);color:#cfe;border:0;border-radius:7px;padding:5px 10px;cursor:pointer}
+  .nomine .lnks{margin-top:11px;font-size:12.5px;color:var(--muted);font-family:"JetBrains Mono"}
+
+  /* filmstrip — the how-it-works signature */
+  .film{margin-top:24px;display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line-2);border-radius:18px;overflow:hidden;background:var(--card)}
+  .frame{position:relative;padding:36px 22px 40px;border-right:1px solid var(--line-2)}
+  .frame:last-child{border-right:0}
+  .frame::before,.frame::after{content:"";position:absolute;left:12px;right:12px;height:8px;border-radius:2px;opacity:.75;
+    background-image:repeating-linear-gradient(90deg,var(--line-2) 0 10px,transparent 10px 24px)}
+  .frame::before{top:11px}
+  .frame::after{bottom:11px}
+  .frame .fno{font-family:"JetBrains Mono";font-size:11px;letter-spacing:.14em;color:var(--clay-ink);text-transform:uppercase}
+  .frame h3{font-size:18px;margin:8px 0 6px}
+  .frame p{color:var(--muted);font-size:13.5px;margin:0}
+  @media(max-width:760px){
+    .film{grid-template-columns:1fr}
+    .frame{border-right:0;border-bottom:1px solid var(--line-2)}
+    .frame:last-child{border-bottom:0}
+  }
+  .queue-note{margin-top:14px;font-size:13px;color:var(--muted);font-family:"JetBrains Mono"}
+
+  /* run-a-miner card */
+  .earn{margin-top:20px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px;display:grid;grid-template-columns:1.25fr 1fr;gap:22px}
+  .earn h3{font-size:22px;margin:0 0 8px}
+  .earn p{color:var(--ink-2);font-size:14.5px;margin:0}
+  .earn .rates{display:flex;flex-direction:column;gap:6px;justify-content:center}
+  .earn .rate{display:flex;justify-content:space-between;gap:12px;font-family:"JetBrains Mono";font-size:12px;color:var(--muted);border-bottom:1px dashed var(--line);padding:4px 0}
+  .earn .rate b{color:var(--gold);font-weight:500;white-space:nowrap}
+  .earn .cmdwrap{grid-column:1/-1}
+  .earn .cmd{display:flex;align-items:center;gap:10px;background:#141b2e;border-radius:11px;padding:11px 14px;overflow:auto}
+  .earn .cmd code{color:#cfe;font-size:13px;white-space:nowrap}
+  .earn .cmd button{margin-left:auto;flex:0 0 auto;font:inherit;font-size:12px;background:rgba(255,255,255,.1);color:#cfe;border:0;border-radius:7px;padding:5px 10px;cursor:pointer}
+  .earn .fine{margin-top:9px;font-size:12px;color:var(--muted-2)}
+  @media(max-width:760px){ .earn{grid-template-columns:1fr} }
+
+  footer{border-top:1px solid var(--line);margin-top:36px;padding:30px 0 70px;color:var(--muted-2);font-size:13px}
+  footer .wrap{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  footer a{color:var(--muted)}
+  .mk{flex:0 0 auto}
+</style>
+</head>
+<body>
+
+<header><div class="wrap"><nav class="nav">
+  <svg class="mk" width="27" height="27" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="128" cy="128" r="112" fill="#2E63FF"/><circle cx="128" cy="128" r="88" fill="#fff"/><path d="M128 68 L84 192 H172 L128 68 Z" fill="#2E63FF"/><rect x="104" y="160" width="48" height="16" rx="8" fill="#2E63FF"/></svg>
+  <a class="brand" href="/">Animica</a>
+  <div class="links">
+    <a href="/video/" aria-current="page">Video</a>
+    <a href="/audio/">Audio</a>
+    <a href="/render/">Render</a>
+    <a href="/">animica.dev</a>
+  </div>
+  <span class="sp"></span>
+  <span class="pill"><span class="d"></span> Free · no API key</span>
+</nav></div></header>
+
+<main>
+<div class="wrap">
+
+  <section class="hero">
+    <div class="eyebrow">GPU Studios · Video</div>
+    <h1 class="title">Your GPU fleet<br>for <em>video.</em></h1>
+    <p class="lede">Upscale to 4K, smooth motion to 60&nbsp;fps, subtitle in any language, key out backgrounds and cut vertical shorts. Every job runs on an independent GPU miner and comes back content-hashed — no key, no signup, no watermark.</p>
+    <div class="assur">
+      <span><b>◦</b> No key, no signup</span>
+      <span><b>◦</b> Processed by GPU miners</span>
+      <span><b>◦</b> Inputs wiped after delivery</span>
+      <span><b>◦</b> Jobs queue — never dropped</span>
+    </div>
+  </section>
+
+  <section id="studio" style="padding-top:8px">
+    <div class="studio">
+      <div class="studio-tabs" role="tablist" aria-label="Video tools">
+        <button class="stab active" data-tab="upscale" role="tab" aria-selected="true"><span class="em">⬆️</span> Upscale<span class="cap"></span></button>
+        <button class="stab" data-tab="smooth" role="tab" aria-selected="false"><span class="em">〰️</span> Smooth 60 fps<span class="cap"></span></button>
+        <button class="stab" data-tab="subs" role="tab" aria-selected="false"><span class="em">💬</span> Subtitles<span class="cap"></span></button>
+        <button class="stab" data-tab="bg" role="tab" aria-selected="false"><span class="em">✂️</span> Remove background<span class="cap"></span></button>
+        <button class="stab" data-tab="shorts" role="tab" aria-selected="false"><span class="em">📱</span> Auto-shorts<span class="cap"></span></button>
+      </div>
+      <div class="studio-body">
+        <p class="studio-lede" id="lede">Upscale to 2× or 4× with Real-ESRGAN — sharper, de-blocked frames, capped at 4K output. Clips up to 10 minutes.</p>
+        <div class="avail" id="avail" aria-live="polite"></div>
+
+        <div class="dropzone" id="dz" tabindex="0" role="button" aria-label="Upload a video">
+          <b>Click or drop a video</b> — MP4, MOV, MKV or WebM.
+          <span class="dz-sub">up to 512 MB · streams straight to the queue, SHA-3 hashed on arrival</span>
+        </div>
+        <input id="fileIn" type="file" accept="video/*,.mkv,.mov,.mp4,.webm,.avi,.m4v" style="display:none">
+        <div class="filecard" id="fCard">
+          <span class="fi">🎬</span>
+          <span class="fmain">
+            <span class="fname" id="fName"></span>
+            <span class="fmeta" id="fMeta"></span>
+            <span class="fc-st" id="fSt"></span>
+            <span class="up-prog" id="fProg"><span class="up-bar" id="fBar"></span></span>
+          </span>
+          <button class="fc-rm" id="fRm" type="button">Remove</button>
+        </div>
+        <div class="durwarn" id="durWarn"></div>
+
+        <div class="opt-row" id="optUpscale">
+          <label>Scale
+            <select id="upScale"><option value="2" selected>2×</option><option value="4">4×</option></select>
+          </label>
+          <label>Model
+            <select id="upModel"><option value="fast" selected>fast</option><option value="quality">quality</option></select>
+          </label>
+          <span>output capped at 3840 × 2160</span>
+        </div>
+        <div class="opt-row" id="optSmooth">
+          <label>Frames
+            <select id="smFactor"><option value="2" selected>2× (30 → 60 fps)</option><option value="4">4×</option></select>
+          </label>
+          <span>output capped at 120 fps</span>
+        </div>
+        <div class="opt-row" id="optSubs">
+          <label>Language
+            <select id="subLang">
+              <option value="auto" selected>auto-detect</option>
+              <option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option>
+              <option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option>
+              <option value="nl">Dutch</option><option value="pl">Polish</option><option value="sv">Swedish</option>
+              <option value="tr">Turkish</option><option value="ru">Russian</option><option value="uk">Ukrainian</option>
+              <option value="ar">Arabic</option><option value="hi">Hindi</option><option value="id">Indonesian</option>
+              <option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option>
+              <option value="vi">Vietnamese</option>
+            </select>
+          </label>
+          <label><input type="checkbox" id="subBurn" checked> burn subtitles into the video</label>
+        </div>
+        <div class="opt-row" id="optBg">
+          <label>Background
+            <select id="bgMode"><option value="green" selected>green screen (.mp4)</option><option value="alpha">transparent alpha (.webm)</option></select>
+          </label>
+        </div>
+        <div class="opt-row" id="optShorts">
+          <label>Clips
+            <select id="shCount"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+          </label>
+          <label>Length
+            <input id="shDur" type="number" min="10" max="60" step="5" value="30"> s
+          </label>
+          <label>Aspect
+            <select id="shAspect"><option value="9:16" selected>9:16 vertical</option><option value="1:1">1:1 square</option><option value="16:9">16:9 wide</option></select>
+          </label>
+          <label><input type="checkbox" id="shSubs" checked> subtitles</label>
+        </div>
+
+        <div class="gorow">
+          <button class="studio-go" id="go">Upscale video</button>
+          <span class="gonote">free · rendered by the first capable GPU miner</span>
+        </div>
+
+        <div class="gen-out" id="out">
+          <div class="gen-progress" id="prog" role="progressbar" aria-label="Job progress" aria-valuemin="0" aria-valuemax="100"><div class="gen-bar" id="bar"></div></div>
+          <div class="gen-status" id="status" aria-live="polite"></div>
+          <div id="mediaWrap" style="margin-top:12px"></div>
+          <div class="gen-rcpt" id="rcpt"></div>
+        </div>
+
+        <div class="nomine" id="noMiner">
+          <h4>No miner online — jobs wait in the queue 🛰️</h4>
+          <p>No model runs on Animica’s servers; this page dispatches to the GPU-miner network. A job you submit is <b>saved and processes automatically</b> the moment a miner connects — nothing is lost. Have a spare GPU? Serve these jobs and earn ANM — IOUs settled on-chain from the block reward (never more than 20% of a block) from Animica 9.0.0:</p>
+          <div class="cmd"><code id="minerCmd">pip install -U animica &amp;&amp; animica up</code><button id="copyCmd" type="button">Copy</button></div>
+          <div class="lnks">Docs: <a href="/docs">animica.dev/docs</a> · Your job id: <span id="noMinerJob" class="mono">—</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">How it works</div>
+    <h2>Three frames. <span class="it">No render queue of your own.</span></h2>
+    <div class="film">
+      <div class="frame">
+        <span class="fno">Take 01 · Upload</span>
+        <h3>Drop a video</h3>
+        <p>It streams straight into the queue — up to 512&nbsp;MB, SHA-3 hashed on arrival. Your file goes only to the miner that claims the job, then it’s wiped.</p>
+      </div>
+      <div class="frame">
+        <span class="fno">Take 02 · Render</span>
+        <h3>A GPU miner picks it up</h3>
+        <p>The first capable miner claims the job and streams real progress back. If one fails, this page automatically re-queues to another — up to three fresh GPUs.</p>
+      </div>
+      <div class="frame">
+        <span class="fno">Take 03 · Download</span>
+        <h3>Preview and keep it</h3>
+        <p>Watch the result right here, then download the file. Subtitle and shorts jobs arrive as a zip with everything inside.</p>
+      </div>
+    </div>
+    <p class="queue-note">Honest queue: if no miner is online your job simply waits and goes through eventually — this page remembers it even if you close the tab.</p>
+  </section>
+
+  <section>
+    <div class="kicker">The other side of the queue</div>
+    <div class="earn">
+      <div>
+        <h3>Run a miner, earn ANM.</h3>
+        <p>Every job on this page is rendered by an independent GPU. Point yours at the queue and it accrues ANM per finished job — IOUs settled on-chain from the block reward, never more than 20% of each block, starting with Animica&nbsp;9.0.0.</p>
+      </div>
+      <div class="rates" aria-label="Reward per job kind">
+        <span class="rate">upscale <b>3 ANM</b></span>
+        <span class="rate">smooth 60 fps <b>3 ANM</b></span>
+        <span class="rate">remove background <b>3 ANM</b></span>
+        <span class="rate">auto-shorts <b>2 ANM</b></span>
+        <span class="rate">subtitles <b>1 ANM</b></span>
+      </div>
+      <div class="cmdwrap">
+        <div class="cmd"><code id="earnCmd">pip install -U animica &amp;&amp; animica up</code><button id="earnCopy" type="button">Copy</button></div>
+        <p class="fine">One command: node + GPU miner + media worker. Also serves the <a href="/audio/">Audio Studio</a> and the <a href="/render/">Render Farm</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:6px">
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <a class="btn ghost" href="/audio/">Audio Studio →</a>
+      <a class="btn ghost" href="/render/">Render Farm →</a>
+      <a class="btn ghost" href="/">Everything else on animica.dev</a>
+    </div>
+  </section>
+
+</div>
+</main>
+
+<footer><div class="wrap">
+  <svg class="mk" width="22" height="22" viewBox="0 0 256 256" aria-hidden="true"><circle cx="128" cy="128" r="112" fill="#2E63FF"/><circle cx="128" cy="128" r="88" fill="#fbf9f3"/><path d="M128 68 L84 192 H172 L128 68 Z" fill="#2E63FF"/><rect x="104" y="160" width="48" height="16" rx="8" fill="#2E63FF"/></svg>
+  <span>Animica · GPU Studios on a post-quantum chain</span>
+  <a href="/llms.txt">llms.txt</a><a href="/openapi.json">OpenAPI</a>
+  <a href="https://animica.org">animica.org</a><a href="https://github.com/animicaorg/all">GitHub</a>
+  <a href="https://nonkyc.io/market/ANM_USDT" target="_blank" rel="noopener">Buy ANM</a>
+</div></footer>
+
+<script>
+(function(){
+'use strict';
+/* Animica Video Studio — dispatch-only frontend for the GPU-miner media queue.
+   Contract: Animica 9.0.0 GPU Studios. No model ever runs on this server. */
+var API_UPLOADS='/api/mkt/v1/media/uploads',
+    API_JOBS='/api/mkt/v1/media/jobs',
+    API_CAPS='/api/mkt/v1/media/capabilities';
+var LS_KEY='anmVideoJob', MAX_CYCLES=3, CAP_BYTES=512*1024*1024;
+
+function $(id){return document.getElementById(id);}
+var els={
+  tabs:document.querySelectorAll('.stab'), lede:$('lede'), avail:$('avail'), go:$('go'),
+  out:$('out'), status:$('status'), mediaWrap:$('mediaWrap'), rcpt:$('rcpt'),
+  prog:$('prog'), bar:$('bar'),
+  noMiner:$('noMiner'), noMinerJob:$('noMinerJob'), minerCmd:$('minerCmd'), copyCmd:$('copyCmd')
+};
+
+var TABS={
+  upscale:{kind:'video_upscale',noun:'upscaling',go:'Upscale video',opt:'optUpscale',maxDur:600,expect:150000,
+    lede:'Upscale to 2× or 4× with Real-ESRGAN — sharper, de-blocked frames, capped at 4K output. Clips up to 10 minutes.'},
+  smooth:{kind:'video_interpolate',noun:'frame interpolation',go:'Smooth to 60 fps',opt:'optSmooth',maxDur:600,expect:150000,
+    lede:'RIFE frame interpolation: 2× or 4× more frames for silky motion, up to 120 fps out. Clips up to 10 minutes.'},
+  subs:{kind:'video_subtitles',noun:'subtitling',go:'Generate subtitles',opt:'optSubs',maxDur:1800,expect:120000,
+    lede:'Whisper transcribes and times your dialogue. You get the subtitled video, the .srt track and a plain transcript. Up to 30 minutes.',
+    zip:['your video with the subtitle track (.mp4)','the timed subtitles (.srt)','a plain-text transcript (.txt)']},
+  bg:{kind:'video_bgremove',noun:'background removal',go:'Remove background',opt:'optBg',maxDur:300,expect:150000,
+    lede:'Person segmentation removes the background — solid green for editing, or a transparent-alpha .webm. Clips up to 5 minutes.'},
+  shorts:{kind:'video_shorts',noun:'auto-shorts',go:'Cut shorts',opt:'optShorts',maxDur:3600,expect:180000,
+    lede:'Scene detection finds the strongest moments and cuts clips, subtitled and ready to post. Source up to 60 minutes.',
+    zip:['up to 5 ready-to-post clips (.mp4), subtitled if selected']}
+};
+var KIND2TAB={}; Object.keys(TABS).forEach(function(t){KIND2TAB[TABS[t].kind]=t;});
+var tab='upscale', polling=null, jobActive=false;
+
+/* ---------- tiny utils ---------- */
+function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function clamp(v,lo,hi){v=+v;if(!isFinite(v))v=lo;return Math.min(hi,Math.max(lo,v));}
+function human(n){if(n>=1073741824)return (n/1073741824).toFixed(2)+' GB';if(n>=1048576)return (n/1048576).toFixed(1)+' MB';if(n>=1024)return Math.round(n/1024)+' KB';return n+' B';}
+function fmtDur(s){s=Math.round(s);var m=Math.floor(s/60),r=s%60;return m?(m+' min '+(r?r+' s':'')).trim():r+' s';}
+function show(el){if(!el)return;el.style.display='';if(el.classList)el.classList.add('show');}
+function hide(el){if(!el)return;if(el.classList)el.classList.remove('show');el.style.display='none';}
+function statusLine(html,spin){els.status.innerHTML=(spin?'<span class="spin"></span>':'')+html;}
+function freeGo(){els.go.disabled=false;}
+function clearSaved(){try{localStorage.removeItem(LS_KEY);}catch(e){}}
+function stopPoll(){if(polling){clearTimeout(polling);polling=null;}}
+/* iOS Safari won't load <video> from a big base64 data: URI — use a Blob URL. */
+var _lastObjUrl=null;
+function b64ToUrl(b64,mime){
+  try{
+    var bin=atob(b64),len=bin.length,buf=new Uint8Array(len);
+    for(var i=0;i<len;i++)buf[i]=bin.charCodeAt(i);
+    var url=URL.createObjectURL(new Blob([buf],{type:mime||'application/octet-stream'}));
+    if(_lastObjUrl){try{URL.revokeObjectURL(_lastObjUrl);}catch(e){}}
+    _lastObjUrl=url;return url;
+  }catch(e){return 'data:'+(mime||'application/octet-stream')+';base64,'+b64;}
+}
+function extOf(mime){
+  var m={'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/mpeg':'mp3','audio/mp3':'mp3',
+    'audio/wav':'wav','audio/x-wav':'wav','application/zip':'zip','image/png':'png','image/jpeg':'jpg'};
+  return m[mime]||((mime||'').split('/')[1]||'bin');
+}
+/* Collapse a raw miner error (CUDA stacks etc.) into one clean sentence. */
+function friendlyErr(e){
+  var s=String(e||'').toLowerCase();
+  if(s.indexOf('out of memory')>=0||s.indexOf('cuda')>=0||s.indexOf('oom')>=0||s.indexOf('memory')>=0)
+    return 'A GPU provider ran out of memory on this clip. Try again (or a shorter/smaller clip) — it may land on a provider with more free VRAM.';
+  if(s.indexOf('load')>=0&&s.indexOf('model')>=0)
+    return 'A GPU provider couldn’t load the model. Please try again in a moment.';
+  if(s.indexOf('duration')>=0||s.indexOf('too long')>=0)
+    return 'The clip is longer than this tool accepts — trim it and try again.';
+  if(s.indexOf('upload')>=0&&(s.indexOf('not found')>=0||s.indexOf('expired')>=0||s.indexOf('missing')>=0))
+    return 'Your upload is no longer on the server (uploads expire after a few hours) — add the file again.';
+  if(!e) return 'The job didn’t complete — please try again.';
+  return String(e).split('\n')[0].slice(0,160)+' — please try again.';
+}
+
+/* ---------- progress bar (real progressPct with phase-based fallback) ---------- */
+var bar={target:0,shown:0,timer:null,phase:'idle',renderStart:0,expected:120000,hideT:null,real:null};
+function barSetWidth(w){if(els.bar){els.bar.style.width=w.toFixed(1)+'%';els.prog.setAttribute('aria-valuenow',Math.round(w));}}
+function barTick(){
+  if(bar.phase==='render'){
+    if(bar.real!=null){bar.target=Math.max(bar.target,Math.min(99,bar.real));}
+    else{var t=Date.now()-bar.renderStart;var frac=1-Math.exp(-t/(bar.expected*0.55));bar.target=15+frac*77;}
+  }
+  bar.shown+=(bar.target-bar.shown)*0.16;
+  if(Math.abs(bar.target-bar.shown)<0.2)bar.shown=bar.target;
+  barSetWidth(bar.shown);
+  if(bar.phase==='done'&&bar.shown>=99.4){barSetWidth(100);bar.timer=null;return;}
+  bar.timer=setTimeout(barTick,110);
+}
+function barRun(){if(!bar.timer)barTick();}
+function barPhase(phase,kind){
+  if(bar.hideT){clearTimeout(bar.hideT);bar.hideT=null;}
+  els.prog.classList.remove('wait','done','err');els.bar.classList.remove('busy');
+  if(phase==='submit'){bar.target=Math.max(bar.target,8);}
+  else if(phase==='wait'){els.prog.classList.add('wait');bar.target=Math.max(bar.target,14);bar.renderStart=0;}
+  else if(phase==='render'){els.bar.classList.add('busy');
+    if(!bar.renderStart){bar.renderStart=Date.now();var tb=KIND2TAB[kind];bar.expected=(tb&&TABS[tb].expect)||120000;}}
+  else if(phase==='done'){els.prog.classList.add('done');bar.target=100;}
+  else if(phase==='err'){els.prog.classList.add('err');}
+  bar.phase=phase;barRun();
+}
+function barBegin(){if(bar.hideT){clearTimeout(bar.hideT);bar.hideT=null;}if(bar.timer){clearTimeout(bar.timer);bar.timer=null;}
+  bar.target=0;bar.shown=0;bar.renderStart=0;bar.phase='idle';bar.real=null;
+  els.prog.classList.remove('wait','done','err');els.bar.classList.remove('busy');barSetWidth(0);els.prog.classList.add('show');}
+function barEndSoon(){if(bar.timer){clearTimeout(bar.timer);bar.timer=null;}
+  bar.hideT=setTimeout(function(){els.prog.classList.remove('show','done','err','wait');els.bar.classList.remove('busy');barSetWidth(0);bar.phase='idle';},700);}
+
+/* ---------- upload slot ---------- */
+function makeSlot(cfg){
+  var dz=$(cfg.dz),input=$(cfg.input),card=$(cfg.card),nameEl=$(cfg.name),metaEl=$(cfg.meta),
+      stEl=$(cfg.st),prog=$(cfg.prog),barEl=$(cfg.bar),rm=$(cfg.rm);
+  var s={file:null,id:null,sha3:null,dur:null,state:'empty',pct:0,note:'',xhr:null};
+  function render(){
+    if(!s.file){hide(card);dz.style.display='';if(cfg.onChange)cfg.onChange();return;}
+    dz.style.display='none';show(card);
+    nameEl.textContent=s.file.name;
+    var bits=[human(s.file.size)];if(s.dur)bits.push(fmtDur(s.dur));
+    metaEl.textContent=bits.join(' · ');
+    if(s.state==='uploading'){stEl.className='fc-st';stEl.textContent='Uploading… '+Math.round(s.pct)+'%';prog.style.display='block';barEl.style.width=s.pct+'%';}
+    else if(s.state==='done'){stEl.className='fc-st ok';stEl.textContent='✓ Uploaded · sha3 '+String(s.sha3||'').slice(0,10)+'…';prog.style.display='none';}
+    else if(s.state==='error'){stEl.className='fc-st err';stEl.textContent='⚠ '+s.note;prog.style.display='none';}
+    if(cfg.onChange)cfg.onChange();
+  }
+  function begin(f){
+    if(!f)return;
+    var bad=cfg.validate(f);
+    if(!bad&&f.size>cfg.cap)bad='That file is '+human(f.size)+' — the cap is '+human(cfg.cap)+'. Trim or compress it and try again.';
+    if(s.xhr){try{s.xhr.abort();}catch(e){}s.xhr=null;}
+    s.file=f;s.id=null;s.sha3=null;s.dur=null;s.pct=0;
+    if(bad){s.state='error';s.note=bad;render();return;}
+    s.state='uploading';render();
+    if(cfg.probe)cfg.probe(f,function(d){if(s.file===f){s.dur=d;render();}});
+    var xhr=new XMLHttpRequest();s.xhr=xhr;
+    xhr.open('POST',API_UPLOADS,true);
+    xhr.setRequestHeader('Content-Type',f.type||'application/octet-stream');
+    xhr.setRequestHeader('x-anm-purpose',cfg.purpose);
+    xhr.upload.onprogress=function(e){if(e.lengthComputable&&s.file===f){s.pct=e.loaded/e.total*100;render();}};
+    xhr.onload=function(){
+      if(s.file!==f)return;s.xhr=null;
+      var j=null;try{j=JSON.parse(xhr.responseText||'null');}catch(e){}
+      if(xhr.status>=200&&xhr.status<300&&j&&j.upload_id){s.id=j.upload_id;s.sha3=j.sha3;s.state='done';}
+      else if(xhr.status===413){s.state='error';s.note='The server refused the file as too large (cap '+human(cfg.cap)+').';}
+      else if(xhr.status===429){s.state='error';s.note='Too many uploads from your connection — wait a minute and retry.';}
+      else{s.state='error';s.note=String((j&&j.error&&(j.error.message||j.error))||('upload failed, HTTP '+xhr.status)).slice(0,140)+' — please retry.';}
+      render();
+    };
+    xhr.onerror=function(){if(s.file!==f)return;s.xhr=null;s.state='error';s.note='Network error during upload — please retry.';render();};
+    xhr.send(f);
+  }
+  dz.addEventListener('click',function(){input.click();});
+  dz.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();input.click();}});
+  input.addEventListener('change',function(){begin(input.files&&input.files[0]);input.value='';});
+  ['dragover','dragenter'].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();dz.classList.add('drag');});});
+  ['dragleave','drop'].forEach(function(ev){dz.addEventListener(ev,function(e){e.preventDefault();dz.classList.remove('drag');});});
+  dz.addEventListener('drop',function(e){if(e.dataTransfer&&e.dataTransfer.files)begin(e.dataTransfer.files[0]);});
+  if(rm)rm.addEventListener('click',function(){if(s.xhr){try{s.xhr.abort();}catch(e){}}
+    s.file=null;s.id=null;s.sha3=null;s.dur=null;s.state='empty';render();});
+  return {s:s,begin:begin,render:render};
+}
+function probeVideo(f,cb){
+  try{
+    var u=URL.createObjectURL(f),m=document.createElement('video');m.preload='metadata';
+    m.onloadedmetadata=function(){var d=m.duration;URL.revokeObjectURL(u);if(isFinite(d)&&d>0)cb(d);};
+    m.onerror=function(){URL.revokeObjectURL(u);};
+    m.src=u;
+  }catch(e){}
+}
+var main=makeSlot({
+  dz:'dz',input:'fileIn',card:'fCard',name:'fName',meta:'fMeta',st:'fSt',prog:'fProg',bar:'fBar',rm:'fRm',
+  purpose:'video',cap:CAP_BYTES,probe:probeVideo,onChange:updDurWarn,
+  validate:function(f){
+    if(/^video\//.test(f.type)||/\.(mp4|mov|m4v|mkv|webm|avi|mpe?g|wmv|ts)$/i.test(f.name))return null;
+    return 'That doesn’t look like a video file — MP4, MOV, MKV or WebM work best.';
+  }
+});
+function updDurWarn(){
+  var w=$('durWarn');if(!w)return;
+  if(main.s.dur&&main.s.dur>TABS[tab].maxDur){
+    w.style.display='block';
+    w.textContent='⚠ This clip is '+fmtDur(main.s.dur)+' — '+TABS[tab].noun+' accepts up to '+fmtDur(TABS[tab].maxDur)+'. The server may reject it.';
+  }else{w.style.display='none';}
+}
+
+/* ---------- tabs ---------- */
+function setTab(name){
+  if(!TABS[name])return;
+  tab=name;var t=TABS[name];
+  els.tabs.forEach(function(b){var on=b.getAttribute('data-tab')===name;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});
+  els.lede.textContent=t.lede;els.go.textContent=t.go;
+  ['optUpscale','optSmooth','optSubs','optBg','optShorts'].forEach(function(idn){var el=$(idn);if(el)el.style.display=(t.opt===idn)?'flex':'none';});
+  updDurWarn();renderAvail();
+}
+els.tabs.forEach(function(b){b.addEventListener('click',function(){setTab(b.getAttribute('data-tab'));});});
+
+/* ---------- capabilities (per-kind miner availability, every 20 s) ---------- */
+var caps=null,capsFetched=false;
+function pollCaps(){
+  fetch(API_CAPS,{cache:'no-store'}).then(function(r){return r.ok?r.json():null;})
+    .then(function(d){if(d&&d.kinds){caps=d.kinds;capsFetched=true;renderAvail();}})
+    .catch(function(){});
+}
+function renderAvail(){
+  els.tabs.forEach(function(b){var t=b.getAttribute('data-tab');var n=caps?(caps[TABS[t].kind]||0):0;
+    b.classList.toggle('cap-on',capsFetched&&n>0);b.classList.toggle('cap-off',capsFetched&&n===0);});
+  var n=caps?(caps[TABS[tab].kind]||0):0;
+  if(!capsFetched){els.avail.className='avail';els.avail.innerHTML='<span class="dot"></span>Checking miner availability…';}
+  else if(n>0){els.avail.className='avail on';
+    els.avail.innerHTML='<span class="dot"></span><span>'+n+' GPU miner'+(n>1?'s':'')+' online for '+TABS[tab].noun+' — jobs start now.</span>';}
+  else{els.avail.className='avail off';
+    els.avail.innerHTML='<span class="dot"></span><span>No miner online for '+TABS[tab].noun+' right now — a submitted job <b>waits in the queue</b> and processes the moment one connects.</span>';}
+  if(capsFetched&&!jobActive){ if(n===0){show(els.noMiner);} else {hide(els.noMiner);} }
+}
+if(els.copyCmd){els.copyCmd.onclick=function(){try{navigator.clipboard.writeText(els.minerCmd.textContent);els.copyCmd.textContent='Copied';setTimeout(function(){els.copyCmd.textContent='Copy';},1500);}catch(e){}};}
+var earnCopy=$('earnCopy');
+if(earnCopy){earnCopy.onclick=function(){try{navigator.clipboard.writeText($('earnCmd').textContent);earnCopy.textContent='Copied';setTimeout(function(){earnCopy.textContent='Copy';},1500);}catch(e){}};}
+
+/* ---------- job body per tab (mirrors the 9.0.0 param tables; server re-clamps) ---------- */
+function buildBody(){
+  var p={};
+  if(tab==='upscale'){p.scale=(+$('upScale').value===4)?4:2;p.model=($('upModel').value==='quality')?'quality':'fast';}
+  else if(tab==='smooth'){p.factor=(+$('smFactor').value===4)?4:2;}
+  else if(tab==='subs'){p.language=$('subLang').value||'auto';p.burn_in=!!$('subBurn').checked;}
+  else if(tab==='bg'){p.mode=($('bgMode').value==='alpha')?'alpha':'green';}
+  else if(tab==='shorts'){p.count=clamp($('shCount').value,1,5);p.duration=clamp($('shDur').value,10,60);
+    p.aspect=$('shAspect').value||'9:16';p.subtitles=!!$('shSubs').checked;}
+  return {kind:TABS[tab].kind,params:p,upload_ids:[main.s.id]};
+}
+
+/* ---------- results ---------- */
+function extractResult(d){
+  if(d.result&&d.result.b64)return {b64:d.result.b64,mime:d.result.mime||'',sha3:d.result.sha3,meta:d.result.meta};
+  var url=d.result_url||(d.result&&d.result.url);
+  if(url)return {url:url,mime:(d.result&&d.result.mime)||d.result_mime||d.mime||'',
+    bytes:(d.result&&d.result.bytes)||d.result_bytes||d.resultBytes||0,
+    sha3:(d.result&&d.result.sha3)||d.result_sha3};
+  return null;
+}
+function renderResult(res,kind){
+  hide(els.noMiner);els.mediaWrap.innerHTML='';
+  var mime=res.mime||'';
+  var src=res.url?res.url:b64ToUrl(res.b64,mime||'application/octet-stream');
+  var t=TABS[KIND2TAB[kind]]||{};
+  var isZip=/zip/.test(mime)||(!mime&&!!t.zip);
+  if(isZip){
+    var zc=document.createElement('div');zc.className='zipcard';
+    var items=(t.zip||['the finished files']).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
+    zc.innerHTML='<h4>Your bundle is ready 📦</h4><div class="dlmeta">'+esc(mime||'application/zip')+(res.bytes?' · '+human(res.bytes):'')+'</div><ul>'+items+'</ul>';
+    els.mediaWrap.appendChild(zc);
+  }else if(/^video\//.test(mime)||(!mime&&!isZip)){
+    var v=document.createElement('video');v.src=src;v.controls=true;v.playsInline=true;
+    v.setAttribute('playsinline','');v.setAttribute('webkit-playsinline','');v.preload='metadata';v.className='gen-media';
+    els.mediaWrap.appendChild(v);
+  }else if(/^audio\//.test(mime)){
+    var a=document.createElement('audio');a.src=src;a.controls=true;a.preload='metadata';a.style.width='100%';
+    els.mediaWrap.appendChild(a);
+  }else if(/^image\//.test(mime)){
+    var im=document.createElement('img');im.src=src;im.className='gen-media';im.alt='result';
+    els.mediaWrap.appendChild(im);
+  }
+  var row=document.createElement('div');row.className='dlrow';
+  var dl=document.createElement('a');dl.className='dlbtn';dl.href=src;
+  dl.setAttribute('download','animica-'+kind+'.'+(isZip?'zip':extOf(mime)));
+  dl.textContent=isZip?'⤓ Download .zip':'⤓ Download';
+  row.appendChild(dl);
+  var meta=document.createElement('span');meta.className='dlmeta';
+  meta.textContent=(mime||'file')+(res.bytes?' · '+human(res.bytes):'');
+  row.appendChild(meta);
+  els.mediaWrap.appendChild(row);
+  statusLine('✓ Done — processed by a GPU miner.',false);
+  barPhase('done',kind);barEndSoon();
+  if(res.sha3){els.rcpt.style.display='flex';els.rcpt.textContent='🔏 '+kind+' · sha3 '+String(res.sha3).slice(0,16)+'… · content-hashed result';}
+}
+
+/* ---------- poll (homepage backoff: 2.5 s → 6 s → 15 s) ---------- */
+function poll(id,kind,started,errs,body,cycles){
+  errs=errs||0;cycles=cycles||0;stopPoll();
+  fetch(API_JOBS+'/'+id,{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+    /* unknown/unreadable job: only when it has an error AND no status (a FAILED job carries both) */
+    if(!d||(d.error&&!d.status)){
+      if(errs>=3){statusLine('Couldn’t find that job — it may have expired. Submit again.',false);
+        barPhase('err',kind);barEndSoon();freeGo();clearSaved();jobActive=false;return;}
+      statusLine('Checking job status…',true);
+      polling=setTimeout(function(){poll(id,kind,started,errs+1,body,cycles);},4000);return;
+    }
+    if(d.status==='DONE'){
+      jobActive=false;var res=extractResult(d);
+      if(res){renderResult(res,kind);}
+      else{statusLine('That job already completed and its file was delivered. Start a new one.',false);
+        barPhase('done',kind);barEndSoon();}
+      freeGo();clearSaved();return;
+    }
+    if(d.status==='FAILED'||d.status==='EXPIRED'){
+      hide(els.noMiner);clearSaved();
+      /* miner cycling — reuse the same upload_ids so nothing re-uploads */
+      if(body&&cycles<MAX_CYCLES){
+        statusLine('A provider couldn’t finish it — trying another GPU miner… (attempt '+(cycles+2)+' of '+(MAX_CYCLES+1)+')',true);
+        barPhase('wait',kind);
+        polling=setTimeout(function(){submitBody(body,cycles+1);},1200);return;
+      }
+      jobActive=false;
+      statusLine('⚠ '+(d.status==='EXPIRED'?'The job expired before a miner finished it — please try again.':esc(friendlyErr(d.error))),false);
+      barPhase('err',kind);barEndSoon();freeGo();return;
+    }
+    freeGo(); /* long queues must never lock the button */
+    if(typeof d.progressPct==='number')bar.real=Math.max(0,Math.min(100,d.progressPct));
+    var online=d.minersOnline||0;
+    if(d.status==='RUNNING'||online>0){
+      hide(els.noMiner);
+      var msg='Processing on a GPU miner…';
+      if(typeof d.progressPct==='number')
+        msg='Processing on a GPU miner — '+Math.round(d.progressPct)+'%'+(d.progressNote?' · '+esc(String(d.progressNote)):'');
+      statusLine(msg,true);barPhase('render',kind);
+    }else{
+      show(els.noMiner);els.noMinerJob.textContent=id;
+      statusLine('Queued · position '+(d.position||1)+' · waiting for a GPU miner. The job is saved and processes the moment one connects.',true);
+      barPhase('wait',kind);
+    }
+    var age=Date.now()-started,next=age<120000?2500:(age<600000?6000:15000);
+    polling=setTimeout(function(){poll(id,kind,started,0,body,cycles);},next);
+  }).catch(function(){
+    if(errs>=3){statusLine('Network trouble reaching the queue — resubmit when you’re back online.',false);barEndSoon();freeGo();return;}
+    polling=setTimeout(function(){poll(id,kind,started,errs+1,body,cycles);},6000);
+  });
+}
+
+/* ---------- submit ---------- */
+function submitBody(body,cycles){
+  cycles=cycles||0;stopPoll();jobActive=true;
+  els.go.disabled=true;
+  barBegin();barPhase(cycles>0?'wait':'submit',body.kind);
+  statusLine(cycles>0?'Trying another GPU miner…':'Submitting to the miner queue…',true);
+  fetch(API_JOBS,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(j){return {status:r.status,j:j};}).catch(function(){return {status:r.status,j:null};});})
+    .then(function(x){
+      if(x.status===429){statusLine('You’re submitting quickly — wait a moment and retry.',false);
+        barPhase('err',body.kind);barEndSoon();freeGo();jobActive=false;return;}
+      if(!x.j||!x.j.job_id){
+        var m=String((x.j&&x.j.error&&(x.j.error.message||x.j.error))||'Could not queue the job');
+        if(/upload/i.test(m)&&/(not found|expired|consumed|unknown|missing)/i.test(m))
+          m='Your upload is no longer on the server (uploads expire after a few hours) — add the file again and resubmit';
+        statusLine('⚠ '+esc(m)+'.',false);barPhase('err',body.kind);barEndSoon();freeGo();jobActive=false;return;}
+      try{localStorage.setItem(LS_KEY,JSON.stringify({id:x.j.job_id,kind:body.kind,body:body,cycles:cycles}));}catch(e){}
+      poll(x.j.job_id,body.kind,Date.now(),0,body,cycles);
+    })
+    .catch(function(){statusLine('Network error — please retry.',false);barPhase('err',body.kind);barEndSoon();freeGo();jobActive=false;});
+}
+function submit(){
+  if(els.go.disabled)return;
+  if(!main.s.file){show(els.out);statusLine('Add a video first — click or drop one above.',false);return;}
+  if(main.s.state==='uploading'){show(els.out);statusLine('Still uploading your video ('+Math.round(main.s.pct)+'%) — one moment…',true);return;}
+  if(main.s.state==='error'||!main.s.id){show(els.out);statusLine('⚠ The upload didn’t complete — re-add the file and try again.',false);return;}
+  stopPoll();
+  var body=buildBody();
+  show(els.out);els.rcpt.style.display='none';els.mediaWrap.innerHTML='';hide(els.noMiner);
+  submitBody(body,0);
+}
+els.go.addEventListener('click',submit);
+
+/* ---------- resume a job from a previous visit (jobs go through eventually) ---------- */
+var resumed=false;
+try{
+  var saved=JSON.parse(localStorage.getItem(LS_KEY)||'null');
+  if(saved&&saved.id){
+    if(KIND2TAB[saved.kind])setTab(KIND2TAB[saved.kind]);
+    resumed=true;jobActive=true;show(els.out);barBegin();barPhase('wait',saved.kind);
+    statusLine('Checking your last job…',true);
+    poll(saved.id,saved.kind,Date.now()-1,0,saved.body,saved.cycles||0);
+  }
+}catch(e){}
+if(!resumed)setTab('upscale');
+pollCaps();setInterval(pollCaps,20000);
+})();
+</script>
+</body>
+</html>

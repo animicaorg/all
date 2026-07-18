@@ -98,7 +98,9 @@ def _wallet_from_legacy(raw: Dict[str, Any], warnings: List[str], idx: int) -> D
             raise WalletParseError(f"wallet[{idx}] invalid alg_id '{alg_id_raw}'") from exc
     if alg_id is None and isinstance(alg_name, str):
         low = alg_name.lower()
-        if "dilith" in low:
+        if "ml_dsa" in low or "ml-dsa" in low or "mldsa" in low:
+            alg_id = 0x1003
+        elif "dilith" in low:
             alg_id = 0x1001
         elif "sphincs" in low:
             alg_id = 0x1002

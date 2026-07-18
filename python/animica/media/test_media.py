@@ -89,10 +89,21 @@ def test_audio_loader_falls_through_musicgen_regression(monkeypatch):
     monkeypatch.setattr(ag, "_synth_lowlevel", boom)
     monkeypatch.setattr(ag, "_synth_pipeline", fake_pipe)
     monkeypatch.setattr(ag, "_cuda_on", lambda force_cpu: False)
+    # Stub torch/transformers ONLY if genuinely absent, and always undo it: a bare
+    # setdefault leaked the attribute-less fake into sys.modules for the rest of the
+    # pytest session, so any LATER test whose real code touched torch (scipy's
+    # array-api probe, the 9.0.0 studio suites) exploded with
+    # "module 'torch' has no attribute 'Tensor'".
+    injected = []
     for m in ("torch", "transformers"):
-        sys.modules.setdefault(m, types.ModuleType(m))
-
-    out = ag.generate_audio("warm lofi hiphop with vinyl crackle", tier="standard", seconds=1.0)
+        if m not in sys.modules:
+            sys.modules[m] = types.ModuleType(m)
+            injected.append(m)
+    try:
+        out = ag.generate_audio("warm lofi hiphop with vinyl crackle", tier="standard", seconds=1.0)
+    finally:
+        for m in injected:
+            sys.modules.pop(m, None)
     assert out["mime"] == "audio/wav" and validate_magic(out["bytes"], "wav")
     assert out["sample_rate"] == 32000
     assert calls[0] == ("lowlevel", True)          # explicit-config attempted first

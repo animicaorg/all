@@ -50,6 +50,12 @@ _VENDOR_MAP: list[tuple[str, str]] = [
     ("../rpc", "rpc"),
     ("../stdlib", "stdlib"),
     ("../vm_py", "vm_py"),
+    # 9.0.0: the FULL chain-parameter spec. core.chain.block_import._load_full_params_dict
+    # probes <site-packages>/spec/params.yaml (repo layout: <root>/spec/params.yaml) for the
+    # emission schedule that drives block rewards AND the IOU-settlement pool cap. Without
+    # it a pip-installed node/CLI computes an empty schedule (cap 0, "rewards will not be
+    # calculated") and silently disagrees with repo-layout nodes.
+    ("../spec", "spec"),
     ("../ai/agent_runtime/src/agent_runtime", "agent_runtime"),
     ("../ai/flagship_agent/src/flagship_agent", "flagship_agent"),
     ("../ai/configs", "_data_ai_configs"),

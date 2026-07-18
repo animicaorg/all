@@ -1,0 +1,15 @@
+[Unit]
+Description=Animica on-chain IOU settlement worker (posts <=cap settlement anchors from marketplace IOU ledgers)
+Documentation=file:/root/animica/scripts/iou_settlement_worker.py
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/animica
+# Armed on purpose: the worker's own hard gates (fork height 50,000, pool cap,
+# daily cap, pending-anchor lock) keep it inert until activation.
+Environment=ANM_SETTLE_POST=1
+# Money-moving submissions go through the box's own node, never the public
+# bootstrap RPC (same convention as animica-treasury-payout.service).
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+ExecStart=/root/animica/.venv/bin/python scripts/iou_settlement_worker.py

@@ -83,16 +83,19 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
 FOUNDATION_TREASURY_ADDRESS = "anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga"
 FOUNDATION_TREASURY_SPLIT_PCT = 15
 
-# FORK_VPN_RELAY_REWARDS (8.0.1) — dVPN relay/exit-operator block rewards.
-# The per-block relay pool is capped at 50 ANM and HALVES on the subsidy schedule
-# (halving h -> cap >> h), so it is never more than 50 ANM/block and decays with emission.
-# It is CARVED from the miner subsidy (emission-conserving: relay total is subtracted from
-# the miner output, never minted above the block subsidy), and is distributed ONLY from a
-# sealed, on-chain relay-contribution root for the settled epoch. That root does not exist
-# in 8.0.1 (the on-chain relay-registration + usage-anchoring mechanism is designed but
-# NOT enabled + is pending adversarial review of its Sybil/inflation surface), so
-# `sealed_relay_distribution` returns [] and the fork emits ZERO relay outputs — activation
-# at height 50,000 is byte-identical to no-fork until the mechanism ships and is re-gated.
+# FORK_VPN_RELAY_REWARDS (8.0.1) — REALIZED in 9.0.0 as on-chain IOU settlement.
+# The per-block settlement pool is capped at 50 ANM and HALVES on the subsidy schedule
+# (cap scales with current_subsidy/start_subsidy), so it is never more than 50 ANM/block
+# and decays with emission. It is CARVED from the miner subsidy (emission-conserving:
+# settlement total is subtracted from the miner output, never minted above the subsidy).
+#
+# 9.0.0: the live mechanism is consensus/iou_settlement.py + the settlement hook in
+# core.chain.block_import._apply_block_state — distributions come from signed
+# settlement-anchor TRANSFER txs (authority-signed, in-block), which this function
+# cannot see (it has no access to block txs), so the in-function branch below stays
+# INERT and byte-identical to 8.0.x: `sealed_relay_distribution` still returns [].
+# Kept (not deleted) so every 8.0.x call site remains valid and the carve math has
+# one reviewed reference implementation (vpn_relay_pool_cap is shared with 9.0.0).
 VPN_RELAY_REWARD_CAP = 50 * COIN
 
 
@@ -116,10 +119,12 @@ def vpn_relay_pool_cap(height_for_halving: int, schedule) -> int:
 def sealed_relay_distribution(height_for_halving: int, chain_id: int) -> List[Tuple[str, int]]:
     """The on-chain-sealed relay reward distribution for this block's settled epoch.
 
-    INERT in 8.0.1: no relay-contribution root is ever sealed (the on-chain mechanism is
-    not enabled), so this returns [] and no relay output is emitted. This is the single
-    self-gating point — until it can return a verified, Sybil-resistant distribution, the
-    fork cannot mint or change emission. Deterministic (no I/O, no clock)."""
+    PERMANENTLY INERT (returns []): superseded in 9.0.0 by anchor-based IOU
+    settlement (consensus/iou_settlement.py), which is applied in
+    core.chain.block_import where the block's transactions are visible. This
+    stub is kept so the 8.0.x branch below stays byte-identical (no relay
+    output is ever emitted from compute_block_reward itself) and existing
+    call sites/imports remain valid. Deterministic (no I/O, no clock)."""
     return []
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)

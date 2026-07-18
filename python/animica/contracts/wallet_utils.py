@@ -20,6 +20,7 @@ class SignerResolution:
 ALG_BY_ID = {
     0x1001: "dilithium3",
     0x1002: "sphincs_shake_128s",
+    0x1003: "ml_dsa_65",
 }
 
 

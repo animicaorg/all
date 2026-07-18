@@ -114,12 +114,25 @@ class AudioRequest(BaseModel):
     seconds: float = 5.0
 
 
+class MultiSceneRequest(BaseModel):
+    prompt: str = ""                       # a brief; split into scenes if `scenes` is not given
+    scenes: Optional[list[str]] = None     # explicit per-scene prompts (overrides `prompt` splitting)
+    images_b64: Optional[list[str]] = None # optional uploaded stills to animate directly (i2v-style)
+    tier: Optional[str] = None
+    width: int = 768
+    height: int = 432
+    fps: int = 24
+    seconds_per_scene: float = 2.5
+    transition: str = "fade"
+    ken_burns: bool = True
+
+
 class CheckpointInstall(BaseModel):
     tar_b64: str   # base64 tar.gz of a trained adapter (content-id verified on install)
 
 
 def build_app() -> "FastAPI":
-    app = FastAPI(title="Animica Media Worker", version="8.0.0")
+    app = FastAPI(title="Animica Media Worker", version="8.0.6")
     default_tier = os.environ.get("ANIMICA_MEDIA_TIER", "standard")
     max_pixels = int(os.environ.get("ANIMICA_MEDIA_MAX_PIXELS", str(1024 * 1024)))
 
@@ -256,6 +269,47 @@ def build_app() -> "FastAPI":
                 "data": [{"b64_json": base64.b64encode(data).decode("ascii"), "mime": "audio/wav"}],
                 "animica": {"sha3": out["sha3"], "sample_rate": out.get("sample_rate"),
                             "seconds": out.get("seconds"), "latency_ms": int((time.time() - t0) * 1000)}}
+
+    @app.post("/v1/videos/multiscene")
+    def multiscene(req: MultiSceneRequest):
+        """Advanced multi-scene video: a shot per scene (generated still or uploaded image),
+        each given motion and joined by crossfades. Works on CPU (ffmpeg) — image stills need the
+        image backend; uploaded stills (images_b64) animate with ffmpeg alone."""
+        from .scene_video import assemble_scene_video, plan_scenes
+        blocked = _safety_reason(req.prompt or " ".join(req.scenes or []))
+        if blocked:
+            raise HTTPException(400, f"blocked: {blocked}")
+        t0 = time.time()
+        try:
+            with _Gate():
+                if req.images_b64:
+                    stills = [base64.b64decode(s.split(",")[-1]) for s in req.images_b64][:8]
+                    model = "anm-i2v-kenburns"
+                else:
+                    avail, why = media_available()
+                    if not avail:
+                        raise HTTPException(503, f"multi-scene stills need the image backend: {why}")
+                    scenes = req.scenes or plan_scenes(req.prompt)
+                    scenes = [s for s in scenes if s][:8]
+                    if not scenes:
+                        raise HTTPException(400, "no scenes to render")
+                    stills = [image_gen.generate_image(sc, tier=req.tier or default_tier,
+                                                       width=req.width, height=req.height)["bytes"] for sc in scenes]
+                    model = "anm-multiscene"
+                out = assemble_scene_video(stills, width=req.width, height=req.height, fps=req.fps,
+                                           seconds_per_scene=req.seconds_per_scene,
+                                           transition=req.transition, ken_burns=req.ken_burns)
+        except _Busy:
+            raise HTTPException(503, "media worker busy — try again shortly")
+        except MediaBackendUnavailable as e:
+            raise HTTPException(503, str(e))
+        except MediaError as e:
+            raise HTTPException(422, f"generation failed: {e}")
+        data = out["bytes"]
+        return {"created": int(t0), "model": model,
+                "data": [{"b64_json": base64.b64encode(data).decode("ascii"), "mime": "video/mp4"}],
+                "animica": {"sha3": out["sha3"], "scenes": out["scenes"], "fps": out["fps"],
+                            "duration_s": out["duration_s"], "latency_ms": int((time.time() - t0) * 1000)}}
 
     # -- trained checkpoint distribution: list / download / install ------------------
     @app.get("/v1/checkpoints")

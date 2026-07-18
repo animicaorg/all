@@ -46,6 +46,16 @@ class PoolPayoutScheduler:
         self._max_pending_reconcile = max(
             1, int(os.getenv("ANIMICA_POOL_PAYOUT_PENDING_LIMIT", "1000"))
         )
+        # Stuck-payout auto-release cutoff (unix ts). A payout submitted at/after
+        # this ts that is found dropped with its nonce ALREADY consumed can never
+        # confirm under its own nonce, so it is released (paid_out rolled back) to
+        # be re-paid — instead of retried forever (which pins paid_out so a miner
+        # reads as paid while the funds were never sent). Payouts submitted BEFORE
+        # the cutoff are grandfathered (e.g. a batch settled out-of-band) so they
+        # are never released and double-paid. Default 0 = release all eligible.
+        self._reconcile_release_min_ts = max(
+            0.0, float(os.getenv("ANIMICA_POOL_PAYOUT_RECONCILE_MIN_TS", "0") or 0.0)
+        )
         self._signer_resolution: Any = None
 
     async def run(self) -> None:
@@ -407,14 +417,36 @@ class PoolPayoutScheduler:
                 continue
 
             if item_nonce is not None and chain_pending_nonce > item_nonce:
-                # Nonce is already consumed/pending by another tx; do not generate
-                # another resend for this payout slot.
-                if callable(record_retry):
+                # Nonce already consumed by another tx AND (we are here because) the
+                # tx is dropped/not-on-chain past the grace window: it can NEVER
+                # confirm under its own nonce. Retrying forever just pins paid_out —
+                # the miner reads as paid while the funds were never sent (the exact
+                # stuck-payout leak). Release the credit (roll back paid_out) so it
+                # can be re-paid with a fresh nonce. Grandfather payouts submitted
+                # before the release cutoff (settled out-of-band) to avoid a
+                # double-pay.
+                if (
+                    submitted_ts >= self._reconcile_release_min_ts
+                    and callable(mark_dropped)
+                ):
+                    try:
+                        mark_dropped(
+                            tx_hash=tx_hash,
+                            error=(
+                                "payout dropped and nonce already consumed "
+                                f"(chain_pending_nonce={chain_pending_nonce}, "
+                                f"tx_nonce={item_nonce}); credit released for re-payout"
+                            ),
+                            release_credit=True,
+                        )
+                    except Exception:
+                        pass
+                elif callable(record_retry):
                     try:
                         record_retry(
                             tx_hash=tx_hash,
                             error=(
-                                "rebroadcast skipped: nonce already advanced "
+                                "rebroadcast skipped: nonce already advanced, pre-cutoff "
                                 f"(chain_pending_nonce={chain_pending_nonce}, tx_nonce={item_nonce})"
                             ),
                             next_retry_ts=now + (self._retry_backoff_seconds * max(2, retry_count + 1)),

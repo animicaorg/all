@@ -717,6 +717,18 @@ def _resolve_signature_alg(requested: Optional[str]) -> Any:
     if not requested:
         return default_signature_alg()
     normalized = normalize_alg_name(requested)
+    # Only ml_dsa_65 (0x1003, real FIPS 204) is accepted by the network. The
+    # legacy dilithium3 (0x1001) / sphincs_shake_128s (0x1002) schemes are
+    # forgeable commitment stubs — creating a wallet with them permanently
+    # strands its funds. Refuse to select them for a new wallet (the escape
+    # hatch mirrors keygen's ANIMICA_ALLOW_LEGACY_STUB_KEYGEN).
+    if normalized in ("dilithium3", "sphincs_shake_128s") and \
+            os.environ.get("ANIMICA_ALLOW_LEGACY_STUB_KEYGEN") != "1":
+        raise typer.BadParameter(
+            f"{normalized} is a deprecated, forgeable stub scheme that the network "
+            "no longer accepts — its funds would be permanently stranded. New "
+            "wallets must use ml_dsa_65 (the default)."
+        )
     try:
         return require_sig(normalized)
     except Exception as exc:

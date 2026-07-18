@@ -18,7 +18,12 @@ class DummyAdapter:
 
 @pytest.mark.asyncio
 async def test_on_new_job_updates_theta_and_broadcasts_difficulty():
-    server = StratumPoolServer(DummyAdapter(), PoolConfig(), JobManager(DummyAdapter(), PoolConfig()))
+    # The pool anchors the FIRST job at start_difficulty (0.3 here), NOT the
+    # template's block-difficulty share_target (0.5) — see _resolve_share_target.
+    # floor disabled so start-difficulty anchoring is exercised in isolation (the
+    # xmrig-compat floor is covered by test_vardiff_difficulty_floor.py).
+    cfg = PoolConfig(start_difficulty=0.3, share_difficulty_floor=0.0)
+    server = StratumPoolServer(DummyAdapter(), cfg, JobManager(DummyAdapter(), cfg))
     server.stratum.set_global_difficulty = AsyncMock()
     server.stratum.publish_job = AsyncMock()
 
@@ -36,7 +41,8 @@ async def test_on_new_job_updates_theta_and_broadcasts_difficulty():
 
     await server._on_new_job(job)
 
-    server.stratum.set_global_difficulty.assert_awaited_once_with(0.5, 1_000_000)
+    # emitted difficulty == start_difficulty (0.3), not the template's 0.5
+    server.stratum.set_global_difficulty.assert_awaited_once_with(0.3, 1_000_000)
     published_job = server.stratum.publish_job.await_args.args[0]
     assert published_job.header["thetaMicro"] == 1_000_000
     assert published_job.header["thetaTargetMicro"] == 1_000_000
@@ -84,7 +90,15 @@ async def test_on_new_job_overrides_stale_header_theta_with_issued_theta():
 
 @pytest.mark.asyncio
 async def test_on_new_job_clamps_theta_micro_difficulty_bounds():
-    cfg = PoolConfig(min_difficulty=120_000, max_difficulty=240_000)
+    # start_difficulty (0.9 → 900_000 θµ) sits ABOVE the max bound, so the emitted
+    # threshold clamps DOWN to the upper bound (240_000 θµ → ratio 0.24). floor
+    # disabled to isolate the θµ clamp (floor covered by test_vardiff_difficulty_floor).
+    cfg = PoolConfig(
+        min_difficulty=120_000,
+        max_difficulty=240_000,
+        start_difficulty=0.9,
+        share_difficulty_floor=0.0,
+    )
     server = StratumPoolServer(
         DummyAdapter(), cfg, JobManager(DummyAdapter(), cfg)
     )
@@ -138,15 +152,32 @@ async def test_on_new_job_uses_min_difficulty_when_template_omits_share_target()
 
     await server._on_new_job(job)
 
-    server.stratum.set_global_difficulty.assert_awaited_once_with(0.02, 1_000_000)
+    # xmrig-compat difficulty floor (share_difficulty_floor=1.0) overrides a
+    # min_difficulty that is EASIER than the floor. At this test's degenerate
+    # θ=1e6 (1 nat) the block difficulty itself is ~6e-10 — far below diff-1 —
+    # so a floor (diff-1) share would be HARDER than a block; the floor is then
+    # clamped to the block target and the easiest share IS the block (ratio 1.0).
+    # min_difficulty=0.02 (→ 20_000 µ-nats) can no longer take effect here. The
+    # realistic θ case (floor lands between min_difficulty and the block) is
+    # covered by test_vardiff_difficulty_floor.py.
+    server.stratum.set_global_difficulty.assert_awaited_once_with(1.0, 1_000_000)
     published_job = server.stratum.publish_job.await_args.args[0]
-    assert published_job.share_target == pytest.approx(0.02)
-    assert int(published_job.raw["_shareThresholdMicro"]) == 20_000
+    assert published_job.share_target == pytest.approx(1.0)
+    assert int(published_job.raw["_shareThresholdMicro"]) == 1_000_000
 
 
 @pytest.mark.asyncio
 async def test_share_target_auto_adjusts_down_and_up():
-    cfg = PoolConfig(min_difficulty=100_000, max_difficulty=900_000)
+    # start_difficulty (0.4) anchors the first job mid-band [100_000, 900_000] so
+    # vardiff has room to step DOWN (on low-diff rejects) then UP (on accepts).
+    # floor disabled to isolate the auto-adjust algorithm (floor covered by
+    # test_vardiff_difficulty_floor.py).
+    cfg = PoolConfig(
+        min_difficulty=100_000,
+        max_difficulty=900_000,
+        start_difficulty=0.4,
+        share_difficulty_floor=0.0,
+    )
     server = StratumPoolServer(
         DummyAdapter(), cfg, JobManager(DummyAdapter(), cfg)
     )
@@ -201,6 +232,20 @@ async def test_share_target_auto_adjusts_down_and_up():
     raised_ratio = float(server._current_stratum_job.share_target)  # type: ignore[union-attr]
     assert raised_ratio > lowered_ratio
     assert raised_ratio <= 0.9
+
+
+@pytest.mark.asyncio
+async def test_pool_disables_unfloored_session_vardiff():
+    # The pool must run ONLY the floored pool vardiff. StratumServer has its OWN
+    # per-session vardiff whose bounds derive from start_difficulty (not
+    # share_difficulty_floor) and whose _push_difficulty bypasses the wire floor.
+    # Once the min-difficulty pin is lifted, that second loop could emit a sub-1.0
+    # set_difficulty (down to start*0.05 ≈ 5e-4 ratio) to a v1/xmrig-style
+    # Animica-native session and trigger the connect→set_difficulty→disconnect
+    # loop. Guard against a regression that re-arms it.
+    cfg = PoolConfig()
+    server = StratumPoolServer(DummyAdapter(), cfg, JobManager(DummyAdapter(), cfg))
+    assert server._server._session_vardiff_enabled is False
 
 
 @pytest.mark.asyncio

@@ -198,10 +198,14 @@ async def test_pps_accounting_credits_accepted_shares():
     )
     detail = metrics.miner_detail("worker-pps")
     assert detail["pool_mode"] == "pps"
-    assert detail["credit_pps"] == "250"
+    # PPS credits a share its EXPECTED value = reward × P(share also solves a block)
+    # = reward × block_target/share_target = reward × exp(-θ·(1-ratio)/MICRO).
+    # 1000 × exp(-1e6·(1-0.25)/1e6) = 1000 × exp(-0.75) = 472. (The legacy
+    # reward×ratio = 250 over-priced low-difficulty shares — see the vardiff rework.)
+    assert detail["credit_pps"] == "472"
     assert detail["credit_solo"] == "0"
     summary = metrics.accounting_summary()
-    assert summary["total_credit"] == "250"
+    assert summary["total_credit"] == "472"
     assert summary["accepted_shares"] == 1
 
 
@@ -242,7 +246,8 @@ async def test_pps_share_credit_ledger_disabled_by_default(tmp_path):
             "SELECT COUNT(*) FROM accounting_ledger WHERE event = 'pps_share_credit'"
         ).fetchone()
     assert int((ledger_rows or [0])[0] or 0) == 0
-    assert metrics.accounting_summary()["total_credit"] == "500"
+    # PPS expected value: 1000 × exp(-θ·(1-0.5)/MICRO) = 1000 × exp(-0.5) = 606.
+    assert metrics.accounting_summary()["total_credit"] == "606"
 
 
 @pytest.mark.asyncio
@@ -283,7 +288,8 @@ async def test_pps_share_credit_ledger_can_be_enabled(monkeypatch, tmp_path):
             "SELECT COUNT(*) FROM accounting_ledger WHERE event = 'pps_share_credit'"
         ).fetchone()
     assert int((ledger_rows or [0])[0] or 0) == 1
-    assert metrics.accounting_summary()["total_credit"] == "250"
+    # PPS expected value: 1000 × exp(-θ·(1-0.25)/MICRO) = 1000 × exp(-0.75) = 472.
+    assert metrics.accounting_summary()["total_credit"] == "472"
 
 
 @pytest.mark.asyncio
@@ -515,7 +521,8 @@ async def test_payout_debits_available_credit_and_tracks_due_amount():
     due_before = metrics.payout_due_addresses(min_amount=1, limit=10)
     assert due_before
     assert due_before[0]["address"] == "anim1pay"
-    assert due_before[0]["amount"] == 500
+    # PPS: 1000 × exp(-θ·(1-0.5)/MICRO) = 1000 × exp(-0.5) = 606.
+    assert due_before[0]["amount"] == 606
 
     applied = metrics.record_payout_sent(
         address="anim1pay",
@@ -525,13 +532,13 @@ async def test_payout_debits_available_credit_and_tracks_due_amount():
     assert applied == 300
 
     summary = metrics.accounting_summary()
-    assert summary["gross_credit"] == "500"
+    assert summary["gross_credit"] == "606"
     assert summary["paid_out_total"] == "300"
-    assert summary["total_credit"] == "200"
+    assert summary["total_credit"] == "306"  # 606 credited − 300 paid
 
     due_after = metrics.payout_due_addresses(min_amount=1, limit=10)
     assert due_after
-    assert due_after[0]["amount"] == 200
+    assert due_after[0]["amount"] == 306
 
 
 @pytest.mark.asyncio
@@ -575,7 +582,8 @@ async def test_mark_payout_dropped_releases_reserved_credit():
     )
     assert applied == 300
     due_before = metrics.payout_due_addresses(min_amount=1, limit=10)
-    assert due_before and due_before[0]["amount"] == 200
+    # PPS credit 1000 × exp(-0.5) = 606, minus the 300 reserved by the payout.
+    assert due_before and due_before[0]["amount"] == 306
 
     dropped = metrics.mark_payout_dropped(
         tx_hash="0x" + "ab" * 32,
@@ -586,9 +594,9 @@ async def test_mark_payout_dropped_releases_reserved_credit():
 
     summary = metrics.accounting_summary()
     assert summary["paid_out_total"] == "0"
-    assert summary["total_credit"] == "500"
+    assert summary["total_credit"] == "606"  # dropped payout released back
     due_after = metrics.payout_due_addresses(min_amount=1, limit=10)
-    assert due_after and due_after[0]["amount"] == 500
+    assert due_after and due_after[0]["amount"] == 606
     assert metrics.pending_payout_submissions(limit=10) == []
 
 

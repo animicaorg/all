@@ -229,7 +229,7 @@ def generate_image(
         except Exception as e:
             last_err = e
             if _is_oom(e) and strat != order[-1]:
-                _drop_pipeline(model_id, adapter, strat)  # free VRAM, then try a frugal strategy
+                _reclaim_all_vram()  # free VRAM, then try a frugal strategy
                 continue
             raise MediaError(f"image generation failed [{strat}]: {e}") from e
 

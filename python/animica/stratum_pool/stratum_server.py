@@ -9,8 +9,11 @@ from collections import deque
 from dataclasses import replace
 from typing import Awaitable, Callable, Deque, Dict, Optional
 
-from core.utils.pow import micro_threshold_to_target256
+import math
+
+from core.utils.pow import MICRO, UINT256_MAX, micro_threshold_to_target256
 from mining.stratum_server import StratumJob, StratumServer
+from mining.templates import D1_TARGET
 
 from .config import PoolConfig
 from .core import MiningCoreAdapter, MiningJob, freeze_mining_job, job_validation_fingerprint
@@ -141,6 +144,16 @@ class StratumPoolServer:
             cryptonote_handler=self._handle_cryptonote_takeover,
             pool_mode=config.pool_mode,
             solo_port=config.solo_port,
+            # Disable StratumServer's OWN per-session vardiff. It is a SECOND
+            # difficulty loop whose bounds derive from start_difficulty (not
+            # share_difficulty_floor) and whose _push_difficulty bypasses
+            # _share_bounds_for_theta entirely — once the pin is lifted it can
+            # emit a sub-1.0 wire set_difficulty (down to start*0.05 → ~5e-4
+            # ratio) to a v1/xmrig-style Animica-native session and trigger the
+            # connect→set_difficulty→disconnect loop. All vardiff is handled by
+            # the FLOORED pool loop (_maybe_auto_adjust_share_target), which
+            # re-applies the wire-difficulty floor before every emission.
+            session_vardiff_enabled=False,
         )
         # XMR (Monero RandomX) dual-mining infrastructure. Initialised
         # lazily in start() once the pool config has been validated.
@@ -278,6 +291,30 @@ class StratumPoolServer:
             return max(1, int(theta * numeric))
         return max(1, int(numeric))
 
+    def _difficulty_to_threshold_micro(self, difficulty: float) -> int:
+        """θµ threshold whose wire difficulty equals ``difficulty``.
+
+        Inverse of mining.templates.share_target_to_difficulty in threshold space:
+        ``micro_threshold_to_target256(t) = UINT256_MAX·exp(-t/MICRO)`` and
+        ``difficulty = D1_TARGET / target``, so
+            ``t = MICRO · ln(UINT256_MAX · difficulty / D1_TARGET)``.
+        θ-independent — a share worth difficulty D always needs the same raw work.
+        Used to floor the EASIEST share so mining.set_difficulty never emits a
+        sub-``difficulty`` value the miner would reject. Returns 1 when the floor
+        sits at/below the minimum representable difficulty.
+        """
+        d = max(float(difficulty or 0.0), 0.0)
+        if d <= 0.0:
+            return 1
+        ratio = (float(UINT256_MAX) * d) / float(D1_TARGET)
+        if ratio <= 1.0:
+            return 1
+        # ceil, not truncate: rounding the threshold DOWN would emit a wire
+        # difficulty a hair under the floor (e.g. 0.99999996) — exactly the
+        # sub-1.0 value xmrig rejects. Always round toward the harder side so the
+        # emitted set_difficulty is >= floor.
+        return max(1, math.ceil(MICRO * math.log(ratio)))
+
     def _share_bounds_for_theta(self, theta_micro: int) -> tuple[int, int]:
         theta = max(int(theta_micro or 0), 0)
         lower = self._difficulty_value_to_threshold_micro(
@@ -286,6 +323,15 @@ class StratumPoolServer:
         upper = self._difficulty_value_to_threshold_micro(
             float(self._config.max_difficulty), theta
         )
+        # xmrig-compat floor: never let the EASIEST share fall below the wire
+        # difficulty the miner accepts. share_difficulty_floor maps to a MINIMUM
+        # θµ threshold; below it the emitted set_difficulty would drop under the
+        # floor (e.g. sub-1.0) and this xmrig build disconnect-loops. It is
+        # meaningless above the block target, so it is clamped to θ just below.
+        floor_threshold = self._difficulty_to_threshold_micro(
+            float(getattr(self._config, "share_difficulty_floor", 1.0))
+        )
+        lower = max(lower, floor_threshold)
         if theta > 0:
             # Share threshold should not become harder than the block threshold.
             lower = min(lower, theta)

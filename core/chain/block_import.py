@@ -75,6 +75,7 @@ from core.network_params import (
     FORK_ADDRESS_FREEZE,
     FORK_PQ_HARDENING,
     FORK_ROOT_COMMITMENT,
+    FORK_VPN_RELAY_REWARDS,
     is_fork_active,
 )
 # FORK_ADDRESS_FREEZE consensus set — imported at MODULE LOAD, deliberately NOT
@@ -2810,7 +2811,78 @@ class BlockImporter:
                     else:
                         # Miner reward (default)
                         miner_reward += amount
-            
+
+            # FORK_VPN_RELAY_REWARDS realized as IOU settlement (9.0.0): a block
+            # at/after H=50,000 that contains valid settlement-anchor txs (normal
+            # TRANSFERs from the code-committed settlement authority carrying an
+            # ANMSETL1 distribution in their data field) pays those entries in
+            # THIS block, capped at 50 ANM decaying with the halving schedule and
+            # CARVED from the miner subsidy (miner + settlement == pre-fork miner
+            # output — never minted). Self-gating: no anchors -> zero outputs ->
+            # byte-identical to 8.0.x. Deterministic: pure function of the block's
+            # tx bytes + static schedule. SettlementUnavailable fails CLOSED like
+            # ANM-H08 (halt loudly, never silently pay nobody while peers pay).
+            settlement_outputs: list[tuple[bytes, int]] = []
+            if (
+                chain_id == 1
+                and miner_reward > 0
+                and not _is_instant_block(block.header)
+                and is_fork_active(FORK_VPN_RELAY_REWARDS, max(1, height), chain_id=1)
+            ):
+                try:
+                    from consensus.iou_settlement import (
+                        SettlementUnavailable,
+                        extract_settlement_distribution,
+                        scale_settlement_outputs,
+                        settlement_pool_cap,
+                    )
+
+                    # Anchor-REPLAY defense: only consider anchors whose transfer
+                    # actually EXECUTED (TxStatus SUCCESS) in this block. A copied
+                    # old anchor still carries a valid authority signature but its
+                    # stale nonce makes it REVERT — and with state-commitment
+                    # enforcement in shadow, a block CONTAINING such a tx is still
+                    # accepted, so tx *presence* alone must never pay. Execution
+                    # status is part of deterministic block application, so every
+                    # node filters identically. Fail closed on any tx/result
+                    # misalignment — never guess.
+                    if len(block_result.tx_results) != len(non_coinbase_txs):
+                        raise SettlementUnavailable(
+                            f"tx_results misaligned with block txs "
+                            f"({len(block_result.tx_results)} != {len(non_coinbase_txs)})"
+                        )
+                    _executed_txs = []
+                    for _si, _stx in enumerate(non_coinbase_txs):
+                        _sst = getattr(block_result.tx_results[_si], "status", None)
+                        _sst_name = (getattr(_sst, "name", None) or str(_sst or "")).upper()
+                        if _sst_name == "SUCCESS":
+                            _executed_txs.append(_stx)
+
+                    _dist = extract_settlement_distribution(
+                        _executed_txs, chain_id=chain_id
+                    )
+                    if _dist:
+                        _cap = settlement_pool_cap(
+                            max(1, height), self.full_params_dict or {}
+                        )
+                        settlement_outputs = scale_settlement_outputs(
+                            _dist, _cap, int(miner_reward)
+                        )
+                        _settle_total = sum(a for _, a in settlement_outputs)
+                        if _settle_total > 0:
+                            miner_reward = int(miner_reward) - _settle_total
+                except Exception as _settle_exc:
+                    # Fail closed on ANY settlement-path error once the fork is
+                    # active: proceeding without the carve while healthy peers
+                    # apply it is a silent balance divergence (the exact hazard
+                    # ANM-H08 closed for reward computation).
+                    log.error(
+                        "iou_settlement: settlement computation failed — failing closed at height %d: %r",
+                        height,
+                        _settle_exc,
+                    )
+                    raise
+
             # Compute fee split for AICF
             fee_aicf_amount = 0
             try:
@@ -2914,6 +2986,44 @@ class BlockImporter:
                     treasury_balance,
                 )
 
+            # IOU settlement (9.0.0): credit each settled entry to its OWN account.
+            # These amounts were carved from miner_reward above, so the coinbase
+            # total is unchanged (miner + settlement == pre-fork miner output).
+            # NOTE: settlement outputs must NEVER fall through the address-
+            # classification loop above — unrecognized addresses land in the
+            # miner bucket there, which would pay the whole pool to the miner.
+            settlement_credit_total = 0
+            for _settle_addr, _settle_amt in settlement_outputs:
+                _settle_amt = int(_settle_amt)
+                if _settle_amt <= 0:
+                    continue
+                _settle_balance = state_credit(
+                    self.state_db,
+                    bytes(_settle_addr),
+                    _settle_amt,
+                    reason="BLOCK_APPLY_IOU_SETTLEMENT",
+                    tx_hash=None,
+                    height=height,
+                    callsite="core.chain.block_import._apply_block_state",
+                )
+                settlement_credit_total += _settle_amt
+                log.info(
+                    "STATE_CREDIT iou_settlement=%s amount=%d height=%d new_balance=%d",
+                    bytes(_settle_addr).hex(),
+                    _settle_amt,
+                    height,
+                    _settle_balance,
+                )
+            if settlement_credit_total > 0:
+                if not seal_only:
+                    _BLOCK_COINBASE_CREDIT_TOTAL += settlement_credit_total
+                log.info(
+                    "iou_settlement: settled %d nANM across %d account(s) at height %d (carved from miner subsidy)",
+                    settlement_credit_total,
+                    len(settlement_outputs),
+                    height,
+                )
+
             # Process AICF accounting (credits, epochs, etc.)
             try:
                 from execution.runtime.aicf_integration import process_block_for_aicf
@@ -2935,7 +3045,7 @@ class BlockImporter:
             
             # Log total coinbase credit metric (include the foundation-treasury slice
             # so the metric matches the actual coinbase emission post-FORK_FOUNDATION_SPLIT).
-            total_credited = miner_total + aicf_total + int(treasury_reward)
+            total_credited = miner_total + aicf_total + int(treasury_reward) + int(settlement_credit_total)
             if total_credited > 0:
                 log.info(
                     "metric block_coinbase_credit_total=%d",
