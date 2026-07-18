@@ -61,6 +61,56 @@ def test_wav_encode_and_failclosed():
         pass
 
 
+def test_audio_array_normalization():
+    # A synth may return 1-D mono, (1, n), or (channels, n); all must reach encode_wav cleanly.
+    from animica.media.audio_gen import _to_wav_array
+    assert _to_wav_array(np.zeros(1000)).shape == (1000,)
+    assert _to_wav_array(np.zeros((1, 1000))).shape == (1000,)
+    assert _to_wav_array(np.zeros((2, 1000))).shape == (1000, 2)
+
+
+def test_audio_loader_falls_through_musicgen_regression(monkeypatch):
+    # The low-level Auto path regressed on transformers>=4.44 with "'MusicgenDecoderConfig'
+    # object has no attribute 'decoder'". _load must try the explicit-config path first, then
+    # fall through to the pipeline strategy instead of failing the whole job.
+    import sys, types
+    from animica.media import audio_gen as ag
+    ag._MODEL_CACHE.clear()
+    calls = []
+
+    def boom(model_id, cuda, fp16, explicit_config):
+        calls.append(("lowlevel", explicit_config))
+        raise AttributeError("'MusicgenDecoderConfig' object has no attribute 'decoder'")
+
+    def fake_pipe(model_id, cuda, fp16):
+        calls.append(("pipeline", None))
+        return lambda prompt, max_new: (np.zeros((1, 16000), dtype="f4"), 32000)
+
+    monkeypatch.setattr(ag, "_synth_lowlevel", boom)
+    monkeypatch.setattr(ag, "_synth_pipeline", fake_pipe)
+    monkeypatch.setattr(ag, "_cuda_on", lambda force_cpu: False)
+    # Stub torch/transformers ONLY if genuinely absent, and always undo it: a bare
+    # setdefault leaked the attribute-less fake into sys.modules for the rest of the
+    # pytest session, so any LATER test whose real code touched torch (scipy's
+    # array-api probe, the 9.0.0 studio suites) exploded with
+    # "module 'torch' has no attribute 'Tensor'".
+    injected = []
+    for m in ("torch", "transformers"):
+        if m not in sys.modules:
+            sys.modules[m] = types.ModuleType(m)
+            injected.append(m)
+    try:
+        out = ag.generate_audio("warm lofi hiphop with vinyl crackle", tier="standard", seconds=1.0)
+    finally:
+        for m in injected:
+            sys.modules.pop(m, None)
+    assert out["mime"] == "audio/wav" and validate_magic(out["bytes"], "wav")
+    assert out["sample_rate"] == 32000
+    assert calls[0] == ("lowlevel", True)          # explicit-config attempted first
+    assert ("pipeline", None) in calls             # then the pipeline strategy won
+    ag._MODEL_CACHE.clear()
+
+
 def test_sha3_stable():
     assert sha3_hex(b"abc") == sha3_hex(b"abc")
     assert sha3_hex(b"abc") != sha3_hex(b"abd")

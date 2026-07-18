@@ -44,8 +44,11 @@ class StreamPipeline:
         self.ctx.now_playing = "" if cfg.music == "off" else "lofi beats to mine ANM to"
         self._stop = threading.Event()
         self._started = 0.0
-        self._last_net = 0.0
-        self._last_think = 0.0
+        self._bg = None            # background worker: all network/LLM/chat I/O lives here (LIVE only)
+        self._bg_last_net = -1e9   # -inf so the first net-stats fetch / first line fire immediately
+        self._bg_last_think = -1e9
+        self._pv_last_net = -1e9   # preview runs the brain inline on the video timeline instead
+        self._pv_last_think = -1e9
 
     def stop(self):
         self._stop.set()
@@ -82,8 +85,20 @@ class StreamPipeline:
         ta.start()
         try:
             self._started = time.monotonic()
+            # LIVE: all network/LLM/chat I/O runs on a background thread, never on the render
+            # loop, so a slow node RPC or LLM call can never stall frame production (which would
+            # make YouTube report "video output low" as the stream falls behind real time).
+            # PREVIEW: there is no real-time pacing, so the render loop drains the audio timeline
+            # far faster than wall clock — a wall-clock brain thread would leave previews nearly
+            # silent. So previews run the brain INLINE on the video timeline (see _inline_brain).
+            if not self.cfg.preview_path:
+                self._bg = threading.Thread(target=self._bg_loop, name="anm-stream-brain", daemon=True)
+                self._bg.start()
             self._loop(vq, aq, proc, max_seconds)
         finally:
+            self._stop.set()                     # also releases the background worker
+            if self._bg is not None:
+                self._bg.join(timeout=5)
             for q in (vq, aq):
                 try:
                     q.put_nowait(None)
@@ -139,8 +154,10 @@ class StreamPipeline:
             if max_seconds and t >= max_seconds:
                 break
 
-            # brain: at most ~every 0.4s decide whether to say something new
-            self._maybe_speak(t)
+            # LIVE: the brain runs on the background worker (never block the render loop).
+            # PREVIEW: run it inline on the video timeline so speech is present + deterministic.
+            if not live:
+                self._inline_brain(t)
 
             # audio chunk (advances voice → drives lip-sync + subtitle transitions)
             acc += spf_exact
@@ -175,36 +192,88 @@ class StreamPipeline:
                     time.sleep(min(slack, 0.5))
 
     # ── brain / context ──────────────────────────────────────────────────────
-    def _maybe_speak(self, t: float):
-        if self.line_provider is None:
-            return
-        # don't stack lines: only ask for a new one when the mixer is nearly idle
-        if self.mixer.backlog > 1 or (t - self._last_think) < 0.4:
-            return
-        self._last_think = t
-        try:
-            item = self.line_provider(self.ctx)
-        except Exception as e:
-            self.log(f"[stream] line_provider error: {e}")
-            item = None
-        if item and item.text:
-            samples, _ = self.voice.synth(item.text)
-            self.mixer.enqueue(samples, {"text": item.text, "emotion": item.emotion,
-                                         "behavior": item.behavior, "source": item.source})
+    def _bg_loop(self):
+        """Background worker for everything that can block on I/O: overlay net-stats,
+        reading live chat, the LLM line generation and TTS synthesis. Keeping all of it
+        off the render loop is what lets the stream hold real time — the render thread
+        only ever touches CPU-local work (render + audio mix + queue put).
 
-    def _update_ctx(self, t: float):
-        self.ctx.uptime_s = time.monotonic() - self._started
-        if (t - self._last_net) > 5.0 or not self.ctx.net_stats:
-            self._last_net = t
+        Enqueue into the mixer is safe from here: AudioMixer._queue is a plain list, and
+        list.append (enqueue) vs list.pop(0) (read, on the render thread) are each atomic
+        under the GIL; _cur/_vp playback state is only ever touched by read()."""
+        while not self._stop.is_set():
+            now = time.monotonic()
+            # 1) overlay/brain grounding stats — may block for seconds on a slow node RPC.
+            # Gate on TIME ONLY: if the fetch keeps failing (net_stats stays empty) we must NOT
+            # busy-retry every tick, or a down node gets hammered ~10x/sec with no backoff.
+            if now - self._bg_last_net > 5.0:
+                self._bg_last_net = now
+                try:
+                    ns = self.net_provider()
+                    if ns:
+                        self.ctx.net_stats = ns
+                except Exception:
+                    pass
+            # 2) let the brain speak when the mixer is nearly idle; the (blocking) chat
+            #    read + LLM completion + TTS all happen HERE, not on the render loop.
+            if (self.line_provider is not None and self.mixer.backlog <= 1
+                    and now - self._bg_last_think >= 0.4):
+                self._bg_last_think = now
+                try:
+                    item = self.line_provider(self.ctx)
+                except Exception as e:
+                    self.log(f"[stream] line_provider error: {e}")
+                    item = None
+                if item and item.text:
+                    try:
+                        samples, _ = self.voice.synth(item.text)
+                        self.mixer.enqueue(samples, {"text": item.text, "emotion": item.emotion,
+                                                     "behavior": item.behavior, "source": item.source})
+                    except Exception as e:
+                        self.log(f"[stream] synth error: {e}")
+            self._stop.wait(0.1)
+
+    def _inline_brain(self, t: float):
+        """Preview-only: run net-stats + brain/TTS synchronously on the VIDEO timeline (t is
+        video-seconds). Previews render as fast as the CPU allows, so pacing speech by wall
+        clock (the live _bg_loop) would leave them near-silent; keying off t keeps voice and
+        subtitles landing at the right frames. Blocking here is fine — previews aren't live."""
+        if t - self._pv_last_net > 5.0:
+            self._pv_last_net = t
             try:
-                self.ctx.net_stats = self.net_provider() or self.ctx.net_stats
+                ns = self.net_provider()
+                if ns:
+                    self.ctx.net_stats = ns
             except Exception:
                 pass
+        if (self.line_provider is not None and self.mixer.backlog <= 1
+                and t - self._pv_last_think >= 0.4):
+            self._pv_last_think = t
+            try:
+                item = self.line_provider(self.ctx)
+            except Exception as e:
+                self.log(f"[stream] line_provider error: {e}")
+                item = None
+            if item and item.text:
+                try:
+                    samples, _ = self.voice.synth(item.text)
+                    self.mixer.enqueue(samples, {"text": item.text, "emotion": item.emotion,
+                                                 "behavior": item.behavior, "source": item.source})
+                except Exception as e:
+                    self.log(f"[stream] synth error: {e}")
+
+    def _update_ctx(self, t: float):
+        # net_stats is refreshed by the background worker; never block the render loop on I/O.
+        self.ctx.uptime_s = time.monotonic() - self._started
         self.ctx.daytime = (t / 3600.0) % 1.0
 
     # ── ffmpeg command ───────────────────────────────────────────────────────
     def _ffmpeg_cmd(self, ff: str, vfifo: str, afifo: str, max_seconds: float):
         c = self.cfg
+        # Live must sustain real-time while sharing the box with the canonical node, so the
+        # encode has to be cheap: ultrafast keeps libx264 well under one core at 540p. A
+        # local preview/VOD render is not real-time bound, so it can afford veryfast quality.
+        preset = "veryfast" if c.preview_path else "ultrafast"
         v = [
             ff, "-hide_banner", "-loglevel", "warning", "-y",
             # analyzeduration/probesize 0/32: raw inputs need no probing; without this
@@ -214,7 +283,7 @@ class StreamPipeline:
             "-analyzeduration", "0", "-probesize", "32", "-i", vfifo,
             "-thread_queue_size", "512", "-f", "s16le", "-ar", str(c.audio_rate), "-ac", "2",
             "-analyzeduration", "0", "-probesize", "32", "-i", afifo,
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", preset,
             "-b:v", f"{c.bitrate_k}k", "-maxrate", f"{c.bitrate_k}k",
             "-bufsize", f"{2 * c.bitrate_k}k", "-g", str(c.fps * 2),
             "-c:a", "aac", "-b:a", "160k", "-ar", str(c.audio_rate),
@@ -224,7 +293,10 @@ class StreamPipeline:
                 v += ["-t", str(max_seconds)]
             v += ["-movflags", "+faststart", c.preview_path]
             return v
-        # LIVE: encode once, tee to RTMP + a segmented 1-hour recording for VOD upload
+        # LIVE: encode once, tee to RTMP + a segmented 1-hour recording for VOD upload.
+        # The tee muxer does NOT auto-select streams the way a normal output does, so we
+        # must map the encoded video+audio explicitly — otherwise ffmpeg opens the tee
+        # with zero streams ("Output file does not contain any stream") and exits.
         outs = []
         if c.rtmp_url:
             outs.append(f"[f=flv]{c.rtmp_url}")
@@ -232,7 +304,7 @@ class StreamPipeline:
             os.makedirs(c.record_dir, exist_ok=True)
             seg = os.path.join(c.record_dir, "seg_%05d.mp4")
             outs.append(f"[f=segment:segment_time={c.segment_seconds}:reset_timestamps=1:segment_format=mp4]{seg}")
-        v += ["-f", "tee", "|".join(outs)]
+        v += ["-map", "0:v:0", "-map", "1:a:0", "-f", "tee", "|".join(outs)]
         return v
 
     @staticmethod

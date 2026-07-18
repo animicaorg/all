@@ -8,6 +8,7 @@ TikTok/Shorts) without posting anywhere. Going live needs ANIMAL_DRY_RUN=0 + ANI
 from __future__ import annotations
 
 import json
+import os
 
 import typer
 
@@ -201,7 +202,31 @@ def stream(
         if yt is None:
             typer.secho("YouTube not connected. Open animica.dev/animal → connect YouTube, then rerun.", fg="red")
             raise typer.Exit(2)
-        info = yt.go_live(title=f"{char.name} — 24/7 Animica Live")
+        # Reuse the same broadcast across restarts so the public watch URL stays stable.
+        state_path = os.environ.get("ANIMAL_BROADCAST_STATE") or os.path.join(
+            record_dir or "/root/anm-vods", ".broadcast.json")
+        # Go-live is resilient to a YouTube Data-API quota 403: a 24/7 stream that restarts
+        # (crash/reboot) after the day's quota is spent CANNOT create or even verify a
+        # broadcast until the quota resets (~midnight Pacific). Crashing out here just makes
+        # systemd hit its start-limit and give the stream up for good; instead WAIT and retry
+        # so the stream self-heals the moment the quota resets. Non-quota errors still fail fast.
+        import time as _t
+        _golive_deadline = _t.time() + float(os.environ.get("ANIMAL_GOLIVE_MAX_WAIT_S", str(26 * 3600)))
+        info = None
+        while info is None:
+            try:
+                info = yt.ensure_live(title=f"{char.name} — 24/7 Animica Live",
+                                      record_dir=record_dir, state_path=state_path)
+            except Exception as e:
+                m = str(e)
+                if not ("403" in m and "quota" in m.lower()) or _t.time() >= _golive_deadline:
+                    raise
+                wait = min(1800.0, max(60.0, yt._seconds_until_quota_reset(_t.time())))
+                typer.secho(
+                    f"YouTube quota exhausted — can't go live yet; waiting {int(wait)}s then "
+                    f"retrying (the stream resumes automatically when the quota resets).",
+                    fg="yellow")
+                _t.sleep(wait)
         cfg.rtmp_url = info["rtmp_url"]
         cfg.record_dir = record_dir or info["record_dir"]
         chat_source, chat_sink = yt.chat_source(), yt.chat_sink()
@@ -235,7 +260,10 @@ def stream(
             hb.stop()
         if uploader:
             uploader.stop()
-        if yt is not None:
+        # 24/7 default: DON'T end the broadcast on a restart — that is exactly what churns
+        # the watch URL. ensure_live() reuses it next start. Only end when explicitly asked
+        # (operator teardown) via ANIMAL_END_ON_STOP=1.
+        if yt is not None and os.environ.get("ANIMAL_END_ON_STOP") == "1":
             yt.end()
     if preview and rc == 0:
         typer.secho(f"wrote {preview}", fg="green")

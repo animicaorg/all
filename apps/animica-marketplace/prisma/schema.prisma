@@ -644,6 +644,7 @@ model HostingPin {
   lastSeen      DateTime @default(now()) // last heartbeat; accrual stops if this goes stale
   byteHours     Float    @default(0)     // accumulated availability = Σ bytes × hours-live
   rewardNanm    BigInt   @default(0)     // IOU reward accrued (NOT yet a spendable balance credit)
+  settledNanm   BigInt   @default(0)     // 9.0.0: portion already PAID on-chain via IOU-settlement anchors
   active        Boolean  @default(true)
 
   @@unique([cid, nodeId])
@@ -681,6 +682,7 @@ model VpnExit {
   openSessions      Int      @default(0)
   lastSeenAt        DateTime @default(now()) // last heartbeat; accrual stops if stale
   rewardNanm        BigInt   @default(0)     // IOU reward accrued (NOT yet a spendable balance credit)
+  settledNanm       BigInt   @default(0)     // 9.0.0: portion already PAID on-chain via IOU-settlement anchors
   createdAt         DateTime @default(now())
 
   sessions          VpnSession[]
@@ -789,6 +791,7 @@ model MediaMiner {
   load           Float    @default(0)
   jobsDone       Int      @default(0)
   rewardNanm     BigInt   @default(0) // IOU only — never a spendable balance credit
+  settledNanm    BigInt   @default(0) // 9.0.0: portion of rewardNanm already PAID on-chain via an IOU-settlement anchor (block-reward carve, ≤50 ANM/block). payable = rewardNanm − settledNanm.
   lastSeenAt     DateTime @default(now())
   createdAt      DateTime @default(now())
 
@@ -879,8 +882,8 @@ model NewsletterSend {
 
 model MediaJob {
   id            String   @id @default(cuid())
-  kind          String   // image | video_t2v | video_i2v | video_multiscene | audio
-  status        String   @default("PENDING") // PENDING | RUNNING | DONE | FAILED | EXPIRED
+  kind          String   // image | video_t2v | video_i2v | video_multiscene | audio | 9.0.0 studio kinds (video_upscale/interpolate/subtitles/bgremove/shorts, audio_stems/isolate/enhance/master, render_blender/chunk/assemble)
+  status        String   @default("PENDING") // PENDING | RUNNING | DONE | FAILED | EXPIRED | WAITING (render parent — never claimable) | CANCELLED (sibling of a failed chunk)
   prompt        String   @default("")
   paramsJson    String   @default("{}") // width/height/fps/tier/seconds/scenes...
   inputB64      String?              // TRANSIENT private input (i2v uploads); wiped on claim/terminal
@@ -897,6 +900,11 @@ model MediaJob {
   resultMime    String?
   resultSha3    String?              // content hash — Proof-of-Inference receipt anchor
   resultMeta    String?              // json: model, device, duration_s, scenes...
+  resultPath    String?              // 9.0.0: disk artifact (big studio outputs) — served via /media/artifacts/[id]
+  resultBytes   BigInt?              // size of the disk artifact
+  progressPct   Int?                 // 9.0.0: miner-reported live progress (heartbeat also extends the lease)
+  progressNote  String?
+  parentId      String?              // 9.0.0: render_chunk/render_assemble → their render_blender parent
   error         String?
   deliveredAt   DateTime?            // first time the requester fetched the result
   expiresAt     DateTime?            // TTL; past this an undelivered job EXPIRES and inputs are wiped
@@ -905,6 +913,27 @@ model MediaJob {
 
   @@index([status, priority, createdAt])
   @@index([claimedById])
+  @@index([parentId])
+}
+
+// 9.0.0 GPU Studios: a large uploaded input (video / audio / .blend / mastering reference)
+// stored on the gateway DISK (never inline in a JSON body / DB row). Referenced from job
+// params by id; wiped when the owning job completes+delivers, or after TTL when unused.
+// Miners fetch it with their bearer token; it is never served on any public read path.
+model MediaUpload {
+  id             String   @id @default(cuid())
+  purpose        String   // video | audio | blend | reference
+  mime           String   @default("application/octet-stream")
+  bytes          BigInt
+  sha3           String
+  path           String   // absolute path inside MEDIA_STORE_DIR
+  requesterIp    String?
+  consumedByJobId String? // set when a job claims this upload (its lifecycle then rules the wipe)
+  expiresAt      DateTime // unconsumed uploads are wiped after this
+  createdAt      DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([consumedByJobId])
 }
 
 // ── Animica Animal — the autonomous mascot ambassador ─────────────────────────
@@ -1014,4 +1043,17 @@ model AnimalKnowledgeChunk {
   createdAt     DateTime @default(now())
 
   @@index([ref])
+}
+
+// 9.0.0 on-chain IOU settlement: one row per APPLIED settlement anchor. The txHash
+// primary key makes marking settledNanm idempotent — the settlement worker INSERTs
+// this row and applies ALL settledNanm increments in ONE transaction, so a crash
+// between the DB commit and its state-file save can never double-apply (the retry
+// hits the txHash conflict and just clears its pending state).
+model IouSettlementAnchor {
+  txHash      String   @id
+  entriesJson String
+  totalNanm   BigInt
+  height      Int
+  appliedAt   DateTime @default(now())
 }

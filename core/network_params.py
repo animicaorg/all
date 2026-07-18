@@ -103,6 +103,19 @@ PINNED_CHECKPOINTS_BY_NETWORK: dict[tuple[str, int], dict[int, bytes]] = {
         38728: bytes.fromhex(
             "00000000190117cd360d56179f88d8d03474e1ab396d90d4ecdc69e6d1e4bc45"
         ),
+        # Fork point of the 2026-07-14 natural 1-block fork. Canonical block B =
+        # 0x0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9 (the
+        # live head at 45204+ descends from it via 44855.parentHash == B, verified
+        # against the pool-backed mainnet node on the majority-hashpower chain); the
+        # orphan sibling A wedged nodes that accepted it first — same headers-pipeline
+        # class as 38728 but recurring on each new natural fork because the fix only
+        # covered the live p2p_service gossip path, not initial block download.
+        # This pin force-converges already-wedged nodes at boot (rolls the head back
+        # below 44854 so the canonical block is re-pulled) and rejects the orphan at
+        # import. Kill-switch: ANIMICA_DISABLE_PINNED_CHECKPOINTS=1.
+        44854: bytes.fromhex(
+            "0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9"
+        ),
     },
 }
 
@@ -240,6 +253,35 @@ FORK_FOUNDATION_SPLIT = "foundation_split"
 # adversarial review. Retunable via ANIMICA_FORK_STATE_COMMITMENT_HEIGHT.
 FORK_STATE_COMMITMENT = "state_commitment"
 
+# FORK_VPN_RELAY_REWARDS (8.0.1, REALIZED in 9.0.0 as IOU settlement) — from H,
+# each block MAY settle service IOUs (dVPN relay/exit, AICF inference, media,
+# hosting — any operator-issued IOU ledger) with REAL per-block payouts, capped
+# at VPN_RELAY_REWARD_CAP (50 ANM, halving exactly when the block subsidy
+# halves) and CARVED from the miner subsidy (emission-conserving: miner +
+# settlement == the pre-fork miner output; never minted above the subsidy).
+#
+# MECHANISM (9.0.0, consensus/iou_settlement.py): a "settlement anchor" is an
+# ordinary signed TRANSFER from the code-committed settlement authority (the
+# foundation treasury account) carrying ANMSETL1 + a strict JSON distribution
+# in TxTransfer.data. A block containing valid anchors pays the anchored
+# entries in THAT block (cap-scaled). Pre-9.0.0 nodes accept the anchor tx as
+# a plain transfer, so inclusion itself never splits the chain.
+#
+# SAFETY — the Sybil/inflation surface of the 8.0.1 design is closed by
+# construction: consensus never measures off-chain contribution; it only
+# rate-limits (cap) and executes distributions signed by the code-committed
+# authority, which is settling ITS OWN off-chain IOU liabilities. SELF-GATING:
+# with no anchors posted, behaviour at/after H is byte-identical to 8.0.x, so
+# the operator arms settlement only after network adoption (the first anchor
+# is the activation switch, exactly like FORK_STATE_COMMITMENT's sealed roots).
+# Forward-only; grandfathered below H. NON-UPGRADED nodes credit the full
+# subsidy to the miner once anchors flow — operators MUST run >= 9.0.0 before
+# the first anchor posts. Retunable via ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT.
+FORK_VPN_RELAY_REWARDS = "vpn_relay_rewards"
+
+# Readable 9.0.0 alias (same fork key, same height, same env override).
+FORK_IOU_SETTLEMENT = FORK_VPN_RELAY_REWARDS
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
     # This MUST match on every node — the live node and every operator's pip install
@@ -276,6 +318,14 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_STATE_COMMITMENT_HEIGHT. Self-gating on non-zero root means a
         # premature activation cannot split honest zero-root miners.
         FORK_STATE_COMMITMENT: 44_444,
+        # dVPN relay block rewards (8.0.1). Operator-chosen height 50,000 (shared with
+        # the consensus ANS fork gate). SELF-GATING + INERT: emits zero relay outputs
+        # until an on-chain relay-contribution root is sealed, which requires the
+        # (designed, not-yet-enabled) on-chain relay-registration + usage-anchoring
+        # mechanism AND an adversarial review to clear Sybil/inflation. Retune via
+        # ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT. Until sealed, activation cannot mint
+        # or change emission — behaviour is byte-identical to no-fork.
+        FORK_VPN_RELAY_REWARDS: 50_000,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {

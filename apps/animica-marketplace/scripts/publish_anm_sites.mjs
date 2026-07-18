@@ -39,6 +39,7 @@ const META = {
   wallet:  { kind: 'app', avatar: '👛', description: 'Non-custodial post-quantum ANM wallet.', endpoint: 'https://wallet.animica.org' },
   forge:   { kind: 'app', avatar: '🔨', description: 'Animica Forge — prompt to app.', endpoint: 'https://animica.io' },
   vpn:     { kind: 'app', avatar: '🛡️', description: 'Animica dVPN — pick an exit, relays earn ANM.', endpoint: 'https://animica.dev/vpn' },
+  animal:  { kind: 'agent', avatar: '🐾', description: 'The Animica mascot — an autonomous AI creature that grows the network.', endpoint: 'https://animica.dev/animal' },
 };
 
 async function owner() {

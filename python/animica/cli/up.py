@@ -196,8 +196,82 @@ def up(ctx: typer.Context,
                       f"{', '.join(summary['enabled_but_pending'])}[/yellow]")
     _ensure_media_models(caps, components, console)
     _ensure_media_miner(components, console)
+    _ensure_inference_worker(components, console, addr)
     _ensure_animal(console)
     Supervisor(components).run()
+
+
+def _ensure_inference_worker(components, console, address) -> None:
+    """Direct this node's LLM/AICF inference at animica.dev's shared queue by default.
+
+    animica.dev serves free chat by submitting on-chain AICF jobs to the canonical mainnet
+    node (fronted by rpc.animica.org). Any inference-capable node — POOL or SOLO, with or
+    without its own local node — should claim from THAT queue so its GPU/CPU serves the
+    animica.dev network's demand instead of an empty local queue. We set ANIMICA_AICF_ENDPOINT,
+    which the miner's ``--aicf`` worker (and any standalone worker) reads; os.environ propagates
+    to the miner subprocess (Supervisor spawns it with ``{**os.environ, **c.env}``). Mirrors
+    ``_ensure_media_miner``.
+
+    Opt out:
+      * ANIMICA_AICF_MINER=0 / ANIMICA_DISABLE_AICF_WORKER=1 / ANIMICA_AICF_DISABLE=1 — don't serve.
+      * ANIMICA_AICF_LOCAL=1 — serve your OWN node's queue (127.0.0.1:8545) instead of animica.dev.
+      * ANIMICA_AICF_ENDPOINT=… / AICF_URL=… — an explicit endpoint always wins.
+    """
+    import os
+
+    if (os.environ.get("ANIMICA_AICF_MINER") == "0"
+            or os.environ.get("ANIMICA_DISABLE_AICF_WORKER")
+            or os.environ.get("ANIMICA_AICF_DISABLE")):
+        # Make the opt-out actually reach the worker(s). The miner subprocess
+        # starts its own ``--aicf`` worker, which is gated ONLY by
+        # ANIMICA_DISABLE_AICF_WORKER=="1" (see agent_runtime.aicf_worker.
+        # is_disabled); a bare ANIMICA_AICF_MINER=0 / ANIMICA_AICF_DISABLE=1
+        # would otherwise be honored here but ignored by the subprocess, so
+        # the node would keep serving AICF against the operator's wishes.
+        # Canonicalize all three opt-outs into the flags every layer checks,
+        # and propagate via os.environ (Supervisor spawns with {**os.environ}).
+        os.environ["ANIMICA_DISABLE_AICF_WORKER"] = "1"
+        os.environ["ANIMICA_AICF_DISABLE"] = "1"
+        os.environ["ANIMICA_AICF_MINER"] = "0"
+        return
+
+    # Default the AICF claim endpoint to the animica.dev-fed canonical node, unless the operator
+    # pinned an endpoint or asked to keep serving local. Explicit config always wins.
+    default_gw = os.environ.get("ANIMICA_AICF_GATEWAY", "https://rpc.animica.org/rpc")
+    explicit = os.environ.get("ANIMICA_AICF_ENDPOINT") or os.environ.get("AICF_URL")
+    if not explicit and not os.environ.get("ANIMICA_AICF_LOCAL"):
+        os.environ["ANIMICA_AICF_ENDPOINT"] = default_gw
+    endpoint = (os.environ.get("ANIMICA_AICF_ENDPOINT")
+                or os.environ.get("AICF_URL") or "127.0.0.1:8545 (local node)")
+
+    enabled = {getattr(c, "name", "") for c in components if getattr(c, "enabled", True)}
+    if "miner" in enabled:
+        # The miner subprocess starts the AICF worker (--aicf) and inherits ANIMICA_AICF_ENDPOINT.
+        console.print(f"[dim]inference: this node serves AICF chat to {endpoint}[/dim]")
+        return
+
+    # No miner in the plan (e.g. --profile provider / ai): start a standalone AICF worker so the
+    # node still serves inference to animica.dev. Best-effort — must never break `up`.
+    if not address or address.startswith("<"):
+        return
+    try:
+        from animica.cli.mining import _start_aicf_worker
+        _stop, stats = _start_aicf_worker(address)
+        tiers_list = stats.get("tiers") or []
+        if stats.get("started") and tiers_list:
+            tiers = ",".join(tiers_list)
+            console.print(f"[dim]inference: serving AICF chat to {endpoint} · tiers {tiers}[/dim]")
+        elif stats.get("started"):
+            # Worker constructed but qualified out every tier (no installed
+            # flagship bundle to serve with). It won't advertise phantom
+            # capacity; tell the operator how to actually serve.
+            console.print("[dim]inference: worker idle (no installed model bundle) — "
+                          "run 'animica miner aicf-worker pull' to serve chat[/dim]")
+        else:
+            console.print(f"[dim]inference: worker idle ({stats.get('reason')}) — "
+                          f"run 'animica miner setup' to serve inference[/dim]")
+    except Exception as exc:  # noqa: BLE001 — never let inference-enroll break the supervisor
+        console.print(f"[dim]inference: worker not started ({exc})[/dim]")
 
 
 def _ensure_media_models(caps, components, console) -> None:

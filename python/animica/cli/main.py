@@ -53,7 +53,7 @@ import typer
 from . import (vpn,  # dVPN
     ai, aicf, animal, beacon, bittensor, chain, chat, contract, da, debug, ena, faucet, growth, gui, key,
                mcp, media, mempool, mining, network, node, p2p, peer, phase2, quantum,
-               rpc, script, snapshot, stratum, studio, sync, tx, up, wallet)
+               rpc, script, settle, snapshot, stratum, studio, sync, tx, up, wallet)
 
 app = typer.Typer(
     name="animica",
@@ -222,6 +222,7 @@ app.add_typer(ai.app, name="ai")
 app.add_typer(media.app, name="media")
 app.add_typer(growth.app, name="growth")
 app.add_typer(animal.app, name="animal")
+app.add_typer(settle.app, name="settle")
 app.add_typer(up.app, name="up")
 
 
