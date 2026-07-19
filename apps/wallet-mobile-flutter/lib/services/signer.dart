@@ -14,7 +14,6 @@ import 'dart:typed_data';
 import '../constants.dart';
 import '../models/account.dart';
 import 'canonical.dart';
-import 'keys.dart';
 import 'ml_dsa_65.dart';
 import 'rpc.dart';
 
@@ -31,19 +30,41 @@ class SignedTx {
   });
 }
 
+/// Max size of the optional `data` payload on a transfer. Mirrors the node's
+/// mempool guardrail (mempool/validate.py) so the wallet fails fast locally
+/// instead of building a tx the network will reject. Store purchase memos
+/// (ANMSTORE1) are always well under this (<=300 bytes).
+const int kMaxTransferDataBytes = 1024;
+
 /// Build a transfer body (kind=0). Amount is in nanos (1 ANM = 1e9 nanos).
+///
+/// `data` is an optional opaque payload written verbatim into the body's
+/// `data` bstr field — used for on-chain memos like the App Store's
+/// `ANMSTORE1` purchase memo. When omitted (the default) the body is
+/// byte-for-byte identical to the historical empty-data transfer, so every
+/// existing golden vector and broadcast envelope is unchanged. The field
+/// name, position and CBOR encoding match the Python builder exactly
+/// (omni_sdk `make_tx` / `build_signable_tx_bytes`), which the chain and the
+/// e2e pay-intent helper (`scripts/e2e_pay_intent.py`) sign over.
 Map<String, dynamic> buildTransferBody({
   required String from,
   required String to,
   required BigInt amountNanos,
   required int nonce,
+  Uint8List? data,
   int gasLimit = 21000,
   int maxFee = 1000000000,
   int chainId = 1,
 }) {
+  if (data != null && data.length > kMaxTransferDataBytes) {
+    throw ArgumentError(
+      'transfer data too large: ${data.length} bytes > '
+      '$kMaxTransferDataBytes-byte limit',
+    );
+  }
   return <String, dynamic>{
     'to': to,
-    'data': Uint8List(0),
+    'data': data ?? Uint8List(0),
     'from': from,
     'nonce': nonce,
     'value': amountNanos,
@@ -104,15 +125,17 @@ Future<SignedTx> signTx({
       sig = await MlDsa65.sign(account.secretKey, prehash);
       break;
     case AnimicaConfig.algIdSphincs:
-      sig = signSphincs(account.publicKey, prehash);
-      break;
     case AnimicaConfig.algIdDilithium3:
-      sig = signDilithium3(
-        sk: account.secretKey,
-        prehash: prehash,
-        pk: account.publicKey,
+      // Legacy stub schemes (sphincs_shake_128s 0x1002 / dilithium3 0x1001) are
+      // forgeable and rejected by the node — any signature they produce can
+      // never be mined. Refuse rather than build an unspendable transaction.
+      throw UnsupportedError(
+        'This is a legacy '
+        '${account.algId == AnimicaConfig.algIdDilithium3 ? "Dilithium3" : "SPHINCS-128s"} '
+        'wallet (alg_id 0x${account.algId.toRadixString(16)}). The network no longer '
+        'accepts this scheme, so its balance cannot be sent. Move funds via an '
+        'ML-DSA-65 wallet.',
       );
-      break;
     default:
       throw UnsupportedError(
         'Unknown alg_id 0x${account.algId.toRadixString(16)} — '

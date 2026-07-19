@@ -1,7 +1,7 @@
 name: animica_wallet
 description: Animica mobile wallet — view ANM balance, ANM-20 tokens and NFTs, buy ANM via buy.animica.org, and browse dapps with an injected provider.
 publish_to: "none"
-version: 0.1.4+5
+version: 0.2.0+6
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
