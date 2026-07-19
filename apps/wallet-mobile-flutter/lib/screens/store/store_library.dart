@@ -14,6 +14,7 @@ import '../../models/store.dart';
 import '../../services/marketplace_api.dart';
 import '../../state/store_state.dart';
 import '../../state/wallet_state.dart';
+import 'game_play_screen.dart';
 
 class StoreLibraryScreen extends ConsumerWidget {
   const StoreLibraryScreen({super.key});
@@ -63,12 +64,12 @@ String _friendlyError(Object e) {
   return 'Could not load your apps. Check your connection.';
 }
 
-class _LicenseTile extends StatelessWidget {
+class _LicenseTile extends ConsumerWidget {
   final License license;
   const _LicenseTile({required this.license});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final name = license.listing?.name ??
         license.listing?.slug ??
@@ -76,6 +77,16 @@ class _LicenseTile extends StatelessWidget {
         'App';
     final version = license.build?.versionName;
     final slug = license.listing?.slug;
+
+    // A playable web game: a DIGITAL_GOOD license, still valid, whose listing
+    // actually carries a play bundle (checked cheaply + cached via the public
+    // bundle route). Only then do we surface a Play button on the tile.
+    final playable = slug != null &&
+        license.listing?.type == 'DIGITAL_GOOD' &&
+        !license.isRevoked &&
+        !license.isExpired &&
+        (ref.watch(gameBundleProvider(slug)).asData?.value.hasBundle ?? false);
+
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
@@ -117,6 +128,19 @@ class _LicenseTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (playable) ...[
+                const SizedBox(width: 4),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  tooltip: 'Play',
+                  onPressed: () => playStoreGame(
+                    context,
+                    api: ref.read(marketplaceApiProvider),
+                    slug: slug,
+                    name: name,
+                  ),
+                ),
+              ],
               const SizedBox(width: 8),
               _StatusChip(license: license),
             ],

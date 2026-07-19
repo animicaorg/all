@@ -65,6 +65,15 @@ final storeAppDetailProvider =
   return api.appDetail(slug);
 });
 
+/// GET /store/apps/{slug}/bundle — web-game bundle metadata (presence, free/paid,
+/// direct play URL for free games). Public; no session. Used to decide whether a
+/// listing shows a Play surface (e.g. per owned game in the library).
+final gameBundleProvider =
+    FutureProvider.autoDispose.family<GameBundle, String>((ref, slug) async {
+  final api = ref.watch(marketplaceApiProvider);
+  return api.gameBundle(slug);
+});
+
 /// The buyer's licenses (My Apps). Fetches from the server (auto sign-in via the
 /// store challenge), caching offline; falls back to the cache when the fetch
 /// fails but a cache exists.

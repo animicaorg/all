@@ -353,6 +353,12 @@ class StoreAppDetail {
   final String type;
   final String? category;
   final String? packageName;
+
+  /// Game Lab web game: CID of the self-contained, sandboxed HTML play bundle
+  /// (`Listing.bundleCid`); null when the listing is not a playable web game.
+  /// FREE games play straight from `/api/mkt/v1/content/<bundleCid>`; PAID games
+  /// must go through the license-gated play-token — clients decide from prices.
+  final String? bundleCid;
   final String? coverUrl;
   final bool verified;
   final String? status;
@@ -374,6 +380,7 @@ class StoreAppDetail {
     required this.type,
     this.category,
     this.packageName,
+    this.bundleCid,
     this.coverUrl,
     this.verified = false,
     this.status,
@@ -396,6 +403,7 @@ class StoreAppDetail {
         type: _str(j['type']) ?? 'APP',
         category: _str(j['category'] ?? j['appCategory']),
         packageName: _str(j['packageName']),
+        bundleCid: _str(j['bundleCid']),
         coverUrl: _str(j['coverUrl']),
         verified: _boolOr(j['verified'], false),
         status: _str(j['status']),
@@ -412,6 +420,18 @@ class StoreAppDetail {
 
   bool get isApp => type == 'APP';
   bool get isDigitalGood => type == 'DIGITAL_GOOD';
+
+  /// True when this is a playable Game Lab web game (a GAMES-category
+  /// DIGITAL_GOOD carrying a bundle). Drives the store detail's Play surface.
+  bool get isGame => isDigitalGood && category == 'GAMES';
+
+  /// The listing carries a self-contained web-game play bundle.
+  bool get hasBundle => bundleCid != null && bundleCid!.isNotEmpty;
+
+  /// Free to play — no active prices, or every active price is the FREE model.
+  /// Matches the server's `isFreeListing` (which the play routes gate on).
+  bool get isFreeListing =>
+      prices.isEmpty || prices.every((p) => p.model == 'FREE');
 
   List<StoreAsset> get screenshots =>
       assets.where((a) => a.isScreenshot).toList(growable: false);
@@ -940,6 +960,88 @@ class DownloadToken {
         sha3: _str(j['sha3']),
         certSha256: _str(j['certSha256']),
         minSdk: _int(j['minSdk']),
+      );
+
+  DateTime? get expiresAtDate => _date(expiresAt);
+}
+
+// ── web-game bundle metadata (GET /store/apps/{slug}/bundle) ─────────────────
+
+/// Price-aware metadata for a Game Lab web-game play bundle. The route is public:
+/// FREE listings expose the direct content [playUrl] (public, immutable play);
+/// PAID listings expose only [hasBundle] — their bytes are served license-gated
+/// through the play-token, so the public content URL never leaks a paywall.
+class GameBundle {
+  final String slug;
+  final bool hasBundle;
+  final bool free;
+  final String? mime;
+  final String? cid;
+
+  /// Origin-relative content play URL (`/api/mkt/v1/content/<cid>`) for FREE
+  /// games (or the owner); null for a paid game to a non-owner. Resolve to an
+  /// absolute URL with `MarketplaceApi.absoluteUrl` before loading in a WebView.
+  final String? playUrl;
+  final BigInt? size;
+
+  const GameBundle({
+    required this.slug,
+    this.hasBundle = false,
+    this.free = false,
+    this.mime,
+    this.cid,
+    this.playUrl,
+    this.size,
+  });
+
+  factory GameBundle.fromJson(Map<String, dynamic> j) => GameBundle(
+        slug: _str(j['slug']) ?? '',
+        hasBundle: _boolOr(j['hasBundle'], false),
+        free: _boolOr(j['free'], false),
+        mime: _str(j['mime']),
+        cid: _str(j['cid']),
+        playUrl: _str(j['playUrl']),
+        size: _bigInt(j['size']),
+      );
+
+  /// A FREE game whose public content URL is directly playable (no play-token).
+  bool get isFreePlayable =>
+      hasBundle && free && playUrl != null && playUrl!.isNotEmpty;
+}
+
+// ── play token (POST /store/play-token/{slug}) ───────────────────────────────
+
+/// Entitlement-gated, short-lived (~10 min) HMAC token + relative play URL for a
+/// web game's self-contained bundle. Minted only for the owner or an active
+/// purchase; the PLAY twin of [DownloadToken]. Entitlement is re-checked when the
+/// bundle is served, so a refund/delist between mint and load still blocks.
+class PlayToken {
+  final String token;
+
+  /// Origin-relative play URL (`/api/mkt/v1/store/play/<token>`). Resolve with
+  /// `MarketplaceApi.absoluteUrl` before loading in a WebView.
+  final String url;
+  final String? expiresAt;
+  final String? slug;
+  final String? listingId;
+  final String? priceModel;
+
+  const PlayToken({
+    required this.token,
+    required this.url,
+    this.expiresAt,
+    this.slug,
+    this.listingId,
+    this.priceModel,
+  });
+
+  factory PlayToken.fromJson(Map<String, dynamic> j) => PlayToken(
+        token: _str(j['token']) ?? '',
+        url: _str(j['url']) ?? '',
+        expiresAt: _str(j['expiresAt']),
+        slug: _str(j['slug']),
+        listingId: _str(j['listingId']),
+        priceModel: _str(j['priceModel']),
       );
 
   DateTime? get expiresAtDate => _date(expiresAt);

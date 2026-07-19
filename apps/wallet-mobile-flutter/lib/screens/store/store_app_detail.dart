@@ -12,6 +12,7 @@ import '../../services/marketplace_api.dart';
 import '../../services/rpc.dart';
 import '../../state/store_state.dart';
 import '../../state/wallet_state.dart';
+import 'game_play_screen.dart';
 import 'store_checkout_sheet.dart';
 
 class StoreAppDetailScreen extends ConsumerWidget {
@@ -40,9 +41,14 @@ class StoreAppDetailScreen extends ConsumerWidget {
   }
 }
 
-/// Pinned bottom bar: headline price + BUY. Enabled only for a paid ONE_TIME
-/// price (non-custodial wallet payment); free / subscription-only listings show
-/// an honest note (those flows are custodial and live on the web store).
+/// Pinned bottom bar: the primary action for the listing.
+///   • A playable web game (GAMES DIGITAL_GOOD with a bundle) shows **Play** —
+///     FREE plays straight from the public bundle; PAID plays once owned (a
+///     license is present), otherwise it falls back to BUY and Play unlocks
+///     after the purchase completes.
+///   • Otherwise it shows the headline price + BUY, enabled only for a paid
+///     ONE_TIME price (non-custodial wallet payment); free / subscription-only
+///     listings show an honest note (those flows are custodial / web store).
 class _BuyBar extends ConsumerWidget {
   final StoreAppDetail app;
   const _BuyBar({required this.app});
@@ -54,32 +60,71 @@ class _BuyBar extends ConsumerWidget {
     return null;
   }
 
-  bool get _isFree =>
-      app.prices.isEmpty || app.prices.every((p) => p.isFree);
+  /// Owned = a non-revoked, non-expired license for this listing's slug. Reads
+  /// the buyer's licenses; while loading / on error we treat it as not owned.
+  bool _ownsSlug(AsyncValue<List<License>> licenses) {
+    final list = licenses.asData?.value;
+    if (list == null) return false;
+    for (final l in list) {
+      if (l.listing?.slug == app.slug && !l.isRevoked && !l.isExpired) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
     final account = ref.watch(activeAccountProvider);
-    final price = _oneTime;
 
-    final String priceLabel;
+    final isGame = app.isGame && app.hasBundle;
+    final isFree = app.isFreeListing;
+
+    String headerLabel = 'Price';
+    final String valueLabel;
     final String cta;
+    IconData? ctaIcon;
     VoidCallback? onTap;
-    if (price != null) {
-      priceLabel = '${formatAnm(price.amountNanm)} ANM';
-      cta = 'Buy';
-      onTap = account == null
-          ? null
-          : () => showStoreCheckoutSheet(context, app: app, price: price);
-    } else if (_isFree) {
-      priceLabel = 'Free';
-      cta = 'Get';
-      onTap = null; // free installs are custodial (web store) — not wired here
+
+    void play() => playStoreGame(
+          context,
+          api: ref.read(marketplaceApiProvider),
+          slug: app.slug,
+          name: app.name,
+        );
+
+    if (isGame && isFree) {
+      // Free web game — playable by anyone, no sign-in / payment needed.
+      headerLabel = 'Web game';
+      valueLabel = 'Free to play';
+      cta = 'Play';
+      ctaIcon = Icons.play_arrow_rounded;
+      onTap = play;
+    } else if (isGame && _ownsSlug(ref.watch(myLicensesProvider))) {
+      // Paid web game the buyer already owns — mint a play-token and play.
+      headerLabel = 'Web game';
+      valueLabel = 'Owned';
+      cta = 'Play';
+      ctaIcon = Icons.play_arrow_rounded;
+      onTap = account == null ? null : play;
     } else {
-      priceLabel = 'Subscription';
-      cta = 'Subscribe';
-      onTap = null; // subscriptions are custodial by design
+      final price = _oneTime;
+      if (price != null) {
+        valueLabel = '${formatAnm(price.amountNanm)} ANM';
+        cta = 'Buy';
+        onTap = account == null
+            ? null
+            : () => showStoreCheckoutSheet(context, app: app, price: price);
+      } else if (isFree) {
+        valueLabel = 'Free';
+        cta = 'Get';
+        onTap = null; // free installs are custodial (web store) — not wired here
+      } else {
+        valueLabel = 'Subscription';
+        cta = 'Subscribe';
+        onTap = null; // subscriptions are custodial by design
+      }
     }
 
     return SafeArea(
@@ -96,21 +141,31 @@ class _BuyBar extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('Price',
+                Text(headerLabel,
                     style: TextStyle(color: cs.outline, fontSize: 12)),
-                Text(priceLabel,
+                Text(valueLabel,
                     style: const TextStyle(
                         fontWeight: FontWeight.w700, fontSize: 16)),
               ],
             ),
             const Spacer(),
-            FilledButton(
-              onPressed: onTap,
-              style: FilledButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 32, vertical: 14)),
-              child: Text(cta),
-            ),
+            if (ctaIcon != null)
+              FilledButton.icon(
+                onPressed: onTap,
+                icon: Icon(ctaIcon),
+                label: Text(cta),
+                style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 14)),
+              )
+            else
+              FilledButton(
+                onPressed: onTap,
+                style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 32, vertical: 14)),
+                child: Text(cta),
+              ),
           ],
         ),
       ),

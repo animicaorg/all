@@ -321,6 +321,41 @@ class MarketplaceApi {
     return DownloadToken.fromJson(j);
   }
 
+  // ── web-game play (Game Lab) ───────────────────────────────────────────────
+
+  /// GET /store/apps/{slug}/bundle — PUBLIC, price-aware web-game bundle
+  /// metadata. FREE games expose the direct content [GameBundle.playUrl] for
+  /// public play; PAID games expose only `hasBundle` (play goes through the
+  /// license-gated play-token). No session required.
+  Future<GameBundle> gameBundle(String slug) async {
+    final uri =
+        Uri.parse('$baseUrl/store/apps/${Uri.encodeComponent(slug)}/bundle');
+    final j = await _getJson(uri);
+    return GameBundle.fromJson(j);
+  }
+
+  /// POST /store/play-token/{slug} — entitlement-gated, short-lived HMAC play
+  /// token + relative play URL for a web game's self-contained HTML bundle
+  /// (the PLAY twin of [requestDownloadToken]). Session-authenticated; a free
+  /// game mints for anyone signed in, a paid game only for the owner or an
+  /// active purchase. Throws `MarketplaceApiException(403,'not_entitled')` when
+  /// a purchase is required.
+  Future<PlayToken> playToken(String slug) async {
+    final j = await _authedJson(
+      'POST',
+      '/store/play-token/${Uri.encodeComponent(slug)}',
+    );
+    return PlayToken.fromJson(j);
+  }
+
+  /// Resolve a FREE web game's absolute play URL via [gameBundle], or null when
+  /// the listing has no bundle or is not free (paid games play via [playToken]).
+  Future<String?> freePlayUrl(String slug) async {
+    final info = await gameBundle(slug);
+    if (!info.hasBundle || !info.free) return null;
+    return absoluteUrl(info.playUrl);
+  }
+
   // ── session management ────────────────────────────────────────────────────
 
   /// True when a usable cached session exists for the active account.
