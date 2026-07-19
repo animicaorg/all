@@ -72,3 +72,22 @@ Per standing note: PyPI token, GitHub token → rotate once used.
   orchestration smoke green end-to-end.
 - Adversarial review (6 dims × refuter panels): all confirmed findings fixed.
 - Backups: /root/site-backups/9.0.0-<ts>/ (index.html, banner, openapi, llms, sw, nginx).
+
+## Post-mortem addenda (2026-07-19) — MANDATORY for 9.0.1+ deploys
+The 9.0.0 deploy caused a 5-hour marketplace outage (Jul 17 21:26 → Jul 18 02:32 CEST,
+~4,500 systemd restarts) and a 30-hour unapplied-nginx window. Two process rules:
+
+1. **Never `next build` in the live app dir while the service runs.** The build wipes
+   `.next` first, so `next start` crash-loops against a missing build and every miner
+   poll gets a 502 at the edge (the pre-9.0.1 miner client hard-exited on that — it
+   killed the fleet's poll loops). Always:
+   ```
+   cd apps/animica-marketplace && cp -a .next .next.bak && systemctl stop animica-marketplace
+   npm run build && rm -rf .next.bak || { rm -rf .next && mv .next.bak .next; }
+   systemctl start animica-marketplace
+   ```
+2. **Applying `deploy/animica.dev-marketplace.nginx.conf` is a release step, not an
+   optional one.** Copy the blocks into sites-available, `nginx -t && systemctl reload
+   nginx`, then curl-probe every new body-size limit (a >24MB POST must NOT 413).
+   The 9.0.0 large-body blocks sat unapplied Jul 18 02:20 → Jul 19 04:55; every large
+   result upload in that window died at the edge.

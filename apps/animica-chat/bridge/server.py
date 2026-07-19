@@ -146,11 +146,61 @@ BRIDGE_NEG_TTL_S = float(os.environ.get("BRIDGE_NEG_TTL_S", "15"))
 
 # Stub markers mirror the agent's _STUB_MARKERS so we never cache a
 # no-miner placeholder as if it were a real answer (rank 6 guardrail).
+# Includes the worker-side "aicf-miner-stub" echoes: a legacy/mis-configured
+# worker that fails to load a model (e.g. it picked a media/diffusion model as
+# an LLM) returns its own error text AS the answer — we must never serve that.
 _STUB_MARKERS = (
     "[distributed-aicf stub",
+    "[aicf-miner-stub",
     "No external workers have claimed",
     "placeholder so the protocol round-trip",
+    "model_load_failed",
+    "Unrecognized model in",
 )
+# Prefixes a stub response reliably STARTS with (used by the stream head-gate
+# to classify before flushing leading tokens to the client).
+_STUB_PREFIXES = ("[aicf-miner-stub", "[distributed-aicf stub")
+# How many times to re-submit a job whose result came back as a stub — a
+# healthy/updated worker may claim the re-submitted job (miner cycling). The
+# node hands each fresh job to whichever worker claims first, so re-submitting
+# is how we "cycle" past a mis-configured provider to a healthy one. Bounded so
+# a fully-degraded network still terminates in a clean fallback.
+BRIDGE_STUB_RETRIES = int(os.environ.get("BRIDGE_STUB_RETRIES", "4"))
+# Total wall-clock budget for the non-streaming request across the first serve
+# and every stub retry. Each retry is a full re-submit that can burn the whole
+# stub-grace window on a claimed-but-undelivered job, so without a deadline a
+# tiny request can exceed the client's timeout with an empty body.
+BRIDGE_TOTAL_BUDGET_S = float(os.environ.get("BRIDGE_TOTAL_BUDGET_S", "90"))
+# Same, for the streaming endpoint (homepage). Kept separate so it can be tuned
+# independently; each cycle is a full re-serve so keep it modest.
+BRIDGE_STUB_STREAM_RETRIES = int(os.environ.get("BRIDGE_STUB_STREAM_RETRIES", "3"))
+# Per-cycle wall-clock budget: if a re-served provider hasn't returned within
+# this many seconds, abandon it and stop cycling (emit the fallback) so the
+# client never waits minutes. Bounds total cycle time to ~N×this.
+BRIDGE_CYCLE_ATTEMPT_S = float(os.environ.get("BRIDGE_CYCLE_ATTEMPT_S", "20"))
+# SSE keepalive cadence. During a long pre-first-token wait (a worker claiming a
+# job + loading a model can take a while) no content bytes flow; we emit an SSE
+# comment line every few seconds so no proxy/browser cuts the stream and the
+# client can wait patiently instead of timing out. Comment lines (":" prefix)
+# are ignored by SSE/EventSource clients and never render.
+BRIDGE_SSE_HEARTBEAT_S = float(os.environ.get("BRIDGE_SSE_HEARTBEAT_S", "12"))
+# Clean, honest message served when every attempt returns a stub, instead of
+# leaking a worker's raw model-load error (the giant transformers model list).
+_FALLBACK_ANSWER = (
+    "⚠️ The Animica AI network couldn't complete your request just now — the "
+    "provider that picked it up wasn't able to load a language model. This is "
+    "usually temporary while GPU/CPU providers come online or finish upgrading. "
+    "Please try again in a moment.\n\n"
+    "Running a node? `pip install -U animica && animica up` serves chat to the "
+    "network — v8.4.2+ automatically qualifies the right model, so you'll never "
+    "advertise capacity you can't fulfill."
+)
+
+
+def _stub_head(text: Optional[str]) -> bool:
+    """True if ``text`` STARTS with a known worker-stub prefix (after lstrip)."""
+    t = (text or "").lstrip()
+    return any(t.startswith(p) for p in _STUB_PREFIXES)
 
 app = FastAPI(title="Animica Chat AICF Bridge", version="0.1.0")
 
@@ -1396,8 +1446,25 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
 
             keepwarm.mark_serve_start()
             t0 = time.monotonic()
+            timed_out = False
             try:
-                result = await loop.run_in_executor(None, provider.serve, turn)
+                serve_fut = loop.run_in_executor(None, provider.serve, turn)
+                # Swallow any late exception so an abandoned serve never logs
+                # "exception was never retrieved" after a budget timeout.
+                serve_fut.add_done_callback(
+                    lambda f: f.cancelled() or f.exception())
+                result = await asyncio.wait_for(
+                    asyncio.shield(serve_fut),
+                    timeout=max(1.0, BRIDGE_TOTAL_BUDGET_S))
+            except asyncio.TimeoutError:
+                # Budget spent before the provider returned (a claimed-but-dead
+                # job can burn the whole stub-grace window). Serve the clean
+                # fallback now; the executor thread finishes in the background
+                # and its result is discarded. Followers get 503-retry via the
+                # pending-leader resolution in the finally block.
+                timed_out = True
+                result = None
+                _NEG_CACHE[tier] = time.time()
             except (AICFError, WalletError, ProviderUnavailable, AgentRuntimeError) as exc:
                 _NEG_CACHE[tier] = time.time()
                 if leader_future is not None and not leader_future.done():
@@ -1432,10 +1499,36 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                         )
 
             dt_ms = (time.monotonic() - t0) * 1000.0
-            _update_latency(dt_ms)             # rank 13
-            _NEG_CACHE.pop(tier, None)         # clear on any successful serve
+            if not timed_out:
+                _update_latency(dt_ms)         # rank 13
+                _NEG_CACHE.pop(tier, None)     # clear on any successful serve
 
-            text = _apply_stop(result.text, req.stop)    # rank 14
+            text = _FALLBACK_ANSWER if timed_out else _apply_stop(result.text, req.stop)    # rank 14
+            # rank 6b: a legacy/mis-configured worker can return its own error or
+            # stub as the "answer" (e.g. it tried to load a media model as an
+            # LLM). Never serve that raw dump. Retry a couple of times (a
+            # healthy/updated worker may claim the re-submitted job); if it still
+            # stubs, return a clean first-party notice.
+            served_fallback = timed_out
+            if not timed_out and _is_stub_text(text):
+                for _attempt in range(max(0, BRIDGE_STUB_RETRIES)):
+                    # Deadline across first serve + all retries: once the budget
+                    # is spent, fall back immediately instead of re-submitting
+                    # (each re-serve can burn minutes on a claimed-but-dead job).
+                    if time.monotonic() - t0 >= BRIDGE_TOTAL_BUDGET_S:
+                        break
+                    try:
+                        retry_res = await loop.run_in_executor(
+                            None, provider.serve, turn)
+                    except Exception:    # noqa: BLE001 — treat as still-stubbed
+                        break
+                    retry_text = _apply_stop(retry_res.text, req.stop)
+                    if retry_text.strip() and not _is_stub_text(retry_text):
+                        text = retry_text
+                        break
+                if _is_stub_text(text):
+                    text = _FALLBACK_ANSWER
+                    served_fallback = True
             usage = {
                 "prompt_tokens": max(1, len(prompt) // 4),
                 "completion_tokens": max(1, len(text) // 4),
@@ -1444,8 +1537,9 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
             payload = _full_payload(
                 f"chatcmpl-{uuid.uuid4().hex[:24]}", model_label, text, usage,
             )
-            # rank 6: only cache real (non-empty, non-stub) answers.
-            if cache_key is not None and text.strip() and not _is_stub_text(text):
+            # rank 6: only cache real (non-empty, non-stub, non-fallback) answers.
+            if (cache_key is not None and text.strip()
+                    and not _is_stub_text(text) and not served_fallback):
                 _cache_put(cache_key, payload)
             return JSONResponse(payload, headers={
                 "X-Cache": "miss",
@@ -1568,8 +1662,46 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
             sent_any = False
             saw_tool_call = False
             finalized = False
+            # rank 6b: stream head-gate. Hold leading plain-content tokens until
+            # we can tell a real answer from a worker's stub/error dump, then
+            # either flush them and stream on, or replace the whole response with
+            # a clean first-party notice. Active only for non-tool streams (a
+            # stub never arrives as a tool_call). Costs one short head-buffer of
+            # latency on real answers.
+            gate_active = parser is None
+            gate_buf: list[str] = []
+            gate_len = 0
+            gate_decided = not gate_active
+            gate_swallow = False
+            GATE_PROBE = 48
+
+            def _gate_emit(force: bool) -> list[bytes]:
+                """Classify the buffered head once we have enough of it (or on
+                force). Real → flush the buffer as content and stream on. Stub →
+                swallow it and set gate_swallow so the caller cycles to other
+                miners after the (stubbed) first attempt drains. No-op while
+                still undecided."""
+                nonlocal gate_decided, gate_swallow
+                if gate_decided or (not force and gate_len < GATE_PROBE):
+                    return []
+                gate_decided = True
+                joined = "".join(gate_buf)
+                gate_buf.clear()
+                if _stub_head(joined):
+                    gate_swallow = True
+                    return []      # emit nothing; cycle happens after the loop
+                return _content_bytes(joined) if joined else []
+
             while True:
-                item = await queue.get()
+                try:
+                    item = await asyncio.wait_for(
+                        queue.get(), timeout=BRIDGE_SSE_HEARTBEAT_S)
+                except asyncio.TimeoutError:
+                    # No token yet (worker still claiming/loading). Keep the SSE
+                    # connection warm so the client waits patiently instead of
+                    # hitting a proxy/browser timeout.
+                    yield b": keepalive\n\n"
+                    continue
                 if item is None:
                     break
                 text, is_final = item
@@ -1585,6 +1717,13 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                                 saw_tool_call = True
                         for chunk in _emit_events(events):
                             yield chunk
+                    elif gate_active and not gate_decided:
+                        gate_buf.append(text)
+                        gate_len += len(text)
+                        for chunk in _gate_emit(False):
+                            yield chunk
+                    elif gate_swallow:
+                        pass    # drop the rest of a stub response
                     else:
                         for chunk in _content_bytes(text):
                             yield chunk
@@ -1597,6 +1736,14 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                         finalized = True
                         break
                 if is_final:
+                    # rank 6b: force a decision on any head still held by the gate.
+                    if gate_active and not gate_decided:
+                        for chunk in _gate_emit(True):
+                            yield chunk
+                    if gate_swallow:
+                        # First provider stubbed — don't finalize here; cycle to
+                        # other miners after the loop.
+                        break
                     # Drain any buffered partial-content from the parser + trimmer.
                     if parser is not None:
                         for chunk in _emit_events(parser.flush()):
@@ -1611,11 +1758,55 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                     yield b"data: [DONE]\n\n"
                     finalized = True
                     break
-            if not sent_any and not finalized:
-                # Make absolutely sure clients always see a frame.
+            # Force a gate decision if the stream ended without one.
+            if gate_active and not gate_decided and gate_buf:
+                for chunk in _gate_emit(True):
+                    yield chunk
+            # rank 6b: MINER CYCLING. The first provider returned a stub (couldn't
+            # load a model). Re-serve up to BRIDGE_STUB_STREAM_RETRIES times — the
+            # node hands each fresh job to whichever worker claims first, so this
+            # cycles past the bad provider to a healthy one — keeping the SSE
+            # connection warm with keepalives. Stream the first real answer; only
+            # fall back to a first-party notice if every provider cycles.
+            if gate_swallow and not finalized:
+                cycled = None
+                for _attempt in range(max(0, BRIDGE_STUB_STREAM_RETRIES)):
+                    turn.stream_callback = None
+                    serve_task = loop.run_in_executor(None, provider.serve, turn)
+                    waited = 0.0
+                    while not serve_task.done() and waited < BRIDGE_CYCLE_ATTEMPT_S:
+                        done, _pending = await asyncio.wait(
+                            {serve_task}, timeout=BRIDGE_SSE_HEARTBEAT_S)
+                        waited += BRIDGE_SSE_HEARTBEAT_S
+                        if not done:
+                            yield b": keepalive\n\n"
+                    if not serve_task.done():
+                        # This provider is too slow — abandon it (the executor
+                        # thread finishes in the background) and stop cycling so
+                        # the client isn't left waiting minutes.
+                        break
+                    try:
+                        res2 = serve_task.result()
+                    except Exception:    # noqa: BLE001 — treat as stub, keep cycling
+                        continue
+                    rt = _apply_stop(res2.text, req.stop)
+                    if rt.strip() and not _is_stub_text(rt):
+                        cycled = rt
+                        break
+                for chunk in _content_bytes(
+                        cycled if cycled is not None else _FALLBACK_ANSWER):
+                    yield chunk
+                _record_latency()
                 final = _chunk_payload(chunk_id, model_label, "", finish="stop")
                 yield f"data: {json.dumps(final)}\n\n".encode("utf-8")
                 yield b"data: [DONE]\n\n"
+                finalized = True
+            if not finalized:
+                # Make absolutely sure clients always see a terminal frame.
+                final = _chunk_payload(chunk_id, model_label, "", finish="stop")
+                yield f"data: {json.dumps(final)}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+                finalized = True
         finally:
             keepwarm.mark_serve_end()
             _schedule_linger_release(loop)
