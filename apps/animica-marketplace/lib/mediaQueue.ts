@@ -592,12 +592,12 @@ export async function postProgress(minerId: string, jobId: string, pct: number, 
 }
 
 // ── Failure path shared by both result routes ─────────────────────────────────
-// Render children get server-side retries (there is no browser to cycle them): a reported
-// failure requeues the chunk until attempts run out, and only then hard-fails (the sweep
-// then fails the parent + cancels siblings).
+// Every kind gets server-side retries: a reported failure requeues the job until
+// attempts run out, and only then hard-fails (for render children the sweep then
+// fails the parent + cancels siblings). Miner errors are frequently host-specific
+// (model-load OOM, broken deps) — another miner often completes the same job.
 async function failJob(job: { id: string; kind: string; attempts: number }, error: string) {
-  const isChild = job.kind === 'render_chunk' || job.kind === 'render_assemble';
-  if (isChild && job.attempts < MEDIA_MAX_ATTEMPTS) {
+  if (job.attempts < MEDIA_MAX_ATTEMPTS) {
     await prisma.mediaJob.update({
       where: { id: job.id },
       data: { status: 'PENDING', claimedById: null, leaseUntil: null, progressPct: null, progressNote: null, error: error.slice(0, 400) },
@@ -734,7 +734,21 @@ async function expireJobUploads(jobId: string) {
 export async function postResult(minerId: string, jobId: string, res: { ok: boolean; b64?: string; mime?: string; sha3?: string; meta?: any; error?: string }) {
   const job = await prisma.mediaJob.findUnique({ where: { id: jobId }, select: { id: true, kind: true, claimedById: true, status: true, isPrivate: true, attempts: true } });
   if (!job) return { ok: false as const, code: 'not_found' as const };
-  if (job.claimedById !== minerId) return { ok: false as const, code: 'not_owner' as const };
+  if (job.claimedById !== minerId) {
+    // Late delivery: the lease expired and the sweep requeued the job while the miner
+    // was still rendering. Adopt a successful result instead of discarding finished
+    // work — only for a genuinely unclaimed PENDING job, and only the success path
+    // (a late failure report must not consume an attempt another miner could use).
+    const adoptable = job.status === 'PENDING' && job.claimedById === null && res.ok && !!res.b64;
+    if (!adoptable) return { ok: false as const, code: 'not_owner' as const };
+    const adopted = await prisma.mediaJob.updateMany({
+      where: { id: jobId, status: 'PENDING', claimedById: null },
+      data: { claimedById: minerId, status: 'RUNNING', leaseUntil: new Date(Date.now() + 60_000) },
+    });
+    if (adopted.count !== 1) return { ok: false as const, code: 'not_owner' as const };
+    job.claimedById = minerId;
+    job.status = 'RUNNING';
+  }
   if (job.status !== 'RUNNING') return { ok: false as const, code: 'not_running' as const };
 
   if (!res.ok || !res.b64) {
@@ -779,7 +793,19 @@ export async function postResult(minerId: string, jobId: string, res: { ok: bool
 export async function postResultFile(minerId: string, jobId: string, file: { path: string; bytes: number; sha3: string; mime: string; meta?: any }) {
   const job = await prisma.mediaJob.findUnique({ where: { id: jobId }, select: { id: true, kind: true, claimedById: true, status: true, attempts: true } });
   if (!job) return { ok: false as const, code: 'not_found' as const };
-  if (job.claimedById !== minerId) return { ok: false as const, code: 'not_owner' as const };
+  if (job.claimedById !== minerId) {
+    // Late delivery of a verified file — same adoption rule as postResult (this path
+    // only ever carries a successful, hash-verified artifact).
+    const adoptable = job.status === 'PENDING' && job.claimedById === null;
+    if (!adoptable) return { ok: false as const, code: 'not_owner' as const };
+    const adopted = await prisma.mediaJob.updateMany({
+      where: { id: jobId, status: 'PENDING', claimedById: null },
+      data: { claimedById: minerId, status: 'RUNNING', leaseUntil: new Date(Date.now() + 60_000) },
+    });
+    if (adopted.count !== 1) return { ok: false as const, code: 'not_owner' as const };
+    job.claimedById = minerId;
+    job.status = 'RUNNING';
+  }
   if (job.status !== 'RUNNING') return { ok: false as const, code: 'not_running' as const };
 
   // Same conditional-flip discipline as postResult — see the double-credit note there.

@@ -152,6 +152,13 @@ def _reclaim_all_vram() -> None:
     earlier job (sdxl-turbo ~7GB, FLUX ~33GB — the cache never evicts on its own) can't keep a
     smaller job from fitting on the next, more frugal attempt."""
     _PIPELINE_CACHE.clear()
+    # Symmetric with video_gen._reclaim_all_vram: a resident SVD/t2v pipeline is
+    # just as capable of squatting the VRAM an image load needs.
+    try:
+        from . import video_gen as _vg
+        _vg._PIPELINE_CACHE.clear()
+    except Exception:
+        pass
     try:
         import gc
         import torch

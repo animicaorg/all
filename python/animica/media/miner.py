@@ -539,6 +539,48 @@ def _save_token(token: str, gateway: str) -> None:
         pass
 
 
+def _post_result_retry(base: str, token: Optional[str], payload: dict, log, tries: int = 5) -> Optional[int]:
+    """POST an inline result, riding out transient failures (5xx, timeout, 429).
+
+    Terminal statuses return immediately: 200 accepted; 403/404/409 mean the
+    gateway will never take THIS post (job re-adopted, gone, or already done) —
+    since 9.0.1 the gateway adopts a late successful result for an unclaimed job,
+    so a 403 here is a real rejection, not a lease race. 413 means the artifact
+    is bigger than the edge allows; retrying the same bytes cannot help."""
+    delay = 5.0
+    code = None
+    for _ in range(max(1, tries)):
+        try:
+            code, _r = _req(f"{base}/miner/result", payload, bearer=token, timeout=180)
+        except Exception as e:
+            code = None
+            log(f"  … result post failed ({e}) — retrying in {delay:.0f}s")
+        if code == 200 or code in (403, 404, 409, 413):
+            return code
+        time.sleep(delay)
+        delay = min(delay * 2, 60.0)
+    return code
+
+
+def _post_result_file_retry(gw, jid: str, out: dict, log, tries: int = 4) -> None:
+    """Stream a studio artifact, retrying transient upload failures (the file is
+    still on disk, so re-posting is free). Non-transient rejections re-raise."""
+    delay = 5.0
+    for attempt in range(max(1, tries)):
+        try:
+            gw.post_result_file(jid, out["path"], mime=out["mime"], sha3=out["sha3"], meta=out.get("meta"))
+            return
+        except MediaError as e:
+            msg = str(e)
+            # "rejected (4xx)" = the gateway examined and refused it — terminal.
+            transient = not any(f"({c})" in msg for c in (400, 401, 403, 404, 409, 413))
+            if not transient or attempt == max(1, tries) - 1:
+                raise
+            log(f"  … artifact upload failed ({msg[:120]}) — retrying in {delay:.0f}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)
+
+
 # ── run loop ─────────────────────────────────────────────────────────────────
 def run_miner(gateway: str, *, token: Optional[str] = None, label: Optional[str] = None,
               caps: Optional[List[str]] = None, poll_interval: float = 3.0,
@@ -557,13 +599,27 @@ def run_miner(gateway: str, *, token: Optional[str] = None, label: Optional[str]
     dev = _device()
     label = label or f"{platform.node()[:32]}·{dev}"
 
-    code, reg = _req(f"{base}/miner/register",
-                     {"token": token, "label": label, "capabilities": caps, "device": dev,
-                      "address": os.environ.get("ANIMICA_MEDIA_REWARD_ADDRESS"),
-                      "maxPixels": int(os.environ.get("ANIMICA_MEDIA_MAX_PIXELS", 1024 * 1024))},
-                     bearer=None)
-    if code != 200 or not reg:
-        raise MediaError(f"registration failed ({code}): {reg}")
+    # Registration rides out gateway restarts/deploys: a hard exit here killed the
+    # whole fleet's poll loops during a 5-hour gateway outage — a 5xx/network error
+    # retries with backoff forever, only a 4xx (client-side problem) is terminal.
+    delay = 5.0
+    while True:
+        try:
+            code, reg = _req(f"{base}/miner/register",
+                             {"token": token, "label": label, "capabilities": caps, "device": dev,
+                              "address": os.environ.get("ANIMICA_MEDIA_REWARD_ADDRESS"),
+                              "maxPixels": int(os.environ.get("ANIMICA_MEDIA_MAX_PIXELS", 1024 * 1024))},
+                             bearer=None)
+        except Exception as e:
+            code, reg = None, {"error": str(e)[:200]}
+        if code == 200 and reg:
+            break
+        if code is not None and 400 <= code < 500 and code != 429:
+            raise MediaError(f"registration failed ({code}): {reg}")
+        log(f"registration unavailable ({code if code is not None else reg.get('error')}) — "
+            f"retrying in {delay:.0f}s (gateway restart/deploy?)")
+        time.sleep(delay)
+        delay = min(delay * 2, 60.0)
     if reg.get("token"):
         token = reg["token"]; _save_token(token, gateway)
     log(f"registered with {gateway} · caps={','.join(caps)} · device={dev} · miner={reg.get('miner_id')}")
@@ -609,27 +665,62 @@ def run_miner(gateway: str, *, token: Optional[str] = None, label: Optional[str]
         log(f"claimed {jid} · {job.get('kind')} · '{(job.get('prompt') or '')[:48]}'"
             + (f" · {len(job.get('images') or [])} image(s)" if job.get('images') else ""))
         t0 = time.time()
+        # Classic kinds render silently for far longer than the claim lease (a t2v
+        # can run hours) — heartbeat every 2 min so the gateway keeps extending the
+        # lease instead of requeuing a job that is still alive. Studio kinds already
+        # run their own keepalive inside _render_studio_job.
+        _ka_stop = None
+        if job.get("kind") not in _STUDIO_KINDS:
+            import threading
+            _ka_stop = threading.Event()
+
+            def _ka(jid=jid, ev=_ka_stop):
+                pct = 5.0
+                while not ev.wait(120.0):
+                    pct = min(95.0, pct + 3.0)
+                    try:
+                        gw.post_progress(jid, pct, "rendering")
+                    except Exception:
+                        pass
+
+            threading.Thread(target=_ka, daemon=True).start()
         try:
             out = render_job(job, gw)
+            if _ka_stop is not None:
+                _ka_stop.set()
             if out.get("path"):
                 # 9.0.0 studio artifact — stream the file (no base64, no 48MB ceiling).
                 tmp = out.pop("_tmp", None)
                 try:
                     size = os.path.getsize(out["path"])
-                    gw.post_result_file(jid, out["path"], mime=out["mime"], sha3=out["sha3"], meta=out.get("meta"))
+                    _post_result_file_retry(gw, jid, out, log)
                     code = 200
                 finally:
                     if tmp is not None:
                         tmp.cleanup()
                 log(f"  ✓ {jid} rendered in {time.time()-t0:.1f}s → {out['mime']} ({size} bytes, streamed) sha3={out['sha3'][:16]}…")
             else:
-                code, r = _req(f"{base}/miner/result",
-                               {"job_id": jid, "ok": True, "b64": out["b64"], "mime": out["mime"],
-                                "sha3": out["sha3"], "meta": out["meta"]},
-                               bearer=token, timeout=180)
-                log(f"  ✓ {jid} rendered in {time.time()-t0:.1f}s → {out['mime']} sha3={out['sha3'][:16]}… (post {code})")
+                code = _post_result_retry(
+                    base, token,
+                    {"job_id": jid, "ok": True, "b64": out["b64"], "mime": out["mime"],
+                     "sha3": out["sha3"], "meta": out["meta"]}, log)
+                if code == 200:
+                    log(f"  ✓ {jid} rendered in {time.time()-t0:.1f}s → {out['mime']} sha3={out['sha3'][:16]}…")
+                else:
+                    # The render is done but the gateway would not take it — say so
+                    # LOUDLY (a silent '(post 413)' once cost days of finished work).
+                    log(f"  ! {jid} rendered in {time.time()-t0:.1f}s but the gateway "
+                        f"REJECTED the result (HTTP {code}) — artifact discarded")
         except Exception as e:  # fail closed — tell the gateway so it can requeue/fail
-            _req(f"{base}/miner/result", {"job_id": jid, "ok": False, "error": str(e)[:300]}, bearer=token, timeout=30)
+            if _ka_stop is not None:
+                _ka_stop.set()
+            try:
+                _req(f"{base}/miner/result", {"job_id": jid, "ok": False, "error": str(e)[:300]}, bearer=token, timeout=30)
+            except Exception:
+                pass
             log(f"  ✗ {jid} failed: {e}")
+        finally:
+            if _ka_stop is not None:
+                _ka_stop.set()
         if once:
             log("rendered one job — exiting (--once)"); return

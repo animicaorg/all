@@ -611,11 +611,16 @@ class _AicfJobStore:
             self._workers[info.address] = info
 
     def get_worker(self, address: str) -> Optional[_WorkerInfo]:
+        # Read-only: status reads must not count as liveness, or tier
+        # availability becomes self-fulfilling (probing a worker "revives" it).
+        with self._lock:
+            return self._workers.get(address)
+
+    def touch_worker(self, address: str) -> None:
         with self._lock:
             w = self._workers.get(address)
             if w is not None:
                 w.last_seen = time.time()
-            return w
 
     def all_workers(self) -> List[_WorkerInfo]:
         with self._lock:
@@ -1404,13 +1409,16 @@ class _SqliteAicfJobStore:
         )
 
     def get_worker(self, address: str) -> Optional[_WorkerInfo]:
-        conn = self._conn()
-        now = time.time()
-        conn.execute("UPDATE workers SET last_seen=? WHERE address=?", (now, address))
-        row = conn.execute(
+        # Read-only: see the in-memory store — reads must not refresh last_seen.
+        row = self._conn().execute(
             "SELECT * FROM workers WHERE address=?", (address,)
         ).fetchone()
         return self._worker_from_row(row) if row else None
+
+    def touch_worker(self, address: str) -> None:
+        self._conn().execute(
+            "UPDATE workers SET last_seen=? WHERE address=?", (time.time(), address)
+        )
 
     def all_workers(self) -> List[_WorkerInfo]:
         rows = self._conn().execute("SELECT * FROM workers").fetchall()
@@ -2044,6 +2052,9 @@ async def worker_claim_next_job(
     if not isinstance(tiers_raw, list):
         raise InvalidParams("workerClaimNextJob: 'tiers' must be a list")
     tiers = [_resolve_tier(t) for t in tiers_raw]
+    # A worker polling for work is the honest liveness signal (get_worker no
+    # longer refreshes last_seen on reads).
+    _STORE.touch_worker(address)
     # claim_next walks every job in tier filter — pipeline jobs already
     # have mode != "race" so they're skipped here naturally (their stages
     # are surfaced via pipelineClaimStage). Belt-and-braces: refuse to
@@ -2073,6 +2084,7 @@ async def worker_submit_result(
     text = _coerce_str(p.get("text"))
     if not address or not job_id:
         raise InvalidParams("workerSubmitResult: 'address' and 'job_id' are required")
+    _STORE.touch_worker(address)
     job = _STORE.get(job_id)
     if job is None:
         raise InvalidParams(f"workerSubmitResult: unknown job_id {job_id}")
