@@ -9,19 +9,26 @@ class AnimicaConfig {
   static const int chainId =
       int.fromEnvironment('ANIMICA_CHAIN_ID', defaultValue: 1);
 
-  /// Primary + secondary public JSON-RPC endpoints. The client tries them
-  /// in order and remembers the last-good one for the session, so a single
-  /// flap doesn't punish every subsequent call. `mobile.animica.org/rpc`
-  /// is a smaller node optimized for mobile wallet traffic; `rpc.animica.org/rpc`
-  /// is the general public node and acts as the failover.
+  /// Public JSON-RPC endpoints, tried in order; the client remembers the
+  /// last-good one and short-circuits endpoints that recently failed at the
+  /// transport level (see RpcClient), so one dead host never stalls a send.
+  /// `rpc.animica.org` is the canonical public node (read-through cache with
+  /// node fallback); `animica.dev/rpc` proxies the same node directly.
+  /// `mobile.animica.org` is kept last: its DNS pointed at a decommissioned
+  /// box in 2026-07 and made it a 12-second tarpit as the old PRIMARY —
+  /// every wallet session stalled and flaky networks saw sends fail outright.
   static const List<String> rpcEndpoints = [
     String.fromEnvironment(
       'ANIMICA_RPC_URL_PRIMARY',
-      defaultValue: 'https://mobile.animica.org/rpc',
+      defaultValue: 'https://rpc.animica.org/rpc',
     ),
     String.fromEnvironment(
       'ANIMICA_RPC_URL_FALLBACK',
-      defaultValue: 'https://rpc.animica.org/rpc',
+      defaultValue: 'https://animica.dev/rpc',
+    ),
+    String.fromEnvironment(
+      'ANIMICA_RPC_URL_TERTIARY',
+      defaultValue: 'https://mobile.animica.org/rpc',
     ),
   ];
 

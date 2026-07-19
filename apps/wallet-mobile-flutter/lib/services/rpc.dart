@@ -27,10 +27,19 @@ class RpcClient {
   int _preferredIdx = 0;
   final Duration _timeout;
 
+  /// Transport-level circuit breaker: an endpoint that timed out or refused
+  /// a connection is skipped for [_deadCooldown] so ONE dead host (e.g. a
+  /// stale DNS record) costs a single stall per cooldown window instead of
+  /// stalling every call — the exact failure mode that made sends "error
+  /// out" when the old primary pointed at a decommissioned box. RPC-level
+  /// errors never trip it: they come from a healthy node.
+  final Map<String, DateTime> _deadUntil = {};
+  static const Duration _deadCooldown = Duration(seconds: 90);
+
   RpcClient({
     List<String>? endpoints,
     http.Client? httpClient,
-    Duration timeout = const Duration(seconds: 12),
+    Duration timeout = const Duration(seconds: 8),
   })  : endpoints = endpoints ?? AnimicaConfig.rpcEndpoints,
         _http = httpClient ?? http.Client(),
         _timeout = timeout;
@@ -44,7 +53,16 @@ class RpcClient {
       if (params != null) 'params': params,
     });
 
-    final order = _orderedEndpoints();
+    var order = _orderedEndpoints();
+    // Skip endpoints inside their dead-cooldown — unless that would leave
+    // nothing to try, in which case try everything (never fail without at
+    // least one real attempt).
+    final now = DateTime.now();
+    final alive = order
+        .where((ep) => !(_deadUntil[ep]?.isAfter(now) ?? false))
+        .toList();
+    if (alive.isNotEmpty) order = alive;
+
     final errors = <String>[];
     for (var i = 0; i < order.length; i++) {
       final ep = order[i];
@@ -66,23 +84,31 @@ class RpcClient {
           // RPC-level errors are NOT transport failures — they came
           // from a healthy node. Surface them immediately rather than
           // failing over (which would just produce the same answer).
+          _deadUntil.remove(ep);
           _preferredIdx = endpoints.indexOf(ep);
           throw RpcError(
             e['code'] as int? ?? -32603,
             e['message'] as String? ?? 'rpc error',
           );
         }
+        _deadUntil.remove(ep);
         _preferredIdx = endpoints.indexOf(ep);
         return j['result'];
       } on TimeoutException {
+        _deadUntil[ep] = DateTime.now().add(_deadCooldown);
         errors.add('$ep: timeout');
       } catch (e) {
         // Network errors are retryable.
         if (e is RpcError) rethrow;
+        _deadUntil[ep] = DateTime.now().add(_deadCooldown);
         errors.add('$ep: $e');
       }
     }
-    throw RpcError(-32603, 'all rpc endpoints failed: ${errors.join('; ')}');
+    throw RpcError(
+      -32603,
+      'Could not reach the Animica network (${errors.join('; ')}). '
+      'Check your connection and try again.',
+    );
   }
 
   List<String> _orderedEndpoints() {
