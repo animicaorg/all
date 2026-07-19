@@ -1,5 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import GameLeaderboard from '@/components/GameLeaderboard';
+import { useGameLeaderboard } from '@/lib/useGameLeaderboard';
 
 // The interactive standalone play shell (rendered chrome-minimal by app/play/[slug]/page.tsx).
 // Mirrors components/GamePlay.tsx's entitlement flow, but full-viewport for a browser tab / PWA
@@ -26,6 +28,13 @@ export default function PlayStandalone({
 }) {
   const [src, setSrc] = useState<string | null>(isFree ? `/api/mkt/v1/content/${bundleCid}` : null);
   const [phase, setPhase] = useState<Phase>(isFree ? 'idle' : 'loading');
+
+  // Score capture + (cosmetic, player-reported) leaderboard. The hook listens for anm-game
+  // postMessages from OUR opaque iframe, records a play, submits terminal scores, and reads the
+  // board; it auto-opens `open` on game-over/win. The game→shell channel is one-way, read-only.
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const { board, open, setOpen } = useGameLeaderboard(slug, frameRef);
+  const yourRank = board?.you?.rank ?? null;
 
   async function mint() {
     setPhase('loading');
@@ -62,6 +71,7 @@ export default function PlayStandalone({
     <main className="play-root">
       {src ? (
         <iframe
+          ref={frameRef}
           className="play-frame"
           src={src}
           title={`Play ${name}`}
@@ -104,6 +114,41 @@ export default function PlayStandalone({
         ‹ Animica
       </a>
 
+      {/* Floating leaderboard — a corner toggle + a slide-in drawer (auto-opens on game-over/win).
+          Only while the game is actually playing; cosmetic + player-reported. */}
+      {src && (
+        <>
+          <button
+            type="button"
+            className="play-lb-btn"
+            onClick={() => setOpen(!open)}
+            aria-expanded={open}
+            aria-label="Leaderboard"
+            title="Leaderboard"
+          >
+            🏆{yourRank != null ? <span className="play-lb-rank">#{yourRank}</span> : null}
+          </button>
+
+          {open && <div className="play-lb-scrim" onClick={() => setOpen(false)} />}
+          <aside className={open ? 'play-lb-drawer open' : 'play-lb-drawer'} aria-hidden={!open}>
+            <div className="play-lb-head">
+              <span className="play-lb-title">🏆 Leaderboard</span>
+              <button
+                type="button"
+                className="play-lb-close"
+                onClick={() => setOpen(false)}
+                aria-label="Close leaderboard"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="play-lb-body">
+              <GameLeaderboard board={board} />
+            </div>
+          </aside>
+        </>
+      )}
+
       <style>{`
         .play-root{position:fixed;inset:0;height:100dvh;background:#05060a;overflow:hidden}
         .play-frame{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:#05060a}
@@ -122,6 +167,31 @@ export default function PlayStandalone({
           border:1px solid var(--border-bright);border-radius:999px;padding:5px 11px;
           backdrop-filter:blur(8px);opacity:.35;transition:opacity .15s}
         .play-home:hover,.play-home:focus{opacity:1}
+
+        .play-lb-btn{position:fixed;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);z-index:11;
+          display:inline-flex;align-items:center;gap:6px;font-size:16px;line-height:1;color:var(--text);
+          background:rgba(13,15,22,0.62);border:1px solid var(--border-bright);border-radius:999px;
+          padding:9px 12px;cursor:pointer;backdrop-filter:blur(8px);opacity:.6;transition:opacity .15s}
+        .play-lb-btn:hover,.play-lb-btn:focus{opacity:1}
+        .play-lb-rank{font-size:12px;font-weight:700;color:#c8bfff}
+        .play-lb-scrim{position:fixed;inset:0;z-index:12;background:rgba(3,4,7,0.45);backdrop-filter:blur(1px)}
+        .play-lb-drawer{position:fixed;z-index:13;top:0;right:0;height:100dvh;width:min(360px,88vw);
+          display:flex;flex-direction:column;background:var(--bg-card);border-left:1px solid var(--border);
+          box-shadow:-14px 0 40px rgba(0,0,0,0.5);transform:translateX(100%);transition:transform .2s ease;
+          padding:calc(env(safe-area-inset-top,0px) + 12px) 16px calc(env(safe-area-inset-bottom,0px) + 16px)}
+        .play-lb-drawer.open{transform:translateX(0)}
+        .play-lb-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+        .play-lb-title{font-weight:700;font-size:16px;letter-spacing:-0.01em}
+        .play-lb-close{background:transparent;border:1px solid var(--border-bright);color:var(--text-dim);
+          border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px;line-height:1}
+        .play-lb-close:hover{color:var(--text);border-color:var(--accent)}
+        .play-lb-body{overflow-y:auto}
+        @media (max-width:560px){
+          .play-lb-drawer{top:auto;bottom:0;right:0;left:0;width:auto;height:auto;max-height:72dvh;
+            border-left:0;border-top:1px solid var(--border);border-radius:16px 16px 0 0;
+            transform:translateY(100%);box-shadow:0 -14px 40px rgba(0,0,0,0.5)}
+          .play-lb-drawer.open{transform:translateY(0)}
+        }
       `}</style>
     </main>
   );

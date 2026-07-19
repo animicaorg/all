@@ -2,9 +2,10 @@ import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { formatAnm, jsonSafe } from '@/lib/nanm';
 import { STORE_TYPES, assetUrl } from '@/lib/storeCatalog';
-import { APP_CATEGORY_LABEL, APP_CATEGORY_ICON, appPriceLabel } from '@/components/AppCard';
+import { APP_CATEGORY_LABEL, APP_CATEGORY_ICON, appPriceLabel, compactCount } from '@/components/AppCard';
 import InstallCta from '@/components/InstallCta';
 import GamePlay from '@/components/GamePlay';
+import { gameStatFor } from '@/lib/gameStats';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +69,9 @@ export default async function AppDetail({ params }: { params: { slug: string } }
   const isGameBundle = l.type === 'DIGITAL_GOOD' && cat === 'GAMES' && !!l.bundleCid;
   const isPaidGame = Array.isArray(l.prices) && l.prices.some((pr: any) => pr.model === 'ONE_TIME' || pr.model === 'SUBSCRIPTION');
 
+  // Game Lab social stats (cosmetic, player-reported — never tied to ANM). Fails closed to zeros.
+  const gstat = isGameBundle ? await gameStatFor(l.id) : null;
+
   return (
     <div className="wrap" style={{ paddingTop: 34 }}>
       <a href="/marketplace/apps" className="muted" style={{ fontSize: 13 }}>← App Store</a>
@@ -91,14 +95,30 @@ export default async function AppDetail({ params }: { params: { slug: string } }
           <div className="meta" style={{ marginTop: 12, gap: 18, color: 'var(--text-faint)', fontSize: 13, display: 'flex', flexWrap: 'wrap' }}>
             <span>by {publisherName}</span>
             <span>{avg ? `★ ${avg} (${l.ratingCount})` : 'no ratings yet'}</span>
-            <span>{(l.usersCount ?? 0).toLocaleString()} installs</span>
+            {isGameBundle ? (
+              <>
+                <span title={`${(gstat!.plays).toLocaleString()} plays`}>▶ {compactCount(gstat!.plays)} play{gstat!.plays === 1 ? '' : 's'}</span>
+                {gstat!.players > 0 ? <span title={`${gstat!.players.toLocaleString()} players`}>{compactCount(gstat!.players)} player{gstat!.players === 1 ? '' : 's'}</span> : null}
+                {gstat!.topScore != null ? <span title={`Top score ${gstat!.topScore.toLocaleString()}`}>★ top {compactCount(gstat!.topScore)}</span> : null}
+              </>
+            ) : (
+              <span>{(l.usersCount ?? 0).toLocaleString()} installs</span>
+            )}
             {build ? <span>v{build.versionName} ({build.versionCode})</span> : null}
             {build ? <span>{fmtBytes(Number(build.sizeBytes))}</span> : null}
           </div>
 
           {isGameBundle && (
             <div className="panel" style={{ marginTop: 20 }}>
-              <h2 style={{ marginTop: 0, fontSize: 18 }}>Play</h2>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <h2 style={{ marginTop: 0, marginBottom: 0, fontSize: 18 }}>Play</h2>
+                <a href="/marketplace/games" className="muted" style={{ fontSize: 12.5 }}>Trending games →</a>
+              </div>
+              <div className="muted" style={{ fontSize: 12, margin: '4px 0 12px' }}>
+                {gstat!.plays > 0
+                  ? <>Played {gstat!.plays.toLocaleString()} time{gstat!.plays === 1 ? '' : 's'}{gstat!.topScore != null ? <> · top score {gstat!.topScore.toLocaleString()}</> : null}. Leaderboard is just for fun.</>
+                  : <>Be the first to play. Scores land on a for-fun leaderboard (not tied to ANM).</>}
+              </div>
               <GamePlay slug={l.slug} bundleCid={l.bundleCid} isFree={!isPaidGame} name={l.name} />
             </div>
           )}

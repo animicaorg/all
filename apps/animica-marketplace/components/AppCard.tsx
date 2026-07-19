@@ -26,6 +26,20 @@ export interface AppCardData {
   coverUrl?: string | null;
   publisher?: { address?: string; displayName?: string | null; anm?: string | null };
   prices?: { model: string; amountNanm: string | bigint; perCallNanm?: string | bigint; periodDays?: number | null }[];
+  // Game Lab social layer (GAMES only; undefined elsewhere). Cosmetic, player-reported counts —
+  // never tied to ANM. See lib/gameStats.ts.
+  plays?: number;
+  players?: number;
+  topScore?: number | null;
+}
+
+// Compact count for badges: 1_234 -> "1.2k", 2_500_000 -> "2.5M".
+export function compactCount(n: number): string {
+  if (!Number.isFinite(n)) return '0';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}M`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(abs >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k`;
+  return String(Math.round(n));
 }
 
 export function appPriceLabel(prices?: AppCardData['prices']): { text: string; sub?: string } {
@@ -65,9 +79,13 @@ export default function AppCard({ a }: { a: AppCardData }) {
       <div className="meta">
         <span className="badge type">{APP_CATEGORY_LABEL[cat] ?? TYPE_LABEL[a.type] ?? 'App'}</span>
         {a.verified ? <span className="badge verified">✓ Verified</span> : null}
-        {a.type === 'DIGITAL_GOOD' ? <span>{TYPE_LABEL.DIGITAL_GOOD}</span> : null}
+        {a.plays ? <span className="badge plays" title={`${a.plays.toLocaleString()} plays`}>▶ {compactCount(a.plays)}</span> : null}
+        {a.topScore != null ? <span className="badge score" title={`Top score ${a.topScore.toLocaleString()}`}>★ {compactCount(a.topScore)}</span> : null}
+        {cat === 'GAMES' ? null : a.type === 'DIGITAL_GOOD' ? <span>{TYPE_LABEL.DIGITAL_GOOD}</span> : null}
         <span style={{ marginLeft: 'auto' }}>
-          {avg ? `★ ${avg}` : 'new'} · {(a.usersCount ?? 0).toLocaleString()} installs
+          {cat === 'GAMES'
+            ? (a.players ? `${compactCount(a.players)} player${a.players === 1 ? '' : 's'}` : (avg ? `★ ${avg}` : 'new'))
+            : `${avg ? `★ ${avg}` : 'new'} · ${(a.usersCount ?? 0).toLocaleString()} installs`}
         </span>
       </div>
     </a>

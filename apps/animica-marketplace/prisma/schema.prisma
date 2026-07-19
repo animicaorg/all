@@ -135,6 +135,7 @@ model Listing {
 
   usersCount  Int @default(0)
   usageCount  Int @default(0)
+  playCount   Int @default(0) // web-game plays; denormalized cheap counter for badges/trending (POST /store/games/[slug]/play)
   ratingSum   Int @default(0)
   ratingCount Int @default(0)
 
@@ -152,6 +153,8 @@ model Listing {
   feedback    Feedback[]
   builds      AppBuild[]
   storeAssets StoreAsset[]
+  gamePlays   GamePlay[]
+  gameScores  GameScore[]
 
   @@index([category])
   @@index([appCategory])
@@ -1262,4 +1265,44 @@ model IouSettlementAnchor {
   totalNanm   BigInt
   height      Int
   appliedAt   DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Game social layer — web-game leaderboards + play counts (Game Lab / DIGITAL_GOOD
+// web games). COSMETIC / "for fun" ONLY: a sandboxed game window.parent.postMessages
+// its score to the play shell, which submits it here. Client-reported scores are
+// UNTRUSTED and are NEVER tied to ANM, balances, or payouts. Anti-abuse is rate-limit
+// + sane integer bounds ONLY — there is no anti-cheat. `playerKey` is either an
+// authenticated account ref ("acct:<accountId>") or a HASHED anonymous token
+// ("anon:<hmac>" from a client uuid, or "ip:<hmac>" fallback) — no raw client token
+// or client-claimed address is ever stored or trusted.
+// ---------------------------------------------------------------------------
+
+// One row per recorded play session (POST /store/games/[slug]/play, deduped per player
+// per short window). Feeds uniquePlayers + dedup; Listing.playCount is the denormalized
+// cheap counter used for card badges + the Trending Games surface.
+model GamePlay {
+  id        String   @id @default(cuid())
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  playerKey String // "acct:<accountId>" | "anon:<hmac>" | "ip:<hmac>"
+  startedAt DateTime @default(now())
+
+  @@index([listingId, startedAt])
+  @@index([listingId, playerKey, startedAt])
+}
+
+// Personal-best score per (game, player) — upserted on POST /store/games/[slug]/score.
+// The leaderboard is ORDER BY score DESC over these rows; one row = one player's best.
+model GameScore {
+  id         String   @id @default(cuid())
+  listingId  String
+  listing    Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  playerKey  String // "acct:<accountId>" | "anon:<hmac>" | "ip:<hmac>"
+  score      Int // bounded 0..1_000_000_000; UNTRUSTED client-reported value
+  achievedAt DateTime @default(now())
+  meta       String? // small JSON blob: { state: "gameover"|"win", ... } — capped length
+
+  @@unique([listingId, playerKey])
+  @@index([listingId, score])
 }

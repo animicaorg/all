@@ -1,4 +1,4 @@
-import { fetchStoreApps, countStoreApps } from '@/lib/storefront';
+import { fetchStoreApps, fetchGames, countStoreApps } from '@/lib/storefront';
 import { APP_CATEGORIES } from '@/lib/appStore';
 import AppCard, { APP_CATEGORY_LABEL } from '@/components/AppCard';
 
@@ -14,9 +14,10 @@ export default async function AppStoreHome({
   const type = searchParams.type?.trim() ?? '';
   const filtered = !!(search || category || type);
 
-  const [top, fresh, results, total] = await Promise.all([
+  const [top, fresh, trendingGames, results, total] = await Promise.all([
     filtered ? Promise.resolve([]) : fetchStoreApps({ sort: 'top', take: 12 }),
     filtered ? Promise.resolve([]) : fetchStoreApps({ sort: 'new', take: 8 }),
+    filtered ? Promise.resolve([]) : fetchGames({ sort: 'trending', take: 8 }),
     filtered ? fetchStoreApps({ q: search, category, type, sort: 'top', take: 60 }) : Promise.resolve([]),
     countStoreApps(),
   ]);
@@ -72,6 +73,20 @@ export default async function AppStoreHome({
           </section>
         ) : (
           <>
+            {trendingGames.length > 0 && (
+              <section className="section">
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <div>
+                    <h2>🎮 Trending games</h2>
+                    <div className="sub" style={{ marginBottom: 0 }}>
+                      Most-played this week — click ▶ to play instantly. Leaderboards are just for fun.
+                    </div>
+                  </div>
+                  <a href="/marketplace/games" className="pill" style={{ whiteSpace: 'nowrap' }}>All games →</a>
+                </div>
+                <div className="grid" style={{ marginTop: 20 }}>{trendingGames.map((a) => <AppCard key={a.slug} a={a} />)}</div>
+              </section>
+            )}
             <section className="section">
               <h2>Top apps</h2>
               <div className="sub">Most-loved on the network.</div>

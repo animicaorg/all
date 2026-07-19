@@ -18,6 +18,7 @@ type State = 'loading' | 'in' | 'out';
 
 const NAV: { href: string; label: string }[] = [
   { href: '/dev', label: 'My apps' },
+  { href: '/dev/games', label: 'Games' },
   { href: '/dev/earnings', label: 'Earnings' },
   { href: '/dev/keys', label: 'API keys' },
 ];
