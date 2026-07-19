@@ -1,6 +1,7 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { formatAnm, jsonSafe } from '@/lib/nanm';
+import { STORE_TYPES } from '@/lib/storeCatalog';
 import PreviewChat from '@/components/PreviewChat';
 import MediaGenerate from '@/components/MediaGenerate';
 
@@ -22,6 +23,8 @@ export default async function ListingDetail({ params }: { params: { slug: string
     },
   });
   if (!listing || listing.status === 'DRAFT') notFound();
+  // Store apps (APP / DIGITAL_GOOD) share the Listing slug space but render in the App Store.
+  if ((STORE_TYPES as readonly string[]).includes(listing.type)) redirect(`/marketplace/apps/${params.slug}`);
   const l = jsonSafe(listing) as any;
   const avg = l.ratingCount ? (l.ratingSum / l.ratingCount).toFixed(1) : null;
 

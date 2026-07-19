@@ -1,7 +1,11 @@
+import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { CATEGORIES } from '@/lib/config';
 import { jsonSafe } from '@/lib/nanm';
+import { STORE_TYPES } from '@/lib/storeCatalog';
+import { fetchStoreApps } from '@/lib/storefront';
 import ListingCard, { type CardListing } from '@/components/ListingCard';
+import AppCard from '@/components/AppCard';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,9 +21,15 @@ export default async function MarketplaceHome({ searchParams }: { searchParams: 
   const category = searchParams.category?.trim() ?? '';
   const type = searchParams.type?.trim() ?? '';
 
+  // Store apps (APP / DIGITAL_GOOD) live in the App Store, not the AI grids — hand them off.
+  if (type && (STORE_TYPES as readonly string[]).includes(type)) {
+    redirect(`/marketplace/apps${search ? `?search=${encodeURIComponent(search)}` : ''}`);
+  }
+
   const where: any = { status: 'PUBLISHED', visibility: 'PUBLIC' };
   if (category && (CATEGORIES as readonly string[]).includes(category)) where.category = category;
-  if (type) where.type = type;
+  // Never surface store apps as AI cards; honor an explicit AI-type filter otherwise.
+  where.type = type ? type : { notIn: [...STORE_TYPES] };
   if (search) where.OR = [
     { name: { contains: search, mode: 'insensitive' } },
     { tagline: { contains: search, mode: 'insensitive' } },
@@ -27,11 +37,12 @@ export default async function MarketplaceHome({ searchParams }: { searchParams: 
   ];
 
   const filtered = !!(search || category || type);
-  const [trending, fresh, filteredList, total] = await Promise.all([
+  const [trending, fresh, filteredList, total, apps] = await Promise.all([
     filtered ? [] : prisma.listing.findMany({ where, orderBy: { usageCount: 'desc' }, take: 8, select: SELECT }),
     filtered ? [] : prisma.listing.findMany({ where, orderBy: { publishedAt: 'desc' }, take: 8, select: SELECT }),
     filtered ? prisma.listing.findMany({ where, orderBy: { usageCount: 'desc' }, take: 60, select: SELECT }) : [],
     prisma.listing.count({ where: { status: 'PUBLISHED', visibility: 'PUBLIC' } }),
+    filtered ? Promise.resolve([]) : fetchStoreApps({ sort: 'top', take: 8 }),
   ]);
 
   const cards = (arr: any[]) => jsonSafe(arr) as CardListing[];
@@ -93,6 +104,18 @@ export default async function MarketplaceHome({ searchParams }: { searchParams: 
                 <h2>Just launched</h2>
                 <div className="sub">New capabilities from creators and agents.</div>
                 <div className="grid">{cards(fresh).map((l) => <ListingCard key={l.slug} l={l} />)}</div>
+              </section>
+            )}
+            {apps.length > 0 && (
+              <section className="section">
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <div>
+                    <h2>The App Store</h2>
+                    <div className="sub">Installable apps &amp; games — signed, verified, priced in ANM.</div>
+                  </div>
+                  <a className="muted mono" style={{ fontSize: 13 }} href="/marketplace/apps">Browse all apps →</a>
+                </div>
+                <div className="grid">{apps.map((a) => <AppCard key={a.slug} a={a} />)}</div>
               </section>
             )}
           </>
