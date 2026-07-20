@@ -291,6 +291,13 @@ model DepositAddress {
   baselineNanm   BigInt   @default(0) // balance snapshot at creation; credit = observed - baseline - alreadyCredited
   creditedNanm   BigInt   @default(0) // cumulative credited from this address
   lastSeenHeight Int      @default(0)
+  // Finality window (reorg-safe crediting, mirrors the store payment watcher's 12-conf gate).
+  // A newly observed uncredited delta is recorded PENDING (amount + the head height it was first
+  // seen at) and credited only once head - pendingSinceHeight >= TX_FINALITY_CONFIRMATIONS with
+  // the funds still present. If the delta shrinks before maturing (reorg / depositor moved funds
+  // back out) the window restarts at the lower level and the reverted portion is never credited.
+  pendingNanm        BigInt @default(0) // uncredited delta currently aging through the finality window
+  pendingSinceHeight Int    @default(0) // head height the current pending delta was first observed at
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())
 

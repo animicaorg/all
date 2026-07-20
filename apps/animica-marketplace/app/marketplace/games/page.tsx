@@ -1,5 +1,6 @@
 import { fetchGames, countGames, type GameSort } from '@/lib/storefront';
 import AppCard from '@/components/AppCard';
+import GameLabPromo from '@/components/GameLabPromo';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,6 +65,9 @@ export default async function GamesHome({
       </section>
 
       <div className="wrap">
+        <section className="section" style={{ paddingBottom: 0 }}>
+          <GameLabPromo />
+        </section>
         <section className="section">
           <h2>{search ? `Results for “${search}”` : active.label}</h2>
           <div className="sub">

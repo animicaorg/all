@@ -33,6 +33,14 @@ export async function creditDeposit(accountId: string, amountNanm: bigint, ref: 
   return prisma.$transaction((tx) => post(tx, accountId, amountNanm, 'DEPOSIT', ref, memo));
 }
 
+// tx-aware variant: lets the deposit scanner book the ledger credit AND its DepositAddress
+// creditedNanm high-water bump (+ the Deposit row) inside ONE caller-owned transaction, so a
+// crash mid-credit can never leave a credited ledger entry without its bookkeeping (which would
+// re-credit on the next scan). See scanDepositAddress in lib/deposit.ts.
+export async function creditDepositInTx(tx: Tx, accountId: string, amountNanm: bigint, ref: string, memo: string) {
+  return post(tx, accountId, amountNanm, 'DEPOSIT', ref, memo);
+}
+
 // Atomic purchase: debit buyer, credit creator (minus fee), credit treasury fee, optional fork royalty.
 // Treasury is represented by the account whose address == config.treasuryAddress (created on demand).
 export interface PurchaseSplit {
@@ -42,27 +50,94 @@ export interface PurchaseSplit {
   listingId: string;
   forkParentCreatorId?: string;
   forkRoyaltyBps?: number;
+  feeBps?: number; // override (store APP/DIGITAL_GOOD sales pass STORE_FEE_BPS=3000); default MKT_FEE_BPS
+}
+
+// The split body, callable inside a caller-owned transaction so purchase-row updates and
+// license issuance can commit atomically with the money movement (renewal worker, watcher).
+export async function settlePurchaseInTx(tx: Tx, s: PurchaseSplit) {
+  const treasury = await ensureTreasury(tx);
+  const feeBps = s.feeBps ?? config.feeBps;
+  if (!Number.isFinite(feeBps) || feeBps < 0 || feeBps > 10_000) throw new LedgerError('BAD_SPLIT', `invalid feeBps ${feeBps}`);
+  const fee = bps(s.amountNanm, feeBps);
+  let royalty = 0n;
+  if (s.forkParentCreatorId && s.forkRoyaltyBps) {
+    royalty = bps(s.amountNanm, s.forkRoyaltyBps);
+  }
+  const creatorShare = s.amountNanm - fee - royalty;
+  if (creatorShare < 0n) throw new LedgerError('BAD_SPLIT', 'fee+royalty exceed amount');
+
+  // Debit buyer first — this enforces the funds check.
+  await post(tx, s.buyerId, -s.amountNanm, 'PURCHASE_DEBIT', s.listingId, 'purchase');
+  await post(tx, s.creatorId, creatorShare, 'SALE_CREDIT', s.listingId, 'sale');
+  await post(tx, treasury.id, fee, 'FEE', s.listingId, `fee ${feeBps}bps`);
+  if (royalty > 0n && s.forkParentCreatorId) {
+    await post(tx, s.forkParentCreatorId, royalty, 'FORK_ROYALTY', s.listingId, 'fork royalty');
+  }
+  return { fee, royalty, creatorShare };
 }
 
 export async function settlePurchaseFromBalance(s: PurchaseSplit) {
-  return prisma.$transaction(async (tx) => {
-    const treasury = await ensureTreasury(tx);
-    const fee = bps(s.amountNanm, config.feeBps);
-    let royalty = 0n;
-    if (s.forkParentCreatorId && s.forkRoyaltyBps) {
-      royalty = bps(s.amountNanm, s.forkRoyaltyBps);
-    }
-    const creatorShare = s.amountNanm - fee - royalty;
-    if (creatorShare < 0n) throw new LedgerError('BAD_SPLIT', 'fee+royalty exceed amount');
+  return prisma.$transaction((tx) => settlePurchaseInTx(tx, s));
+}
 
-    // Debit buyer first — this enforces the funds check.
-    await post(tx, s.buyerId, -s.amountNanm, 'PURCHASE_DEBIT', s.listingId, 'purchase');
-    await post(tx, s.creatorId, creatorShare, 'SALE_CREDIT', s.listingId, 'sale');
-    await post(tx, treasury.id, fee, 'FEE', s.listingId, `fee ${config.feeBps}bps`);
-    if (royalty > 0n && s.forkParentCreatorId) {
-      await post(tx, s.forkParentCreatorId, royalty, 'FORK_ROYALTY', s.listingId, 'fork royalty');
+// Settle a VERIFIED on-chain wallet purchase (ANMSTORE1). The caller — the store payment
+// watcher — has already proven the buyer's transfer to the DEDICATED store treasury address
+// executed with finality (12 confs + memo byte-match + treasury balance-delta coverage).
+// This books it: credit the buyer's ledger with the observed on-chain deposit (ref = txid),
+// then run the standard split. Net ledger effect: buyer 0, creator +share, treasury +fee —
+// every credited nANM is backed 1:1 by real ANM sitting in the store treasury wallet.
+// MUST run inside the caller's transaction together with the Purchase→ACTIVE update, the
+// StorePaymentIntent.verifiedAt claim, and License issuance (all-or-nothing).
+export async function settleStoreWalletPurchase(tx: Tx, s: PurchaseSplit & { txid: string }) {
+  await post(tx, s.buyerId, s.amountNanm, 'DEPOSIT', s.txid, 'store wallet purchase (on-chain, verified)');
+  return settlePurchaseInTx(tx, s);
+}
+
+// Admin refund of a SETTLED store purchase: reverse the split (creator/treasury/royalty give
+// back, buyer gets the full amount as ledger balance — withdrawable on-chain), mark the
+// purchase REFUNDED and revoke its license, all in ONE transaction so money and entitlement
+// state can never diverge. The status claim makes it exactly-once under concurrent calls.
+// If the creator has already withdrawn their share, post() fails INSUFFICIENT_FUNDS and the
+// whole refund aborts (fail-closed — admin resolves the shortfall out of band).
+// Works for both sources: 'balance' (buyer was debited here) and 'wallet' (buyer paid the
+// store treasury on-chain; the credited split is reversed and the buyer's refund is backed
+// by those on-chain treasury funds).
+export async function refundStorePurchase(opts: {
+  purchaseId: string;
+  buyerId: string;
+  creatorId: string;
+  amountNanm: bigint;
+  feeBps: number; // MUST be the bps the sale settled with (store = STORE_FEE_BPS)
+  forkParentCreatorId?: string;
+  forkRoyaltyBps?: number;
+  memo?: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const claimed = await tx.purchase.updateMany({
+      where: { id: opts.purchaseId, status: 'ACTIVE' },
+      data: { status: 'REFUNDED', autoRenew: false },
+    });
+    if (claimed.count !== 1) throw new LedgerError('NOT_REFUNDABLE', 'purchase is not ACTIVE');
+    const revoked = await tx.license.updateMany({
+      where: { purchaseId: opts.purchaseId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (opts.amountNanm <= 0n) return { fee: 0n, royalty: 0n, creatorShare: 0n, licensesRevoked: revoked.count };
+
+    const treasury = await ensureTreasury(tx);
+    const fee = bps(opts.amountNanm, opts.feeBps);
+    const royalty = opts.forkParentCreatorId && opts.forkRoyaltyBps ? bps(opts.amountNanm, opts.forkRoyaltyBps) : 0n;
+    const creatorShare = opts.amountNanm - fee - royalty;
+    if (creatorShare < 0n) throw new LedgerError('BAD_SPLIT', 'fee+royalty exceed amount');
+    const memo = opts.memo ?? 'store refund';
+    await post(tx, opts.creatorId, -creatorShare, 'ADJUSTMENT', opts.purchaseId, `${memo} (sale reversal)`);
+    await post(tx, treasury.id, -fee, 'ADJUSTMENT', opts.purchaseId, `${memo} (fee reversal)`);
+    if (royalty > 0n && opts.forkParentCreatorId) {
+      await post(tx, opts.forkParentCreatorId, -royalty, 'ADJUSTMENT', opts.purchaseId, `${memo} (royalty reversal)`);
     }
-    return { fee, royalty, creatorShare };
+    await post(tx, opts.buyerId, opts.amountNanm, 'REFUND', opts.purchaseId, memo);
+    return { fee, royalty, creatorShare, licensesRevoked: revoked.count };
   });
 }
 

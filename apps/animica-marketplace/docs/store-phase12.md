@@ -170,12 +170,36 @@ credits expired intents); mint a download token, refund via
   node has no historical-state RPC); treasury baseline reconciliation is the
   hard value-conservation gate either way.
 - `GET /store/licenses` (not `/store/licenses/mine`) lists the caller's
-  licenses; design's `/licenses/[id]/proof`, `/anchors`, `/revocations` and
-  `GET /store/subscriptions` list are not built in this phase.
-- The custodial `POST /api/mkt/v1/purchases` route was NOT modified for the
-  STORE_FEE_BPS override / subscription consent — `settlePurchaseFromBalance`
-  already accepts `feeBps`, so it's a follow-up one-liner if custodial APP
-  purchases should split 70/30 too.
+  licenses; design's `/licenses/[id]/proof`, `/anchors`, `/revocations` are not
+  built in this phase.
+- **Subscriptions (custodial, consent-gated) — now built:**
+  - `POST /api/mkt/v1/store/subscriptions/start` — start a subscription. Body
+    `{ slug, priceId?, address, challenge, signature, publicKey }`. The
+    `challenge` MUST be a v2 subscribe challenge whose bound params match the
+    price exactly — fetch it from
+    `GET /auth/challenge?address=..&purpose=subscribe&listing=<slug>&period=<periodDays>&amount=<amountNanm>`,
+    sign it (`animica_signMessage`), send back `signature`+`publicKey`. The route
+    ml_dsa_65-verifies the signature, burns the challenge single-use, records a
+    `StoreConsent(purpose=subscribe)`, does the **first-period debit** via the
+    ledger split (STORE_FEE_BPS for APP/DIGITAL_GOOD else MKT_FEE_BPS), creates a
+    `Purchase(SUBSCRIPTION, autoRenew=true, consentId set, expiresAt=now+periodDays)`
+    and a SUBSCRIPTION `License`. `402 insufficient_funds` → wallet prompts a
+    top-up. Idempotent (an already-active subscription is returned unchanged).
+  - `GET /api/mkt/v1/store/subscriptions[?state=active]` — the caller's
+    subscriptions (one row per chain tail) with derived `state`
+    (`active|grace|expired|cancelled|refunded`), `nextRenewalAt`, price, listing.
+  - This is the shape the ARMED renewal worker requires: `autoRenew=true` +
+    `consentId` + a `StoreConsent` row + `renewals:none` tail. Verified aligned —
+    no worker change needed.
+  - **HONESTY / disclosure:** subscriptions are **CUSTODIAL**. The chain has no
+    pull-payment/allowance primitive, so renewals debit the buyer's in-app
+    marketplace balance (withdrawable anytime), and only under the signed
+    consent. This is NOT non-custodial on-chain auto-pay — every surface (API
+    `custodial:true`/`disclosure`, wallet UI) must say so.
+- `POST /api/mkt/v1/purchases` now **refuses** `SUBSCRIPTION` prices
+  (`400 subscription_requires_consent`) and points callers at the start route —
+  it cannot record signed consent, so a subscription bought there would be
+  orphaned (never renewed). FREE/USAGE/ONE_TIME on that route are unchanged.
 - Refunds recompute the split at the *current* `STORE_FEE_BPS` — don't change
   the bps while refunds for old sales are possible.
 - `builds/` dir is created lazily on first upload; completed build files are

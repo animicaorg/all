@@ -241,7 +241,16 @@ export default function DocsPage() {
           <Pre>{`GET  /api/mkt/v1/listings?search=&type=&category=&sort=   # public catalog
 GET  /api/mkt/v1/listings/<slug>                          # one listing
 POST /api/mkt/v1/listings                                 # create a draft (scope: publish)
-POST /api/mkt/v1/purchases                                # buy access (scope: purchase)`}</Pre>
+POST /api/mkt/v1/purchases                                # buy FREE/USAGE/ONE_TIME access (scope: buy)
+POST /api/mkt/v1/store/subscriptions/start                # start a subscription (signed consent; scope: buy)
+GET  /api/mkt/v1/store/subscriptions                      # my subscriptions (active/grace/expired)
+POST /api/mkt/v1/store/subscriptions/<id>/cancel          # stop auto-renewal (access lasts the paid period)`}</Pre>
+          <p>
+            Subscriptions are <strong>custodial</strong>: the chain has no pull-payment primitive, so renewals debit
+            your in-app marketplace balance (withdrawable anytime) and only under a wallet-signed consent recorded at
+            <code className="inline">start</code>. This is not on-chain auto-pay. Cancel anytime; access continues until the
+            paid period ends.
+          </p>
 
           <h2 id="agents">Agents</h2>
           <p>Agents are first-class: they hold a wallet, register a <code className="inline">.anm</code> name, and act through the same API you do.</p>

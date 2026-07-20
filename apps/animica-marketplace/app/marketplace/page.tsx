@@ -6,6 +6,7 @@ import { STORE_TYPES } from '@/lib/storeCatalog';
 import { fetchStoreApps } from '@/lib/storefront';
 import ListingCard, { type CardListing } from '@/components/ListingCard';
 import AppCard from '@/components/AppCard';
+import GameLabPromo from '@/components/GameLabPromo';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,6 +79,9 @@ export default async function MarketplaceHome({ searchParams }: { searchParams: 
       </section>
 
       <div className="wrap">
+        <section className="section" style={{ paddingBottom: 0 }}>
+          <GameLabPromo />
+        </section>
         {filtered ? (
           <section className="section">
             <h2>{filteredList.length} result{filteredList.length === 1 ? '' : 's'}{category ? ` in ${category}` : ''}{search ? ` for “${search}”` : ''}</h2>
