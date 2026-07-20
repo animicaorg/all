@@ -13,6 +13,8 @@ import 'screens/settings.dart';
 import 'screens/store/store_app_detail.dart';
 import 'screens/store/store_home.dart';
 import 'screens/store/store_library.dart';
+import 'screens/store/subscriptions_screen.dart';
+import 'screens/store/topup_screen.dart';
 import 'screens/tokens.dart';
 
 final router = GoRouter(
@@ -47,6 +49,14 @@ final router = GoRouter(
     GoRoute(
       path: '/store/library',
       builder: (c, s) => const StoreLibraryScreen(),
+    ),
+    GoRoute(
+      path: '/store/subscriptions',
+      builder: (c, s) => const SubscriptionsScreen(),
+    ),
+    GoRoute(
+      path: '/store/topup',
+      builder: (c, s) => const TopUpScreen(),
     ),
     GoRoute(
       path: '/store/app/:slug',

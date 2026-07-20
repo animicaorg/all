@@ -276,4 +276,210 @@ void main() {
       ], leaf), isFalse);
     });
   });
+
+  group('web-game play models', () {
+    test('StoreAppDetail exposes game / bundle / free getters', () {
+      final free = StoreAppDetail.fromJson({
+        'slug': 'blocks',
+        'name': 'Blocks',
+        'type': 'DIGITAL_GOOD',
+        'category': 'GAMES',
+        'bundleCid': 'cidabc',
+        'publisher': {'address': 'anim1pub'},
+        'prices': [
+          {'id': 'p0', 'model': 'FREE', 'amountNanm': '0'},
+        ],
+      });
+      expect(free.isGame, isTrue);
+      expect(free.hasBundle, isTrue);
+      expect(free.bundleCid, 'cidabc');
+      expect(free.isFreeListing, isTrue);
+
+      final paid = StoreAppDetail.fromJson({
+        'slug': 'quest',
+        'name': 'Quest',
+        'type': 'DIGITAL_GOOD',
+        'category': 'GAMES',
+        'bundleCid': 'cidxyz',
+        'publisher': {'address': 'anim1pub'},
+        'prices': [
+          {'id': 'p1', 'model': 'ONE_TIME', 'amountNanm': '5000000000'},
+        ],
+      });
+      expect(paid.isGame, isTrue);
+      expect(paid.hasBundle, isTrue);
+      expect(paid.isFreeListing, isFalse);
+
+      // A non-game / bundle-less listing must not read as playable.
+      final apk = StoreAppDetail.fromJson({
+        'slug': 'app',
+        'name': 'App',
+        'type': 'APP',
+        'category': 'TOOLS',
+        'publisher': {'address': 'anim1pub'},
+      });
+      expect(apk.isGame, isFalse);
+      expect(apk.hasBundle, isFalse);
+      expect(apk.isFreeListing, isTrue); // no prices => free
+    });
+
+    test('GameBundle.fromJson: free exposes playUrl, paid hides it', () {
+      final freeB = GameBundle.fromJson({
+        'slug': 'blocks',
+        'hasBundle': true,
+        'free': true,
+        'mime': 'text/html; charset=utf-8',
+        'cid': 'cidabc',
+        'playUrl': '/api/mkt/v1/content/cidabc',
+        'size': '12345',
+      });
+      expect(freeB.hasBundle, isTrue);
+      expect(freeB.free, isTrue);
+      expect(freeB.playUrl, '/api/mkt/v1/content/cidabc');
+      expect(freeB.isFreePlayable, isTrue);
+      expect(freeB.size, BigInt.from(12345));
+
+      final paidB = GameBundle.fromJson({
+        'slug': 'quest',
+        'hasBundle': true,
+        'free': false,
+        'cid': null,
+        'playUrl': null,
+      });
+      expect(paidB.hasBundle, isTrue);
+      expect(paidB.free, isFalse);
+      expect(paidB.playUrl, isNull);
+      expect(paidB.isFreePlayable, isFalse);
+
+      // Missing/empty payload never throws and defaults sanely.
+      final none = GameBundle.fromJson(const {});
+      expect(none.hasBundle, isFalse);
+      expect(none.free, isFalse);
+      expect(none.isFreePlayable, isFalse);
+    });
+
+    test('PlayToken.fromJson parses token + url, tolerant of missing pieces', () {
+      final t = PlayToken.fromJson({
+        'token': 'abc.def',
+        'url': '/api/mkt/v1/store/play/abc.def',
+        'expiresAt': '2026-07-20T00:10:00.000Z',
+        'slug': 'quest',
+        'listingId': 'lst_1',
+        'priceModel': 'ONE_TIME',
+      });
+      expect(t.token, 'abc.def');
+      expect(t.url, '/api/mkt/v1/store/play/abc.def');
+      expect(t.slug, 'quest');
+      expect(t.priceModel, 'ONE_TIME');
+      expect(t.expiresAtDate, isNotNull);
+
+      final bare = PlayToken.fromJson(const {});
+      expect(bare.token, '');
+      expect(bare.url, '');
+      expect(bare.expiresAtDate, isNull);
+    });
+  });
+
+  group('subscription models (custodial)', () {
+    String future() =>
+        DateTime.now().toUtc().add(const Duration(days: 10)).toIso8601String();
+    String past() =>
+        DateTime.now().toUtc().subtract(const Duration(days: 10)).toIso8601String();
+
+    test('PurchaseRecord subscription flags + lifecycle state', () {
+      final active = PurchaseRecord.fromJson({
+        'id': 'p1',
+        'status': 'ACTIVE',
+        'priceModel': 'SUBSCRIPTION',
+        'amountNanm': '5000000000',
+        'source': 'balance',
+        'autoRenew': true,
+        'expiresAt': future(),
+        'listing': {'slug': 'news', 'name': 'News', 'type': 'APP'},
+      });
+      expect(active.isSubscription, isTrue);
+      expect(active.isCustodial, isTrue);
+      expect(active.isInGrace, isFalse);
+      expect(active.subscriptionState, 'active');
+
+      final grace = PurchaseRecord.fromJson({
+        'id': 'p2',
+        'status': 'ACTIVE',
+        'priceModel': 'SUBSCRIPTION',
+        'amountNanm': 5000000000,
+        'autoRenew': true,
+        'expiresAt': past(),
+        'graceUntil': future(),
+      });
+      expect(grace.isInGrace, isTrue);
+      expect(grace.subscriptionState, 'grace');
+
+      final cancelled = PurchaseRecord.fromJson({
+        'id': 'p3',
+        'status': 'ACTIVE',
+        'priceModel': 'SUBSCRIPTION',
+        'amountNanm': '5000000000',
+        'autoRenew': false,
+        'expiresAt': future(),
+      });
+      expect(cancelled.subscriptionState, 'cancelled');
+
+      final expired = PurchaseRecord.fromJson({
+        'id': 'p4',
+        'status': 'EXPIRED',
+        'priceModel': 'SUBSCRIPTION',
+        'amountNanm': '5000000000',
+        'autoRenew': false,
+        'expiresAt': past(),
+      });
+      expect(expired.isExpired, isTrue);
+      expect(expired.subscriptionState, 'expired');
+    });
+
+    test('PurchaseRecord.listFrom drops rows without an id', () {
+      final list = PurchaseRecord.listFrom([
+        {'id': 'a', 'status': 'ACTIVE'},
+        {'status': 'ACTIVE'}, // no id -> dropped
+        'junk',
+      ]);
+      expect(list.length, 1);
+      expect(list.first.id, 'a');
+      expect(PurchaseRecord.listFrom(null), isEmpty);
+    });
+
+    test('StoreBalance.fromJson tolerant of key aliases + string amounts', () {
+      final b = StoreBalance.fromJson({
+        'balanceNanm': '12345000000',
+        'depositAddress': 'anim1deadbeef',
+        'note': 'hi',
+      });
+      expect(b.balanceNanm, BigInt.parse('12345000000'));
+      expect(b.depositAddress, 'anim1deadbeef');
+
+      final alt = StoreBalance.fromJson({'balance': 7, 'address': 'anim1x'});
+      expect(alt.balanceNanm, BigInt.from(7));
+      expect(alt.depositAddress, 'anim1x');
+
+      final bare = StoreBalance.fromJson(const {});
+      expect(bare.balanceNanm, BigInt.zero);
+      expect(bare.depositAddress, isNull);
+    });
+
+    test('CancelSubscriptionResult.fromJson', () {
+      final r = CancelSubscriptionResult.fromJson({
+        'cancelled': true,
+        'activeUntil': '2026-08-01T00:00:00.000Z',
+        'purchase': {'id': 'p1', 'status': 'ACTIVE', 'autoRenew': false},
+      });
+      expect(r.cancelled, isTrue);
+      expect(r.alreadyCancelled, isFalse);
+      expect(r.activeUntilDate, isNotNull);
+      expect(r.purchase?.autoRenew, isFalse);
+
+      final already = CancelSubscriptionResult.fromJson(
+          {'cancelled': false, 'alreadyCancelled': true});
+      expect(already.alreadyCancelled, isTrue);
+      expect(already.purchase, isNull);
+    });
+  });
 }

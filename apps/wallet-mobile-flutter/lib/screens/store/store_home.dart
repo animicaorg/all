@@ -26,6 +26,11 @@ class StoreHomeScreen extends ConsumerWidget {
         title: const Text('Store'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.autorenew),
+            tooltip: 'Subscriptions',
+            onPressed: () => context.push('/store/subscriptions'),
+          ),
+          IconButton(
             icon: const Icon(Icons.apps),
             tooltip: 'My Apps',
             onPressed: () => context.push('/store/library'),

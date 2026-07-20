@@ -74,6 +74,27 @@ final gameBundleProvider =
   return api.gameBundle(slug);
 });
 
+/// The buyer's subscription purchases (active, in-grace/dunning, lapsed). Needs
+/// a signed-in account; empty when signed out. Auto sign-in via the store
+/// challenge happens inside the API client.
+final mySubscriptionsProvider =
+    FutureProvider.autoDispose<List<PurchaseRecord>>((ref) async {
+  final account = ref.watch(activeAccountProvider);
+  if (account == null) return const [];
+  final api = ref.watch(marketplaceApiProvider);
+  return api.listSubscriptions();
+});
+
+/// The caller's custodial ledger balance + deposit address (GET /me/balance).
+/// This balance funds subscription renewals. Null account => no balance.
+final storeBalanceProvider =
+    FutureProvider.autoDispose<StoreBalance?>((ref) async {
+  final account = ref.watch(activeAccountProvider);
+  if (account == null) return null;
+  final api = ref.watch(marketplaceApiProvider);
+  return api.balance();
+});
+
 /// The buyer's licenses (My Apps). Fetches from the server (auto sign-in via the
 /// store challenge), caching offline; falls back to the cache when the fetch
 /// fails but a cache exists.

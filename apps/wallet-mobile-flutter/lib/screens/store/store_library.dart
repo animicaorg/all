@@ -25,7 +25,16 @@ class StoreLibraryScreen extends ConsumerWidget {
     final licenses = ref.watch(myLicensesProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('My Apps')),
+      appBar: AppBar(
+        title: const Text('My Apps'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.autorenew),
+            tooltip: 'Subscriptions',
+            onPressed: () => context.push('/store/subscriptions'),
+          ),
+        ],
+      ),
       body: account == null
           ? const Center(child: Text('No active account.'))
           : licenses.when(

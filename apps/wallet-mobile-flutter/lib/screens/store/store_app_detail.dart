@@ -14,6 +14,7 @@ import '../../state/store_state.dart';
 import '../../state/wallet_state.dart';
 import 'game_play_screen.dart';
 import 'store_checkout_sheet.dart';
+import 'store_subscribe_sheet.dart';
 
 class StoreAppDetailScreen extends ConsumerWidget {
   final String slug;
@@ -56,6 +57,13 @@ class _BuyBar extends ConsumerWidget {
   StorePrice? get _oneTime {
     for (final p in app.prices) {
       if (p.model == 'ONE_TIME' && !p.isFree) return p;
+    }
+    return null;
+  }
+
+  StorePrice? get _subscription {
+    for (final p in app.prices) {
+      if (p.isSubscription && !p.isFree) return p;
     }
     return null;
   }
@@ -110,12 +118,24 @@ class _BuyBar extends ConsumerWidget {
       onTap = account == null ? null : play;
     } else {
       final price = _oneTime;
+      final sub = _subscription;
       if (price != null) {
         valueLabel = '${formatAnm(price.amountNanm)} ANM';
         cta = 'Buy';
         onTap = account == null
             ? null
             : () => showStoreCheckoutSheet(context, app: app, price: price);
+      } else if (sub != null) {
+        // Subscriptions are CUSTODIAL (renewals debit the in-app balance) —
+        // the consent sheet discloses that before we sign the recurring consent.
+        headerLabel = 'Subscription';
+        valueLabel =
+            '${formatAnm(sub.amountNanm)} ANM / ${periodLabel(sub.periodDays)}';
+        cta = 'Subscribe';
+        ctaIcon = Icons.autorenew;
+        onTap = account == null
+            ? null
+            : () => showStoreSubscribeSheet(context, app: app, price: sub);
       } else if (isFree) {
         valueLabel = 'Free';
         cta = 'Get';
@@ -123,7 +143,7 @@ class _BuyBar extends ConsumerWidget {
       } else {
         valueLabel = 'Subscription';
         cta = 'Subscribe';
-        onTap = null; // subscriptions are custodial by design
+        onTap = null; // subscription price unavailable
       }
     }
 

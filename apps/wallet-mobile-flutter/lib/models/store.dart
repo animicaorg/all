@@ -603,6 +603,104 @@ class PurchaseRecord {
   bool get isActive => status == 'ACTIVE';
   bool get isPending => status == 'PENDING_PAYMENT';
   DateTime? get expiresAtDate => _date(expiresAt);
+  DateTime? get graceUntilDate => _date(graceUntil);
+
+  /// A recurring (custodial) subscription purchase.
+  bool get isSubscription => priceModel == 'SUBSCRIPTION';
+
+  /// Paid from the custodial in-app ledger (renewals draw this), as opposed to a
+  /// non-custodial on-chain wallet payment.
+  bool get isCustodial => source == 'balance';
+
+  /// The paid period's hard expiry is in the past.
+  bool get isExpired {
+    final e = expiresAtDate;
+    return e != null && e.isBefore(DateTime.now());
+  }
+
+  /// A renewal failed (e.g. insufficient ledger balance) and the subscription is
+  /// in its dunning window — access continues until [graceUntilDate] while the
+  /// buyer tops up. Drives the "top up to keep your subscription" banner.
+  bool get isInGrace {
+    final g = graceUntilDate;
+    return g != null && g.isAfter(DateTime.now());
+  }
+
+  /// Coarse lifecycle bucket for the subscriptions list.
+  ///   grace     — a renewal failed; still usable inside the grace window.
+  ///   active    — auto-renewing (the worker keeps expiresAt fresh).
+  ///   cancelled — auto-renew off but still inside the paid period.
+  ///   expired   — auto-renew off and past the paid period.
+  String get subscriptionState {
+    if (isInGrace) return 'grace';
+    if (autoRenew) return 'active';
+    if (isExpired) return 'expired';
+    return 'cancelled';
+  }
+
+  static List<PurchaseRecord> listFrom(dynamic v) => _list(v)
+      .whereType<Map<String, dynamic>>()
+      .map(PurchaseRecord.fromJson)
+      .where((p) => p.id.isNotEmpty)
+      .toList(growable: false);
+}
+
+// ── custodial ledger balance (GET /me/balance) ──────────────────────────────
+
+/// The signed-in buyer's custodial marketplace ledger balance plus a personal
+/// deposit address to fund it. This balance is what subscription renewals debit
+/// (non-custodial pull payments are impossible on Animica); it is topped up by
+/// sending ANM on-chain to [depositAddress] and is withdrawable anytime.
+class StoreBalance {
+  final BigInt balanceNanm;
+
+  /// Personal deposit address (may be null if the route returns balance only;
+  /// callers can mint one via `MarketplaceApi.depositAddress`).
+  final String? depositAddress;
+  final String? note;
+
+  const StoreBalance({
+    required this.balanceNanm,
+    this.depositAddress,
+    this.note,
+  });
+
+  factory StoreBalance.fromJson(Map<String, dynamic> j) => StoreBalance(
+        balanceNanm: _bigIntOrZero(j['balanceNanm'] ?? j['balance']),
+        depositAddress: _str(j['depositAddress'] ?? j['address']),
+        note: _str(j['note']),
+      );
+}
+
+// ── cancel subscription result (POST /store/subscriptions/{id}/cancel) ───────
+
+class CancelSubscriptionResult {
+  final bool cancelled;
+  final bool alreadyCancelled;
+
+  /// Access remains until this instant (the current paid period's expiry).
+  final String? activeUntil;
+  final PurchaseRecord? purchase;
+
+  const CancelSubscriptionResult({
+    this.cancelled = false,
+    this.alreadyCancelled = false,
+    this.activeUntil,
+    this.purchase,
+  });
+
+  factory CancelSubscriptionResult.fromJson(Map<String, dynamic> j) =>
+      CancelSubscriptionResult(
+        cancelled: _boolOr(j['cancelled'], false),
+        alreadyCancelled: _boolOr(j['alreadyCancelled'], false),
+        activeUntil: _str(j['activeUntil']),
+        purchase: () {
+          final m = _mapOrNull(j['purchase']);
+          return m == null ? null : PurchaseRecord.fromJson(m);
+        }(),
+      );
+
+  DateTime? get activeUntilDate => _date(activeUntil);
 }
 
 class PaymentIntentStatus {

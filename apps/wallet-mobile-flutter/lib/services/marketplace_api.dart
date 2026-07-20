@@ -44,6 +44,12 @@ const String _signMessageDomain = 'animica:signMessage:';
 /// The challenge purpose that mints a store session (scopes: read, buy, use).
 const String _storePurpose = 'store';
 
+/// The single-use, purpose-bound challenge that authorizes a CUSTODIAL recurring
+/// subscription. The signed string binds the listing + price so what the user
+/// approves is exactly what the renewal worker enforces (see lib/challenge.ts
+/// v2 challenges and SESSION_PURPOSE_SCOPES.subscribe on the server).
+const String _subscribePurpose = 'subscribe';
+
 const String _kStoreSessionKey = 'animica.wallet.store.session.v1';
 const String _sessionCookieName = 'anm_mkt_session';
 
@@ -62,6 +68,12 @@ class MarketplaceApiException implements Exception {
   bool get isNotFound => statusCode == 404;
   bool get isConflict => statusCode == 409;
   bool get isExpired => statusCode == 410;
+
+  /// The custodial ledger balance can't cover the charge (subscribe / renew).
+  /// Surfaced as HTTP 402 with `code == 'insufficient_funds'`; the UI should
+  /// prompt a top-up.
+  bool get isInsufficientFunds =>
+      statusCode == 402 || code == 'insufficient_funds';
 
   /// The store side is not yet configured / armed (STORE_TREASURY_ADDRESS,
   /// dormant rails). Surfaced by the intent route as 503.
@@ -321,6 +333,129 @@ class MarketplaceApi {
     return DownloadToken.fromJson(j);
   }
 
+  // ── subscriptions (CUSTODIAL recurring billing) ────────────────────────────
+  //
+  // Honesty note: Animica cannot do non-custodial pull payments, so recurring
+  // renewals debit the buyer's in-app LEDGER balance (a custodial balance,
+  // topped up from an on-chain deposit address and withdrawable anytime). A
+  // subscription only auto-renews when the buyer has explicitly signed a
+  // single-use `subscribe` consent — the same ML-DSA-65 signing path as the
+  // store login — which the server records as a StoreConsent the renewal worker
+  // requires. Cancelling stops future renewals; access continues to the paid
+  // period's end.
+
+  /// Subscribe to a SUBSCRIPTION-priced listing. Signs a purpose-bound,
+  /// single-use `subscribe` consent authorizing the marketplace to debit the
+  /// caller's custodial ledger balance once per billing period until cancelled,
+  /// then creates the subscription server-side.
+  ///
+  /// The consent binds the EXACT economic terms — listing + period + amount —
+  /// INTO the signed string (the blind-sign defense: a signature can never be
+  /// repurposed to a different listing/period/price), so the caller must pass
+  /// the [amountNanm] and [periodDays] of the price being subscribed to. These
+  /// must equal the store's price row or the server rejects with `consent_mismatch`.
+  ///
+  /// Flow (mirrors [_login] for the signing step; matches the store's
+  /// `/store/subscriptions/start` route + lib/challenge.ts v2 contract):
+  ///   1. GET /auth/challenge?purpose=subscribe&listing=<slug>&period=<days>&amount=<nanm>
+  ///      — the server binds those params INTO the signed challenge.
+  ///   2. sign UTF8(SIGN_MESSAGE_DOMAIN + challenge) with ML-DSA-65.
+  ///   3. POST /store/subscriptions/start { slug, priceId, address, challenge,
+  ///      signature, publicKey } (session cookie authenticates the buyer). The
+  ///      route re-verifies the signature, enforces the bound terms, burns the
+  ///      challenge single-use, records the StoreConsent, debits the first
+  ///      period, and creates the autoRenew subscription Purchase the renewal
+  ///      worker requires (autoRenew=true + consentId).
+  ///
+  /// Returns the created subscription [PurchaseRecord]. Throws
+  /// `MarketplaceApiException(402, 'insufficient_funds')` when the ledger
+  /// balance can't cover the first period (prompt a top-up).
+  Future<PurchaseRecord> subscribe({
+    required String slug,
+    required String priceId,
+    required BigInt amountNanm,
+    required int periodDays,
+  }) async {
+    final acc = _requireAccount();
+    if (acc.algId != AnimicaConfig.algIdMlDsa65) {
+      throw MarketplaceApiException(
+        400,
+        'unsupported_scheme',
+        'Subscriptions require an ML-DSA-65 wallet to sign consent.',
+      );
+    }
+    // The POST is buyer-authenticated by the session cookie; ensure one first.
+    await _ensureCookie();
+
+    // 1. purpose-bound consent challenge binding the EXACT terms the server
+    //    enforces (listing = slug, period = periodDays, amount = amountNanm).
+    final challenge = await _fetchChallengeV2(
+      acc.address,
+      _subscribePurpose,
+      extra: {
+        'listing': slug,
+        'period': '$periodDays',
+        'amount': amountNanm.toString(),
+      },
+    );
+
+    // 2. sign UTF8(domain + challenge) with ML-DSA-65 — identical to _login.
+    final msgBytes =
+        Uint8List.fromList(utf8.encode(_signMessageDomain + challenge));
+    final sig = await MlDsa65.sign(acc.secretKey, msgBytes);
+
+    // 3. POST the subscribe-start route with the signed consent. `address` is
+    //    the signer the server matches against the authenticated account.
+    final j = await _authedJson('POST', '/store/subscriptions/start', body: {
+      'slug': slug,
+      'priceId': priceId,
+      'address': acc.address,
+      'challenge': challenge,
+      'signature': '0x${_hex(sig)}',
+      'publicKey': '0x${_hex(acc.publicKey)}',
+    });
+    // Tolerant: the record may come back bare or wrapped as {subscription|purchase}.
+    final raw = j['subscription'] ?? j['purchase'] ?? j;
+    final map = raw is Map<String, dynamic> ? raw : j;
+    return PurchaseRecord.fromJson(map);
+  }
+
+  /// GET /store/subscriptions — the caller's subscription purchases (active,
+  /// in-grace/dunning, and recently-lapsed), newest first.
+  Future<List<PurchaseRecord>> listSubscriptions() async {
+    final j = await _authedJson('GET', '/store/subscriptions');
+    return PurchaseRecord.listFrom(
+        j['subscriptions'] ?? j['purchases'] ?? j['items']);
+  }
+
+  /// POST /store/subscriptions/{purchaseId}/cancel — stop auto-renewal. Access
+  /// stays until the current period's expiry (no refund). Idempotent.
+  Future<CancelSubscriptionResult> cancelSubscription(String purchaseId) async {
+    final j = await _authedJson(
+      'POST',
+      '/store/subscriptions/${Uri.encodeComponent(purchaseId)}/cancel',
+    );
+    return CancelSubscriptionResult.fromJson(j);
+  }
+
+  /// GET /me/balance — the caller's custodial ledger balance + a personal
+  /// deposit address to top it up. This balance funds subscription renewals and
+  /// is withdrawable on-chain anytime.
+  Future<StoreBalance> balance() async {
+    final j = await _authedJson('GET', '/me/balance');
+    return StoreBalance.fromJson(j);
+  }
+
+  /// POST /deposits/address — mint (or return) a personal deposit address to
+  /// fund the custodial balance. Sending ANM there credits the ledger after
+  /// on-chain finality (inclusion is not execution — observed balance deltas
+  /// only). Used by the top-up screen when [balance] omits the address.
+  Future<String?> depositAddress({String purpose = 'topup'}) async {
+    final j = await _authedJson('POST', '/deposits/address',
+        body: {'purpose': purpose});
+    return j['address']?.toString();
+  }
+
   // ── web-game play (Game Lab) ───────────────────────────────────────────────
 
   /// GET /store/apps/{slug}/bundle — PUBLIC, price-aware web-game bundle
@@ -395,6 +530,29 @@ class MarketplaceApi {
     }
     final session = await _login(acc);
     return session.cookie;
+  }
+
+  /// Fetch a v2 (purpose-bound) challenge string. [extra] params are bound INTO
+  /// the signed challenge by the server (e.g. subscribe: slug + price). The
+  /// wallet always signs UTF8(SIGN_MESSAGE_DOMAIN + challenge) over the result.
+  Future<String> _fetchChallengeV2(
+    String address,
+    String purpose, {
+    Map<String, String> extra = const {},
+  }) async {
+    final qp = <String, String>{
+      'address': address,
+      'purpose': purpose,
+      ...extra,
+    };
+    final uri =
+        Uri.parse('$baseUrl/auth/challenge').replace(queryParameters: qp);
+    final j = await _getJson(uri);
+    final challenge = (j['challenge'] ?? '').toString();
+    if (challenge.isEmpty) {
+      throw MarketplaceApiException(200, 'bad_challenge', 'no challenge returned');
+    }
+    return challenge;
   }
 
   Future<StoreSession> _login(Account acc) async {
