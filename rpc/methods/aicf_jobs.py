@@ -48,6 +48,35 @@ log = logging.getLogger("animica.rpc.aicf_jobs")
 
 
 # ---------------------------------------------------------------------------
+# Worker liveness-touch throttle.
+# ---------------------------------------------------------------------------
+# touch_worker() bumps a worker's last_seen and is called on the HOT path
+# aicf.workerClaimNextJob — which every miner polls in a tight uncached loop.
+# On the SQLite store each touch is a write that contends with claim_next()'s
+# BEGIN IMMEDIATE write lock (busy_timeout up to 5 s), so writing on every claim
+# serialized miners and made claims take seconds → RPC timeouts → 503s cascading
+# to everyone pointing at the node. Liveness only needs ~seconds granularity, so
+# throttle the DB write to at most once per worker per TOUCH_THROTTLE_S and make
+# it best-effort (a touch must never slow or fail a claim).
+_TOUCH_THROTTLE_S = float(os.environ.get("ANIMICA_AICF_TOUCH_THROTTLE_S", "30"))
+_last_touch: Dict[str, float] = {}
+_last_touch_lock = threading.Lock()
+
+
+def _should_touch(address: str) -> bool:
+    now = time.monotonic()
+    with _last_touch_lock:
+        if now - _last_touch.get(address, 0.0) < _TOUCH_THROTTLE_S:
+            return False
+        _last_touch[address] = now
+        if len(_last_touch) > 20000:  # unbounded-growth guard
+            cutoff = now - _TOUCH_THROTTLE_S
+            for k in [k for k, v in _last_touch.items() if v < cutoff]:
+                _last_touch.pop(k, None)
+        return True
+
+
+# ---------------------------------------------------------------------------
 # Treasury address & settlement config
 # ---------------------------------------------------------------------------
 
@@ -617,6 +646,10 @@ class _AicfJobStore:
             return self._workers.get(address)
 
     def touch_worker(self, address: str) -> None:
+        # In-memory store: the write is cheap, but throttle anyway for parity
+        # so behaviour matches the SQLite path (and to skip the lock churn).
+        if not _should_touch(address):
+            return
         with self._lock:
             w = self._workers.get(address)
             if w is not None:
@@ -1416,9 +1449,17 @@ class _SqliteAicfJobStore:
         return self._worker_from_row(row) if row else None
 
     def touch_worker(self, address: str) -> None:
-        self._conn().execute(
-            "UPDATE workers SET last_seen=? WHERE address=?", (time.time(), address)
-        )
+        # Throttled + best-effort: at most one DB write per worker per
+        # _TOUCH_THROTTLE_S, and a locked/slow write never blocks the caller
+        # (the claim path). Liveness granularity of tens of seconds is fine.
+        if not _should_touch(address):
+            return
+        try:
+            self._conn().execute(
+                "UPDATE workers SET last_seen=? WHERE address=?", (time.time(), address)
+            )
+        except Exception:  # noqa: BLE001 — a liveness touch must never fail a claim
+            pass
 
     def all_workers(self) -> List[_WorkerInfo]:
         rows = self._conn().execute("SELECT * FROM workers").fetchall()
