@@ -993,6 +993,7 @@ def _full_payload(resp_id: str, model: str, text: str, usage: dict) -> dict:
 
 
 _MODEL_CHAIN_TIER = {
+    "kimi-k3": "standard",
     "animica-chat": "standard",
     "animica-chat-small": "standard",
     "animica-chat-flagship": "premium",
@@ -1002,6 +1003,7 @@ _MODEL_CHAIN_TIER = {
     # actually serve — routing a 32B job there hangs. Re-add once elite is served.
 }
 _MODELS_META = [
+    ("kimi-k3", "Kimi K3 — flagship coding & chat, served by the Animica miner network."),
     ("animica-chat", "On-chain AICF chat — routed through registered miners."),
     ("animica-chat-small", "Tier 'small' on the AICF network."),
     ("animica-chat-flagship", "Tier 'flagship' on the AICF network."),
@@ -1238,6 +1240,8 @@ def _resolve_tier(req_model: Optional[str], req_tier: Optional[str],
     # tier, so explicit caller choices are always honored.
     if req_model in (None, "animica-chat"):
         return _route_tier(prompt, history or [])
+    if req_model and req_model.startswith("kimi-k3"):
+        return "small"  # chain tier 'standard' — served by the live worker
     # animica-chat-small / animica-chat-flagship / animica-chat-tiny
     if req_model.startswith("animica-chat-"):
         return req_model[len("animica-chat-"):]

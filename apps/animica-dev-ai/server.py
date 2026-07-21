@@ -368,7 +368,7 @@ async def _run_timeout(client: httpx.AsyncClient) -> float:
 
 
 # Prefer higher-quality tiers, but run on ANY tier a worker is actually serving.
-_MODEL_PRIORITY = ["animica-chat-flagship", "animica-chat", "animica-chat-small"]
+_MODEL_PRIORITY = ["kimi-k3", "animica-chat-flagship", "animica-chat", "animica-chat-small"]
 
 
 def _next_lower_tier(current: str, unserved: set) -> Optional[str]:
@@ -1463,6 +1463,28 @@ def _critic_user(project: str, desc: str, orig_prompt: str, files: dict[str, str
     return "\n".join(parts)
 
 
+def _revise_leader_user(prompt: str, existing: dict[str, str]) -> str:
+    """Give the reviser the ACTUAL current code (budgeted), not just a filename manifest,
+    so it can plan real, targeted changes. index.html is shown first; the rest share the
+    remaining budget. Each targeted worker still receives its file's full contents."""
+    parts = ["Current files (name — size):"]
+    for p, c in existing.items():
+        parts.append(f"- {p} ({len(c or '')} chars)")
+    parts += ["", "Current file contents (large files may be truncated — target them by "
+              "name and the worker gets the full file):"]
+    budget = CRITIC_CONTEXT_BUDGET
+    ordered = sorted(existing.items(), key=lambda kv: (kv[0] not in ("index.html", "index.htm"), kv[0]))
+    for p, c in ordered:
+        c = c or ""
+        take = min(len(c), MAX_FILE_BYTES, max(0, budget))
+        suffix = "" if take >= len(c) else f"\n… [truncated {len(c) - take} chars]"
+        parts.append(f"\n===== {p} ({len(c)} chars) =====\n{c[:take]}{suffix}")
+        budget -= take
+    parts.append(f"\nChange request: {prompt}\n\nReturn your JSON revision plan now — list EVERY "
+                 "file that must change or be added to satisfy the request (never an empty list).")
+    return "\n".join(parts)
+
+
 REVISE_LEADER_SYS = (
     "You are the LEAD ARCHITECT revising an existing web app. You are given the current "
     "files and a change request. Output ONLY one JSON object and nothing else:\n"
@@ -1615,9 +1637,8 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                 yield ev({"type": "phase", "phase": "planning",
                           "note": "Leader agent is planning the revision…" if revise else "Leader agent is decomposing your request…"})
                 if revise:
-                    cur = "\n".join(f"- {p} ({len(c)} chars)" for p, c in existing.items())
                     lead_msgs = [{"role": "system", "content": REVISE_LEADER_SYS},
-                                 {"role": "user", "content": f"Current files:\n{cur}\n\nChange request: {prompt}"}]
+                                 {"role": "user", "content": _revise_leader_user(prompt, existing)}]
                 else:
                     lead_msgs = [{"role": "system", "content": LEADER_SYS}, {"role": "user", "content": prompt}]
                 # Leader downgrade-and-retry: if the chosen tier only advertised serving and
@@ -1669,6 +1690,20 @@ async def _swarm_events(prompt: str, model: Optional[str], existing: Optional[di
                 if not revise and len(clean) < SWARM_MIN_FILES:
                     clean = _rich_default_files(prompt, clean)
                     print(f"[swarm.leader] applied rich default architecture → {len(clean)} files", flush=True)
+
+                # A revise must NEVER silently no-op: if the reviser returned no parseable
+                # file list, apply the change to the entry point (or the existing files) so a
+                # worker actually rewrites real content instead of returning the code unchanged.
+                if revise and not clean:
+                    entry = next((p for p in ("index.html", "index.htm") if p in existing), None)
+                    targets = [entry] if entry else list(existing.keys())[:6]
+                    if targets:
+                        clean = [{"path": p, "spec": f"Apply this change to the app: {prompt}. Rewrite "
+                                  "the WHOLE file to satisfy it, keeping everything that already works."}
+                                 for p in targets]
+                    else:
+                        clean = _rich_default_files(prompt, [])   # revise with no files → fresh build
+                    print(f"[swarm.revise] empty plan — targeting {[f['path'] for f in clean]}", flush=True)
 
             yield ev({"type": "leader", "project": project, "description": desc,
                       "files": [f["path"] for f in clean], "revise": revise, "large": bool(planned)})

@@ -51,7 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: { slug: strin
     // Preview uses the FREE bridge to avoid spending paid credits. Keep it short.
     const result = await chat(
       [{ role: 'system', content: system }, ...messages.filter((m) => m.role !== 'system')],
-      { model: 'animica-chat', temperature: listing.temperature, maxTokens: 384, paid: false, timeoutMs: 60_000 },
+      { model: 'kimi-k3', temperature: listing.temperature, maxTokens: 384, paid: false, timeoutMs: 60_000 },
     );
     return ok({ answer: result.text, preview: true });
   } catch (e) {

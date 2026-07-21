@@ -70,6 +70,15 @@ _FALLBACK_TIER_MODEL: dict[str, str] = {
 }
 _DEFAULT_MODEL = _FALLBACK_TIER_MODEL["standard"]
 
+# "Kimi K3" is the network's flagship brand for its top-end coding & chat
+# model. This env var lets operators point the brand at genuine Kimi weights
+# (default moonshotai/Kimi-K2-Instruct); on hardware that can't load a model
+# that large, the standard-tier coder model still serves the Kimi K3 brand so
+# /v1/models keeps reporting it as served.
+KIMI_K3_MODEL = os.environ.get(
+    "ANIMICA_AICF_KIMI_MODEL", "moonshotai/Kimi-K2-Instruct"
+).strip() or "moonshotai/Kimi-K2-Instruct"
+
 # Tier → (min_billion_params, max_billion_params) used to bucket detected
 # models. Top of range is exclusive so a 7B model lands in "premium",
 # not "elite". A model whose size we can't parse goes to "standard".
@@ -268,6 +277,13 @@ def discover_models() -> list[ModelChoice]:
     pinned = os.environ.get("ANIMICA_AICF_MODEL", "").strip()
     if pinned:
         _add(pinned, "env_override")
+    # "Kimi K3" flagship: only offered when the operator explicitly opts in via
+    # ANIMICA_AICF_KIMI_MODEL — we never force every miner to try downloading a
+    # ~1T model. Set → discoverable as an operator override (bypasses the
+    # non-chat filter, same as any env pin).
+    kimi = os.environ.get("ANIMICA_AICF_KIMI_MODEL", "").strip()
+    if kimi:
+        _add(kimi, "env_override")
     # Local bundles + HF cache (no network needed).
     for path in _scan_local_bundles():
         _add(path, "local_bundle")
@@ -278,6 +294,18 @@ def discover_models() -> list[ModelChoice]:
     for model in _FALLBACK_TIER_MODEL.values():
         _add(model, "fallback")
     return out
+
+
+def resolve_kimi_model() -> str:
+    """HF repo id backing the "Kimi K3" flagship brand.
+
+    Re-reads ``ANIMICA_AICF_KIMI_MODEL`` on every call so operators can
+    repoint the brand at real Kimi weights without editing code (falls back
+    to the module default when unset).
+    """
+    return os.environ.get(
+        "ANIMICA_AICF_KIMI_MODEL", "moonshotai/Kimi-K2-Instruct"
+    ).strip() or "moonshotai/Kimi-K2-Instruct"
 
 
 def resolve_tier_model(tier: str) -> str:
