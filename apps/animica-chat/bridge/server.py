@@ -1090,15 +1090,50 @@ _KNOWN_WORKER_WALLETS = [
 ]
 
 
+# How recently a worker must have been seen to count as serving. External
+# miners heartbeat on their own cadence, so 5 min was too tight; default 10 min,
+# tunable via BRIDGE_WORKER_FRESH_SEC.
+_WORKER_FRESH_SEC = float(os.environ.get("BRIDGE_WORKER_FRESH_SEC", "600"))
+
+
+def _discover_worker_wallets(rpc_url: str) -> list[str]:
+    """Every wallet that has registered a worker — so the serving probe is not
+    limited to the hardcoded BRIDGE_KNOWN_WORKER_WALLETS (which was just the
+    local worker, making animica.dev show "offline" whenever the only live
+    miners were EXTERNAL ones on other wallets).
+
+    The chat AICF path exposes no "list all serving workers" RPC, but the node's
+    work registry (``aicf.work.listWorkers``) enumerates every wallet that ever
+    registered a worker. We union those with the configured known wallets, then
+    ``aicf.workerStatus`` each to read its live tiers + heartbeat. Best-effort:
+    on any failure we fall back to just the known wallets.
+    """
+    import httpx
+    wallets: set[str] = set(_KNOWN_WORKER_WALLETS)
+    try:
+        with httpx.Client(timeout=3.0) as client:
+            resp = client.post(rpc_url, json={
+                "jsonrpc": "2.0", "id": 1,
+                "method": "aicf.work.listWorkers", "params": {},
+            })
+            rows = (resp.json().get("result") or {}).get("workers") or []
+        for row in rows:
+            w = row.get("wallet_address")
+            if w:
+                wallets.add(str(w))
+    except Exception:    # noqa: BLE001
+        pass
+    return [w for w in wallets if w]
+
+
 def _probe_chain_tier_availability() -> set[str]:
     """Return the set of chain tiers (free/standard/premium/elite) that
     currently have a registered, recently-seen worker.
 
-    We can't enumerate workers globally — the chain only exposes
-    `aicf.workerStatus` per address. The bridge polls a configured set
-    of known wallet addresses (BRIDGE_KNOWN_WORKER_WALLETS); operators
-    add wallets here as new miners join. Best-effort; failures degrade
-    to "no workers known" which the UI surfaces by greying out tiers.
+    Enumerates ALL registered workers (see _discover_worker_wallets) — not just
+    the local wallet — and unions the live tiers of every one seen within
+    _WORKER_FRESH_SEC. Best-effort; failures degrade to "no workers known"
+    which the UI surfaces by greying out tiers.
     """
     import httpx
     rpc_url = (
@@ -1107,8 +1142,8 @@ def _probe_chain_tier_availability() -> set[str]:
     )
     available: set[str] = set()
     now_ms = int(time.time() * 1000)
-    fresh_window_ms = 5 * 60 * 1000    # treat as alive if seen in 5 min
-    for addr in _KNOWN_WORKER_WALLETS:
+    fresh_window_ms = int(_WORKER_FRESH_SEC * 1000)
+    for addr in _discover_worker_wallets(rpc_url):
         try:
             with httpx.Client(timeout=3.0) as client:
                 resp = client.post(rpc_url, json={
