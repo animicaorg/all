@@ -1474,7 +1474,15 @@ def _mining_gate(
     # allow_unsynced override still works for intentional offline/test mining.
     network_best = int(sync_status.get("network_best_height") or 0)
     net_lag = network_best - exec_head
-    net_lag_limit = int(os.getenv("ANIMICA_MINING_MAX_NETWORK_LAG", "16"))
+    # network_best_height comes from peers' ADVERTISED height — a peer can inflate
+    # it without ever delivering the headers (we see this as "headers_timeout"
+    # churn), which trips this gate and HALTS block production on the canonical
+    # producer. Do NOT halt mining on an unverified claim: the verified gates
+    # (too_far_behind >=100 and max_lag, both keyed on best_header_height which
+    # requires actually-received headers) still halt a genuinely-behind node, and
+    # fork-choice reorgs us if a heavier chain really appears. Default raised from
+    # 16 so a false/stale advertisement can't stall a seed. Still env-overridable.
+    net_lag_limit = int(os.getenv("ANIMICA_MINING_MAX_NETWORK_LAG", "1000000"))
     if network_best > 0 and net_lag >= net_lag_limit and not allow_unsynced:
         log.info(
             "MINER_BEHIND_NETWORK",

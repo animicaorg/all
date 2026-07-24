@@ -290,7 +290,17 @@ def test_block_import_rejects_duplicate_sender_nonce_even_with_distinct_hashes(t
     assert state_db.get_balance(recipient) == 0
 
 
-def test_importing_same_block_twice_does_not_reapply_state(tmp_path: Path) -> None:
+def test_importing_same_block_twice_does_not_reapply_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # This test exercises the apply-once invariant (importing the same block
+    # twice must not re-apply state), not signature/root policy. Push the
+    # height-gated PQ-hardening and root-commitment checks past the test's
+    # block heights so the unsigned devnet fixture block imports. Dedicated
+    # tests cover the sig/root gates.
+    monkeypatch.setenv("ANIMICA_FORK_PQ_HARDENING_HEIGHT", "999999999")
+    monkeypatch.setenv("ANIMICA_FORK_ROOT_COMMITMENT_HEIGHT", "999999999")
+
     params = _params()
     bdb, state_db = _db_bundle(tmp_path)
     importer = BlockImporter(params=params, block_db=bdb, state_db=state_db)

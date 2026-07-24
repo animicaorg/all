@@ -40,6 +40,7 @@ Compression
 """
 
 import enum
+import os
 import struct
 import zlib
 from dataclasses import dataclass
@@ -54,6 +55,56 @@ HEADER_FMT = (
     "!2sBBHQQII8s"  # magic,ver,flags,msg_id,seq,nonce,plain_len,wire_len,checksum8
 )
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
+
+# ── ANM-H03: bounded decode / anti-decompression-bomb ────────────────────────
+# Hard ceiling on the *logical* (decompressed) payload of a single frame.
+#
+# Without this, a hostile peer can send a tiny COMPRESSED body that inflates to
+# gigabytes inside unpack_frame() *before* any length/checksum check runs — a
+# trivial memory-exhaustion DoS. We cap the decompressed output and reject an
+# oversized declared plain_len up front.
+#
+# The default (16 MiB) is comfortably above the largest legitimate logical
+# payload: transports cap on-wire frames at 8 MiB and senders cap logical
+# payloads at 8 MiB, so honest peers are never affected. Tunable via env for
+# operators who deliberately raise frame sizes.
+DEFAULT_MAX_PLAINTEXT_BYTES = 16 * 1024 * 1024
+
+
+def _default_max_plaintext() -> int:
+    raw = os.environ.get("ANIMICA_P2P_MAX_FRAME_PLAINTEXT_BYTES")
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return DEFAULT_MAX_PLAINTEXT_BYTES
+
+
+def _bounded_decompress(data: bytes, max_out: int) -> bytes:
+    """zlib-inflate ``data`` while never allocating more than ``max_out`` bytes.
+
+    Decompresses at most ``max_out + 1`` bytes; if the stream would produce more
+    (detected via a non-empty ``unconsumed_tail`` or an output already over the
+    cap) we raise instead of continuing to inflate. This defuses zlib
+    decompression bombs regardless of what the frame's declared ``plain_len``
+    claims.
+    """
+    dobj = zlib.decompressobj()
+    try:
+        out = dobj.decompress(data, max_out + 1)
+        if len(out) > max_out or dobj.unconsumed_tail:
+            raise ValueError(
+                f"decompressed payload exceeds cap ({max_out} bytes)"
+            )
+        out += dobj.flush()
+    except zlib.error as e:
+        raise ValueError(f"zlib decompress failed: {e}") from e
+    if len(out) > max_out:
+        raise ValueError(f"decompressed payload exceeds cap ({max_out} bytes)")
+    return out
 
 
 class FrameFlags(enum.IntFlag):
@@ -185,6 +236,7 @@ def unpack_frame(
     framed: bytes,
     *,
     aead: Optional[AeadLike] = None,
+    max_plaintext: Optional[int] = None,
 ) -> Frame:
     """
     Parse a single wire frame (no outer length prefix). Returns a Frame with
@@ -192,7 +244,12 @@ def unpack_frame(
 
     :param framed: header+payload bytes
     :param aead: optional AEAD for opening encrypted frames
+    :param max_plaintext: hard ceiling on the logical (decompressed) payload
+        size. Defaults to ``ANIMICA_P2P_MAX_FRAME_PLAINTEXT_BYTES`` (or 16 MiB).
+        An oversized declared ``plain_len`` is rejected up front and the
+        decompressor is bounded so a lying header cannot smuggle a bomb.
     """
+    cap = _default_max_plaintext() if max_plaintext is None else int(max_plaintext)
     if len(framed) < HEADER_SIZE:
         raise ValueError(f"truncated frame: {len(framed)} < {HEADER_SIZE}")
 
@@ -214,6 +271,11 @@ def unpack_frame(
         raise ValueError(f"unsupported frame version: {version}")
     flags = FrameFlags(flags_b)
 
+    # Reject an absurd declared logical size before doing any work (cheap,
+    # pre-allocation). Bounds both compressed and plaintext frames.
+    if plain_len > cap:
+        raise ValueError(f"plain_len too large: {plain_len} > {cap}")
+
     body_wire = framed[HEADER_SIZE:]
     if len(body_wire) != wire_len:
         raise ValueError(
@@ -230,12 +292,10 @@ def unpack_frame(
     else:
         body = body_wire
 
-    # Decompress if needed
+    # Decompress if needed — bounded so a compression bomb (small body that
+    # inflates to gigabytes) cannot exhaust memory even if plain_len lies.
     if flags & FrameFlags.COMPRESSED:
-        try:
-            body = zlib.decompress(body)
-        except zlib.error as e:
-            raise ValueError(f"zlib decompress failed: {e}") from e
+        body = _bounded_decompress(body, cap)
 
     # Verify length & checksum
     if len(body) != plain_len:
@@ -287,6 +347,7 @@ __all__ = [
     "VERSION",
     "HEADER_FMT",
     "HEADER_SIZE",
+    "DEFAULT_MAX_PLAINTEXT_BYTES",
     "FrameFlags",
     "AeadLike",
     "Frame",

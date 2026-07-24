@@ -489,6 +489,18 @@ class Config:
     admin_allowlist: list[str] = field(default_factory=list)
     bootstrap_rate_limit: int = 0
     bootstrap_node: bool = False
+    # --- 6.0.0 RPC hardening (C08 / M02 / M06) ---
+    # Whether the CORS layer may emit Access-Control-Allow-Credentials.
+    # Safe default False; NEVER combined with a wildcard origin (see server.py).
+    cors_allow_credentials: bool = False
+    # Optional bearer token. When set, the JSON-RPC HTTP endpoints require it
+    # (fail-closed). When None, the endpoints stay open (current behavior) and
+    # the server logs one prominent startup warning.
+    auth_token: str | None = None
+    # When True, admin/debug/dangerous methods are refused from non-loopback
+    # clients while the server is bound to a public (non-loopback) address.
+    # Safe default False (preserves current behavior) + loud startup warning.
+    restrict_sensitive: bool = False
 
 
 def load_config() -> Config:
@@ -508,6 +520,10 @@ def load_config() -> Config:
         admin_allowlist=list(cfg.access.admin_allowlist),
         bootstrap_rate_limit=cfg.access.bootstrap_rate_limit,
         bootstrap_node=cfg.access.bootstrap_node,
+        # --- 6.0.0 RPC hardening (C08 / M02 / M06) ---
+        cors_allow_credentials=cfg.cors.allow_credentials,
+        auth_token=_env("ANIMICA_RPC_AUTH_TOKEN"),
+        restrict_sensitive=_env_bool("ANIMICA_RPC_RESTRICT_SENSITIVE", False),
     )
 
 

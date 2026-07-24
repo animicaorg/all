@@ -994,7 +994,7 @@ class P2PService:
         self._peers_by_session: dict[str, _PeerState] = {}
         self._peer_registry = PeerRegistry(
             max_inbound_per_ip=int(os.environ.get("ANIMICA_P2P_MAX_INBOUND_PER_IP", "10") or 10),
-            handshake_timeout_s=float(os.environ.get("ANIMICA_P2P_HANDSHAKE_TIMEOUT", "30.0") or 30.0),
+            handshake_timeout_s=float(os.environ.get("ANIMICA_P2P_HANDSHAKE_TIMEOUT", "3.0") or 3.0),
             handshake_rate_limit_per_ip=int(
                 os.environ.get("ANIMICA_P2P_HANDSHAKE_RATE_PER_IP", "30") or 30
             ),
@@ -1016,7 +1016,7 @@ class P2PService:
             trusted_hosts=set(self._trusted_seed_hosts),
         )
         self._hello_timeout_grace_s = float(
-            os.environ.get("ANIMICA_P2P_HELLO_TIMEOUT_GRACE", "30.0") or 30.0
+            os.environ.get("ANIMICA_P2P_HELLO_TIMEOUT_GRACE", "5.0") or 5.0
         )
         self._hello_timeout_grace_used: set[str] = set()
 
@@ -6841,7 +6841,7 @@ class P2PService:
         try:
             conn = await self._transport.dial(
                 addr,
-                timeout=float(os.environ.get("ANIMICA_P2P_DIAL_TIMEOUT", "30.0") or 30.0),
+                timeout=float(os.environ.get("ANIMICA_P2P_DIAL_TIMEOUT", "5.0") or 5.0),
             )
         except asyncio.CancelledError:
             raise

@@ -195,6 +195,7 @@ def up(ctx: typer.Context,
         console.print(f"[yellow]enabled but not yet runnable: "
                       f"{', '.join(summary['enabled_but_pending'])}[/yellow]")
     _ensure_media_models(caps, components, console)
+    _ensure_llm_model(caps, components, console)
     _ensure_media_miner(components, console)
     _ensure_inference_worker(components, console, addr)
     _ensure_animal(console)
@@ -247,7 +248,7 @@ def _ensure_inference_worker(components, console, address) -> None:
     enabled = {getattr(c, "name", "") for c in components if getattr(c, "enabled", True)}
     if "miner" in enabled:
         # The miner subprocess starts the AICF worker (--aicf) and inherits ANIMICA_AICF_ENDPOINT.
-        console.print(f"[dim]inference: this node serves AICF chat to {endpoint}[/dim]")
+        console.print(f"[dim]inference: this node serves AICF chat (incl. Kimi K3 · kimi-k3) to {endpoint}[/dim]")
         return
 
     # No miner in the plan (e.g. --profile provider / ai): start a standalone AICF worker so the
@@ -260,7 +261,7 @@ def _ensure_inference_worker(components, console, address) -> None:
         tiers_list = stats.get("tiers") or []
         if stats.get("started") and tiers_list:
             tiers = ",".join(tiers_list)
-            console.print(f"[dim]inference: serving AICF chat to {endpoint} · tiers {tiers}[/dim]")
+            console.print(f"[dim]inference: serving AICF chat (incl. Kimi K3 · kimi-k3) to {endpoint} · tiers {tiers}[/dim]")
         elif stats.get("started"):
             # Worker constructed but qualified out every tier (no installed
             # flagship bundle to serve with). It won't advertise phantom
@@ -327,6 +328,90 @@ def _ensure_media_models(caps, components, console) -> None:
 
     console.print(f"[dim]media: ensuring image model {model_id} (~{gb}GB) in background…[/dim]")
     threading.Thread(target=_dl, name="animica-media-prefetch", daemon=True).start()
+
+
+def _ensure_llm_model(caps, components, console) -> None:
+    """Auto-install this miner's AICF chat/coding model bundle, in the BACKGROUND.
+
+    So ``animica up`` sets up a miner that actually serves network chat — including
+    the "Kimi K3" (kimi-k3) flagship brand — out of the box, with zero manual
+    ``animica miner setup``. Mirrors :func:`_ensure_media_models`: a daemon thread
+    downloads if missing, disk-guarded, env-gated, and fully best-effort so it can
+    never block or break ``up``.
+
+    Env:
+      * ANIMICA_AICF_AUTOINSTALL=0 — don't auto-install the LLM bundle.
+      * ANIMICA_AICF_TIER=<tiny|small|flagship|large> — pin the tier (else picked by VRAM).
+      * ANIMICA_AICF_MODEL=<hf repo id> — serve these exact weights instead of the tier
+        default (e.g. set it to the Kimi K3 backend, moonshotai/Kimi-K2-Instruct, on a rig
+        that can load it).
+    """
+    import os
+    import shutil
+    import threading
+
+    if os.environ.get("ANIMICA_AICF_AUTOINSTALL", "1") == "0":
+        return
+    if os.environ.get("ANIMICA_AICF_PREFETCH", "1") == "0":
+        return
+    # Opt-outs that disable AICF serving entirely also skip the model install.
+    if (os.environ.get("ANIMICA_AICF_MINER") == "0"
+            or os.environ.get("ANIMICA_DISABLE_AICF_WORKER")
+            or os.environ.get("ANIMICA_AICF_DISABLE")):
+        return
+    # Only relevant when this node serves work.
+    enabled = {getattr(c, "name", "") for c in components if getattr(c, "enabled", True)}
+    if not (enabled & {"miner", "aicf-worker", "server", "provider", "useful-work"}):
+        return
+    try:
+        from agent_runtime.aicf_worker import bootstrap_bundle_from_hf
+    except Exception:
+        return
+    # Optional fast-path skip: older agent_runtime builds don't export this, so
+    # treat it as "unknown" (proceed to install; the HF cache makes it idempotent).
+    try:
+        from agent_runtime.aicf_worker import _has_servable_bundle
+    except Exception:
+        _has_servable_bundle = None
+
+    # Pick a tier by hardware (catalog names tiny|small|flagship|large): a CPU / low-VRAM
+    # box gets the light tiny model (still coder-tuned, CPU-runnable); bigger rigs get more.
+    vram = float(getattr(caps, "vram_gb", 0) or 0)
+    if vram >= 40:
+        tier, gb = "flagship", 34.0
+    elif vram >= 16:
+        tier, gb = "small", 15.0
+    else:
+        tier, gb = "tiny", 4.0
+    tier = os.environ.get("ANIMICA_AICF_TIER", tier)
+    repo_override = os.environ.get("ANIMICA_AICF_MODEL", "").strip() or None
+
+    try:
+        if _has_servable_bundle is not None and _has_servable_bundle(tier):
+            console.print(f"[dim]inference: {tier}-tier chat model already installed[/dim]")
+            return
+    except Exception:
+        pass
+
+    _total, _used, free = shutil.disk_usage(os.path.expanduser("~"))
+    if free / 1e9 < gb * 1.3:
+        console.print(
+            f"[yellow]inference: skipping chat-model install — only {round(free/1e9, 1)}GB free "
+            f"(need ~{round(gb * 1.3, 1)}GB for the {tier} model); "
+            f"run 'animica miner setup' once you have space[/yellow]")
+        return
+
+    def _dl():
+        try:
+            bootstrap_bundle_from_hf(tier, repo_id=repo_override)
+        except Exception:
+            pass  # non-fatal; the worker / `animica miner setup` will retry on demand
+
+    label = repo_override or f"{tier}-tier default"
+    console.print(
+        f"[dim]inference: installing chat/coding model ({label}) in background so this "
+        f"miner serves Kimi K3 to the network…[/dim]")
+    threading.Thread(target=_dl, name="animica-aicf-model-prefetch", daemon=True).start()
 
 
 def _ensure_media_miner(components, console) -> None:

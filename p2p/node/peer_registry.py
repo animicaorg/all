@@ -75,6 +75,7 @@ class PeerRegistry:
         handshake_rate_netgroup_v4_bits: int = 24,
         handshake_rate_netgroup_v6_bits: int = 48,
         trusted_reconnect_grace_s: float = 180.0,
+        trusted_hosts: Optional[set] = None,
     ) -> None:
         self._sessions: Dict[str, PeerSession] = {}
         self._sessions_by_peer_key: Dict[tuple[str, str], PeerSession] = {}
@@ -95,6 +96,31 @@ class PeerRegistry:
         self._handshake_rate_ip: Dict[str, List[float]] = {}
         self._handshake_rate_netgroup: Dict[str, List[float]] = {}
         self._trusted_reconnect_ip: Dict[str, float] = {}
+        # Hosts/IPs exempt from the per-IP inbound COUNT cap (our own seeds).
+        self._trusted_hosts: set = set(trusted_hosts or ())
+
+    def add_trusted_hosts(self, hosts: Optional[set]) -> None:
+        """Extend the per-IP-count-cap exemption set (e.g. verifier seeds
+        computed after this registry is constructed)."""
+        if hosts:
+            self._trusted_hosts |= set(hosts)
+
+    def _is_inbound_ip_exempt(self, ip: str) -> bool:
+        """True when the per-IP inbound COUNT cap must NOT apply to this ip.
+
+        Under docker-proxy every external peer is SNAT'd to the bridge gateway
+        (a private IP), so counting inbound-per-ip would hard-cap the ENTIRE
+        internet at max_inbound_per_ip. Private (non-loopback / non-link-local)
+        addresses and configured trusted hosts are therefore exempt; real
+        distinct PUBLIC IPs stay capped.
+        """
+        if ip in self._trusted_hosts:
+            return True
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        return bool(addr.is_private and not (addr.is_loopback or addr.is_link_local))
 
     # --------------------------- registration --------------------------- #
 
@@ -105,7 +131,10 @@ class PeerRegistry:
         if direction == "inbound":
             ip = _extract_ip(remote)
             self._enforce_handshake_rate(ip)
-            if self._inbound_count(ip) >= self._max_inbound_per_ip:
+            if (
+                not self._is_inbound_ip_exempt(ip)
+                and self._inbound_count(ip) >= self._max_inbound_per_ip
+            ):
                 raise ValueError(f"inbound limit reached for {ip}")
 
         session = PeerSession(
@@ -227,6 +256,13 @@ class PeerRegistry:
 
     def _enforce_handshake_rate(self, ip: str) -> None:
         now = time.time()
+        if self._is_inbound_ip_exempt(ip):
+            # NAT/docker-proxy-collapsed source or a configured trusted seed:
+            # per-IP handshake rate limiting is meaningless here (the whole
+            # internet can arrive under one bridge-gateway IP), so it would
+            # blackhole every inbound peer. Rely on the transport-layer global
+            # inbound cap for these hosts instead.
+            return
         trusted_seen_at = self._trusted_reconnect_ip.get(ip)
         if (
             trusted_seen_at is not None

@@ -361,6 +361,23 @@ def state_get_balance(address: str, tag: str = "latest") -> str:
     ):  # be liberal; ignore unknowns as 'latest'
         tag = "latest"
     value = _svc_balance(addr, tag=tag)
+    # Read-through: when the local node is behind a trusted upstream (still
+    # syncing / stalled / freshly bootstrapped) return the AUTHORITATIVE balance
+    # instead of a stale 0. A fully-synced node returns its own local value.
+    # Consensus/execution/tx-validation always use LOCAL state, never this.
+    try:
+        import os as _os
+        from rpc.upstream_balance import authoritative as _authoritative
+        _head = deps.get_head() or {}
+        _cid = _head.get("chainId", _head.get("chain_id"))
+        if _cid is None:
+            try:
+                _cid = int(_os.environ.get("ANIMICA_CHAIN_ID") or 0) or None
+            except Exception:
+                _cid = None
+        value = _authoritative(addr, "state.getBalance", int(value), _head.get("height"), _cid)
+    except Exception:
+        pass
     return _to_hex_quantity(value)
 
 
@@ -444,8 +461,27 @@ def state_get_nonce(address: str, tag: str = "latest") -> int:
         tag = "latest"
 
     if tag == "pending":
-        return int(_svc_pending_nonce(addr))
-    return int(_svc_nonce(addr, tag=tag))
+        local_nonce = int(_svc_pending_nonce(addr))
+    else:
+        local_nonce = int(_svc_nonce(addr, tag=tag))
+    # Read-through: a node behind a trusted upstream returns a stale (too-low)
+    # nonce, which breaks withdrawal construction. Use the authoritative nonce
+    # when behind; never return lower than what we computed locally.
+    try:
+        import os as _os
+        from rpc.upstream_balance import authoritative as _authoritative
+        _head = deps.get_head() or {}
+        _cid = _head.get("chainId", _head.get("chain_id"))
+        if _cid is None:
+            try:
+                _cid = int(_os.environ.get("ANIMICA_CHAIN_ID") or 0) or None
+            except Exception:
+                _cid = None
+        _auth = _authoritative(addr, "state.getNonce", local_nonce, _head.get("height"), _cid,
+                               extra_params=[tag])
+        return max(local_nonce, int(_auth))
+    except Exception:
+        return local_nonce
 
 
 def _svc_pending_nonce(addr: str) -> int:

@@ -9,6 +9,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Deque, Dict, Iterable, List, Optional, Set
 
+from core.ptl.canonical_txid import NonCanonicalTxError, canonical_ptl_txid
 from core.ptl.service import PtlService
 from core.ptl.model import TxStatus
 
@@ -195,19 +196,53 @@ class PtlRelayService:
             txid_bytes = bytes(txid)
             tx_bytes_data = bytes(tx_bytes)
 
+            # ANM-M10: bind the peer-advertised txid to the actual tx bytes before
+            # accepting. The relay must never key receipts/dedup on an id a peer
+            # simply asserted; it must equal the id derived from the (canonical)
+            # bytes. An honest peer always advertises sha3_256(bytes), so this only
+            # rejects mismatched (malicious/buggy) advertisements.
+            strict = getattr(self.ptl_service, "strict_txid", None)
             try:
-                # Submit to PTL
-                _, entry = await self.ptl_service.submit(tx_bytes_data, origin=f"peer:{conn_id}")
-                
-                # Add receipt
-                await self.ptl_service.add_receipt(
-                    txid_bytes, conn_id, "ack", reason="received"
+                _store_bytes, expected_txid = canonical_ptl_txid(
+                    tx_bytes_data, strict=strict
                 )
-                
-                ack_txids.append(txid_bytes)
+            except NonCanonicalTxError as exc:
+                reject_txids.append(txid_bytes)
+                log.warning(
+                    "PTL_PUSH rejected: non-canonical/undecodable tx (strict mode)",
+                    extra={
+                        "peer": conn_id,
+                        "txid": txid_bytes.hex()[:16],
+                        "error": str(exc),
+                    },
+                )
+                continue
+
+            if txid_bytes != expected_txid:
+                reject_txids.append(txid_bytes)
+                log.warning(
+                    "PTL_PUSH rejected: advertised txid does not bind to bytes",
+                    extra={
+                        "peer": conn_id,
+                        "advertised_txid": txid_bytes.hex()[:16],
+                        "expected_txid": expected_txid.hex()[:16],
+                    },
+                )
+                continue
+
+            try:
+                # Submit to PTL (txid is authoritative; equals expected_txid).
+                _, entry = await self.ptl_service.submit(tx_bytes_data, origin=f"peer:{conn_id}")
+
+                # Add receipt keyed on the verified txid.
+                await self.ptl_service.add_receipt(
+                    expected_txid, conn_id, "ack", reason="received"
+                )
+
+                ack_txids.append(expected_txid)
                 log.info(
                     "PTL transaction received",
-                    extra={"peer": conn_id, "txid": txid_bytes.hex()[:16]},
+                    extra={"peer": conn_id, "txid": expected_txid.hex()[:16]},
                 )
             except Exception as exc:
                 reject_txids.append(txid_bytes)

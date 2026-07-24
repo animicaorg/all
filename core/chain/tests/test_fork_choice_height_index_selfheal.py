@@ -324,3 +324,135 @@ def test_already_stored_orphan_at_pinned_height_rejected_not_duplicate(tmp_path,
         res.code == ImportErrorCode.INVALID
     ), "re-import of an already-stored orphan at a pinned height must be rejected, not DUPLICATE"
     assert "checkpoint" in (res.reason or "").lower()
+
+
+def test_mainnet_pinned_checkpoints_are_wellformed() -> None:
+    """Guard the hardcoded mainnet checkpoint hashes against typos.
+
+    Each pin is the CANONICAL block hash at a natural-fork height; enforcement is
+    generic (validate_head_against_checkpoint + import rejection), so a wrong hash
+    here would force upgrading nodes onto the wrong fork. Assert the known set,
+    32-byte length, and the PoW leading-zero prefix.
+    """
+    import core.network_params as np
+
+    pins = np.get_pinned_checkpoints(chain_id=1)
+    # every historical fork remedy must remain present
+    for h in (28167, 38728, 44854):
+        assert h in pins, f"mainnet checkpoint {h} missing"
+        assert len(pins[h]) == 32, f"checkpoint {h} is not a 32-byte hash"
+        assert pins[h][:3] == b"\x00\x00\x00", f"checkpoint {h} lacks PoW prefix"
+    # exact value of the 2026-07-14 fork pin (44854)
+    assert pins[44854].hex() == (
+        "0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9"
+    )
+
+
+def test_pinned_checkpoints_killswitch_disables_all() -> None:
+    import os
+    import core.network_params as np
+
+    prev = os.environ.get("ANIMICA_DISABLE_PINNED_CHECKPOINTS")
+    os.environ["ANIMICA_DISABLE_PINNED_CHECKPOINTS"] = "1"
+    try:
+        assert np.get_pinned_checkpoints(chain_id=1) == {}
+    finally:
+        if prev is None:
+            os.environ.pop("ANIMICA_DISABLE_PINNED_CHECKPOINTS", None)
+        else:
+            os.environ["ANIMICA_DISABLE_PINNED_CHECKPOINTS"] = prev
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Natural 1-block fork self-heal, proven on the REAL importer (44854 / 38728).
+#
+# The p2p header-path proof lives in p2p/tests/test_sync_fork_selfheal_repro.py
+# (real _process_headers enqueues the winning sibling); these lock in the OTHER
+# half — that block_import actually reorgs a node off the losing orphan onto the
+# winning branch — plus the two boundaries that MUST NOT be "fixed" away.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_natural_1block_fork_self_heals_on_real_importer(tmp_path: Path) -> None:
+    """Head is the LOSING orphan sibling at N; once the winning sibling@N and its
+    descendant@N+1 arrive, the importer reorgs onto the winning branch — depth 1,
+    no pin, no HTTP fallback. This is what a ≥7.2.0 node does on a natural fork."""
+    importer = BlockImporter(params=_params(), block_db=(bdb := _db(tmp_path)))
+    g = _header(height=0, parent_hash=b"\x00" * 32, timestamp=1000, theta_micro=100)
+    r0 = importer.import_block(_block(g))
+    assert r0.code == ImportErrorCode.ACCEPTED
+    p = _header(height=1, parent_hash=r0.block_hash, timestamp=1012, theta_micro=100)
+    rp = importer.import_block(_block(p))
+    assert rp.code == ImportErrorCode.ACCEPTED
+
+    # Losing sibling at the fork height N=2 -> our head lands on the orphan.
+    loser = _header(height=2, parent_hash=rp.block_hash, timestamp=1024, theta_micro=100)
+    rlose = importer.import_block(_block(loser))
+    assert rlose.code == ImportErrorCode.ACCEPTED
+    assert bdb.get_head() == (2, rlose.block_hash), "precondition: wedged on the loser"
+
+    # Winning sibling at N (same parent, different timestamp -> different hash).
+    winner = _header(height=2, parent_hash=rp.block_hash, timestamp=1025, theta_micro=100)
+    assert winner.hash() != rlose.block_hash
+    rwin = importer.import_block(_block(winner))
+    assert rwin.code == ImportErrorCode.ACCEPTED  # stored as a competing tip
+
+    # Winning descendant N+1 tips the cumulative weight -> reorg fires.
+    w3 = _header(height=3, parent_hash=rwin.block_hash, timestamp=1037, theta_micro=100)
+    rw3 = importer.import_block(_block(w3))
+    assert rw3.code == ImportErrorCode.ACCEPTED
+
+    assert bdb.get_head() == (3, rw3.block_hash), "node did not self-heal onto the winning branch"
+    assert bdb.get_canonical_hash(2) == winner.hash(), "by-height index at N not repaired to the winner"
+
+
+def test_equal_height_sibling_does_not_prematurely_reorg(tmp_path: Path) -> None:
+    """A winning sibling at N with NO descendant is an unresolved live tie: equal
+    height, equal work. The head must NOT flip (first-seen wins) — reorging here
+    would be wrong, and the self-heal must wait for a strictly-heavier descendant."""
+    importer = BlockImporter(params=_params(), block_db=(bdb := _db(tmp_path)))
+    g = _header(height=0, parent_hash=b"\x00" * 32, timestamp=1000, theta_micro=100)
+    r0 = importer.import_block(_block(g))
+    p = _header(height=1, parent_hash=r0.block_hash, timestamp=1012, theta_micro=100)
+    rp = importer.import_block(_block(p))
+    first = _header(height=2, parent_hash=rp.block_hash, timestamp=1024, theta_micro=100)
+    rf = importer.import_block(_block(first))
+    assert bdb.get_head() == (2, rf.block_hash)
+    # second, equal-weight sibling — stored but head stays on the first-seen tip.
+    second = _header(height=2, parent_hash=rp.block_hash, timestamp=1025, theta_micro=100)
+    rs = importer.import_block(_block(second))
+    assert rs.code == ImportErrorCode.ACCEPTED
+    assert bdb.get_head() == (2, rf.block_hash), "equal-height sibling must not flip the head"
+
+
+def test_deep_loser_extension_is_reorg_capped(tmp_path: Path) -> None:
+    """A node that extended the LOSING branch beyond max_reorg_depth is
+    DELIBERATELY not reorged onto the heavier winner — a deep-reorg / long-range
+    defense. This is the one non-self-healing case; it is a guard, NOT a bug, and
+    must never be 'fixed' by relaxing the depth cap (that would be split-unsafe)."""
+    importer = BlockImporter(params=_params(), block_db=(bdb := _db(tmp_path)), max_reorg_depth=4)
+    g = _header(height=0, parent_hash=b"\x00" * 32, timestamp=1000, theta_micro=100)
+    r0 = importer.import_block(_block(g))
+    p = _header(height=1, parent_hash=r0.block_hash, timestamp=1012, theta_micro=100)
+    rp = importer.import_block(_block(p))
+
+    # Loser branch extended 5 blocks above the fork point p (depth 5 > cap 4).
+    prev = rp.block_hash
+    loser_tip = None
+    for h in range(2, 7):
+        blk = _header(height=h, parent_hash=prev, timestamp=1000 + h * 12, theta_micro=100)
+        r = importer.import_block(_block(blk))
+        assert r.code == ImportErrorCode.ACCEPTED
+        prev, loser_tip = r.block_hash, r.block_hash
+    assert bdb.get_head()[0] == 6
+
+    # Strictly-heavier winner branch from the same fork point p (6 blocks -> height 7).
+    prev = rp.block_hash
+    for h in range(2, 8):
+        blk = _header(height=h, parent_hash=prev, timestamp=2000 + h * 12, theta_micro=100)
+        r = importer.import_block(_block(blk))
+        assert r.code == ImportErrorCode.ACCEPTED
+        prev = r.block_hash
+
+    # The reorg would be depth 5 > cap 4, so it is refused: head stays on the loser.
+    assert bdb.get_head() == (6, loser_tip), "deep-reorg guard must hold (head stays on the loser)"

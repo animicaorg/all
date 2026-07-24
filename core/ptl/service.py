@@ -7,9 +7,9 @@ import logging
 import time
 from typing import Optional
 
+from core.ptl.canonical_txid import canonical_ptl_txid
 from core.ptl.model import PtlEntry, ReplicationReceipt, TxStatus
 from core.ptl.store import PtlStore
-from core.utils.hash import sha3_256
 
 log = logging.getLogger("animica.ptl.service")
 
@@ -23,18 +23,33 @@ class PtlService:
         *,
         ttl_seconds: int = 3600,
         min_peer_acks: int = 2,
+        strict_txid: Optional[bool] = None,
     ) -> None:
         self.store = store
         self.ttl_seconds = ttl_seconds
         self.min_peer_acks = min_peer_acks
+        # None => resolve ANIMICA_PTL_STRICT_TXID at submit time (default off,
+        # preserving current live behavior); True/False forces the policy.
+        self.strict_txid = strict_txid
         self._running = False
         self._lock = asyncio.Lock()
 
     async def submit(
-        self, tx_bytes: bytes, origin: str = "local"
+        self, tx_bytes: bytes, origin: str = "local", *, strict: Optional[bool] = None
     ) -> tuple[bytes, PtlEntry]:
-        """Submit a new transaction to the PTL."""
-        txid = sha3_256(tx_bytes)
+        """Submit a new transaction to the PTL.
+
+        The txid is derived from a strict canonical re-encode of the decoded
+        transaction (ANM-H09) so that non-canonical re-encodings of the same
+        logical tx cannot mint distinct txids / bypass dedup. Behavior is gated
+        by ``strict`` (see ``core.ptl.canonical_txid``): with the safe default
+        (off) canonical txs are unaffected and non-canonical/opaque bytes keep the
+        legacy raw-hash txid; when strict is enabled, non-canonical input is
+        rejected.
+        """
+        effective_strict = strict if strict is not None else self.strict_txid
+        # Raises NonCanonicalTxError (a ValueError) in strict mode on bad input.
+        store_bytes, txid = canonical_ptl_txid(tx_bytes, strict=effective_strict)
         now = time.time()
 
         async with self._lock:
@@ -48,12 +63,12 @@ class PtlService:
 
             entry = PtlEntry(
                 txid=txid,
-                tx_bytes=tx_bytes,
+                tx_bytes=store_bytes,
                 status=TxStatus.STORED,
                 received_at=now,
                 updated_at=now,
                 origin=origin,
-                size=len(tx_bytes),
+                size=len(store_bytes),
                 expire_at=now + self.ttl_seconds,
             )
             self.store.add(entry)

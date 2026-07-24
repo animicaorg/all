@@ -87,6 +87,17 @@ TRANSCRIPT_DOMAIN = b"animica/p2p/hs/v1"
 # HKDF info label (kept short and constant)
 KEY_SCHEDULE_INFO = b"animica/p2p/hs/keys/v1"
 
+# ── TCP handshake wire magics ───────────────────────────────────────────────
+# Both magics MUST be the SAME byte length so a responder can send a compact
+# rejection frame in place of the first handshake frame and a dialer can tell
+# the two apart by reading a single fixed-size header. An old peer that never
+# emits/parses the reject frame is unaffected (it simply sees EOF, as before).
+HANDSHAKE_MAGIC = b"ANIMICA/TCP/HS/V0"
+REJECT_MAGIC = b"ANIMICA/TCP/RJ/V0"
+assert len(REJECT_MAGIC) == len(HANDSHAKE_MAGIC), (
+    "REJECT_MAGIC must equal HANDSHAKE_MAGIC in length"
+)
+
 
 @dataclass(frozen=True)
 class HandshakeKeys:
@@ -305,10 +316,32 @@ class _TcpAead:
                 self.impl = AESGCM(key)
             else:
                 self.impl = ChaCha20Poly1305(key)
-        except Exception:  # pragma: no cover - minimal environments
-            # Fallback: lightweight pure-Python stream "AEAD" suitable for tests/dev only.
-            # It provides confidentiality + an integrity tag, but is not intended
-            # to be a production-grade AEAD replacement.
+        except Exception as _crypto_exc:  # pragma: no cover - minimal environments
+            # ANM-L01: the hand-rolled pure-Python stream "AEAD" is NOT a
+            # production-grade AEAD. But the live Animica network already runs on
+            # it (the 'cryptography' backend is not deployed on peers), so refusing
+            # it by default would drop every peer and ISOLATE the node — fragmenting
+            # the network and violating "keep the chain working". We therefore ALLOW
+            # the fallback with a loud warning by default and let operators opt IN to
+            # strict refusal via ANIMICA_STRICT_AEAD=1. Installing 'cryptography' (a
+            # 6.0.0 runtime dependency) makes this branch unreachable and yields a
+            # real ChaCha20-Poly1305/AES-GCM AEAD, wire-compatible with pure-Python
+            # peers. ANIMICA_ALLOW_PURE_AEAD is still honored for backward compat.
+            import os as _os
+
+            if _os.getenv("ANIMICA_STRICT_AEAD") == "1":
+                raise HandshakeError(
+                    "ANIMICA_STRICT_AEAD=1 but no production AEAD backend is "
+                    "available (install 'cryptography'); refusing the insecure "
+                    "pure-Python fallback"
+                ) from _crypto_exc
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "ANM-L01: no 'cryptography' AEAD backend — using the INSECURE "
+                "pure-Python AEAD fallback. Install 'cryptography' for a real AEAD; "
+                "set ANIMICA_STRICT_AEAD=1 to refuse the fallback instead."
+            )
             self._pure = True
             self.impl = None
 
@@ -366,6 +399,24 @@ class _TcpAead:
         return bytes(pt)
 
 
+async def send_handshake_reject(writer, reason: str = "inbound_capped") -> None:
+    """Best-effort: tell a dialer we are refusing it BEFORE closing the socket.
+
+    Wire shape mirrors the handshake header so it lands in the dialer's
+    fixed-size header read: REJECT_MAGIC || len(reason) (1 byte, <=255) ||
+    reason. This turns an opaque "0 bytes read on a total of 18 expected"
+    EOF into an actionable "peer rejected connection: <reason>". It is fully
+    backward-compatible: peers that never parse this frame just see EOF as
+    before. All exceptions are suppressed — this is a courtesy, not a contract.
+    """
+    try:
+        rb = reason.encode()[:255]
+        writer.write(REJECT_MAGIC + bytes([len(rb)]) + rb)
+        await writer.drain()
+    except Exception:
+        pass
+
+
 async def perform_handshake_tcp(
     reader,
     writer,
@@ -389,7 +440,7 @@ async def perform_handshake_tcp(
     """
 
     async def _do_handshake():
-        magic = b"ANIMICA/TCP/HS/V0"
+        magic = HANDSHAKE_MAGIC
         pro = prologue or b""
         if chain_id is not None:
             pro = pro + b"|cid=" + int(chain_id).to_bytes(4, "big", signed=False)
@@ -401,8 +452,21 @@ async def perform_handshake_tcp(
 
         async def _read_peer_msg():
             header = await reader.readexactly(len(magic) + 1)
+            if header[: len(REJECT_MAGIC)] == REJECT_MAGIC:
+                # Responder refused us (e.g. inbound-capped). The byte after the
+                # magic is the reason length; the reason bytes follow.
+                reason_len = header[len(REJECT_MAGIC)]
+                reason_b = (
+                    await reader.readexactly(reason_len) if reason_len else b""
+                )
+                reason = reason_b.decode("utf-8", "replace")
+                raise HandshakeError(
+                    f"peer rejected connection: {reason or 'unspecified'}"
+                )
             if header[: len(magic)] != magic:
-                raise HandshakeError("invalid handshake magic")
+                raise HandshakeError(
+                    "invalid handshake magic (protocol/version mismatch)"
+                )
 
             peer_pro_len = header[len(magic)]
             body = await reader.readexactly(peer_pro_len + 32)
@@ -461,6 +525,18 @@ async def perform_handshake_tcp(
         return await _do_handshake()
     except asyncio.TimeoutError as exc:  # pragma: no cover - network dependent
         raise HandshakeError("tcp handshake timeout") from exc
+    except asyncio.IncompleteReadError as exc:
+        # EOF before the handshake completed. An empty partial means the peer
+        # closed the socket without writing a single byte — the classic symptom
+        # of "0 bytes read on a total of 18 expected" when a responder is
+        # connection-refused or inbound-capped and closes without a reject frame.
+        if not exc.partial:
+            raise HandshakeError(
+                "peer closed before handshake (connection refused or inbound-capped)"
+            ) from exc
+        raise HandshakeError(
+            f"truncated handshake ({len(exc.partial)}/{exc.expected} bytes)"
+        ) from exc
     except Exception as exc:
         raise HandshakeError(f"tcp handshake failed: {exc}") from exc
 
