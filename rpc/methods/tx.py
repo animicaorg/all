@@ -2029,7 +2029,18 @@ def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int
     # This keeps tx.getStatus aligned with canonical chain state even when auxiliary indexes lag.
     if bdb is not None:
         target = _b(tx_hash_hex)
-        scan_depth = int(os.getenv("ANIMICA_TX_STATUS_SCAN_DEPTH", "4096") or 4096)
+        # 2026-07-25: this is a LINEAR backwards scan that deserializes every block
+        # in range out of SQLite and re-hashes each tx. At depth 4096 a single
+        # lookup for a txid that is not in tx_index (unknown/old/pending txid —
+        # exactly what status pollers ask for) reads 4096 blocks. Several clients
+        # polling tx.getStatus/getTransactionByHash saturated the whole
+        # ThreadPoolExecutor (py-spy showed every worker inside
+        # _lookup_persisted_tx -> get_block_by_height -> sqlite), held the GIL, and
+        # starved the asyncio loop -> miner.getBlockTemplate timed out -> the pool
+        # could not build jobs -> chain stalled. Drop the fallback window to a
+        # recent-reorg-depth window; tx_index still serves normal lookups, this is
+        # only the "auxiliary index lagged" fallback. Env-overridable.
+        scan_depth = int(os.getenv("ANIMICA_TX_STATUS_SCAN_DEPTH", "64") or 64)
         head_height: int | None = None
         try:
             getter = getattr(ctx, "get_head", None)
