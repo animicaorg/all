@@ -2040,7 +2040,11 @@ def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int
         # could not build jobs -> chain stalled. Drop the fallback window to a
         # recent-reorg-depth window; tx_index still serves normal lookups, this is
         # only the "auxiliary index lagged" fallback. Env-overridable.
-        scan_depth = int(os.getenv("ANIMICA_TX_STATUS_SCAN_DEPTH", "64") or 64)
+        # 128 (not 64): DEFAULT_MAX_REORG_DEPTH=96 (core/chain/block_import.py) and
+        # the ~120-block tx validity window bound how far back a tx this fallback
+        # could legitimately rescue may sit, so 128 covers every real case at ~0.5s
+        # worst case instead of the ~18s the old 4096 default cost.
+        scan_depth = int(os.getenv("ANIMICA_TX_STATUS_SCAN_DEPTH", "128") or 128)
         head_height: int | None = None
         try:
             getter = getattr(ctx, "get_head", None)
