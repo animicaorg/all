@@ -447,7 +447,15 @@ def chain_get_network_hashrate(window_blocks: int | None = None) -> dict[str, t.
             height_end=height_end,
         )
 
-    cache_key = (window_blocks, height_end)
+    # Key on the window only, NOT on height_end. Including the head height meant
+    # every new block invalidated the cache, so the 10s TTL never applied: each
+    # caller after a block (node.getStatus calls this unconditionally) re-walked
+    # `window_blocks` headers — ~240 SQLite reads + 120 CBOR decodes — on the
+    # asyncio event loop, adding multi-second RPC stalls. A hashrate estimate over
+    # a 120-block window is statistical and barely moves block-to-block, so
+    # serving it for up to _NETWORK_HASHRATE_TTL_SEC is correct; the payload still
+    # reports the height range it was computed over.
+    cache_key = (window_blocks,)
     now = time.time()
     if (
         _NETWORK_HASHRATE_CACHE["payload"] is not None

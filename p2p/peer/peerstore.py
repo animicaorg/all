@@ -21,11 +21,22 @@ def _now() -> float:
 
 
 def _connect(path: Path) -> sqlite3.Connection:
+    # check_same_thread=False: the connection is cached and reused (see
+    # PeerStore._locked_conn), and EVERY access is serialised by PeerStore._lock,
+    # so cross-thread use is safe. Reuse matters because opening a connection here
+    # also runs the PRAGMAs below; doing that per call made peer-list ingestion
+    # (2 peerstore writes x up to 256 entries = 512 open/close cycles per PEERS
+    # message, all on the asyncio event loop) block the loop for seconds and take
+    # the node's RPC down.
     if str(path) == ":memory:":
-        conn = sqlite3.connect(str(path), isolation_level=None)  # autocommit
+        conn = sqlite3.connect(
+            str(path), isolation_level=None, check_same_thread=False
+        )  # autocommit
     else:
         uri = f"file:{path}?mode=rwc"
-        conn = sqlite3.connect(uri, isolation_level=None, uri=True)  # autocommit
+        conn = sqlite3.connect(
+            uri, isolation_level=None, uri=True, check_same_thread=False
+        )  # autocommit
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     # Pragmas tuned for an append-mostly metadata DB.
@@ -126,10 +137,22 @@ class PeerStore:
             self._migrate_add_disconnect_reason_column(conn)
 
     def _locked_conn(self) -> sqlite3.Connection:
-        # Acquire a re-entrant lock and return a connection bound to this thread.
+        # Acquire the re-entrant lock and return a CACHED connection.
+        #
+        # This used to open a fresh sqlite connection (plus 4 PRAGMAs) on every
+        # call and close it again. _ingest_peer_entries does two peerstore writes
+        # per learned peer and a PEERS message carries up to 256 entries, so a
+        # single message cost ~512 connect/pragma/close cycles — executed
+        # synchronously on the asyncio event loop, which blocked the loop for
+        # seconds and made the node's RPC time out (chain stalls because
+        # miner.getBlockTemplate can't be served). Reusing one connection is safe:
+        # the RLock serialises every access, and _connect() now passes
+        # check_same_thread=False so a different thread may take the lock.
         self._lock.acquire()
-        # We open per-call to avoid sharing stateful connections across threads.
-        conn = _connect(self.path)
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            conn = _connect(self.path)
+            self._conn = conn
 
         class _Guard:
             def __init__(self, outer: PeerStore, c: sqlite3.Connection):
@@ -141,7 +164,15 @@ class PeerStore:
 
             def __exit__(self, exc_type, exc, tb) -> None:
                 try:
-                    self._c.close()
+                    # Drop the cached handle only if sqlite itself failed, so the
+                    # next caller reopens instead of reusing a poisoned connection.
+                    if exc_type is not None and issubclass(exc_type, sqlite3.Error):
+                        try:
+                            self._c.close()
+                        except Exception:
+                            pass
+                        if getattr(self._outer, "_conn", None) is self._c:
+                            self._outer._conn = None
                 finally:
                     self._outer._lock.release()
 
