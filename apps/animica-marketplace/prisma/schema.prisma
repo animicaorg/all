@@ -48,6 +48,7 @@ model Account {
   hostings     HostingPin[]
   vpnExits     VpnExit[]
   vpnSessions  VpnSession[]
+  mediaItems   MediaItem[]
 
   @@index([role])
 }
@@ -1430,4 +1431,55 @@ model HireTicketMessage {
   createdAt DateTime   @default(now())
 
   @@index([ticketId, createdAt])
+}
+
+// ── Animica Internet media platform: music.anm (SoundCloud-style) + video.anm (YouTube-style) ──
+// Audio/video bytes are stored in the ANM DA (data-availability) layer as one or more <=32MiB
+// blobs (daBlobsJson = ordered list of blob ids); a disk copy under mediaStore('artifacts') is
+// the Range-streaming cache, rehydrated from DA on a miss. Small cover/thumb art uses the CID
+// object store (posterCid). Creators are tipped in ANM directly wallet->wallet (MediaTip records
+// the on-chain txid for display; funds never touch the marketplace).
+enum MediaKind {
+  AUDIO
+  VIDEO
+}
+
+model MediaItem {
+  id           String    @id @default(cuid())
+  kind         MediaKind
+  ownerId      String
+  owner        Account   @relation(fields: [ownerId], references: [id])
+  ownerAddress String // creator's anim1 address — the tip destination (denormalized for the feed)
+  title        String
+  creatorName  String    @default("")
+  description  String    @default("")
+  posterCid    String? // cover / thumbnail in the CID object store (<=2MB)
+  daBlobsJson  String    @default("[]") // ordered JSON array of DA blob ids (chunks)
+  daCommitment String? // NMT commitment root when stored with a namespace
+  mime         String
+  sizeBytes    BigInt    @default(0)
+  durationSec  Int?
+  plays        Int       @default(0)
+  tipTotalNanm BigInt    @default(0)
+  tipCount     Int       @default(0)
+  visibility   String    @default("public") // public | unlisted
+  createdAt    DateTime  @default(now())
+
+  tips MediaTip[]
+
+  @@index([kind, createdAt])
+  @@index([ownerId])
+}
+
+model MediaTip {
+  id          String    @id @default(cuid())
+  itemId      String
+  item        MediaItem @relation(fields: [itemId], references: [id])
+  fromAddress String
+  toAddress   String
+  amountNanm  BigInt
+  txid        String    @unique // on-chain tx hash; unique so a tip is recorded once
+  createdAt   DateTime  @default(now())
+
+  @@index([itemId, createdAt])
 }

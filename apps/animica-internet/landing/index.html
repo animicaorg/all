@@ -230,19 +230,20 @@
           Download for Windows <span class="btn-os">x64 · setup.exe</span>
         </a>
         <a class="aicf-btn" href="/internet/animica-internet-macos.dmg" download>
-          Download for macOS <span class="btn-os">.dmg</span>
+          Download for macOS <span class="btn-os">Apple Silicon · .dmg</span>
         </a>
         <a class="aicf-btn" href="/internet/animica-internet-linux-x86_64.AppImage" download>
           Download for Linux <span class="btn-os">x86_64 · AppImage</span>
         </a>
       </div>
       <p class="dl-note">
-        <strong>macOS:</strong> the build is unsigned — right-click the app and choose
-        <em>Open</em> the first time.&ensp;
-        <strong>Linux:</strong> it&rsquo;s an AppImage — make it executable first:
-        <code>chmod +x animica-internet-linux-x86_64.AppImage</code>, then run it.
+        <strong>macOS:</strong> the build is unsigned — right-click the app and choose <em>Open</em>
+        the first time.&ensp;
+        <strong>Linux:</strong> it&rsquo;s an AppImage —
+        <code>chmod +x animica-internet-linux-x86_64.AppImage</code> then run it (self-contained;
+        Python&nbsp;+&nbsp;Qt bundled).
       </p>
-      <p class="hero-note"><span class="dot">&#9679;</span> Free download &middot; self-contained build (Python + Qt bundled) &middot; no account required</p>
+      <p class="hero-note"><span class="dot">&#9679;</span> Free &middot; self-contained (Python + Qt bundled) &middot; no account required</p>
     </div>
   </section>
 
@@ -340,5 +341,24 @@
     </div>
   </footer>
 
+  <script>
+  // Direct downloads are served from /internet/. Any installer not yet built (e.g. a platform
+  // still compiling on the release runners) gracefully shows "Building…" instead of 404-ing.
+  (function(){
+    var links = document.querySelectorAll('#download a[href^="/internet/"]');
+    links.forEach(function(a){
+      fetch(a.getAttribute('href'), { method: 'HEAD' }).then(function(r){
+        if(!r.ok){ throw 0; }
+      }).catch(function(){
+        a.style.opacity = '.5';
+        a.style.pointerEvents = 'none';
+        a.removeAttribute('download');
+        a.removeAttribute('href');
+        var os = a.querySelector('.btn-os');
+        if(os){ os.textContent = 'building…'; }
+      });
+    });
+  })();
+  </script>
 </body>
 </html>
