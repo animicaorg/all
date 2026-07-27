@@ -133,15 +133,38 @@ class ReservePanel(QDialog):
 
     def _reserve(self):
         self.btn.setEnabled(False)
-        self.btn.setText("Paying…")
+        self.btn.setText("Reserving…")
         name, years = self.name.text(), self.years.value()
-        _run(lambda: names.reserve(self.wallet, self._reg, name, years=years),
-             self._ok, self._err)
+
+        def work():
+            try:
+                return names.reserve(self.wallet, self._reg, name, years=years)
+            except names.InsufficientBalance as e:
+                return {"_insufficient": True, "message": str(e),
+                        "deposit": e.deposit_address, "feeAnm": e.fee_anm}
+
+        _run(work, self._ok, self._err)
 
     def _ok(self, out):
+        self.btn.setEnabled(True)
+        self.btn.setText("Pay & reserve")
+        if out.get("_insufficient"):
+            # Offer to fund the marketplace balance from the wallet ("pay in the browser").
+            reply = QMessageBox.question(
+                self, "Fund your balance",
+                out["message"] + f"\n\nSend {out['feeAnm']} ANM from your wallet to your deposit "
+                f"address now?\n({out.get('deposit') or 'deposit address unavailable'})")
+            if reply == QMessageBox.StandardButton.Yes and out.get("deposit"):
+                _run(lambda: names.fund_balance(self.wallet, self._reg, out["feeAnm"]),
+                     lambda r: QMessageBox.information(
+                         self, "Funding sent",
+                         f"Sent {out['feeAnm']} ANM (tx {str(r.get('txid'))[:18]}…). It credits your "
+                         f"balance after ~12 confirmations — then reserve again."),
+                     lambda m: QMessageBox.warning(self, "Funding failed", m))
+            return
         QMessageBox.information(self, "Reserved",
-                                f"Paid {out['feeAnm']} ANM (tx {out['txid'][:18]}…).\n"
-                                f"{out['name']}.anm is now yours. Use Publish to add a site.")
+                                f"{out['name']}.anm is now yours ({out['feeAnm']} ANM → Foundation).\n"
+                                f"Use Publish to add a site.")
         self.accept()
 
     def _err(self, msg):

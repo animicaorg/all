@@ -70,47 +70,60 @@ def test_fee_schedule_matches_ans():
     assert config.registration_fee_anm("abc", 99) == 500 * 10  # years clamp 1..10
 
 
-def test_reservation_quote_and_memo():
+def test_reservation_quote():
     q = names.reservation_quote("mysite", 2)   # 6 chars -> 25 ANM/yr
     assert q["name"] == "mysite" and q["years"] == 2
     assert q["feeAnm"] == 25 * 2 and q["feeNanm"] == 25 * 2 * config.NANM_PER_ANM
     assert q["foundation"] == config.FOUNDATION_ADDRESS
-    assert names.reserve_memo("mysite", 2) == "anmreserve:mysite:2"
-    assert names.memo_to_data_hex("anmreserve:mysite:2") == "0x" + b"anmreserve:mysite:2".hex()
 
 
-def test_reserve_pays_foundation_with_bound_memo():
+def test_reserve_logs_in_then_registers():
+    calls = {}
+
+    class _Wallet:
+        def primary_address(self): return "anim1payer"
+
+    class _Reg:
+        def login(self, wallet, *, address=None): calls["login"] = True
+        def register(self, name, *, years, kind="app"):
+            calls["register"] = (name, years, kind)
+            return {"domain": {"name": name, "fqdn": f"{name}.anm"}, "feeAnm": 50}
+
+    out = names.reserve(_Wallet(), _Reg(), "mysite", years=2)
+    assert calls.get("login") and calls["register"] == ("mysite", 2, "app")
+    assert out["name"] == "mysite" and out["feeAnm"] == 50 and out["domain"]["fqdn"] == "mysite.anm"
+
+
+def test_reserve_insufficient_balance_surfaces_deposit_address():
+    class _Wallet:
+        def primary_address(self): return "anim1payer"
+
+    class _Reg:
+        def login(self, wallet, *, address=None): pass
+        def register(self, *a, **k): raise RuntimeError("402 insufficient_funds")
+        def deposit_address(self, purpose="names"): return "anim1deposit"
+
+    with pytest.raises(names.InsufficientBalance) as ei:
+        names.reserve(_Wallet(), _Reg(), "mysite", years=1)
+    assert ei.value.deposit_address == "anim1deposit"
+    assert ei.value.fee_anm == 25          # mysite = 6 chars, 1yr
+
+
+def test_fund_balance_sends_to_deposit_address():
     calls = {}
 
     class _Wallet:
         def primary_address(self): return "anim1payer"
         def send(self, to, amount, *, from_address=None, data_hex=None):
             calls["to"] = to; calls["amount"] = amount
-            calls["from"] = from_address; calls["data"] = data_hex
-            return {"tx_hash": "0xdeadbeef"}
+            return {"tx_hash": "0xfeed"}
 
     class _Reg:
-        def reserve(self, name, *, years, address, payment_txid, kind="app"):
-            calls["reserve"] = (name, years, address, payment_txid, kind)
-            return {"registered": True, "name": name}
+        def deposit_address(self, purpose="names"): return "anim1deposit"
 
-    out = names.reserve(_Wallet(), _Reg(), "mysite", years=2)
-    # paid the Foundation the exact fee, with the name-bound memo
-    assert calls["to"] == config.FOUNDATION_ADDRESS
-    assert calls["amount"] == 50 * config.NANM_PER_ANM
-    assert calls["data"] == "0x" + b"anmreserve:mysite:2".hex()
-    assert calls["reserve"] == ("mysite", 2, "anim1payer", "0xdeadbeef", "app")
-    assert out["txid"] == "0xdeadbeef" and out["feeAnm"] == 50
-
-
-def test_reserve_surfaces_payment_failure_clearly():
-    class _Wallet:
-        def primary_address(self): return "anim1payer"
-        def send(self, *a, **k): raise RuntimeError("insufficient funds")
-
-    with pytest.raises(names.ReserveError) as ei:
-        names.reserve(_Wallet(), object(), "mysite", years=1)
-    assert "Foundation" in str(ei.value)
+    out = names.fund_balance(_Wallet(), _Reg(), 50)
+    assert calls["to"] == "anim1deposit" and calls["amount"] == 50 * config.NANM_PER_ANM
+    assert out["txid"] == "0xfeed" and out["depositAddress"] == "anim1deposit"
 
 
 # ------------------------------------------------------------------ serve/publish limits

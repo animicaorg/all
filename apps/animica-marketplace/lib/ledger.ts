@@ -179,12 +179,26 @@ export async function refundWithdrawal(accountId: string, amountNanm: bigint, wi
 }
 
 // Pay a .anm registration/renewal fee: debit the registrant, credit the marketplace treasury.
+// The Animica Foundation ledger account (address == config.foundationAddress), created on demand.
+async function ensureFoundation(tx: Tx) {
+  const addr = config.foundationAddress;
+  let acct = await tx.account.findUnique({ where: { address: addr } });
+  if (!acct) {
+    acct = await tx.account.create({ data: { address: addr, displayName: 'Animica Foundation', role: 'ADMIN' } });
+  }
+  return acct;
+}
+
+// .anm name-registration + renewal fees route to the Foundation (the Animica Internet's revenue
+// stream). The debit is backed by the buyer's deposited ANM (deposit finality already enforced),
+// so this is safe against the inclusion!=execution / phantom-deposit class — we never trust a raw
+// tx here. The Foundation withdraws its accrued balance on-chain.
 export async function payNameFee(accountId: string, amountNanm: bigint, ref: string, memo: string) {
   if (amountNanm <= 0n) return;
   return prisma.$transaction(async (tx) => {
-    const treasury = await ensureTreasury(tx);
+    const foundation = await ensureFoundation(tx);
     await post(tx, accountId, -amountNanm, 'PURCHASE_DEBIT', ref, memo);
-    await post(tx, treasury.id, amountNanm, 'FEE', ref, memo);
+    await post(tx, foundation.id, amountNanm, 'FEE', ref, memo);
   });
 }
 

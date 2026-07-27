@@ -98,13 +98,17 @@ class RegistryClient:
         d = self._req("GET", "/names/mine")
         return d.get("domains") or d.get("results") or []
 
-    # ------------------------------------------------------------------ on-chain reserve
-    def reserve(self, name: str, *, years: int, address: str, payment_txid: str,
-                kind: str = "app") -> dict:
-        """Reserve a name backed by an on-chain payment to the Foundation. The server verifies
-        the txid pays >= fee to the Foundation address from `address`, then registers the name
-        to `address`. No login required — the payment is the authorization."""
-        return self._req("POST", "/names/reserve", body={
-            "name": name, "years": years, "address": address,
-            "paymentTxid": payment_txid, "kind": kind,
-        })
+    # ------------------------------------------------------------------ balance / funding
+    def deposit_address(self, purpose: str = "names") -> str:
+        """The buyer's personal on-chain deposit address; funding it credits the marketplace
+        balance that name-reservation fees are drawn from (12-conf finality)."""
+        d = self._req("POST", "/deposits/address", body={"purpose": purpose})
+        return d.get("address") or (d.get("deposit") or {}).get("address") or ""
+
+    def balance_nanm(self) -> int:
+        d = self._req("GET", "/balance")
+        raw = d.get("balance") or d.get("confirmed") or d.get("nanm") or 0
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0

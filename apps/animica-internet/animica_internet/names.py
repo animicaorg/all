@@ -1,18 +1,22 @@
 """
 Name reservation — the in-app "pay ANM to reserve a .anm site name" flow.
 
-The reservation fee is paid ON-CHAIN to the Animica Foundation address (config.FOUNDATION_ADDRESS),
-carrying a memo that binds the payment to the exact name+term so it can't be replayed for another
-name. Once the payment is broadcast, the app calls the registry's /names/reserve endpoint, which
-re-verifies the on-chain payment before registering the name to the payer.
+SECURITY NOTE. The chain today commits a zero state root (state-commitment armed but inert), so
+tx receipts carry status=null: INCLUSION != EXECUTION. A raw wallet payment to the Foundation
+therefore CANNOT be trusted as proof of value moved (an included-but-reverted transfer is
+indistinguishable from a real one — the phantom-deposit class). So reservation does NOT verify a
+loose on-chain tx. Instead the fee is debited from the buyer's marketplace balance (which is
+funded via unique-address deposits with 12-conf balance-delta finality — the audited safe path)
+and credited to the Foundation ledger account server-side (lib/ledger.payNameFee). The Foundation
+withdraws its accrued balance on-chain. Net effect: reservation ANM routes to the Foundation,
+safely.
 
-  validate_name(name)            -> None | raises ReserveError
+  validate_name(name)            -> str | raises ReserveError
   reservation_quote(name, years) -> {name, years, feeAnm, feeNanm, foundation}
-  reserve_memo(name, years)      -> str  (also enforced server-side)
-  reserve(wallet, reg, name, ...)-> {txid, name, ...}  (pays foundation, then reserves)
+  reserve(wallet, reg, name, ...) -> {name, years, feeAnm, domain}  (login + register)
 
-Pure logic + a thin orchestration; the payment/registry calls are injected so it unit-tests
-without a chain or a server.
+Pure logic + thin orchestration; the wallet/registry calls are injected so it unit-tests without
+a chain or a server.
 """
 
 from __future__ import annotations
@@ -23,11 +27,19 @@ from .config import (FOUNDATION_ADDRESS, NAME_RE, NANM_PER_ANM, RESERVED_NAMES,
                      registration_fee_anm)
 
 _NAME_RE = re.compile(NAME_RE)
-MEMO_PREFIX = "anmreserve"
 
 
 class ReserveError(RuntimeError):
     pass
+
+
+class InsufficientBalance(ReserveError):
+    """The marketplace balance can't cover the fee — the caller should fund it (deposit ANM)."""
+
+    def __init__(self, message: str, *, deposit_address: str = "", fee_anm: int = 0):
+        super().__init__(message)
+        self.deposit_address = deposit_address
+        self.fee_anm = fee_anm
 
 
 def normalize(name: str) -> str:
@@ -61,38 +73,48 @@ def reservation_quote(name: str, years: int = 1) -> dict:
     }
 
 
-def reserve_memo(name: str, years: int) -> str:
-    """Binds an on-chain payment to a specific name+term (server enforces the same string)."""
-    return f"{MEMO_PREFIX}:{normalize(name)}:{int(years)}"
-
-
-def memo_to_data_hex(memo: str) -> str:
-    return "0x" + memo.encode("utf-8").hex()
+def _is_insufficient_funds(err: Exception) -> bool:
+    s = str(err).lower()
+    return "insufficient_funds" in s or "insufficient funds" in s or "402" in s
 
 
 def reserve(wallet, reg, name: str, *, years: int = 1, kind: str = "app",
             address: str | None = None) -> dict:
-    """Pay the Foundation the reservation fee (with a name-bound memo), then reserve the name.
+    """Reserve a name: authenticate with the wallet, then register it. The fee is debited from
+    the buyer's marketplace balance and credited to the Foundation server-side.
 
     `wallet` = animica_internet.wallet.Wallet, `reg` = registry_client.RegistryClient.
-    Returns {name, years, feeAnm, txid, reservation}. Raises ReserveError on any failure."""
+    Returns {name, years, feeAnm, domain}. Raises InsufficientBalance (with the deposit address)
+    when the balance can't cover the fee, or ReserveError on any other failure."""
     q = reservation_quote(name, years)
-    addr = address or wallet.primary_address()
-    memo = reserve_memo(q["name"], q["years"])
     try:
-        res = wallet.send(FOUNDATION_ADDRESS, q["feeNanm"], from_address=addr,
-                          data_hex=memo_to_data_hex(memo))
+        reg.login(wallet, address=address)
     except Exception as e:  # noqa: BLE001
-        raise ReserveError(f"payment to the Foundation failed: {e}") from e
-    txid = res.get("tx_hash") or res.get("txid") or res.get("hash")
-    if not txid:
-        raise ReserveError(f"payment sent but no tx id returned: {res}")
+        raise ReserveError(f"could not authenticate with the registry: {e}") from e
     try:
-        reservation = reg.reserve(q["name"], years=q["years"], address=addr,
-                                  payment_txid=txid, kind=kind)
+        res = reg.register(q["name"], years=q["years"], kind=kind)
     except Exception as e:  # noqa: BLE001
-        # Payment is on-chain; reservation can be retried with the same txid (idempotent server-side).
-        raise ReserveError(f"paid {q['feeAnm']} ANM (tx {txid}) but reserve call failed: {e}. "
-                           f"Retry from 'My names' — the payment is not lost.") from e
+        if _is_insufficient_funds(e):
+            dep = ""
+            try:
+                dep = reg.deposit_address()
+            except Exception:  # noqa: BLE001
+                pass
+            raise InsufficientBalance(
+                f"reserving {q['name']}.anm costs {q['feeAnm']} ANM — your marketplace balance is "
+                f"too low. Fund it by sending ANM to your deposit address, then reserve again.",
+                deposit_address=dep, fee_anm=q["feeAnm"]) from e
+        raise ReserveError(f"reservation failed: {e}") from e
     return {"name": q["name"], "years": q["years"], "feeAnm": q["feeAnm"],
-            "txid": txid, "reservation": reservation}
+            "domain": res.get("domain") or res}
+
+
+def fund_balance(wallet, reg, amount_anm: int, *, address: str | None = None) -> dict:
+    """'Pay in the browser': send ANM from the wallet to the buyer's marketplace deposit address
+    to top up the balance that reservation fees are drawn from. Returns {txid, depositAddress}."""
+    dep = reg.deposit_address()
+    if not dep:
+        raise ReserveError("could not obtain a deposit address")
+    res = wallet.send(dep, int(amount_anm) * NANM_PER_ANM, from_address=address)
+    txid = res.get("tx_hash") or res.get("txid") or res.get("hash")
+    return {"txid": txid, "depositAddress": dep}

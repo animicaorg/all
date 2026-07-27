@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Launch to the Animica Internet</title>
+<style>
+  :root{--bg:#0A0E16;--raise:#111a2e;--line:rgba(110,168,254,.18);--text:#E6ECF5;--muted:#98A6C2;--blue:#6EA8FE;--violet:#B98CFF;--live:#4FE3B0;--warn:#F0A020}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{width:100%;max-width:560px;background:var(--raise);border:1px solid var(--line);border-radius:16px;padding:28px}
+  h1{font-size:20px;margin-bottom:6px}h1 .anm{color:var(--live);font-family:ui-monospace,Menlo,monospace}
+  p.sub{color:var(--muted);font-size:13.5px;margin-bottom:18px}
+  label{display:block;font-size:12.5px;color:var(--muted);margin:14px 0 6px}
+  input{width:100%;background:#0c1424;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px 12px;font:inherit}
+  .row{display:flex;align-items:center;gap:8px}.row .suffix{color:var(--muted);font-family:ui-monospace,monospace}
+  .fee{font-size:13px;color:var(--muted);margin-top:8px}.fee b{color:var(--text)}.fee code{color:var(--live)}
+  button{width:100%;margin-top:18px;padding:12px;border:0;border-radius:11px;font:600 14.5px inherit;color:#04122a;cursor:pointer;background:linear-gradient(180deg,#37e0d8,#2bb6cf)}
+  button:disabled{opacity:.6;cursor:default}
+  button.ghost{background:transparent;color:var(--blue);border:1px solid var(--line)}
+  .msg{margin-top:16px;font-size:13.5px;padding:11px 12px;border-radius:10px;display:none}
+  .msg.err{display:block;background:rgba(240,160,32,.12);color:var(--warn);border:1px solid rgba(240,160,32,.3)}
+  .msg.ok{display:block;background:rgba(79,227,176,.1);color:var(--live);border:1px solid rgba(79,227,176,.3)}
+  a{color:var(--violet)}
+  .who{font-size:12.5px;color:var(--muted);margin-top:12px}.who code{color:var(--text)}
+  .note{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Launch to the <span class="anm">.anm</span> Internet</h1>
+  <p class="sub">Reserve a name and publish your generated site. The reservation fee is paid in ANM to the <b style="color:var(--text)">Animica Foundation</b>.</p>
+
+  <div id="stage-connect">
+    <p id="buildInfo" class="who"></p>
+    <button id="btnConnect">Connect wallet</button>
+    <p class="note">This uses your Animica wallet (the browser extension, or the built-in wallet of the <a href="/internet">Animica Internet</a> desktop app). Nothing is signed without your explicit approval.</p>
+  </div>
+
+  <div id="stage-publish" style="display:none">
+    <p class="who">Signed in as <code id="acct"></code></p>
+    <label for="name">Choose your .anm name</label>
+    <div class="row"><input id="name" placeholder="your-name" autocomplete="off" spellcheck="false" /><span class="suffix">.anm</span></div>
+    <p class="fee" id="fee"></p>
+    <button id="btnPublish">Reserve &amp; publish</button>
+    <button class="ghost" id="btnServe" style="margin-top:10px">Or host it yourself — get the desktop app</button>
+  </div>
+
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+(function(){
+  var API="/api/mkt/v1";
+  var $=function(id){return document.getElementById(id);};
+  var build=null;
+  try{ build=JSON.parse(localStorage.getItem("anmLaunch-v1")||"null"); }catch(e){}
+  var addr="", pub="";
+
+  function show(kind,html){ var m=$("msg"); m.className="msg "+kind; m.innerHTML=html; }
+  function clearMsg(){ $("msg").className="msg"; }
+
+  if(!build||!build.html){ show("err","No generated site found. Go back to <a href='/'>animica.dev</a>, build a site, then click <b>🚀 Launch to .anm</b>."); }
+  else { $("buildInfo").innerHTML="Ready to publish: <code>"+(build.project||"app").replace(/[^\w -]/g,"")+"</code> ("+(new Blob([build.html]).size/1024|0)+" KB)"; }
+
+  function provider(){ return window.animica; }
+  function req(method,params){ var p=provider(); if(!p) return Promise.reject(new Error("no wallet"));
+    if(p.request) return p.request({method:method,params:params||[]});
+    return Promise.reject(new Error("wallet has no request()")); }
+
+  function feeForName(n){ n=(n||"").length; return n<=3?500:n<=5?100:n<=8?25:5; }
+  function updFee(){ var n=($("name").value||"").trim().toLowerCase().replace(/\.anm$/,"");
+    $("fee").innerHTML = n ? ("Fee: <b>"+feeForName(n)+" ANM</b> / year &rarr; <code>Animica Foundation</code>") : ""; }
+
+  $("btnConnect").onclick=async function(){
+    clearMsg();
+    if(!provider()){ show("err","No Animica wallet detected. Install the <a href='/internet'>Animica Internet desktop app</a> (wallet built in) or the wallet browser extension, then reload."); return; }
+    this.disabled=true; this.textContent="Connecting…";
+    try{
+      var accts=await req("animica_requestAccounts");
+      addr=(accts&&accts[0])||"";
+      if(!addr) throw new Error("no account");
+      var pk=await req("animica_getPublicKey",[addr]);
+      pub=(pk&&pk.publicKey)||pk||"";
+      $("acct").textContent=addr;
+      $("stage-connect").style.display="none";
+      $("stage-publish").style.display="";
+      updFee();
+    }catch(e){ show("err","Connect failed: "+(e.message||e)); this.disabled=false; this.textContent="Connect wallet"; }
+  };
+
+  $("name").addEventListener("input",updFee);
+  $("btnServe").onclick=function(){ window.open("/internet","_blank","noopener"); };
+
+  async function postJSON(path,body){
+    var r=await fetch(API+path,{method:"POST",credentials:"include",headers:{"content-type":"application/json"},body:JSON.stringify(body||{})});
+    var j=null; try{ j=await r.json(); }catch(e){}
+    if(!r.ok){ var m=(j&&j.error&&j.error.message)||(j&&j.error)||("HTTP "+r.status); var err=new Error(m); err.status=r.status; err.code=(j&&j.error&&j.error.code)||""; throw err; }
+    return j;
+  }
+
+  $("btnPublish").onclick=async function(){
+    clearMsg();
+    var name=($("name").value||"").trim().toLowerCase().replace(/\.anm$/,"");
+    if(!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)||name.length<2||name.length>63){ show("err","Names are 2–63 chars: a–z, 0–9 and internal hyphens."); return; }
+    if(new Blob([build.html]).size>2*1024*1024){ show("err","The site is over the 2 MB single-file limit — trim it and rebuild."); return; }
+    this.disabled=true; this.textContent="Signing in…";
+    try{
+      // 1) wallet login -> session cookie
+      var ch=await fetch(API+"/auth/challenge?address="+encodeURIComponent(addr),{credentials:"include"}).then(function(r){return r.json();});
+      var challenge=ch.challenge; if(!challenge) throw new Error("no challenge");
+      var sig=await req("animica_signMessage",[{message:challenge}]);
+      await postJSON("/auth/verify",{address:addr,challenge:challenge,signature:sig,publicKey:pub});
+      // 2) reserve the name (fee -> Foundation)
+      this.textContent="Reserving "+name+".anm…";
+      try{
+        await postJSON("/names",{name:name,years:1,kind:"app"});
+      }catch(e){
+        if(e.code==="insufficient_funds"||e.status===402){
+          var dep=""; try{ dep=(await postJSON("/deposits/address",{purpose:"names"})).address||""; }catch(_){}
+          show("err","You need "+feeForName(name)+" ANM to reserve <b>"+name+".anm</b>. Send ANM to your deposit address"+(dep?": <code>"+dep+"</code>":"")+", wait for confirmations, then try again.");
+          this.disabled=false; this.textContent="Reserve & publish"; return;
+        }
+        if(e.status===409){ show("err","<b>"+name+".anm</b> is already taken — pick another."); this.disabled=false; this.textContent="Reserve & publish"; return; }
+        throw e;
+      }
+      // 3) publish the HTML
+      this.textContent="Publishing…";
+      var res=await postJSON("/names/"+encodeURIComponent(name)+"/publish",{html:build.html});
+      var gw=(res&&res.gateway)||("https://animica.dev/anm/"+name);
+      show("ok","✅ <b>"+name+".anm</b> is live on the Animica Internet.<br>Open it in the <a href='/internet'>Animica Internet app</a>, or preview via the gateway: <a href='"+gw+"' target='_blank' rel='noopener'>"+gw+"</a><br><span style='color:var(--muted);font-size:12px'>To host it from your own machine, publish/serve it from the desktop app.</span>");
+      this.textContent="Published ✓";
+    }catch(e){
+      show("err","Publish failed: "+(e.message||e));
+      this.disabled=false; this.textContent="Reserve & publish";
+    }
+  };
+})();
+</script>
+</body>
+</html>
