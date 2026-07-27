@@ -1,0 +1,227 @@
+name: Animica Internet Release
+
+# Build + release the three Animica Internet desktop binaries (the .anm-only
+# PySide6/QtWebEngine browser at apps/animica-internet):
+#   - Linux  : AppImage (+ tarball fallback)   built on ubuntu-latest
+#   - macOS  : .app .dmg (+ .zip)              built on macos-latest (Apple
+#              toolchain cannot be cross-compiled from Linux)
+#   - Windows: Inno Setup installer .exe       built on windows-latest
+#
+# PyInstaller cannot cross-compile, so each artifact builds on its native
+# runner. A final job aggregates the per-artifact JSON lines into
+# downloads/manifest.json and attaches every binary + checksums + the
+# manifest to a GitHub Release.
+#
+# NOTE: unlike the miner GUI, this app bundles QtWebEngine — the PyInstaller
+# specs under apps/animica-internet/packaging/ must collect
+# PySide6.QtWebEngineCore, the QtWebEngineProcess helper and its resources.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. anmnet-v0.1.0). Defaults to a dev tag.
+        required: false
+        default: ""
+      draft:
+        description: Create the release as a draft
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+  push:
+    tags:
+      - "anmnet-v*"
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  build:
+    name: build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+            script: build_linux.sh
+          - os: macos-latest
+            label: macos
+            script: build_macos.sh
+          - os: windows-latest
+            label: windows
+            script: build_windows.ps1
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Linux system dependencies (Qt + QtWebEngine + AppImage)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libgl1 \
+            libglib2.0-0 \
+            libxkbcommon-x11-0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xfixes0 \
+            libxcb-cursor0 \
+            libnss3 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            libxtst6 \
+            libxcursor1 \
+            libfuse2
+          # ALSA runtime lib is named differently on ubuntu 24.04 vs 22.04.
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2
+
+      - name: Install app package + animica CLI + PyInstaller
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pyinstaller pyinstaller-hooks-contrib
+          python -m pip install -e apps/animica-internet
+          # The wallet backend imports the unified `animica` package lazily.
+          python -m pip install ./python
+
+      - name: Headless smoke test
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_DISABLE_SANDBOX: "1"
+        run: |
+          python -m animica_internet.main --smoke
+
+      - name: Run OS build script (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          chmod +x apps/animica-internet/packaging/${{ matrix.script }}
+          ./apps/animica-internet/packaging/${{ matrix.script }}
+
+      - name: Run OS build script (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pwsh -File apps/animica-internet/packaging/${{ matrix.script }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: animica-internet-${{ matrix.label }}
+          path: |
+            apps/animica-internet/dist/*.AppImage
+            apps/animica-internet/dist/*.tar.gz
+            apps/animica-internet/dist/*.dmg
+            apps/animica-internet/dist/*.zip
+            apps/animica-internet/dist/*Setup*.exe
+            apps/animica-internet/dist/*.sha256
+            apps/animica-internet/dist/artifacts.jsonl
+          if-no-files-found: warn
+          retention-days: 14
+
+  release:
+    name: manifest + GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: animica-internet-*
+          path: artifacts
+
+      - name: Stage binaries + collect artifact logs
+        shell: bash
+        run: |
+          set -eux
+          mkdir -p release downloads
+          # Flatten binaries into release/ and gather every per-artifact log.
+          find artifacts -type f \
+            \( -name '*.AppImage' -o -name '*.tar.gz' -o -name '*.dmg' \
+               -o -name '*.zip' -o -name '*Setup*.exe' -o -name '*.sha256' \) \
+            -exec cp -v {} release/ \;
+          find artifacts -type f -name 'artifacts.jsonl' -print
+
+      - name: Resolve release tag + version
+        id: meta
+        shell: bash
+        run: |
+          set -eux
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          if [ -n "${INPUT_TAG}" ]; then
+            TAG="${INPUT_TAG}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="anmnet-dev-$(date -u +%Y%m%d%H%M%S)"
+          fi
+          VERSION="$(python -c "import sys; sys.path.insert(0, 'apps/animica-internet'); import animica_internet; print(animica_internet.__version__)")"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate downloads/manifest.json
+        shell: bash
+        run: |
+          set -eux
+          python apps/animica-internet/packaging/make_manifest.py \
+            --inputs 'artifacts/**/artifacts.jsonl' \
+            --out downloads/manifest.json \
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag "${{ steps.meta.outputs.tag }}" \
+            --version "${{ steps.meta.outputs.version }}"
+          cp downloads/manifest.json release/manifest.json
+          echo "---- manifest.json ----"
+          cat downloads/manifest.json
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: animica-internet-manifest
+          path: downloads/manifest.json
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Animica Internet ${{ steps.meta.outputs.version }}
+          draft: ${{ github.event.inputs.draft != 'false' }}
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+          files: |
+            release/*.AppImage
+            release/*.tar.gz
+            release/*.dmg
+            release/*.zip
+            release/*Setup*.exe
+            release/*.sha256
+            release/manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

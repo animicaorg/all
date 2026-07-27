@@ -287,5 +287,199 @@ def test_proxy_token_compare_is_constant_time():
     assert "close_connection = True" in src, "rejections must close the connection (anti-smuggling)"
 
 
+# --------------------------------------------------------------- macOS (pf) parity 9.0.7
+# The Darwin firewall backend must enforce the SAME security policy as the nft ruleset:
+# scoped NAT, BCP38 anti-spoof, no v6 exit, block RFC1918/metadata/CGNAT/host + abuse ports,
+# and a fail-closed killswitch. These lock in parity so the macOS exit is never weaker.
+
+
+def test_pf_exit_anchor_has_parity_with_nft_ruleset():
+    from animica.vpn import pf
+    rs = pf.render_exit_anchor("en0", "anmwg0")
+    # scoped NAT for the tunnel subnet only, out the uplink
+    assert f"nat on en0 inet from {WG_SUBNET} to any -> (en0)" in rs
+    # BCP38 anti-spoof + no IPv6 exit
+    assert f'block drop in quick on anmwg0 inet from ! {WG_SUBNET} to any' in rs
+    assert "block drop in quick on anmwg0 inet6 all" in rs
+    # same blocked destinations + abuse ports as nft (SSRF/LAN/metadata/CGNAT, SMTP, torrents)
+    assert "169.254.0.0/16" in rs and "10.0.0.0/8" in rs and "100.64.0.0/10" in rs
+    assert "6881:6889" in rs and "25" in rs
+    # host-service protection: tunnel may not reach ANY address on the exit host (pf `self`)
+    assert f"block drop in quick on anmwg0 inet from {WG_SUBNET} to self" in rs
+    # every block is scoped to the tunnel iface (never the host's own traffic)
+    for line in rs.splitlines():
+        if line.strip().startswith("block drop"):
+            assert 'on anmwg0' in line, f"unscoped pf block: {line!r}"
+    # never destructive to the host's ruleset
+    assert "flush" not in rs.lower()
+
+
+def test_pf_main_ruleset_section_order_is_valid():
+    from animica.vpn import pf
+    # Exit + killswitch both active, with the stock com.apple anchors present.
+    main = pf.build_main_ruleset(exit_active=True, killswitch_active=True, apple_anchors=True)
+    lines = [ln.strip() for ln in main.splitlines() if ln.strip()]
+    # pf mandatory order: normalization(scrub) < translation(nat) < queueing(dummynet) < filtering(anchor)
+    def idx(exact):
+        return next(i for i, ln in enumerate(lines) if ln == exact)
+    assert idx('scrub-anchor "com.apple/*"') < idx('nat-anchor "com.apple/*"')
+    assert idx('nat-anchor "com.apple/*"') < idx('dummynet-anchor "com.apple/*"')
+    # our nat-anchor sits in the translation section (after com.apple nat, before dummynet)
+    assert idx('nat-anchor "com.apple/*"') < idx(f'nat-anchor "{NFT_TABLE}"') < idx('dummynet-anchor "com.apple/*"')
+    # our FILTER anchors come BEFORE com.apple's so their `quick` rules win (no host rule preempts)
+    assert idx(f'anchor "{NFT_TABLE}"') < idx('anchor "com.apple/*"')
+    assert idx(f'anchor "{KILLSWITCH_TABLE}"') < idx('anchor "com.apple/*"')
+    # dummynet (queueing) precedes all filter anchors
+    assert idx('dummynet-anchor "com.apple/*"') < idx(f'anchor "{NFT_TABLE}"')
+
+
+def test_pf_main_ruleset_without_apple_anchors_is_minimal():
+    from animica.vpn import pf
+    main = pf.build_main_ruleset(exit_active=False, killswitch_active=True, apple_anchors=False)
+    assert 'com.apple' not in main
+    assert f'anchor "{KILLSWITCH_TABLE}"' in main
+    assert f'nat-anchor "{NFT_TABLE}"' not in main  # exit not active
+
+
+def test_pf_exit_anchor_blocks_exactly_the_nft_ports():
+    from animica.vpn import pf
+    from animica.vpn.nftables import BLOCKED_TCP_PORTS, BLOCKED_UDP_PORTS
+    rs = pf.render_exit_anchor("en0", "anmwg0")
+    for p in BLOCKED_TCP_PORTS:
+        assert str(p) in rs, f"pf exit anchor missing blocked TCP port {p}"
+    for p in BLOCKED_UDP_PORTS:
+        assert str(p) in rs, f"pf exit anchor missing blocked UDP port {p}"
+
+
+def test_pf_killswitch_anchor_is_fail_closed():
+    from animica.vpn import pf
+    ks = pf.render_killswitch_anchor("anmwg0", "203.0.113.9", 51820)
+    # default-drop everything out, allow only lo, the tunnel iface, and the handshake escape
+    assert "block drop out quick inet from any to any" in ks
+    assert "block drop out quick inet6 from any to any" in ks
+    assert "pass out quick on lo0 all" in ks
+    assert "pass out quick on anmwg0 all" in ks
+    # the only outbound-to-a-destination pass is pinned to the exit endpoint (no blanket escape)
+    assert "to 203.0.113.9 port 51820" in ks
+    assert "to any port" not in ks
+
+
+def test_pf_extra_block_v4_is_appended():
+    from animica.vpn import pf
+    rs = pf.render_exit_anchor("en0", "anmwg0", extra_block_v4=["198.51.100.0/24"])
+    assert "198.51.100.0/24" in rs
+
+
+# ------------------------------------------------------------- platform_net dispatch 9.0.7
+
+
+def test_detect_uplink_parses_linux_and_darwin(monkeypatch):
+    from animica.vpn import platform_net as pnet
+
+    class _CP:
+        def __init__(self, out): self.stdout = out
+
+    # Linux: `ip route show default`
+    monkeypatch.setattr(pnet, "IS_DARWIN", False)
+    monkeypatch.setattr(pnet.subprocess, "run",
+                        lambda *a, **k: _CP("default via 192.168.1.1 dev eth0 proto dhcp\n"))
+    assert pnet.detect_uplink() == "eth0"
+
+    # Darwin: `route -n get default`
+    monkeypatch.setattr(pnet, "IS_DARWIN", True)
+    monkeypatch.setattr(pnet.subprocess, "run",
+                        lambda *a, **k: _CP("   route to: default\n  interface: en1\n"))
+    assert pnet.detect_uplink() == "en1"
+
+
+def test_read_ip_forward_darwin_uses_bsd_sysctl(monkeypatch):
+    from animica.vpn import platform_net as pnet
+
+    class _CP:
+        def __init__(self, out): self.stdout = out
+
+    seen = {}
+
+    def fake_run(cmd, *a, **k):
+        seen["cmd"] = cmd
+        return _CP("1\n")
+
+    monkeypatch.setattr(pnet, "IS_DARWIN", True)
+    monkeypatch.setattr(pnet.subprocess, "run", fake_run)
+    assert pnet.read_ip_forward() == "1"
+    assert seen["cmd"] == ["sysctl", "-n", "net.inet.ip.forwarding"]
+
+
+# ------------------------------------------------------------- payout address 9.0.7
+
+
+def test_exit_descriptor_includes_payout_address_and_defaults_to_wallet():
+    from animica.vpn.exit_daemon import ExitConfig, ExitDaemon
+
+    w = crypto.Wallet.generate()
+    d = ExitDaemon(w, ExitConfig(), reg=object())  # reg unused until register()
+    d.public_ip = "203.0.113.9"
+    d.wg_pub = _K2
+
+    captured = {}
+
+    class _Reg:
+        def register_exit(self, descriptor, *, idem=None):
+            captured["descriptor"] = descriptor
+            captured["idem"] = idem
+            # REAL marketplace shape: {exit:{id,…}, registered, note} — not a flat id.
+            return {"exit": {"id": "exit-abc"}, "registered": True}
+
+    d.reg = _Reg()
+    exit_id = d.register()
+    assert exit_id == "exit-abc", "must read the nested exit.id the marketplace returns"
+    assert captured["descriptor"]["payoutAddress"] == w.address, "defaults to operator wallet"
+    # idempotency key binds to the descriptor content (so a changed payout re-runs the handler)
+    assert captured["idem"].startswith(f"exit-register:{_K2}:")
+
+
+def test_exit_descriptor_uses_explicit_payout_and_changes_idem(monkeypatch):
+    from animica.vpn.exit_daemon import ExitConfig, ExitDaemon
+
+    w = crypto.Wallet.generate()
+    other = crypto.Wallet.generate().address
+
+    idems = []
+
+    class _Reg:
+        def register_exit(self, descriptor, *, idem=None):
+            idems.append((descriptor.get("payoutAddress"), idem))
+            return {"id": "exit-abc"}
+
+    def _make(addr):
+        d = ExitDaemon(w, ExitConfig(payout_address=addr), reg=_Reg())
+        d.public_ip = "203.0.113.9"
+        d.wg_pub = _K2
+        d.register()
+
+    _make("")            # default -> wallet
+    _make(other)         # explicit different address
+    assert idems[0][0] == w.address and idems[1][0] == other
+    assert idems[0][1] != idems[1][1], "different payout address must mint a different idem key"
+
+
+def test_cli_validates_anm_payout_address():
+    from animica.cli.vpn import _validate_anm_address
+
+    good = crypto.Wallet.generate().address
+    assert _validate_anm_address(good) is True
+    assert _validate_anm_address("not-an-address") is False
+    assert _validate_anm_address("bc1qxyz") is False           # wrong hrp
+    assert _validate_anm_address(good[:-1] + ("q" if good[-1] != "q" else "p")) is False  # bad checksum
+
+
+def test_cli_exit_serve_exposes_address_flag():
+    # the operator-facing payout flag must exist and be documented honestly
+    cli = (_VPN_DIR.parent / "cli" / "vpn.py").read_text()
+    assert '"--address"' in cli
+    low = cli.lower()
+    assert "iou" in low and ("settle" in low or "deferred" in low)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

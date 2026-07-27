@@ -897,6 +897,7 @@ model VpnExit {
   load               Float    @default(0) // 0..1 utilization from heartbeats
   openSessions       Int      @default(0)
   lastSeenAt         DateTime @default(now()) // last heartbeat; accrual stops if stale
+  payoutAddress      String? // 9.0.7: anim1 address bandwidth-reward IOUs settle to (default: owner Account.address)
   rewardNanm         BigInt   @default(0) // IOU reward accrued (NOT yet a spendable balance credit)
   settledNanm        BigInt   @default(0) // 9.0.0: portion already PAID on-chain via IOU-settlement anchors
   createdAt          DateTime @default(now())
@@ -1312,4 +1313,121 @@ model GameScore {
 
   @@unique([listingId, playerKey])
   @@index([listingId, score])
+}
+
+// ═══════════════════ Hire Me — managed infrastructure services (2026-07-26) ═══════════════════
+
+// Catalog of managed services sold on /hire. Data-driven: the page renders whatever rows are
+// active here, so future offerings (GPU hosting, validators, seed nodes, consulting, …) are added
+// from the admin panel without touching frontend code.
+model HireService {
+  id              String   @id @default(cuid())
+  slug            String   @unique // mining-pool | rpc-node | custom | ...
+  name            String
+  tagline         String   @default("")
+  description     String   @default("")
+  features        String[] @default([])
+  icon            String   @default("🛠️")
+  kind            String   @default("subscription") // subscription | quote
+  priceUsdMonthly Int? // whole USD per month; null => quote-only
+  setupFeeUsd     Int      @default(0) // one-time, charged on first payment via PayPal plan setup_fee
+  paypalPlanId    String? // live PayPal billing plan id (created by scripts/hire-setup.ts)
+  active          Boolean  @default(true)
+  sortOrder       Int      @default(100)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  orders ServicesOrder[]
+}
+
+// Email/password customer account for the hire flow (deliberately separate from wallet Accounts —
+// these users buy managed services with fiat; they log in on /hire and dashboard.animica.dev).
+model HireCustomer {
+  id           String    @id @default(cuid())
+  email        String    @unique // stored lowercase
+  passwordHash String // scrypt$N$r$p$saltHex$hashHex (never plaintext)
+  name         String    @default("")
+  company      String?
+  discord      String?
+  sessionEpoch Int       @default(1) // bump to invalidate every outstanding session token
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  orders  ServicesOrder[]
+  tickets HireTicket[]
+}
+
+// One managed-service order: a paid PayPal subscription or a quote request.
+model ServicesOrder {
+  id                   String        @id @default(cuid())
+  orderId              String        @unique // human-facing id, e.g. HM-7Q2M9XKV
+  userId               String?
+  user                 HireCustomer? @relation(fields: [userId], references: [id])
+  serviceId            String
+  service              HireService   @relation(fields: [serviceId], references: [id])
+  serviceType          String // catalog slug snapshot at order time
+  serviceName          String // display-name snapshot at order time
+  monthlyPriceUsd      Int? // snapshot; null for quote requests
+  setupFeeUsd          Int           @default(0) // snapshot
+  customerName         String
+  email                String // snapshot of account email at order time
+  company              String?
+  domain               String?
+  discordUsername      String?
+  notes                String?
+  paypalPlanId         String?
+  paypalOrderId        String?
+  paypalSubscriptionId String?       @unique
+  paypalTransactionId  String?
+  paymentStatus        String        @default("draft") // draft | pending | active | suspended | cancelled | failed | quote
+  deploymentStatus     String        @default("awaiting_payment") // awaiting_payment | pending_setup | active | suspended | cancelled | quote_requested
+  adminNotes           String?
+  // Operator bookkeeping (manually entered): when the underlying server was provisioned and when
+  // its rental/renewal is due — drives the admin Renewals view.
+  serverStartAt        DateTime?
+  serverEndAt          DateTime?
+  serverLabel          String? // provider/instance note, e.g. "Contabo VPS16 #12345"
+  customerIp           String?
+  userAgent            String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  tickets HireTicket[]
+
+  @@index([email])
+  @@index([userId])
+  @@index([deploymentStatus])
+  @@index([paymentStatus, createdAt])
+}
+
+// Support tickets for hire customers (dashboard "Support" tab + admin console).
+model HireTicket {
+  id       String  @id @default(cuid())
+  ticketId String  @unique // human-facing id, e.g. HT-4K2P7QRZ
+  userId   String
+  user     HireCustomer @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId  String? // optional link to a ServicesOrder
+  order    ServicesOrder? @relation(fields: [orderId], references: [id])
+  subject  String
+  status   String  @default("open") // open | answered | customer_reply | closed
+  priority String  @default("normal") // low | normal | high
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages HireTicketMessage[]
+
+  @@index([userId, updatedAt])
+  @@index([status, updatedAt])
+}
+
+model HireTicketMessage {
+  id        String     @id @default(cuid())
+  ticketId  String
+  ticket    HireTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author    String // customer | admin
+  body      String
+  createdAt DateTime   @default(now())
+
+  @@index([ticketId, createdAt])
 }

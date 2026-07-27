@@ -17,15 +17,16 @@ Nothing here touches consensus, the node's ports, or docker's firewall.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import secrets
-import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
-from . import (NFT_TABLE, WG_IFACE, WG_LISTEN_PORT, WG_SERVER_IP, WG_SUBNET,
-               accounting, guard, http_proxy, nftables, tos, wg)
+from . import (WG_IFACE, WG_LISTEN_PORT,
+               accounting, firewall, guard, http_proxy, platform_net, tos, wg)
 from .crypto import Wallet
 from .registry_client import RegistryClient
 
@@ -52,12 +53,7 @@ def _detect_public_ip() -> Optional[str]:
 
 
 def _detect_uplink() -> str:
-    out = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True).stdout
-    for tok in out.split():
-        if tok == "dev":
-            idx = out.split().index("dev")
-            return out.split()[idx + 1]
-    return "eth0"
+    return platform_net.detect_uplink()
 
 
 @dataclass
@@ -72,6 +68,7 @@ class ExitConfig:
     enable_browser_proxy: bool = False
     browser_proxy_port: int = 8443
     allow_validator: bool = False
+    payout_address: str = ""               # anim1… address bandwidth IOUs settle to (default: operator wallet)
 
 
 @dataclass
@@ -121,12 +118,8 @@ class ExitDaemon:
             os.close(fd)
         self.wg_pub = wg.pubkey(priv)
 
-        wg.iface_del(WG_IFACE, netns=netns)  # clean any stale
-        wg.iface_add(WG_IFACE, netns=netns)
-        wg.iface_set_key(WG_IFACE, priv, listen_port=self.cfg.listen_port, netns=netns,
-                         keydir=state_dir())
-        wg.addr_add(WG_IFACE, f"{WG_SERVER_IP}/16", netns=netns)
-        wg.iface_up(WG_IFACE, netns=netns)
+        platform_net.exit_iface_up(priv, self.cfg.listen_port, confdir=state_dir(),
+                                   keydir=state_dir(), backend=self.backend, netns=netns)
 
         # enable forwarding (record whether we changed it, to restore on teardown)
         cur = _read_ip_forward(netns)
@@ -134,7 +127,7 @@ class ExitDaemon:
             _write_ip_forward("1", netns)
             self._set_ip_forward = True
 
-        nftables.apply_exit(self.uplink, WG_IFACE, netns=netns)
+        firewall.apply_exit(self.uplink, WG_IFACE, netns=netns, confdir=state_dir())
 
         if self.cfg.enable_browser_proxy and netns is None:
             self._proxy_token = secrets.token_urlsafe(24)
@@ -147,16 +140,28 @@ class ExitDaemon:
         endpoint = f"{self.public_ip}:{self.cfg.listen_port}"
         http_proxy_ep = (f"{self.public_ip}:{self.cfg.browser_proxy_port}"
                          if self.cfg.enable_browser_proxy else None)
+        payout = self.cfg.payout_address.strip() or self.wallet.address
         descriptor = {
             "label": self.cfg.label, "region": self.cfg.region, "country": self.cfg.country,
             "city": self.cfg.city, "wgPubkey": self.wg_pub, "endpoint": endpoint,
             "httpProxy": http_proxy_ep, "proxyToken": self._proxy_token or None,
             "capacityMbps": self.cfg.capacity_mbps,
             "priceHintNanmPerGb": self.cfg.price_hint_nanm_per_gb,
+            "payoutAddress": payout,
             "tosHash": tos.tos_hash(),
         }
-        res = self.reg.register_exit(descriptor, idem=f"exit-register:{self.wg_pub}")
-        self.exit_id = res.get("id") or res.get("exitId")
+        # Idempotency key binds to the descriptor CONTENT: an identical re-register dedups,
+        # but a changed descriptor (e.g. a new payout address) mints a fresh key so the
+        # handler actually runs — the marketplace 422s a reused key with a different body,
+        # and silently replays a reused key with the same body (the new field would never
+        # apply). See the idempotency trap noted in the 9.0.7 scout.
+        body_sig = hashlib.sha256(
+            json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:16]
+        res = self.reg.register_exit(descriptor, idem=f"exit-register:{self.wg_pub}:{body_sig}")
+        # The marketplace returns {exit:{id,…}, registered, note}; older shapes used a flat id.
+        exit_obj = res.get("exit") if isinstance(res.get("exit"), dict) else {}
+        self.exit_id = res.get("id") or res.get("exitId") or exit_obj.get("id")
         if not self.exit_id:
             raise RuntimeError(f"registry did not return an exit id: {res}")
         return self.exit_id
@@ -173,7 +178,7 @@ class ExitDaemon:
             if pub not in self.peers:
                 aip = p["allocatedIp"]
                 wg.peer_add(WG_IFACE, pub, f"{aip}/32", netns=self._ns)
-                wg.route_add(f"{aip}/32", WG_IFACE, netns=self._ns)  # allowed-ips is an ACL, not a route
+                platform_net.route_add_host(f"{aip}/32", netns=self._ns)  # allowed-ips is an ACL, not a route
                 self.peers[pub] = _PeerState(session_id=p["sessionId"], pubkey=pub,
                                              allocated_ip=aip,
                                              meter=accounting.UsageMeter(p["sessionId"], "exit"),
@@ -225,8 +230,8 @@ class ExitDaemon:
         for pub in list(self.peers):
             wg.peer_remove(WG_IFACE, pub, netns=self._ns)
         self.peers.clear()
-        nftables.remove_exit(netns=self._ns)
-        wg.iface_del(WG_IFACE, netns=self._ns)
+        firewall.remove_exit(netns=self._ns, confdir=state_dir())
+        platform_net.exit_iface_down(confdir=state_dir(), netns=self._ns)
         if self._proxy is not None:
             try:
                 self._proxy.shutdown()
@@ -238,17 +243,8 @@ class ExitDaemon:
 
 
 def _read_ip_forward(netns: Optional[str]) -> str:
-    if netns:
-        return subprocess.run(["ip", "netns", "exec", netns, "sysctl", "-n", "net.ipv4.ip_forward"],
-                              capture_output=True, text=True).stdout.strip()
-    try:
-        with open("/proc/sys/net/ipv4/ip_forward") as f:
-            return f.read().strip()
-    except OSError:
-        return "0"
+    return platform_net.read_ip_forward(netns)
 
 
 def _write_ip_forward(val: str, netns: Optional[str]) -> None:
-    cmd = (["ip", "netns", "exec", netns] if netns else []) + \
-          ["sysctl", "-qw", f"net.ipv4.ip_forward={val}"]
-    subprocess.run(cmd, capture_output=True)
+    platform_net.write_ip_forward(val, netns)

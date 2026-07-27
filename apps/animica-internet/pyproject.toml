@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "animica-internet"
+version = "0.1.0"
+description = "Animica Internet — a standalone .anm-only desktop browser (Windows/macOS/Linux) with a built-in wallet, name reservation, and site publishing."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Animica" }]
+keywords = ["animica", "anm", "browser", "web3", "qtwebengine"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+]
+dependencies = [
+    "PySide6>=6.6",
+    "PySide6-Addons>=6.6",
+    "requests",
+]
+
+[project.scripts]
+animica-internet = "animica_internet.main:main"
+
+[project.urls]
+Homepage = "https://animica.org"
+Source = "https://github.com/animicaorg/all"
+
+[tool.hatch.build.targets.wheel]
+packages = ["animica_internet"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "animica_internet",
+    "tests",
+    "README.md",
+    "pyproject.toml",
+]

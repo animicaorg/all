@@ -18,6 +18,7 @@ import subprocess
 from dataclasses import dataclass
 
 from . import NFT_TABLE, WG_LISTEN_PORT
+from .platform_net import IS_DARWIN
 
 
 class GuardError(RuntimeError):
@@ -34,6 +35,24 @@ class GuardReport:
 # Per the conservative posture, None is treated as a refusal by preflight — never a silent pass.
 
 def _udp_port_in_use(port: int):
+    if IS_DARWIN:
+        import os as _os
+        if not shutil.which("lsof"):
+            return None
+        # lsof only sees all sockets as root; without it, refuse-by-uncertainty (return None).
+        if hasattr(_os, "geteuid") and _os.geteuid() != 0:
+            return None
+        out = subprocess.run(["lsof", "-nP", f"-iUDP:{port}"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if not line.strip() or line.startswith("COMMAND"):
+                continue
+            # NAME is the last column: "<local>" or "<local>-><remote>"; only the LOCAL endpoint
+            # carrying <port> means the port is bound here (not an outbound flow to a remote :port).
+            name = line.split()[-1]
+            local = name.split("->", 1)[0]
+            if local.endswith(f":{port}"):
+                return True
+        return False
     if not shutil.which("ss"):
         return None
     out = subprocess.run(["ss", "-lun"], capture_output=True, text=True).stdout
@@ -41,6 +60,14 @@ def _udp_port_in_use(port: int):
 
 
 def _nft_table_exists(table: str):
+    if IS_DARWIN:
+        if not shutil.which("pfctl"):
+            return None
+        from . import pf
+        try:
+            return pf.anchor_loaded(table)
+        except Exception:
+            return None
     if not shutil.which("nft"):
         return None
     out = subprocess.run(["nft", "list", "tables"], capture_output=True, text=True).stdout
@@ -62,20 +89,22 @@ def _looks_like_validator_host():
 def preflight(*, port: int = WG_LISTEN_PORT, allow_validator: bool = False) -> GuardReport:
     reasons: list[str] = []
 
+    port_tool = "lsof" if IS_DARWIN else "'ss'/iproute2"
+    fw_tool = "pf/pfctl" if IS_DARWIN else "'nft'/nftables"
     used = _udp_port_in_use(port)
     if used is None:
-        reasons.append(f"cannot verify UDP port {port} is free ('ss'/iproute2 not found) — refusing "
-                       f"rather than risk stealing the node's port. Install iproute2.")
+        reasons.append(f"cannot verify UDP port {port} is free ({port_tool} not found) — refusing "
+                       f"rather than risk stealing the node's port. Install {port_tool}.")
     elif used:
         reasons.append(f"UDP port {port} is already in use — refusing to steal a port "
                        f"(the mainnet node owns 443/udp; the exit must have {port} free).")
 
     exists = _nft_table_exists(NFT_TABLE)
     if exists is None:
-        reasons.append("cannot verify the isolated nft table is absent ('nft'/nftables not found) — refusing. "
-                       "Install nftables.")
+        reasons.append(f"cannot verify the exit firewall table/anchor is absent ({fw_tool} not found) — refusing. "
+                       f"Install {fw_tool}.")
     elif exists:
-        reasons.append(f"nft table 'inet {NFT_TABLE}' already exists — refusing to clobber it. "
+        reasons.append(f"exit firewall '{NFT_TABLE}' already present — refusing to clobber it. "
                        f"Run `animica vpn exit stop` first, or remove it manually.")
 
     if not allow_validator:

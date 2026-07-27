@@ -165,21 +165,29 @@ export async function withIdempotency(
     return ok(r.data, { status: r.status });
   }
   const bodyHash = createHash('sha256').update(JSON.stringify(body ?? {})).digest('hex');
+  // Idempotency records are meant to dedup a client's short retry window, not to freeze a
+  // response forever. Records never expired, so an A→B→A sequence (revert to a previously-seen
+  // body) would replay the STALE cached response and silently skip the DB write. Treat records
+  // older than the TTL as absent, and re-run the handler (upserting the fresh response).
+  const TTL_MS = 24 * 60 * 60 * 1000;
   const existing = await prisma.idempotencyRecord.findUnique({
     where: { apiKeyId_key: { apiKeyId: ctx.key.keyId, key: idemKey } },
   });
-  if (existing) {
+  const fresh = existing && (Date.now() - new Date(existing.createdAt).getTime() < TTL_MS);
+  if (existing && fresh) {
     if (existing.bodyHash !== bodyHash) throw new ApiError(422, 'idempotency_mismatch', 'body differs for reused key');
     return ok(JSON.parse(existing.responseJson), { status: existing.statusCode });
   }
   const r = await handler();
-  await prisma.idempotencyRecord.create({
-    data: {
-      apiKeyId: ctx.key.keyId,
-      key: idemKey,
-      bodyHash,
-      statusCode: r.status,
-      responseJson: JSON.stringify(jsonSafe(r.data)),
+  await prisma.idempotencyRecord.upsert({
+    where: { apiKeyId_key: { apiKeyId: ctx.key.keyId, key: idemKey } },
+    create: {
+      apiKeyId: ctx.key.keyId, key: idemKey, bodyHash,
+      statusCode: r.status, responseJson: JSON.stringify(jsonSafe(r.data)),
+    },
+    update: {
+      bodyHash, statusCode: r.status,
+      responseJson: JSON.stringify(jsonSafe(r.data)), createdAt: new Date(),
     },
   }).catch(() => {});
   return ok(r.data, { status: r.status });

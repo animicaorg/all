@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import subprocess
 from dataclasses import dataclass, field
 
-from . import KILLSWITCH_TABLE, WG_IFACE, wg
-from .client import _session_path, apparent_ip
+from . import KILLSWITCH_TABLE, WG_IFACE, firewall, wg
+from .client import _session_path, apparent_ip, state_dir
+from .platform_net import IS_DARWIN
 
 
 @dataclass
@@ -42,6 +42,15 @@ class Report:
 
 
 def _has_v6_default_route_outside_tunnel() -> bool:
+    if IS_DARWIN:
+        # macOS: the tunnel device is the real utunN, not the logical name; compare against it.
+        from .platform_net import wg_device
+        dev = wg_device()
+        out = subprocess.run(["netstat", "-rn", "-f", "inet6"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if line.split()[:1] == ["default"] and dev not in line:
+                return True
+        return False
     out = subprocess.run(["ip", "-6", "route", "show", "default"], capture_output=True, text=True).stdout
     # a v6 default via a non-tunnel iface = potential leak
     for line in out.splitlines():
@@ -78,9 +87,15 @@ def run() -> Report:
         r.add("egress-ip", False, f"apparent IP {ip}, but no pre-tunnel baseline to prove it changed — unverified")
 
     v6_leak = _has_v6_default_route_outside_tunnel()
-    r.add("ipv6-leak", not v6_leak,
-          "no IPv6 default outside the tunnel" if not v6_leak
-          else "IPv6 default route bypasses the tunnel — v6 traffic may leak; disable IPv6 or use a v6-capable exit")
+    # A fail-closed killswitch drops ALL inet6 egress, so a v6 default route can't actually leak.
+    ks_v6_covered = bool(sess.get("killswitch")) and firewall.killswitch_loaded(
+        KILLSWITCH_TABLE, confdir=state_dir())
+    if v6_leak and ks_v6_covered:
+        r.add("ipv6-leak", True, "IPv6 default route present but the killswitch blocks all v6 egress")
+    else:
+        r.add("ipv6-leak", not v6_leak,
+              "no IPv6 default outside the tunnel" if not v6_leak
+              else "IPv6 default route bypasses the tunnel — v6 traffic may leak; disable IPv6 or use a v6-capable exit")
 
     # dns: resolution working proves nothing about WHERE the query went. Check the active
     # resolver is the tunnel-forced DNS; a LAN/ISP resolver in resolv.conf is a DNS leak.
@@ -98,8 +113,7 @@ def run() -> Report:
         r.add("dns", False, "could not read the active resolver — DNS leak status unverified")
 
     if sess.get("killswitch"):
-        present = subprocess.run(["nft", "list", "tables"], capture_output=True, text=True).stdout
-        ks = f"inet {KILLSWITCH_TABLE}" in present
+        ks = firewall.killswitch_loaded(KILLSWITCH_TABLE, confdir=state_dir())
         r.add("killswitch", ks, "fail-closed killswitch active" if ks else "killswitch table missing")
     return r
 
