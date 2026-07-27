@@ -16,6 +16,11 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     smoke = "--smoke" in argv
 
+    # A frozen build has no OS CA store — point the process at certifi's bundle BEFORE any
+    # HTTPS call, or every .anm resolution fails with CERTIFICATE_VERIFY_FAILED.
+    from .netcfg import install_ca_env
+    install_ca_env()
+
     # MUST run before QApplication is constructed.
     register_anm_scheme()
 

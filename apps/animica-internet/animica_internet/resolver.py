@@ -78,9 +78,10 @@ def is_cid(s: str) -> bool:
 
 
 def _get_json(url: str, timeout: int = 12) -> dict:
+    from .netcfg import ca_context
     req = urllib.request.Request(url, headers={"accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=ca_context()) as r:
             return json.loads(r.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         raise ResolveError(f"{url} -> {e.code}") from e
@@ -121,9 +122,10 @@ def resolve(name: str) -> ResolvedName:
 def fetch_content(cid: str, timeout: int = 15) -> bytes:
     if not is_cid(cid):
         raise ContentVerifyError(f"not a valid CID: {cid!r}")
+    from .netcfg import ca_context
     req = urllib.request.Request(f"{API_BASE}/content/{cid}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=ca_context()) as r:
             data = r.read(MAX_CONTENT_BYTES + 1)
     except urllib.error.HTTPError as e:
         raise ContentVerifyError(f"content {cid} -> {e.code}") from e

@@ -29,7 +29,11 @@ class RegistryClient:
     def __init__(self, base: Optional[str] = None):
         self.base = (base or API_BASE).rstrip("/")
         self._jar = CookieJar()
-        self._opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._jar))
+        from .netcfg import ca_context
+        self._opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ca_context()),
+            urllib.request.HTTPCookieProcessor(self._jar),
+        )
 
     def _req(self, method: str, path: str, *, body: Optional[dict] = None,
              auth_key: Optional[str] = None, timeout: int = 15):

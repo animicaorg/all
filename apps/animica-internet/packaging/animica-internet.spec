@@ -126,9 +126,17 @@ hiddenimports = [
     "shiboken6",
     # Core deps
     "requests",
+    "certifi",  # CA bundle — without it every HTTPS .anm resolution fails cert verification
     # Wallet backend (imported lazily by animica_internet.wallet)
     "animica",
 ]
+
+# Bundle certifi's cacert.pem (its data file) so netcfg can point urllib/requests at it.
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+    datas += collect_data_files("certifi")
+except Exception as exc:  # noqa: BLE001
+    print(f"[spec] warning: collect_data_files('certifi') failed: {exc}")
 
 try:
     from PyInstaller.utils.hooks import collect_all

@@ -26,6 +26,7 @@ dependencies = [
     "PySide6>=6.6",
     "PySide6-Addons>=6.6",
     "requests",
+    "certifi",
 ]
 
 [project.scripts]
