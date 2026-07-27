@@ -31,7 +31,8 @@ def register_anm_scheme() -> None:
     """Register the secure, CORS-enabled anm:// scheme. Call BEFORE QApplication()."""
     scheme = QWebEngineUrlScheme(ANM_SCHEME.encode())
     scheme.setSyntax(QWebEngineUrlScheme.Syntax.Host)
-    scheme.setDefaultPort(QWebEngineUrlScheme.SpecialPort.PortUnspecified)
+    # Default port is already "unspecified"; setDefaultPort wants a plain int, and the enum
+    # member isn't int-coercible across PySide6 builds, so we leave the default in place.
     # Secure origin (so modern web features work), CORS-enabled so sandboxed .anm pages may call
     # the CORS-open names/content API, but NO local-file access.
     scheme.setFlags(

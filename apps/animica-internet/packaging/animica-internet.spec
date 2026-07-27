@@ -207,6 +207,16 @@ a = Analysis(
         "test",
         "tests",
         "pytest",
+        # The .anm browser only needs animica's wallet/tx/crypto modules. collect_submodules
+        # ("animica") also enumerates the AI/ENA/mining subtrees, which pull in torch/transformers
+        # (hundreds of MB). Exclude them so the installer stays small and builds fast — none are
+        # imported by the wallet path.
+        "torch", "torchvision", "torchaudio", "triton",
+        "transformers", "safetensors", "accelerate", "sentencepiece", "tokenizers",
+        "sklearn", "scipy", "pandas", "matplotlib",
+        "animica.ena", "animica.aicf", "animica.cli.ena", "animica.cli.aicf",
+        "animica.cli.gui", "animica.cli.studio", "animica.cli.mining",
+        "animica.hash_work", "animica.flagship_agent", "animica.agent_runtime",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
