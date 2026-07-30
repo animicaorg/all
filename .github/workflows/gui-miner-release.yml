@@ -9,6 +9,12 @@ name: GUI Miner Release
 #               build-scripts/build_windows_wine.sh, but CI uses the native
 #               runner for reliability)
 #
+# macOS is Apple-silicon (arm64) ONLY — Intel/x86_64 mac builds are deliberately
+# not produced. Linux and Windows can also be built on the box itself
+# (build_linux.sh natively, build_windows_wine.sh via Docker+Wine), so the
+# common use of this workflow is `platforms: macos` to fill in the one artifact
+# that has no cross-build path.
+#
 # A final job aggregates the per-artifact JSON lines into downloads/manifest.json
 # and attaches every binary + the manifest to a GitHub Release.
 
@@ -16,11 +22,30 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to publish (e.g. gui-v0.1.0). Defaults to a dev tag.
+        description: Release tag to publish (e.g. gui-v9.0.8). Defaults to a dev tag.
         required: false
         default: ""
       draft:
         description: Create the release as a draft
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      platforms:
+        description: Which platforms to build (macOS is always arm64; Intel is skipped)
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "all"
+          - "macos"
+          - "linux"
+          - "windows"
+          - "linux,windows"
+      release:
+        description: Publish a GitHub Release. "false" uploads build artifacts only.
         required: false
         default: "true"
         type: choice
@@ -38,24 +63,57 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
+  matrix:
+    name: resolve platform matrix
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.resolve.outputs.include }}
+    steps:
+      - name: Resolve requested platforms
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Tag pushes always build everything; workflow_dispatch can narrow it.
+          SELECTION="${{ github.event.inputs.platforms }}"
+          [ -n "$SELECTION" ] || SELECTION="all"
+          [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] || SELECTION="all"
+
+          # macos-14 is Apple silicon; we never schedule an Intel (macos-13) runner.
+          add() { ENTRIES="${ENTRIES:+$ENTRIES,}$1"; }
+          ENTRIES=""
+          case ",$SELECTION," in *,all,*|*,linux,*)
+            add '{"os":"ubuntu-latest","label":"linux","script":"build_linux.sh","expect_arch":""}' ;; esac
+          case ",$SELECTION," in *,all,*|*,macos,*)
+            add '{"os":"macos-14","label":"macos","script":"build_macos.sh","expect_arch":"arm64"}' ;; esac
+          case ",$SELECTION," in *,all,*|*,windows,*)
+            add '{"os":"windows-latest","label":"windows","script":"build_windows.sh","expect_arch":""}' ;; esac
+
+          [ -n "$ENTRIES" ] || { echo "::error::no platforms selected from '$SELECTION'"; exit 1; }
+          echo "include=[${ENTRIES}]" >> "$GITHUB_OUTPUT"
+          echo "building: $SELECTION"
+
   build:
     name: build ${{ matrix.label }}
+    needs: matrix
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            label: linux
-            script: build_linux.sh
-          - os: macos-latest
-            label: macos
-            script: build_macos.sh
-          - os: windows-latest
-            label: windows
-            script: build_windows.sh
+        include: ${{ fromJSON(needs.matrix.outputs.include) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Assert runner architecture
+        if: matrix.expect_arch != ''
+        shell: bash
+        run: |
+          ACTUAL="$(uname -m)"
+          if [ "$ACTUAL" != "${{ matrix.expect_arch }}" ]; then
+            echo "::error::expected ${{ matrix.expect_arch }} runner, got $ACTUAL"
+            exit 1
+          fi
+          echo "runner arch: $ACTUAL"
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -181,6 +239,7 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.release != 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}

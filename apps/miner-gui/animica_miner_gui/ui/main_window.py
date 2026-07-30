@@ -498,12 +498,15 @@ class MainWindow(QMainWindow):
     
     def show_about(self) -> None:
         """Show about dialog."""
+        from animica_miner_gui import __version__, bundled_animica_version
+
         QMessageBox.about(
             self,
             "About Animica Miner",
             "<h3>Animica Miner</h3>"
             "<p>Production-quality Qt desktop GUI miner for Animica blockchain.</p>"
-            "<p>Version: 0.1.0</p>"
+            f"<p>Version: {__version__}</p>"
+            f"<p>Bundled animica: {bundled_animica_version()}</p>"
             "<p>© 2026 Animica</p>"
         )
     
@@ -512,10 +515,13 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
         import platform
         
+        from animica_miner_gui import __version__, bundled_animica_version
+
         # Gather diagnostics
         diagnostics = []
         diagnostics.append("=== Animica Miner Diagnostics ===")
-        diagnostics.append(f"Version: 0.1.0")
+        diagnostics.append(f"Version: {__version__}")
+        diagnostics.append(f"Bundled animica: {bundled_animica_version()}")
         diagnostics.append(f"Platform: {platform.system()} {platform.release()}")
         diagnostics.append(f"Python: {platform.python_version()}")
         diagnostics.append("")

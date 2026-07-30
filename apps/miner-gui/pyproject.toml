@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica-miner-gui"
-version = "0.1.0"
+version = "9.0.8"
 description = "Production-quality Qt desktop GUI miner for Animica blockchain"
 readme = "README.md"
 requires-python = ">=3.10"

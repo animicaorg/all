@@ -25,8 +25,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"          # apps/miner-gui
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"        # repo root
-DIST_DIR="${APP_DIR}/dist"
-BUILD_DIR="${APP_DIR}/build"
+# Overridable so a Linux build and the Dockerized Wine cross-build can run
+# concurrently without each `rm -rf`-ing the other's output.
+DIST_DIR="${ANIMICA_GUI_DIST_DIR:-${APP_DIR}/dist}"
+BUILD_DIR="${ANIMICA_GUI_BUILD_DIR:-${APP_DIR}/build}"
 SPEC_FILE="${SCRIPT_DIR}/animica-miner-gui.spec"
 ARTIFACT_LOG="${ARTIFACT_LOG:-${DIST_DIR}/artifacts.jsonl}"
 APP_NAME="AnimicaMiner"
@@ -90,6 +92,10 @@ if [[ -f "$REPO_ROOT/python/pyproject.toml" ]]; then
     "$PY" -m pip install -e "$REPO_ROOT/python" || warn "could not install animica package; bundle may be incomplete"
 fi
 
+# ---- Bundled animica version (hard-fails on drift) ----
+BUNDLED_ANIMICA="$("$PY" "$SCRIPT_DIR/bundle_version.py")" || die "bundled animica version check failed"
+log "Bundled animica: $BUNDLED_ANIMICA"
+
 # ---- Version ----
 VERSION="$("$PY" -c "import tomllib; print(tomllib.load(open(r'$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
 log "Building version: $VERSION"
@@ -121,9 +127,9 @@ emit_artifact() {
     name="$(basename "$file")"
     size="$(stat -c %s "$file" 2>/dev/null || stat -f %z "$file")"
     sha="$(sha256sum "$file" | awk '{print $1}')"
-    "$PY" - "$ARTIFACT_LOG" "$platform" "$name" "$VERSION" "$size" "$sha" "$min_os" <<'PYEOF'
+    "$PY" - "$ARTIFACT_LOG" "$platform" "$name" "$VERSION" "$size" "$sha" "$min_os" "$BUNDLED_ANIMICA" <<'PYEOF'
 import json, sys
-log, platform, name, version, size, sha, min_os = sys.argv[1:8]
+log, platform, name, version, size, sha, min_os, bundled = sys.argv[1:9]
 rec = {
     "platform": platform,
     "name": "AnimicaMiner",
@@ -132,6 +138,7 @@ rec = {
     "size_bytes": int(size),
     "sha256": sha,
     "min_os": min_os,
+    "bundled_animica": bundled,
 }
 with open(log, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(rec) + "\n")
@@ -208,7 +215,12 @@ exec "${HERE}/usr/bin/AnimicaMiner" "$@"
 APPRUN_EOF
     chmod +x "$APPDIR/AppRun"
 
-    if ARCH="$APPIMAGE_ARCH" "$APPIMAGE_TOOL" "$APPDIR" "$APPIMAGE_PATH" 2>&1 | grep -v "WARNING" || true; then :; fi
+    # APPIMAGE_EXTRACT_AND_RUN makes appimagetool (itself an AppImage) unpack
+    # rather than FUSE-mount itself. Build hosts, containers and CI runners
+    # frequently lack libfuse.so.2, where the mount fails with
+    # "dlopen(): error loading libfuse.so.2" and we silently fell back to the
+    # tarball only.
+    if APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$APPIMAGE_ARCH" "$APPIMAGE_TOOL" "$APPDIR" "$APPIMAGE_PATH" 2>&1 | grep -v "WARNING" || true; then :; fi
     if [[ -f "$APPIMAGE_PATH" ]]; then
         chmod +x "$APPIMAGE_PATH"
         log "AppImage: $APPIMAGE_PATH"
