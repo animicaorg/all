@@ -124,6 +124,7 @@ def build_manifest(
     tag: str,
     url_template: str,
     version: str | None,
+    notice: str | None = None,
 ) -> dict[str, Any]:
     miners: list[dict[str, Any]] = []
     seen_files: set[str] = set()
@@ -166,11 +167,17 @@ def build_manifest(
                 break
     resolved_version = resolved_version or "0.0.0"
 
-    return {
+    manifest: dict[str, Any] = {
         "generated_at": _utc_now(),
         "version": resolved_version,
         "miners": miners,
     }
+    # An operator-set warning the download page renders above the cards. Lets a
+    # known-bad release be flagged (or un-flagged) by regenerating the manifest
+    # alone, with no site rebuild or restart.
+    if notice:
+        manifest["notice"] = notice
+    return manifest
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -202,6 +209,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Override the top-level manifest version.",
     )
     parser.add_argument(
+        "--notice",
+        default=None,
+        help="Warning banner text shown above the download cards (e.g. a known issue).",
+    )
+    parser.add_argument(
         "--url-template",
         default=DEFAULT_URL_TEMPLATE,
         help=(
@@ -224,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         tag=args.tag,
         url_template=args.url_template,
         version=args.version,
+        notice=args.notice,
     )
 
     out = Path(args.out)

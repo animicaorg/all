@@ -183,10 +183,12 @@ hdiutil create -volname "Animica Miner" \
 log "DMG: $DMG_PATH"
 
 # ---- Record artifacts ----
-# Apple silicon only — Intel/x86_64 macs are deliberately not built, and
-# arm64 macOS starts at 11.0, so "10.15+" was never reachable for this binary.
-MACOS_MIN_OS="macOS 11+"
-[[ "$ARCH" == "arm64" ]] && MACOS_MIN_OS="macOS 11+ (Apple silicon)"
+# Apple silicon only — Intel/x86_64 macs are deliberately not built. Report the
+# floor actually enforced by the bundled Qt (detected above), not a guess: this
+# string is what the download page shows users, and promising a version the
+# binary cannot run on sends them to a crash.
+MACOS_MIN_OS="macOS ${QT_MIN_OS:-11.0}+"
+[[ "$ARCH" == "arm64" ]] && MACOS_MIN_OS="$MACOS_MIN_OS (Apple silicon)"
 emit_artifact "$DMG_PATH" "macos" "$MACOS_MIN_OS"
 emit_artifact "$ZIP_PATH" "macos" "$MACOS_MIN_OS"
 
