@@ -17,8 +17,7 @@ caller, which is how the wallet's Send button came to report
 alone broadcast.
 
 This module centralises the resolution so every call site gets the same
-answer, and returns None rather than a booby-trapped command when no usable
-CLI exists.
+answer, and never hands back a booby-trapped ``sys.executable -m`` command.
 """
 from __future__ import annotations
 
@@ -32,8 +31,8 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
-def resolve_module_cmd(module: str) -> list[str] | None:
-    """Return an argv prefix that runs `module` as `__main__`, or None.
+def resolve_module_cmd(module: str) -> list[str]:
+    """Return an argv prefix that runs `module` as `__main__`.
 
     From source this is ``[sys.executable, "-m", module]``. Frozen, the CLI
     packages are inside the bundle but there is no interpreter to call, so we
@@ -47,24 +46,32 @@ def resolve_module_cmd(module: str) -> list[str] | None:
     return [sys.executable, "--run-module", module]
 
 
-def resolve_animica_cli() -> list[str] | None:
-    """Return an argv prefix that really runs the `animica` CLI, or None.
+def resolve_animica_cli() -> list[str]:
+    """Return an argv prefix that really runs the `animica` CLI.
 
     Resolution order:
       1. ``ANIMICA_CLI`` env override (an explicit path to the executable).
-      2. An ``animica`` executable on PATH — preferred when present because it
-         is the user's own, possibly newer, install.
-      3. The bundled copy, via the frozen binary's ``--run-module`` re-entry
-         (or ``-m`` from a source checkout).
+      2. When frozen: the **bundled** CLI, via ``--run-module``.
+      3. Otherwise: an ``animica`` executable on PATH, else ``-m``.
 
-    Never returns a command built from a bare ``sys.executable`` + ``-m`` under
-    PyInstaller, which would relaunch the GUI and exit 0 having done nothing.
+    A frozen build deliberately prefers its own bundled CLI over whatever is on
+    PATH. Two reasons: an unrelated `animica` install can be an entirely
+    different version from the one this bundle was built and tested against,
+    and on Windows ``shutil.which`` consults the current directory, so a file
+    dropped next to the app could be executed instead of the real tool.
+
+    Always returns a usable command — the bundled CLI is guaranteed present by
+    the REQUIRED_MODULES gate in the PyInstaller spec — so callers do not need
+    a "no CLI" branch.
     """
     override = os.environ.get("ANIMICA_CLI")
     if override:
         candidate = Path(override)
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return [str(candidate)]
+
+    if is_frozen():
+        return resolve_module_cmd("animica.cli.main")
 
     found = shutil.which("animica")
     if found:
@@ -73,10 +80,65 @@ def resolve_animica_cli() -> list[str] | None:
     return resolve_module_cmd("animica.cli.main")
 
 
-CLI_UNAVAILABLE_MESSAGE = (
-    "The bundled app cannot run the `animica` command-line tool.\n\n"
-    "Install it with:\n"
-    "    pip install --upgrade animica\n\n"
-    "or set ANIMICA_CLI to the full path of the `animica` executable, then "
-    "restart Animica Miner."
+#: Search paths that point inside the bundle and must not reach a foreign
+#: child. The loader ones are set by PyInstaller's bootloader; the Qt ones are
+#: set by this app (main._configure_qt_plugins) and by the PyInstaller runtime
+#: hook — a child that happens to use Qt would otherwise load OUR plugins
+#: against ITS Qt and abort with "could not load the platform plugin".
+_BUNDLE_PATH_VARS = (
+    "LD_LIBRARY_PATH",
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FRAMEWORK_PATH",
+    "QT_PLUGIN_PATH",
+    "QT_QPA_PLATFORM_PLUGIN_PATH",
 )
+
+
+def child_env(overlay: dict[str, str] | None = None, *, same_binary: bool = False) -> dict[str, str]:
+    """Build a child-process environment that is safe to hand to another program.
+
+    A frozen process really does carry the bundle on its loader path — verified
+    on a shipped build::
+
+        $ tr '\\0' '\\n' < /proc/<pid>/environ | grep LD_LIBRARY_PATH
+        LD_LIBRARY_PATH=/…/AnimicaMiner/_internal
+
+    Inheriting that wholesale makes an unrelated child (an externally installed
+    `animica`, xmrig, a system tool) resolve our bundled libstdc++/libssl/Qt
+    ahead of its own, which crashes or subtly misbehaves. The old
+    whitelist-style env avoided this by accident while breaking Windows; copying
+    the environment fixes Windows but reintroduces this, so strip it explicitly.
+
+    Only entries that point inside the bundle are removed — anything the user
+    genuinely set is preserved. ``same_binary=True`` keeps them, for children
+    that ARE this frozen binary (the ``--run-module`` re-entry), which need the
+    bundle on the loader path.
+    """
+    env = os.environ.copy()
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if is_frozen() and meipass and not same_binary:
+        bundle = os.path.realpath(meipass)
+        bundle_prefix = bundle.rstrip(os.sep) + os.sep
+
+        def _inside_bundle(part: str) -> bool:
+            real = os.path.realpath(part)
+            return real == bundle or real.startswith(bundle_prefix)
+
+        for var in _BUNDLE_PATH_VARS:
+            value = env.get(var)
+            if not value:
+                continue
+            kept = [
+                part
+                for part in value.split(os.pathsep)
+                if part and not _inside_bundle(part)
+            ]
+            if kept:
+                env[var] = os.pathsep.join(kept)
+            else:
+                env.pop(var, None)
+
+    if overlay:
+        env.update(overlay)
+    return env

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Entitlements for the hardened runtime, required for Developer ID signing +
+  notarization.
+
+  A PyInstaller bundle is an embedded CPython that loads a large tree of
+  unsigned-by-us .so/.dylib files and, via PyTorch, generates and executes code
+  at runtime. The hardened runtime blocks all of that by default, so a notarized
+  build without these entitlements starts and then dies on the first dlopen or
+  JIT compile. Each entry below is the minimum that keeps that working — do not
+  add sandbox or network entitlements here; they are not needed for a
+  Developer ID (non-App-Store) distribution.
+-->
+<plist version="1.0">
+<dict>
+  <!-- PyTorch/inductor and Qt's QML pipeline generate executable code. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- PyInstaller collects thousands of third-party dylibs that are not signed
+       with our team ID; library validation would refuse to load them. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- Deliberately NOT granting the allow-dyld-environment-variables
+       entitlement. A PyInstaller .app resolves its libraries through
+       @loader_path/rpath, not DYLD_*, so it buys nothing and weakens the
+       hardened runtime by letting an attacker inject libraries via the
+       environment. The post-signing smoke-test gate in build_macos.sh would
+       catch it if this ever became necessary.
+       (Note: no double hyphen may appear inside an XML comment.) -->
+</dict>
+</plist>

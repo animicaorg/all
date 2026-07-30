@@ -410,7 +410,31 @@ def resolve_address(explicit: Optional[str] = None, *,
 
 
 def animica_cmd() -> list[str]:
-    """The base argv to invoke the animica CLI (prefer the installed script)."""
+    """The base argv to invoke the animica CLI (prefer the installed script).
+
+    The ``sys.executable -m`` fallback is only valid when ``sys.executable`` is
+    a real interpreter. Inside a PyInstaller bundle it is the host application,
+    and the bootloader **ignores ``-m``** and hands the whole argv to the frozen
+    entry script — so the fallback silently relaunched the host instead of the
+    CLI. In the miner GUI that meant Supervisor spawned GUI copies in a restart
+    loop rather than miners, and it only ever looked fine on a dev box that
+    happened to have `animica` on PATH.
+
+    Frozen hosts must therefore expose a ``--run-module`` entry point that runs
+    the named module as ``__main__`` (the miner GUI does; see
+    animica_miner_gui.main). ``ANIMICA_CLI`` overrides everything for operators
+    who want to pin a specific executable.
+    """
+    override = os.environ.get("ANIMICA_CLI")
+    if override and os.path.isfile(override) and os.access(override, os.X_OK):
+        return [override]
+    if getattr(sys, "frozen", False):
+        # Prefer the bundled CLI over PATH when frozen: an unrelated `animica`
+        # install may be a different version than this bundle was built
+        # against, and a child launched from the bundle inherits the bundle's
+        # loader path (LD_LIBRARY_PATH / DYLD_*), which would make a foreign
+        # binary resolve our libstdc++/libssl instead of its own.
+        return [sys.executable, "--run-module", "animica.cli.main"]
     exe = shutil.which("animica")
     if exe:
         return [exe]

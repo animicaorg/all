@@ -287,23 +287,30 @@ class MinerRunner:
             threads = config.get('cpu', {}).get('threads', 1)
             blocks_per_batch = config.get('miner', {}).get('blocks_per_batch', 10)
             
-            # Find the repository root (where mining module exists)
+            # Find the repository root (where mining module exists).
+            #
+            # Only meaningful from a source checkout. A frozen build runs the
+            # bundled mining.cli.miner via --run-module, and these probes
+            # resolve into sys._MEIPASS, which would export a PYTHONPATH
+            # pointing inside the bundle and let the child pick up a second,
+            # half-visible copy of the package.
             repo_root = None
-            try:
-                import mining
-                mining_path = Path(mining.__file__).parent.parent.resolve()
-                if (mining_path / "mining").is_dir():
-                    repo_root = str(mining_path)
-                    logger.info(f"Found mining module at: {repo_root}")
-            except ImportError:
-                pass
-            
-            if not repo_root:
-                current_file = Path(__file__).resolve()
-                potential_root = current_file.parent.parent.parent.parent.parent
-                if (potential_root / "mining" / "__init__.py").is_file():
-                    repo_root = str(potential_root)
-                    logger.info(f"Found repository root at: {repo_root}")
+            if not getattr(sys, "frozen", False):
+                try:
+                    import mining
+                    mining_path = Path(mining.__file__).parent.parent.resolve()
+                    if (mining_path / "mining").is_dir():
+                        repo_root = str(mining_path)
+                        logger.info(f"Found mining module at: {repo_root}")
+                except ImportError:
+                    pass
+
+                if not repo_root:
+                    current_file = Path(__file__).resolve()
+                    potential_root = current_file.parent.parent.parent.parent.parent
+                    if (potential_root / "mining" / "__init__.py").is_file():
+                        repo_root = str(potential_root)
+                        logger.info(f"Found repository root at: {repo_root}")
             
             # Prepare environment
             current_pythonpath = os.environ.get('PYTHONPATH', '')
@@ -316,13 +323,25 @@ class MinerRunner:
                 pythonpath = current_pythonpath
                 logger.warning("Could not locate repository root; mining module may not be found")
             
-            minimal_env = {
-                'PATH': os.environ.get('PATH', ''),
-                'HOME': os.environ.get('HOME', ''),
-                'USER': os.environ.get('USER', ''),
-                'PYTHONPATH': pythonpath,
-                'ANIMICA_PAYOUT_ADDRESS': payout_address
-            }
+            # Inherit the environment and overlay only what we mean to change.
+            #
+            # The previous minimal_env whitelisted POSIX-only variables: on
+            # Windows HOME and USER do not exist, while SystemRoot, APPDATA,
+            # LOCALAPPDATA, USERPROFILE and TEMP were dropped. A child without
+            # SystemRoot cannot initialise sockets/SSL on Windows at all, and
+            # without APPDATA/USERPROFILE it resolves a different wallet
+            # location than the GUI wrote to — so a miner that did start would
+            # mine to the wrong wallet.
+            from animica_miner_gui.backend.cli_runner import child_env
+
+            overlay = {'ANIMICA_PAYOUT_ADDRESS': payout_address}
+            if pythonpath:
+                overlay['PYTHONPATH'] = pythonpath
+            # same_binary: the miner is launched through this frozen binary's
+            # --run-module re-entry, so it needs the bundle's loader path.
+            minimal_env = child_env(overlay, same_binary=getattr(sys, "frozen", False))
+            if not pythonpath:
+                minimal_env.pop('PYTHONPATH', None)
             
             wallet_file = config.get('miner', {}).get('wallet_file')
             if wallet_file:
@@ -339,17 +358,20 @@ class MinerRunner:
             from animica_miner_gui.backend.cli_runner import resolve_module_cmd
 
             module_cmd = resolve_module_cmd("mining.cli.miner")
-            if module_cmd is None:
-                raise RuntimeError("Cannot start the miner: no way to run mining.cli.miner")
 
+            # NOTE: no --allow-offline-mining / --allow-unsynced. Those flags
+            # do not exist on `mining.cli.miner mine-blocks` (it accepts
+            # --address --count --threads --rpc-url --workers --retry-delay
+            # --force-empty-template --log-level --verbose --no-timeout), so
+            # passing them made the miner exit immediately on an unknown
+            # option. Verify against `python -m mining.cli.miner mine-blocks
+            # --help` before adding any flag here.
             cmd = [
                 *module_cmd, "mine-blocks",
                 "--address", payout_address,
                 "--count", str(blocks_per_batch),
                 "--threads", str(threads),
                 "--rpc-url", rpc_url,
-                "--allow-offline-mining",
-                "--allow-unsynced"
             ]
             
             # Configurable retry delay (default: 2 seconds)

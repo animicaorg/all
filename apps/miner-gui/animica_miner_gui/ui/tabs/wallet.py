@@ -29,6 +29,9 @@ from animica_miner_gui.backend.rpc_client import RPCClient
 
 logger = logging.getLogger(__name__)
 
+#: CSI/OSC escape sequences rich emits when it believes it has a terminal.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
 # Constants
 MIN_ADDRESS_LENGTH = 42  # Minimum length for valid Animica address
 TX_SEND_TIMEOUT = 60  # Timeout for transaction sending in seconds
@@ -359,18 +362,11 @@ class WalletTab(QWidget):
                 return
             
             from animica_miner_gui.backend.cli_runner import (
-                CLI_UNAVAILABLE_MESSAGE,
+                child_env,
                 resolve_animica_cli,
             )
 
             cli = resolve_animica_cli()
-            if cli is None:
-                # Refuse rather than shell out to sys.executable, which in a
-                # frozen build just relaunches this GUI and exits 0 — reporting
-                # a send that never happened.
-                self.result_text.append("✗ Cannot send: `animica` CLI not available.\n")
-                QMessageBox.critical(self, "Cannot Send", CLI_UNAVAILABLE_MESSAGE)
-                return
 
             cmd = [
                 *cli, "tx", "send",
@@ -385,6 +381,16 @@ class WalletTab(QWidget):
             # Run the command
             result = subprocess.run(
                 cmd,
+                env=child_env(
+                    {
+                        # Keep rich from hard-wrapping the tx hash across lines
+                        # and from emitting colour codes into captured output.
+                        "COLUMNS": "200",
+                        "NO_COLOR": "1",
+                        "TERM": "dumb",
+                    },
+                    same_binary=(cli[0] == sys.executable),
+                ),
                 capture_output=True,
                 text=True,
                 timeout=TX_SEND_TIMEOUT
@@ -456,19 +462,36 @@ def _extract_tx_hash(stdout: str) -> str | None:
     not enough: under PyInstaller a misresolved CLI can exit 0 having done
     nothing at all, and the wallet used to render that as a success.
 
-    Accepts a bare 0x-prefixed 64-hex-digit hash anywhere in the output, or one
-    introduced by a label such as "tx hash:" / "txid =".
+    The CLI prints through `rich`, which hard-wraps to the console width and
+    can split a 64-hex hash across lines::
+
+        >>> Console(file=buf, width=60).print(f"Tx Hash: {h}")
+        'Tx Hash: \n0xabababab...ababab\nababab\n'
+
+    A naive ``\\b0x[0-9a-fA-F]{64}\\b`` never matches that, so a genuine send
+    was reported as "your funds have NOT been sent" — far worse than the false
+    success this check was added to prevent. Strip ANSI, then also search a
+    whitespace-collapsed copy so a wrapped hash is still found.
     """
     if not stdout:
         return None
 
+    text = _ANSI_RE.sub("", stdout)
+
+    # "Tx Hash: 0x…" / "txid = 0x…" — allow the space in "Tx Hash".
     labelled = re.search(
-        r"(?:tx(?:id|_?hash)?|transaction(?:\s+hash)?)\s*[:=]\s*(0x[0-9a-fA-F]{64})",
-        stdout,
+        r"(?:tx[\s_-]*(?:id|hash)?|transaction(?:[\s_-]*hash)?)\s*[:=]\s*(0x[0-9a-fA-F]{64})",
+        text,
         re.IGNORECASE,
     )
     if labelled:
         return labelled.group(1)
 
-    bare = re.search(r"\b(0x[0-9a-fA-F]{64})\b", stdout)
-    return bare.group(1) if bare else None
+    bare = re.search(r"\b(0x[0-9a-fA-F]{64})\b", text)
+    if bare:
+        return bare.group(1)
+
+    # Last resort: rich wrapped it. Rejoin and look again.
+    unwrapped = re.sub(r"\s+", "", text)
+    rewrapped = re.search(r"(0x[0-9a-fA-F]{64})", unwrapped)
+    return rewrapped.group(1) if rewrapped else None

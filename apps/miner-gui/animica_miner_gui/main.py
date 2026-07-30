@@ -41,12 +41,36 @@ def _setup_logging() -> None:
 logger = logging.getLogger(__name__)
 
 
+def _frozen_qt_plugins_dir() -> Path | None:
+    """Find the bundled Qt plugin directory across PyInstaller layouts.
+
+    PySide6 does not use one layout: `PySide6/Qt/plugins` on Linux/macOS but
+    `PySide6/plugins` on Windows, and PyInstaller sometimes flattens it to a
+    bare `plugins`. Probing only the first meant the whole configuration block
+    was skipped on Windows — it worked purely because PyInstaller's own
+    pyi_rth_pyside6 hook had already set the paths, so this function was
+    silently dead there rather than helping.
+
+    Only accept a candidate that actually contains `platforms`; that is the
+    subdirectory holding the platform plugin Qt refuses to start without.
+    """
+    resources = get_resources_dir()
+    candidates = (
+        resources / "PySide6" / "Qt" / "plugins",
+        resources / "PySide6" / "plugins",
+        resources / "plugins",
+    )
+    for candidate in candidates:
+        if (candidate / "platforms").is_dir():
+            return candidate
+    logger.warning("no bundled Qt plugins dir with platforms/ under %s", resources)
+    return None
+
+
 def _configure_qt_plugins() -> None:
     plugins_dir: Path | None = None
     if getattr(sys, "frozen", False):
-        candidate = get_resources_dir() / "PySide6" / "Qt" / "plugins"
-        if candidate.exists():
-            plugins_dir = candidate
+        plugins_dir = _frozen_qt_plugins_dir()
     else:
         plugins_path = ""
         try:
@@ -128,6 +152,38 @@ def _report_fatal_error(exc: BaseException) -> None:
     print(message, file=sys.stderr)
 
 
+#: The only modules the frozen binary will re-enter as __main__.
+#:
+#: Without this, --run-module was a general-purpose Python launcher wearing the
+#: app's identity: `--run-module timeit -s '<code>'` executes arbitrary source
+#: and `--run-module pdb -c continue file.py` executes an arbitrary script —
+#: under a Developer-ID-signed, notarized binary whose entitlements allow JIT
+#: and disable library validation, and before logging or the crash hooks are
+#: installed. Only the two CLI entry points cli_runner actually invokes are
+#: permitted; both are guaranteed present by the spec's REQUIRED_MODULES gate.
+_ALLOWED_RUN_MODULES = frozenset({"animica.cli.main", "mining.cli.miner"})
+
+
+def _audit_run_module(module: str, argv: list[str]) -> None:
+    """Append one line about a CLI re-entry to the startup log.
+
+    Deliberately writes the file directly instead of configuring the `logging`
+    root: miner_runner merges the child's stderr into the stream it parses for
+    mining events, and the wallet parses child output for a transaction hash —
+    a stray log handler would corrupt both.
+    """
+    try:
+        from animica_miner_gui.backend.app_paths import get_logs_dir, get_startup_log_path
+        from datetime import datetime
+
+        get_logs_dir().mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with get_startup_log_path().open("a", encoding="utf-8") as fh:
+            fh.write(f"{stamp} [INFO] run-module: {module} argv={argv}\n")
+    except Exception:
+        pass
+
+
 def _run_module_entrypoint() -> int:
     """Act as a CLI host: `AnimicaMiner --run-module <mod> [args...]`.
 
@@ -147,6 +203,15 @@ def _run_module_entrypoint() -> int:
     module = argv[idx + 1]
     forwarded = argv[idx + 2:]
 
+    if module not in _ALLOWED_RUN_MODULES:
+        print(
+            f"error: --run-module does not allow '{module}' "
+            f"(permitted: {', '.join(sorted(_ALLOWED_RUN_MODULES))})",
+            file=sys.stderr,
+        )
+        return 2
+    _audit_run_module(module, forwarded)
+
     # Present the module with the argv it would have seen under `python -m`.
     sys.argv = [module, *forwarded]
     try:
@@ -156,14 +221,27 @@ def _run_module_entrypoint() -> int:
         code = exc.code
         if code is None:
             return 0
-        return code if isinstance(code, int) else 1
+        if isinstance(code, int):
+            return code
+        # A string exit code is a message, per SystemExit semantics.
+        print(code, file=sys.stderr)
+        return 1
+    except ImportError as exc:
+        # Only modules baked into the bundle are reachable, so this means a
+        # caller asked for something that was not collected. Say that plainly
+        # instead of dumping a frozen-runpy traceback the user cannot act on.
+        print(
+            f"error: module '{module}' is not available in this build ({exc}).",
+            file=sys.stderr,
+        )
+        return 2
 
 
 def main() -> int:
     """Main entry point for the GUI miner."""
     # Handled before anything else: this process is a CLI, not the GUI, so it
     # must not create a QApplication or trip the single-instance guard.
-    if "--run-module" in sys.argv[1:]:
+    if len(sys.argv) > 1 and sys.argv[1] == "--run-module":
         return _run_module_entrypoint()
 
     try:

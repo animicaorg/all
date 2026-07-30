@@ -152,11 +152,70 @@ jobs:
             python -m pip install -e ../../python || echo "animica package install skipped"
           fi
 
-      - name: Run OS build script
+      # Developer ID signing + notarization for macOS. Entirely optional: when
+      # the secrets are absent the import is skipped and build_macos.sh falls
+      # back to an ad-hoc signature (and says so). Without this the .app is
+      # blocked by Gatekeeper for anyone who downloads it.
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
         shell: bash
         run: |
+          set -euo pipefail
+          # The `secrets` context is not reliably readable from a step-level
+          # `if:`, so gate here instead. No certificate configured is a normal,
+          # non-fatal state: the build continues and signs ad-hoc.
+          if [ -z "${MACOS_CERT_P12:-}" ]; then
+            echo "No MACOS_CERT_P12 secret set; skipping (build will be ad-hoc signed)."
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "Imported signing identity."
+
+      - name: Run OS build script
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_KEY_P8_B64: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          # A tag push is a public release: refuse to publish macOS artifacts
+          # that Gatekeeper will block rather than shipping them silently.
+          ANIMICA_REQUIRE_SIGNED: ${{ (runner.os == 'macOS' && github.ref_type == 'tag') && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APPLE_NOTARY_KEY_P8_B64:-}" ]; then
+            echo "$APPLE_NOTARY_KEY_P8_B64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+            export APPLE_NOTARY_KEY_P8="$RUNNER_TEMP/notary.p8"
+          fi
           chmod +x apps/miner-gui/build-scripts/${{ matrix.script }}
           ./apps/miner-gui/build-scripts/${{ matrix.script }}
+
+      # Always remove the signing material, including after a failed build.
+      - name: Clean up signing credentials
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/cert.p12" || true
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          security list-keychain -d user -s login.keychain-db 2>/dev/null || true
+          echo "signing material removed"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

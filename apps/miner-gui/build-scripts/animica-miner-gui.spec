@@ -178,7 +178,17 @@ if qt_hook.exists():
 
 a = Analysis(
     [str(ENTRY)],
-    pathex=[str(APP_DIR), str(REPO_ROOT), str(REPO_ROOT / "python")],
+    # `omni_sdk` lives under sdk/python, which was never on pathex — so every
+    # build declared it as a hidden import, PyInstaller warned and carried on,
+    # and the shipped app raised ModuleNotFoundError the moment anyone tried to
+    # deploy a contract from the IDE tab. (It is also why --verify-packaged has
+    # been failing on every build.)
+    pathex=[
+        str(APP_DIR),
+        str(REPO_ROOT),
+        str(REPO_ROOT / "python"),
+        str(REPO_ROOT / "sdk" / "python"),
+    ],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -209,6 +219,46 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# ---------------------------------------------------------------------------
+# Fail the build when a module the app genuinely needs did not make it in.
+#
+# PyInstaller logs an unresolved hiddenimport at ERROR level and then completes
+# successfully, so a green build proves nothing. That is how omni_sdk went
+# missing from every release while still being listed as a hidden import.
+# ---------------------------------------------------------------------------
+REQUIRED_MODULES = (
+    "animica",
+    "animica.cli.main",          # --run-module CLI host
+    "mining.cli.miner",          # --run-module miner entry point
+    "omni_sdk.tx",               # IDE contract deploy
+    "omni_sdk.wallet.signer",
+    "vm_py.abi",
+    "unittest",                  # torch imports it at module scope; see excludes
+)
+# noarchive builds put modules elsewhere, so an empty a.pure means "cannot
+# check", not "everything is missing" — do not fail the build on that.
+# `a.pure` only holds modules destined for the PYZ. With noarchive=True
+# PyInstaller routes them to `_modules_outside_pyz` instead (build_main.py:341,
+# 872-886), leaving a.pure empty — so a gate reading only a.pure would fail a
+# noarchive build claiming EVERY module is missing, sending whoever is
+# debugging a launch crash after a pathex problem that does not exist. Check
+# both TOCs so the gate is independent of archive mode.
+_collected = {entry[0] for entry in a.pure}
+_collected |= {entry[0] for entry in getattr(a, "_modules_outside_pyz", ())}
+# Exact names only. Accepting a parent package because a submodule is present
+# would let `omni_sdk.tx` pass on the strength of `omni_sdk.tx.encode` alone —
+# precisely the "declared but not really there" failure this gate exists to
+# catch.
+_missing = [m for m in REQUIRED_MODULES if m not in _collected]
+if _missing:
+    raise SystemExit(
+        "[spec] refusing to build: these modules are required at runtime but "
+        "were not collected: " + ", ".join(_missing) + "\n"
+        "       Check pathex and that the packages are installed in the build "
+        "environment."
+    )
+print(f"[spec] required-module gate passed ({len(REQUIRED_MODULES)} checked)")
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
