@@ -77,7 +77,8 @@ BUNDLED_ANIMICA="$(printf '%s' "$BUNDLED_ANIMICA" | tr -d '\r')"
 log "Bundled animica: $BUNDLED_ANIMICA"
 
 # ---- Version ----
-VERSION="$($PY -c "import tomllib; print(tomllib.load(open(r'$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
+VERSION="$($PY "$SCRIPT_DIR/gui_version.py")" || die "could not read the GUI version from pyproject.toml"
+VERSION="$(printf '%s' "$VERSION" | tr -d '\r')"
 log "Building version: $VERSION"
 
 # ---- PyInstaller ----
@@ -98,6 +99,18 @@ EXE_PATH="${ONEDIR}/${APP_NAME}.exe"
 [[ -d "$ONEDIR" ]] || die "Failed to create onedir build at $ONEDIR"
 [[ -f "$EXE_PATH" ]] || warn "Expected ${APP_NAME}.exe not found (continuing; check dist)"
 log "onedir build created at: $ONEDIR"
+
+# ---- Launch gate ----
+# See build_linux.sh: a windowed build that aborts on startup still exits 0
+# from PyInstaller. Run the artifact before packaging it. Skipped under Wine,
+# where the emulated GUI stack is not a meaningful signal.
+if [[ -f "$EXE_PATH" && -z "$WINE" ]]; then
+    log "Smoke-testing the frozen binary..."
+    if ! QT_QPA_PLATFORM=offscreen "$EXE_PATH" --smoke-test; then
+        die "frozen binary failed --smoke-test; refusing to package a broken build"
+    fi
+    log "Smoke test passed."
+fi
 
 # ---- ZIP package ----
 ZIP_NAME="AnimicaMiner-${VERSION}-windows-x64.zip"

@@ -637,11 +637,18 @@ class MainWindow(QMainWindow):
             f"Startup log: {log_path}\n"
         )
         if mode != "dev":
-            message += (
-                "\nThe packaged app is missing its bundled node payload. "
-                "Please reinstall or rebuild the application."
+            # Packaged builds do not carry a local node payload, so this branch
+            # fires on EVERY launch. It used to raise a modal "please reinstall"
+            # alert that greeted every user before they could touch the app —
+            # alarming, wrong (nothing is broken, and reinstalling changes
+            # nothing) and blocking. Mining against a pool needs no local node,
+            # so report it in the status bar and let the app run.
+            logger.warning("No bundled node payload; continuing without a local node. %s", details)
+            self.status_bar.showMessage(
+                "No local node bundled — using the configured remote RPC. "
+                "Pool mining is unaffected.",
+                15000,
             )
-            QMessageBox.critical(self, "Node Missing", message)
             return
 
         message += (

@@ -93,13 +93,16 @@ if schemas_dir.exists():
                 (str(schema_path), "animica_miner_gui/ide/toolchain/schemas")
             )
 
-# Collect Qt plugins so the packaged app can find its platform plugin.
-try:
-    from PyInstaller.utils.hooks.qt import collect_qt_plugins
-
-    datas += collect_qt_plugins("PySide6")
-except Exception as exc:  # pragma: no cover - depends on PyInstaller version
-    print(f"[spec] warning: collect_qt_plugins unavailable: {exc}")
+# Qt plugins need no help here: PyInstaller's bundled hook-PySide6.QtCore
+# collects every plugin type QtGui declares (platforms, imageformats, styles,
+# …) on all three platforms. A previous attempt to call a
+# `collect_qt_plugins` helper printed
+#   "[spec] warning: collect_qt_plugins unavailable: cannot import name ..."
+# on every single build because that name has never existed in
+# PyInstaller.utils.hooks.qt — dead code whose only effect was to make real
+# triage harder. Verified present in the shipped bundles:
+#   Linux : _internal/PySide6/Qt/plugins/platforms/libqxcb.so
+#   macOS : Contents/Frameworks/PySide6/Qt/plugins/platforms/libqcocoa.dylib
 
 # ---------------------------------------------------------------------------
 # Hidden imports: PySide6, matplotlib, pydantic, httpx, jsonschema, and the
@@ -128,6 +131,13 @@ hiddenimports = [
     "animica.cli.gui",
     "animica.stratum_pool",
     "animica.stratum_pool.package_builder",
+    # CLI entry points the GUI re-enters through `--run-module` (see
+    # animica_miner_gui.backend.cli_runner). They must be in the bundle or the
+    # miner and wallet actions have nothing to run.
+    "animica.cli.main",
+    "mining",
+    "mining.cli",
+    "mining.cli.miner",
     # Optional omni SDK / VM (present in the monorepo)
     "omni_sdk",
     "omni_sdk.contracts.deployer",
@@ -175,11 +185,23 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=runtime_hooks,
+    # DO NOT exclude `unittest` or `test` here. They look like test-only
+    # baggage but they are not: torch/utils/_config_module.py imports
+    # `unittest` at module scope, and multiprocessing.util imports `test`
+    # lazily. Excluding `unittest` made `import torch` raise
+    # ModuleNotFoundError *after* torch's C extension had already registered
+    # its pybind11 types. animica.unified._detect_gpu_via_torch() swallows
+    # that with a bare `except Exception`, leaving torch half-initialised, and
+    # the next `import torch` re-ran the extension init and aborted the whole
+    # process from C++:
+    #   terminate called after throwing an instance of 'std::runtime_error'
+    #     what(): generic_type: cannot initialize type "GradBucket":
+    #             an object with that name is already defined
+    # That is a std::terminate, not a Python exception, so nothing could catch
+    # it and the app died silently on every launch. `unittest` is ~300 KB in a
+    # multi-GB bundle; excluding it saved nothing and cost the whole app.
     excludes=[
         "tkinter",
-        "test",
-        "tests",
-        "unittest",
         "pytest",
     ],
     win_no_prefer_redirects=False,

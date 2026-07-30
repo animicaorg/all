@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import os
 import subprocess
 import sys
@@ -357,16 +358,30 @@ class WalletTab(QWidget):
                 )
                 return
             
+            from animica_miner_gui.backend.cli_runner import (
+                CLI_UNAVAILABLE_MESSAGE,
+                resolve_animica_cli,
+            )
+
+            cli = resolve_animica_cli()
+            if cli is None:
+                # Refuse rather than shell out to sys.executable, which in a
+                # frozen build just relaunches this GUI and exits 0 — reporting
+                # a send that never happened.
+                self.result_text.append("✗ Cannot send: `animica` CLI not available.\n")
+                QMessageBox.critical(self, "Cannot Send", CLI_UNAVAILABLE_MESSAGE)
+                return
+
             cmd = [
-                sys.executable, "-m", "animica", "tx", "send",
+                *cli, "tx", "send",
                 "--from", from_addr,
                 "--to", to_addr,
                 "--value", str(amount),
                 "--rpc-url", rpc_url,
             ]
-            
+
             self.result_text.append(f"Running: {' '.join(cmd)}\n")
-            
+
             # Run the command
             result = subprocess.run(
                 cmd,
@@ -374,24 +389,41 @@ class WalletTab(QWidget):
                 text=True,
                 timeout=TX_SEND_TIMEOUT
             )
-            
-            # Display results
-            if result.returncode == 0:
-                self.result_text.append("✓ Transaction sent successfully!\n\n")
+
+            # A zero exit code alone is not proof the transaction happened —
+            # require the CLI to have printed a transaction hash. Money moving
+            # is not something to infer from an empty stdout.
+            tx_hash = _extract_tx_hash(result.stdout)
+
+            if result.returncode == 0 and tx_hash:
+                self.result_text.append(f"✓ Transaction sent. Hash: {tx_hash}\n\n")
                 self.result_text.append("Output:\n")
                 self.result_text.append(result.stdout)
-                
+
                 # Clear inputs on success
                 self.recipient_input.clear()
                 self.amount_input.clear()
-                
+
                 # Refresh wallet info after successful transaction
                 self.refresh_wallet_info()
-                
+
                 QMessageBox.information(
                     self,
                     "Success",
-                    "Transaction sent successfully! Check the result below for details."
+                    f"Transaction sent.\n\nHash: {tx_hash}"
+                )
+            elif result.returncode == 0:
+                self.result_text.append(
+                    "✗ The send command exited cleanly but returned no transaction "
+                    "hash, so the transaction was NOT confirmed as sent.\n\n"
+                )
+                self.result_text.append(result.stdout or "(no output)")
+                QMessageBox.warning(
+                    self,
+                    "Send Not Confirmed",
+                    "The wallet command produced no transaction hash. Your funds "
+                    "have NOT been sent. Check the result pane and your balance "
+                    "before retrying.",
                 )
             else:
                 self.result_text.append("✗ Transaction failed!\n\n")
@@ -415,3 +447,28 @@ class WalletTab(QWidget):
         
         finally:
             self.send_button.setEnabled(True)
+
+
+def _extract_tx_hash(stdout: str) -> str | None:
+    """Pull a transaction hash out of `animica tx send` output.
+
+    Used as positive proof that a send actually happened. A clean exit code is
+    not enough: under PyInstaller a misresolved CLI can exit 0 having done
+    nothing at all, and the wallet used to render that as a success.
+
+    Accepts a bare 0x-prefixed 64-hex-digit hash anywhere in the output, or one
+    introduced by a label such as "tx hash:" / "txid =".
+    """
+    if not stdout:
+        return None
+
+    labelled = re.search(
+        r"(?:tx(?:id|_?hash)?|transaction(?:\s+hash)?)\s*[:=]\s*(0x[0-9a-fA-F]{64})",
+        stdout,
+        re.IGNORECASE,
+    )
+    if labelled:
+        return labelled.group(1)
+
+    bare = re.search(r"\b(0x[0-9a-fA-F]{64})\b", stdout)
+    return bare.group(1) if bare else None

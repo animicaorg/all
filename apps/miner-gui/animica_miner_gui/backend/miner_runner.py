@@ -332,8 +332,18 @@ class MinerRunner:
             logger.info(f"Subprocess PYTHONPATH: {pythonpath}")
             
             # Build command once outside the loop (optimization)
+            # `sys.executable` is the GUI binary in a frozen build, so a bare
+            # `-m mining.cli.miner` spawned GUI copies in a restart loop
+            # instead of miners. resolve_module_cmd re-enters the binary via
+            # --run-module, which runs the bundled module for real.
+            from animica_miner_gui.backend.cli_runner import resolve_module_cmd
+
+            module_cmd = resolve_module_cmd("mining.cli.miner")
+            if module_cmd is None:
+                raise RuntimeError("Cannot start the miner: no way to run mining.cli.miner")
+
             cmd = [
-                sys.executable, "-m", "mining.cli.miner", "mine-blocks",
+                *module_cmd, "mine-blocks",
                 "--address", payout_address,
                 "--count", str(blocks_per_batch),
                 "--threads", str(threads),

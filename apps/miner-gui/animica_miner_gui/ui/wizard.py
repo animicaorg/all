@@ -183,11 +183,24 @@ class CreateWalletDialog(QDialog):
             
             # Call the wallet creation CLI with label and wallet file path as separate arguments
             # Using subprocess.run with a list of arguments (not shell=True) prevents command injection
+            from animica_miner_gui.backend.cli_runner import (
+                CLI_UNAVAILABLE_MESSAGE,
+                resolve_animica_cli,
+            )
+
+            cli = resolve_animica_cli()
+            if cli is None:
+                # Frozen builds must not fall back to sys.executable: that
+                # relaunches this GUI, which exits 0 with no output, and the
+                # wizard then fails with an opaque "could not parse wallet
+                # address" instead of telling the user what is actually wrong.
+                raise RuntimeError(CLI_UNAVAILABLE_MESSAGE)
+
             cmd = [
-                sys.executable, "-m", "animica", "wallet", 
+                *cli, "wallet",
                 "--wallet-file", wallet_file_path,
-                "create", 
-                "--label", label, 
+                "create",
+                "--label", label,
                 "--allow-insecure-fallback"
             ]
             

@@ -75,7 +75,7 @@ BUNDLED_ANIMICA="$("$PY" "$SCRIPT_DIR/bundle_version.py")" || die "bundled animi
 log "Bundled animica: $BUNDLED_ANIMICA"
 
 # ---- Version ----
-VERSION="$("$PY" -c "import tomllib; print(tomllib.load(open(r'$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
+VERSION="$("$PY" "$SCRIPT_DIR/gui_version.py")" || die "could not read the GUI version from pyproject.toml"
 log "Building version: $VERSION"
 
 # ---- PyInstaller ----
@@ -97,6 +97,46 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
     [[ -n "$FOUND" ]] && APP_BUNDLE="$FOUND" || die "Failed to create .app bundle in $DIST_DIR"
 fi
 log ".app bundle created: $APP_BUNDLE"
+
+# ---- Info.plist minimum-OS floor ----
+# Hardcoding LSMinimumSystemVersion is a trap: Launch Services trusts it, so a
+# too-low value lets macOS start the app and then dyld kills it while loading
+# Qt frameworks built for a newer OS ("building for macOS X, which is newer
+# than running OS") — before Python runs, so nothing is logged. Read the real
+# floor off the bundled QtCore and write that instead.
+QTCORE="$(find "$APP_BUNDLE/Contents" -name 'QtCore' -type f -path '*QtCore.framework*' -print -quit 2>/dev/null || true)"
+if [[ -n "$QTCORE" ]] && command -v otool >/dev/null 2>&1; then
+    QT_MIN_OS="$(otool -l "$QTCORE" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')"
+    if [[ -n "${QT_MIN_OS:-}" ]]; then
+        log "Bundled Qt minimum OS: $QT_MIN_OS (was declaring $(defaults read "$APP_BUNDLE/Contents/Info" LSMinimumSystemVersion 2>/dev/null || echo '?'))"
+        /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $QT_MIN_OS" \
+            "$APP_BUNDLE/Contents/Info.plist" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $QT_MIN_OS" \
+               "$APP_BUNDLE/Contents/Info.plist"
+        # Editing the plist invalidates the ad-hoc signature PyInstaller applied.
+        codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null 2>&1 \
+            || warn "re-signing after Info.plist edit failed"
+    else
+        warn "could not read minos from $QTCORE; leaving LSMinimumSystemVersion as-is"
+    fi
+else
+    warn "QtCore not found in bundle; leaving LSMinimumSystemVersion as-is"
+fi
+
+# ---- Launch gate ----
+# See build_linux.sh. This is the check that would have caught 9.0.8 aborting
+# with SIGABRT on every launch.
+log "Smoke-testing the frozen app..."
+if ! QT_QPA_PLATFORM=offscreen "$APP_BUNDLE/Contents/MacOS/$APP_NAME" --smoke-test; then
+    die "frozen app failed --smoke-test; refusing to package a broken build"
+fi
+log "Smoke test passed."
+
+# The bundle must carry a valid signature or arm64 macOS refuses to exec it.
+if command -v codesign >/dev/null 2>&1; then
+    codesign --verify --strict "$APP_BUNDLE" || die "bundle signature is invalid"
+    log "Signature verified (ad-hoc; not notarized)."
+fi
 
 # ---- Artifact-record helper (SHA256 + size + JSON line) ----
 emit_artifact() {
@@ -143,8 +183,12 @@ hdiutil create -volname "Animica Miner" \
 log "DMG: $DMG_PATH"
 
 # ---- Record artifacts ----
-emit_artifact "$DMG_PATH" "macos" "macOS 10.15+"
-emit_artifact "$ZIP_PATH" "macos" "macOS 10.15+"
+# Apple silicon only — Intel/x86_64 macs are deliberately not built, and
+# arm64 macOS starts at 11.0, so "10.15+" was never reachable for this binary.
+MACOS_MIN_OS="macOS 11+"
+[[ "$ARCH" == "arm64" ]] && MACOS_MIN_OS="macOS 11+ (Apple silicon)"
+emit_artifact "$DMG_PATH" "macos" "$MACOS_MIN_OS"
+emit_artifact "$ZIP_PATH" "macos" "$MACOS_MIN_OS"
 
 log "Build complete. Artifacts in: $DIST_DIR"
 log "Manifest log: $ARTIFACT_LOG"

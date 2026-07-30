@@ -171,6 +171,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # PyInstaller's warn-*.txt is the authoritative list of modules it could
+      # not resolve — the only artifact that explains an import-time launch
+      # failure. It was being written and thrown away, so a crash that reached
+      # users left nothing to diagnose. `always()` so a FAILED build (including
+      # one the new --smoke-test gate rejected) still yields the evidence.
+      - name: Upload PyInstaller diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-miner-${{ matrix.label }}-diagnostics
+          path: |
+            apps/miner-gui/build/**/warn-*.txt
+            apps/miner-gui/build/**/xref-*.html
+          if-no-files-found: ignore
+          retention-days: 14
+
   release:
     name: manifest + GitHub Release
     needs: build

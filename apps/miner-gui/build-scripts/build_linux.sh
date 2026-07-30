@@ -97,7 +97,7 @@ BUNDLED_ANIMICA="$("$PY" "$SCRIPT_DIR/bundle_version.py")" || die "bundled animi
 log "Bundled animica: $BUNDLED_ANIMICA"
 
 # ---- Version ----
-VERSION="$("$PY" -c "import tomllib; print(tomllib.load(open(r'$APP_DIR/pyproject.toml','rb'))['project']['version'])" 2>/dev/null || echo "0.1.0")"
+VERSION="$("$PY" "$SCRIPT_DIR/gui_version.py")" || die "could not read the GUI version from pyproject.toml"
 log "Building version: $VERSION"
 
 # ---- PyInstaller ----
@@ -118,6 +118,18 @@ EXE_PATH="${ONEDIR}/${APP_NAME}"
 [[ -d "$ONEDIR" && -f "$EXE_PATH" ]] || die "Failed to create onedir build at $ONEDIR"
 chmod +x "$EXE_PATH"
 log "onedir build created at: $ONEDIR"
+
+# ---- Launch gate ----
+# `console=False` means a frozen app that dies on startup produces no output
+# anywhere the build can see; PyInstaller exiting 0 says nothing about whether
+# the binary actually runs. 9.0.8 shipped to all three platforms while aborting
+# with SIGABRT before the window appeared. Run the real artifact through the
+# whole startup path and refuse to package it if that fails.
+log "Smoke-testing the frozen binary..."
+if ! QT_QPA_PLATFORM=offscreen "$EXE_PATH" --smoke-test; then
+    die "frozen binary failed --smoke-test; refusing to package a broken build"
+fi
+log "Smoke test passed."
 
 # ---- Artifact-record helper (SHA256 + size + JSON line) ----
 emit_artifact() {
