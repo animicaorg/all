@@ -283,7 +283,11 @@ class MinerRunner:
                 return
             
             from animica_miner_gui.backend.config import resolve_rpc_url
-            rpc_url = resolve_rpc_url(config) or "http://127.0.0.1:8545"
+            # resolve_rpc_url now returns the network default, so this only
+            # matters if the config is unreadable. Note the old fallback also
+            # omitted the /rpc path, so it could not have worked even against a
+            # local node.
+            rpc_url = resolve_rpc_url(config) or "https://rpc.animica.org/rpc"
             threads = config.get('cpu', {}).get('threads', 1)
             blocks_per_batch = config.get('miner', {}).get('blocks_per_batch', 10)
             

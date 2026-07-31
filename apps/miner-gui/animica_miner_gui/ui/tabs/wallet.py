@@ -8,7 +8,7 @@ import subprocess
 import sys
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QRunnable, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QFormLayout,
@@ -40,6 +40,30 @@ ANM_BASE_UNITS = 1_000_000_000  # 1 ANM = 1e9 base units
 WALLET_INFO_REFRESH_INTERVAL = 10000  # Refresh wallet info every 10 seconds (milliseconds)
 
 
+class _WalletQueryTask(QRunnable):
+    """Runs one wallet balance/nonce query off the GUI thread."""
+
+    def __init__(self, tab: "WalletTab") -> None:
+        super().__init__()
+        self._tab = tab
+
+    def run(self) -> None:  # pragma: no cover - thread body
+        try:
+            self._tab._query_wallet_info()
+        except RuntimeError as exc:
+            # The tab was destroyed while this query was in flight (app closing,
+            # tab torn down). Qt raises "Signal source has been deleted" on the
+            # emit. Expected during shutdown — not worth a traceback.
+            logger.debug("wallet query abandoned: %s", exc)
+        except Exception:
+            logger.exception("wallet query failed")
+        finally:
+            try:
+                self._tab._refresh_in_flight = False
+            except RuntimeError:
+                pass
+
+
 class WalletTab(QWidget):
     """Wallet tab for sending transactions."""
     
@@ -48,8 +72,25 @@ class WalletTab(QWidget):
         self.config = config
         self.node_controller = node_controller
         self.rpc_client: Optional[RPCClient] = None
+        self._refresh_in_flight = False
+        # Own the pool: its destructor waits for in-flight tasks, so a worker
+        # can never reference this widget after Qt has deleted it.
+        self._pool = QThreadPool(self)
+        self._pool.setMaxThreadCount(1)
         self.setup_ui()
+        self.walletInfoReady.connect(self._apply_wallet_info)
         self.node_controller.rpcChanged.connect(self.on_rpc_changed)
+        # Build a client straight from configuration rather than waiting for
+        # NodeController to announce one. The tab is then useful on its own,
+        # and it no longer depends on having been constructed before the
+        # controller emits rpcChanged — an ordering assumption that left the
+        # wallet permanently empty whenever it did not hold.
+        try:
+            configured_url = config.network.resolved_rpc_url()
+            if configured_url:
+                self.rpc_client = RPCClient(configured_url)
+        except Exception:
+            logger.exception("could not build an RPC client from configuration")
         self.setup_auto_refresh()
     
     def setup_ui(self) -> None:
@@ -150,6 +191,26 @@ class WalletTab(QWidget):
         layout.addStretch()
         self.setLayout(layout)
     
+    def apply_config(self, config: MiningAppConfig) -> None:
+        """Re-render everything that depends on configuration.
+
+        The address label and the enabled state of Copy/Refresh were computed
+        once in setup_ui(). On a first run the payout address is empty, so
+        those buttons were created disabled and stayed disabled for the whole
+        session — even after the user saved an address in the Configuration
+        tab, which is exactly when they expect the Wallet tab to come alive.
+        """
+        self.config = config
+        address = config.miner.payout_address or ""
+        self.address_label.setText(address or "Not configured")
+        self.copy_address_button.setEnabled(bool(address))
+        self.refresh_balance_button.setEnabled(bool(address))
+        if address:
+            self.refresh_wallet_info()
+        else:
+            self.balance_label.setText("--")
+            self.nonce_label.setText("--")
+
     def on_rpc_changed(self, rpc_url: str, token: str) -> None:
         """Update RPC client when node RPC changes."""
         try:
@@ -166,56 +227,92 @@ class WalletTab(QWidget):
         self.refresh_timer.timeout.connect(self.refresh_wallet_info)
         self.refresh_timer.start(WALLET_INFO_REFRESH_INTERVAL)
         
-        # Do initial refresh
-        if self.config.miner.payout_address:
-            self.refresh_wallet_info()
+        # Deliberately no refresh here. Constructing the tab must not start
+        # network work: it put a request in flight before the window was even
+        # shown, and a worker outliving a short-lived widget (tests, tab
+        # teardown) aborted the process. The timer fires shortly, and
+        # on_rpc_changed / apply_config refresh on demand.
     
     def closeEvent(self, event) -> None:
         """Clean up resources when widget is closed."""
+        # Stop accepting new queries and drain anything in flight before the
+        # widget goes away.
+        self._refresh_in_flight = True
+        try:
+            self._pool.waitForDone(3000)
+        except Exception:
+            pass
         # Stop the refresh timer to prevent memory leaks
         if hasattr(self, 'refresh_timer') and self.refresh_timer.isActive():
             self.refresh_timer.stop()
         super().closeEvent(event)
     
+    #: Carries a finished wallet query back to the GUI thread.
+    walletInfoReady = Signal(object, object, object)
+
     def refresh_wallet_info(self) -> None:
-        """Query RPC for wallet balance and nonce."""
+        """Query RPC for wallet balance and nonce, off the GUI thread.
+
+        This used to make two blocking HTTP calls inline, on a 10s timer. When
+        the endpoint was slow or half-open the whole window froze — measured at
+        40s against an unreachable host — and the user had no idea why.
+        """
         if not self.rpc_client:
-            logger.debug("No RPC client available")
+            logger.info("wallet refresh skipped: no RPC endpoint yet")
             return
-        
+        if getattr(self, "_refresh_in_flight", False):
+            return
+        self._refresh_in_flight = True
+        self._pool.start(_WalletQueryTask(self))
+
+    def _query_wallet_info(self) -> None:
+        """Body of the wallet query. Runs on a worker thread.
+
+        Touches no widgets — results go back through walletInfoReady, which Qt
+        marshals to the GUI thread.
+        """
+        if not self.rpc_client:
+            return
+
         payout_address = self.config.miner.payout_address
         if not payout_address:
-            self.balance_label.setText("No payout address")
-            self.nonce_label.setText("--")
+            self.walletInfoReady.emit("No payout address", "--", None)
             return
-        
-        # Query balance using public method
+
         try:
             balance_int = self.rpc_client.get_balance(payout_address)
-            
             if balance_int is not None:
-                balance_value = balance_int / ANM_BASE_UNITS
-                self.balance_label.setText(f"{balance_value:.9f} ANM")
+                balance_text = f"{balance_int / ANM_BASE_UNITS:.9f} ANM"
+                balance_error = None
             else:
-                self.balance_label.setText("Unable to query")
-                
+                balance_text = "Unable to query"
+                balance_error = "node returned no balance"
         except Exception as e:
-            logger.debug(f"Failed to query balance: {e}")
-            self.balance_label.setText("Query failed")
-        
-        # Query nonce using public method
+            # Was logger.debug under an INFO root, i.e. invisible. A wallet
+            # stuck on "--" with nothing in the log the user is asked to send
+            # is unsupportable.
+            logger.warning("Failed to query balance for %s: %s", payout_address, e)
+            balance_text = "Query failed"
+            balance_error = str(e)
+
         try:
             nonce_int = self.rpc_client.get_nonce(payout_address)
-            
-            if nonce_int is not None:
-                self.nonce_label.setText(str(nonce_int))
-            else:
-                self.nonce_label.setText("Unable to query")
-                
+            nonce_text = str(nonce_int) if nonce_int is not None else "Unable to query"
         except Exception as e:
-            logger.debug(f"Failed to query nonce: {e}")
-            self.nonce_label.setText("Query failed")
-    
+            logger.warning("Failed to query nonce for %s: %s", payout_address, e)
+            nonce_text = "Query failed"
+
+        self.walletInfoReady.emit(balance_text, nonce_text, balance_error)
+
+    @Slot(object, object, object)
+    def _apply_wallet_info(self, balance_text, nonce_text, error) -> None:
+        """Apply a finished wallet query. GUI thread only."""
+        self._refresh_in_flight = False
+        self.balance_label.setText(str(balance_text))
+        self.nonce_label.setText(str(nonce_text))
+        # Say why, instead of leaving an unexplained placeholder on screen.
+        self.balance_label.setToolTip(str(error) if error else "")
+
     def copy_address_to_clipboard(self) -> None:
         """Copy the wallet address to clipboard."""
         address = self.config.miner.payout_address

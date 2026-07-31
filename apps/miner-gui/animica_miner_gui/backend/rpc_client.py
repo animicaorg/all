@@ -65,7 +65,14 @@ class RPCClient:
         """
         if params is None:
             params = []
-        
+
+        # Fail with something a user can act on. Passing None straight to httpx
+        # produced "Invalid type for url. Expected str or httpx.URL, got
+        # <class 'NoneType'>" in the diagnostics and logs, which tells nobody
+        # that the real problem is an unconfigured endpoint.
+        if not self.rpc_url:
+            raise RPCError("No RPC endpoint configured")
+
         self._request_id += 1
         payload = {
             "jsonrpc": "2.0",
@@ -108,6 +115,19 @@ class RPCClient:
             else:
                 raise RPCError("No HTTP client available (install httpx or requests)")
             
+            # A reachable-but-wrong URL (a web page, a proxy error page, a
+            # different service) returns 200 with JSON that has no "result"
+            # and no "error". Treating that as a successful None made every
+            # field render "--" with no error anywhere — "connected, but no
+            # stats" with nothing to debug.
+            if not isinstance(data, dict) or (
+                "result" not in data and "error" not in data
+            ):
+                raise RPCError(
+                    f"{self.rpc_url} did not return a JSON-RPC response "
+                    f"(got {type(data).__name__})"
+                )
+
             if "error" in data:
                 error = data["error"] or {}
                 if isinstance(error, dict):

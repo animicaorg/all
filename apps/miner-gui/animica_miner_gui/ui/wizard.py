@@ -257,7 +257,12 @@ class NetworkSelectionPage(QWizardPage):
         self.mainnet_radio = QRadioButton("Mainnet (production)")
         self.testnet_radio = QRadioButton("Testnet (testing with real conditions)")
         self.devnet_radio = QRadioButton("Devnet (development and testing)")
-        self.devnet_radio.setChecked(True)  # Default to devnet
+        # Default to Mainnet. This wizard runs whenever config.json is absent —
+        # i.e. every fresh install — and accept() persists the choice, so
+        # defaulting to devnet pointed every new user at a localhost node that
+        # a packaged build never ships, overriding the mainnet default in
+        # NetworkConfig and leaving the whole app on "--".
+        self.mainnet_radio.setChecked(True)
         
         layout.addWidget(self.mainnet_radio)
         layout.addWidget(self.testnet_radio)

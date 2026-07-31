@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator
 
+from animica_miner_gui.backend.app_paths import is_frozen
+
 
 class NetworkType(str, Enum):
     """Supported network types."""
@@ -88,10 +90,27 @@ class PoolConfig(BaseModel):
     failover_pools: List[Dict[str, str]] = Field(default_factory=list, description="Failover pool configurations")
 
 
+#: Public JSON-RPC endpoints used when no local node is running.
+#:
+#: A packaged build ships without a node payload, so before this existed the
+#: ONLY code that ever set an RPC URL was NodeController starting a local node
+#: — which can never happen in a release build. Every surface therefore had
+#: rpc_url=None forever: the wallet showed "--" for balance and nonce, the
+#: dashboard had no chain data, and the app reported "RPC unavailable". The
+#: public endpoint needs no token and serves the same JSON-RPC.
+DEFAULT_RPC_ENDPOINTS: Dict[NetworkType, str] = {
+    NetworkType.MAINNET: "https://rpc.animica.org/rpc",
+    NetworkType.DEVNET: "http://127.0.0.1:8545/rpc",
+}
+
+
 class NetworkConfig(BaseModel):
     """Network and RPC configuration."""
-    network_type: NetworkType = Field(default=NetworkType.DEVNET, description="Network type")
-    rpc_url: Optional[str] = Field(default=None, description="Resolved RPC endpoint URL (runtime)")
+    # Mainnet, not devnet: this is a miner people download and point at the
+    # live chain. Defaulting to devnet meant a fresh install targeted a network
+    # that does not exist on the user's machine.
+    network_type: NetworkType = Field(default=NetworkType.MAINNET, description="Network type")
+    rpc_url: Optional[str] = Field(default=None, description="Explicit RPC endpoint override (None = use the network default)")
     chain_id: Optional[int] = Field(default=None, ge=1, description="Chain ID (None=auto-detect)")
 
     @field_validator("rpc_url", mode="before")
@@ -105,8 +124,15 @@ class NetworkConfig(BaseModel):
         return value
 
     def resolved_rpc_url(self) -> Optional[str]:
-        """Return the effective RPC URL based on mode and configured values."""
-        return self.rpc_url
+        """Return the effective RPC URL: explicit override, else network default.
+
+        Falling back matters because `rpc_url` is only ever populated by a
+        locally-started node. Without the fallback a packaged build — which has
+        no node to start — has no endpoint at all.
+        """
+        if self.rpc_url:
+            return self.rpc_url
+        return DEFAULT_RPC_ENDPOINTS.get(self.network_type)
 
 
 class MinerConfig(BaseModel):
@@ -222,27 +248,52 @@ def migrate_config_dict(raw: Any) -> Tuple[Dict[str, Any], bool, List[str]]:
         network.pop("mode", None)
         changed = True
 
+    # Older schemas kept the endpoint under different keys. Carry the value
+    # over instead of discarding it: these builds ship without a local node, so
+    # an external endpoint is the normal configuration, not a deprecated one.
     if external_rpc_url is not None:
-        warnings.append("External RPC configuration has been removed; using the bundled node.")
+        if not rpc_url and isinstance(external_rpc_url, str) and external_rpc_url.strip():
+            rpc_url = external_rpc_url.strip()
+            warnings.append("Moved external_rpc_url into rpc_url.")
         network.pop("external_rpc_url", None)
         changed = True
 
     if custom_rpc_url is not None:
-        warnings.append("Custom RPC configuration has been removed; using the bundled node.")
+        if not rpc_url and isinstance(custom_rpc_url, str) and custom_rpc_url.strip():
+            rpc_url = custom_rpc_url.strip()
+            warnings.append("Moved custom_rpc_url into rpc_url.")
         network.pop("custom_rpc_url", None)
         changed = True
 
     if isinstance(rpc_url, str):
         rpc_url = rpc_url.strip() or None
 
-    if rpc_url and not _is_local_rpc_url(rpc_url):
-        warnings.append("External RPC URL ignored; the GUI now uses the bundled node only.")
-        rpc_url = None
-        changed = True
+    # NOTE: a remote rpc_url is explicitly SUPPORTED and must be preserved.
+    # This used to read:
+    #     if rpc_url and not _is_local_rpc_url(rpc_url):
+    #         rpc_url = None            # "the GUI now uses the bundled node only"
+    # which erased the user's endpoint from disk on every single launch — and
+    # popped a "Configuration Repaired" dialog each time — making it impossible
+    # to point the app anywhere. Since packaged builds carry no bundled node,
+    # that policy left the app with no endpoint at all.
 
     if network.get("rpc_url") != rpc_url:
         network["rpc_url"] = rpc_url
         changed = True
+
+    # Heal installs created before mainnet became the default. Changing the
+    # model default alone is inert on upgrade: anyone who already launched the
+    # app has "devnet" written to disk, which resolves to a localhost endpoint
+    # a packaged build has no node to serve. Only rewrite when the user has not
+    # named their own endpoint, so a real devnet developer is left alone.
+    if not rpc_url and network.get("network_type") == NetworkType.DEVNET.value:
+        if is_frozen():
+            network["network_type"] = NetworkType.MAINNET.value
+            warnings.append(
+                "Switched from devnet to mainnet: this build has no bundled "
+                "node, so devnet had no endpoint to connect to."
+            )
+            changed = True
 
     data["network"] = network
     return data, changed, warnings
@@ -298,11 +349,23 @@ def save_config(config: MiningAppConfig, path: Optional[Path] = None) -> None:
 
 
 def resolve_rpc_url(config_data: Dict[str, Any]) -> Optional[str]:
-    """Resolve the effective RPC URL from a serialized config dict."""
+    """Resolve the effective RPC URL from a serialized config dict.
+
+    Mirrors NetworkConfig.resolved_rpc_url so callers holding a raw dict (the
+    miner runner) reach the same endpoint as the ones holding a model.
+    """
     network = config_data.get("network") if isinstance(config_data, dict) else None
     if not isinstance(network, dict):
-        return None
-    return network.get("rpc_url")
+        return DEFAULT_RPC_ENDPOINTS.get(NetworkType.MAINNET)
+    explicit = network.get("rpc_url")
+    if explicit:
+        return explicit
+    raw_type = network.get("network_type") or NetworkType.MAINNET
+    try:
+        net = NetworkType(raw_type)
+    except ValueError:
+        net = NetworkType.MAINNET
+    return DEFAULT_RPC_ENDPOINTS.get(net)
 
 
 def _is_local_rpc_url(rpc_url: str) -> bool:

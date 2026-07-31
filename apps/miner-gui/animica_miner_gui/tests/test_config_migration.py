@@ -34,14 +34,21 @@ def test_load_config_null_rpc_url_repro(tmp_path):
 
     config = load_config(config_path)
 
+    # No explicit override in the fixture...
     assert config.network.rpc_url is None
+    # ...but it must resolve to the endpoint for its network rather than to
+    # nothing at all, which is what left every surface showing "--".
+    from animica_miner_gui.backend.config import DEFAULT_RPC_ENDPOINTS
+    assert config.network.resolved_rpc_url() == DEFAULT_RPC_ENDPOINTS[config.network.network_type]
 
-    repaired = _load_json(config_path)
-    assert repaired["network"]["rpc_url"] is None
 
+def test_load_config_preserves_external_rpc(tmp_path):
+    """A user-configured remote rpc_url must survive a load.
 
-def test_load_config_strips_external_rpc(tmp_path):
-    """Old external rpc_url should be stripped in favor of local node."""
+    It used to be deleted on every launch ("the GUI now uses the bundled node
+    only"), which made it impossible to point the app at any endpoint — and
+    packaged builds have no bundled node to fall back to.
+    """
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
@@ -55,7 +62,9 @@ def test_load_config_strips_external_rpc(tmp_path):
 
     config = load_config(config_path)
 
-    assert config.network.rpc_url is None
+    assert config.network.rpc_url == "https://rpc.example.com"
+    assert config.network.resolved_rpc_url() == "https://rpc.example.com"
 
+    # And it must still be on disk afterwards.
     repaired = _load_json(config_path)
-    assert repaired["network"]["rpc_url"] is None
+    assert repaired["network"]["rpc_url"] == "https://rpc.example.com"

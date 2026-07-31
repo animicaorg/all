@@ -114,6 +114,8 @@ def test_tx_send_command_uses_correct_rpc_option(qapp, config_with_address, node
         with patch('animica_miner_gui.ui.tabs.wallet.subprocess.run') as mock_run, \
              patch('animica_miner_gui.ui.tabs.wallet.QMessageBox.question') as mock_question, \
              patch('animica_miner_gui.ui.tabs.wallet.QMessageBox.information'), \
+             patch('animica_miner_gui.ui.tabs.wallet.QMessageBox.warning'), \
+             patch('animica_miner_gui.ui.tabs.wallet.QMessageBox.critical'), \
              patch('animica_miner_gui.ui.tabs.wallet.os.path.exists', return_value=True), \
              patch('builtins.open', MagicMock()):
             
@@ -132,7 +134,14 @@ def test_tx_send_command_uses_correct_rpc_option(qapp, config_with_address, node
                 # Mock successful subprocess result
                 mock_result = MagicMock()
                 mock_result.returncode = 0
-                mock_result.stdout = "Transaction sent successfully"
+                # Mirror what `animica tx send` actually prints. A send is only
+                # reported as successful when a transaction hash is present, so
+                # a bare success line must not be treated as one.
+                mock_result.stdout = (
+                    "=== Transaction Sent ===\n"
+                    "Tx Hash: 0x" + "ab" * 32 + "\n"
+                    "Transaction broadcast successfully"
+                )
                 mock_result.stderr = ""
                 mock_run.return_value = mock_result
                 
@@ -225,7 +234,7 @@ def test_wallet_info_refresh(qapp, config_with_address, node_controller):
         tab = WalletTab(config_with_address, node_controller)
         
         # Trigger refresh
-        tab.refresh_wallet_info()
+        tab._query_wallet_info()  # synchronous body; refresh_wallet_info() dispatches to a worker
         
         # Check that balance and nonce labels were updated
         assert "1.5" in tab.balance_label.text() or "ANM" in tab.balance_label.text()
@@ -238,7 +247,7 @@ def test_wallet_info_refresh_no_address(qapp, config_no_address, node_controller
         tab = WalletTab(config_no_address, node_controller)
         
         # Trigger refresh
-        tab.refresh_wallet_info()
+        tab._query_wallet_info()  # synchronous body; refresh_wallet_info() dispatches to a worker
         
         # Should show appropriate message
         assert "No payout address" in tab.balance_label.text()
@@ -259,7 +268,7 @@ def test_wallet_info_refresh_zero_balance_and_nonce(qapp, config_with_address, n
         tab = WalletTab(config_with_address, node_controller)
         
         # Trigger refresh
-        tab.refresh_wallet_info()
+        tab._query_wallet_info()  # synchronous body; refresh_wallet_info() dispatches to a worker
         
         # Check that zero balance and nonce are displayed correctly
         assert "0.000000000 ANM" in tab.balance_label.text()

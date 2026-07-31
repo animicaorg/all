@@ -188,8 +188,11 @@ class MainWindow(QMainWindow):
         self.pools_tab = PoolsTab(self.config)
         self.wallet_tab = WalletTab(self.config, self.node_controller)
         self.config_tab = ConfigurationTab(self.config)
+        # A save must reach every tab, not just the one that performed it.
+        self.config_tab.configSaved.connect(self.on_config_saved)
         self.logs_tab = LogsTab()
         self.stats_tab = StatsTab()
+        self.node_controller.statusUpdated.connect(self.stats_tab.on_node_status)
         self.console_tab = ConsoleTab(self.node_controller)
         self.ide_tab = IDETab(self.config, self.node_controller)
         
@@ -480,19 +483,10 @@ class MainWindow(QMainWindow):
         status = stats['status']
 
         if status == 'running':
-            hashrate = stats['hashrate']
-            if hashrate >= 1e9:
-                hr_str = f"{hashrate/1e9:.2f} GH/s"
-            elif hashrate >= 1e6:
-                hr_str = f"{hashrate/1e6:.2f} MH/s"
-            elif hashrate >= 1e3:
-                hr_str = f"{hashrate/1e3:.2f} KH/s"
-            else:
-                hr_str = f"{hashrate:.0f} H/s"
-            
-            self.status_bar.showMessage(
-                f"Mining: {hr_str} | Blocks: {stats['blocks']}"
-            )
+            # Blocks found is a real, observed count. Hashrate is not reported
+            # by the miner and was being inferred from block timestamps, which
+            # produced either 0 or an invented figure — so it is not shown.
+            self.status_bar.showMessage(f"Mining | Blocks found: {stats['blocks']}")
         else:
             self.status_bar.showMessage(f"Status: {status}")
     
@@ -591,15 +585,52 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def on_config_saved(self, new_config) -> None:
+        """Propagate a saved configuration to every tab.
+
+        Each tab was constructed with a reference to the original config
+        object, so rebinding it inside the Configuration tab left the rest of
+        the app on stale values — most visibly, a payout address saved there
+        never appeared in the Wallet tab.
+        """
+        self.config = new_config
+        for tab in (
+            getattr(self, "dashboard_tab", None),
+            getattr(self, "wallet_tab", None),
+            getattr(self, "mining_tab", None),
+            getattr(self, "pools_tab", None),
+        ):
+            if tab is None:
+                continue
+            tab.config = new_config
+            applier = getattr(tab, "apply_config", None)
+            if callable(applier):
+                try:
+                    applier(new_config)
+                except Exception:
+                    logger.exception("tab failed to apply new config")
+        logger.info("configuration propagated to all tabs")
+
     def on_node_started(self, rpc_url: str, token: str) -> None:
         """Handle node started event."""
         self.config.network.rpc_url = rpc_url
         logger.info("Node started. rpc_url=%s", rpc_url)
 
     def start_network_services(self) -> None:
-        """Initialize RPC connectivity based on config mode."""
-        self.status_bar.showMessage("Starting node...")
-        self.node_controller.start()
+        """Get an RPC endpoint up, without blocking the first paint.
+
+        Order matters. Attaching to the remote endpoint is one quick request,
+        so do it first and the UI has real data the moment it appears. Starting
+        a local node can block for the whole _wait_for_rpc deadline, which used
+        to run inside __init__ — the window did not exist for ~36s on a machine
+        with a slow node.
+        """
+        if self.node_controller.connect_remote_now():
+            self.status_bar.showMessage("Connected to the Animica network.", 8000)
+        else:
+            self.status_bar.showMessage("Connecting…")
+        # Try for a local node afterwards; if one comes up it takes over.
+        QTimer.singleShot(0, self.node_controller.start)
 
     def _show_config_repair_notice(self) -> None:
         """Show dialog about repaired config file."""
@@ -684,7 +715,9 @@ class MainWindow(QMainWindow):
             "Node Installed",
             "Node payload installed. The GUI will retry starting the node.",
         )
-        self.node_controller.start()
+        # Explicit user action: take the local node even if a remote endpoint
+        # is currently serving.
+        self.node_controller.start(force=True)
     
     def restart_wizard(self) -> None:
         """Restart the setup wizard."""

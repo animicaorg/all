@@ -112,22 +112,19 @@ class DashboardTab(QWidget):
         self.mining_status_label = QLabel("Stopped")
         mining_layout.addWidget(self.mining_status_label, 0, 1)
         
-        mining_layout.addWidget(QLabel("Hashrate:"), 1, 0)
-        self.hashrate_label = QLabel("0 H/s")
-        self.hashrate_label.setStyleSheet("font-weight: bold; font-size: 14pt;")
-        mining_layout.addWidget(self.hashrate_label, 1, 1)
+        # No Hashrate row. There is no real hashrate to show: the miner CLI
+        # never reports one, so this was derived from the gaps between block
+        # timestamps — which reads 0 H/s during normal mining and then jumps to
+        # a fabricated figure (e.g. "27.20 KH/s" on a machine doing no local
+        # hashing) the instant a block arrives. A number that is always either
+        # zero or wrong is worse than no number.
         
         mining_layout.addWidget(QLabel("Difficulty:"), 2, 0)
         self.difficulty_label = QLabel("--")
         self.difficulty_label.setToolTip("Network difficulty (theta) - higher values mean harder to find blocks")
         mining_layout.addWidget(self.difficulty_label, 2, 1)
         
-        mining_layout.addWidget(QLabel("Time to Block:"), 3, 0)
-        self.time_to_block_label = QLabel("--")
-        self.time_to_block_label.setToolTip("Estimated average time to find a block at current hashrate")
-        mining_layout.addWidget(self.time_to_block_label, 3, 1)
-        
-        mining_layout.addWidget(QLabel("Blocks Found:"), 4, 0)
+        mining_layout.addWidget(QLabel("Blocks Found:"), 3, 0)
         self.blocks_label = QLabel("0")
         mining_layout.addWidget(self.blocks_label, 4, 1)
         
@@ -297,13 +294,41 @@ class DashboardTab(QWidget):
         else:
             self.sync_label.setText("Unknown")
 
+        # The sync payload already carries the network difficulty/theta. It was
+        # being dropped, so Difficulty and Time to Block stayed "--" forever
+        # even while connected and updating head height every 5s.
+        theta = (
+            sync_status.get("theta_micro")
+            or sync_status.get("thetaMicro")
+            or (head.get("theta_micro") if isinstance(head, dict) else None)
+            or (head.get("thetaMicro") if isinstance(head, dict) else None)
+        )
+        try:
+            theta_micro = int(theta) if theta is not None else 0
+        except (TypeError, ValueError):
+            theta_micro = 0
+        if theta_micro > 0:
+            self.current_theta_micro = theta_micro
+            self.difficulty_label.setText(f"{theta_micro / 1_000_000:.6f} nats")
+            self._update_time_to_block()
+
         peers = status.get("peers") or {}
         if isinstance(peers, dict):
-            inbound = peers.get("inbound")
-            outbound = peers.get("outbound")
+            inbound = peers.get("inbound") or 0
+            outbound = peers.get("outbound") or 0
             total = peers.get("total")
+            # The node's summary counters come back 0/0 even when the per-peer
+            # entries carry a correct "direction", so "0/0/2" told the user
+            # they had two peers and zero connections — which reads as broken.
+            # Derive from the list when the counters are empty.
+            peer_list = peers.get("peers")
+            if not inbound and not outbound and isinstance(peer_list, list):
+                inbound = sum(1 for x in peer_list if isinstance(x, dict) and x.get("direction") == "inbound")
+                outbound = sum(1 for x in peer_list if isinstance(x, dict) and x.get("direction") == "outbound")
+            if total is None and isinstance(peer_list, list):
+                total = len(peer_list)
             if total is not None:
-                self.peers_label.setText(f"{inbound or 0}/{outbound or 0}/{total}")
+                self.peers_label.setText(f"{inbound}/{outbound}/{total}")
 
         pid = status.get("pid")
         if pid:
@@ -311,7 +336,10 @@ class DashboardTab(QWidget):
 
         rpc_url = status.get("rpc_url")
         if rpc_url:
-            self.rpc_url_label.setText(rpc_url)
+            # Label remote endpoints so the user knows there is no local node,
+            # rather than staring at "Starting node..." indefinitely.
+            suffix = "  (remote)" if status.get("remote") else ""
+            self.rpc_url_label.setText(f"{rpc_url}{suffix}")
 
         logs_dir = status.get("logs_dir")
         last_log = status.get("last_log_line")
@@ -367,6 +395,10 @@ class DashboardTab(QWidget):
                     # Only show first 20 chars to avoid displaying sensitive data
                     safe_balance = str(balance)[:20] if balance else "None"
                     self.balance_label.setText(f"Parse error: {safe_balance}...")
+            elif balance == 0 or balance == "0x0":
+                # A genuine zero is data, not an error. `if balance:` treated it
+                # as "unable to query", so a fresh wallet looked broken.
+                self.balance_label.setText("0.000000000 ANM")
             else:
                 self.balance_label.setText("Unable to query")
                 
@@ -375,47 +407,12 @@ class DashboardTab(QWidget):
             self.balance_label.setText("Query failed")
     
     def _update_time_to_block(self) -> None:
-        """Update the estimated time to find a block based on current hashrate and difficulty."""
-        if self.current_hashrate <= 0 or self.current_theta_micro <= 0:
-            self.time_to_block_label.setText("--")
-            return
-        
-        try:
-            # Calculate probability of finding a block per hash
-            # Block threshold is theta_micro (in micro-nats)
-            # Probability = e^(-theta)
-            theta_nats = self.current_theta_micro / 1_000_000
-            block_probability = math.exp(-theta_nats)
-            
-            if block_probability <= 0:
-                self.time_to_block_label.setText("Very high")
-                return
-            
-            # Average hashes needed = 1 / probability
-            avg_hashes_needed = 1.0 / block_probability
-            
-            # Time = hashes / hashrate (in seconds)
-            time_seconds = avg_hashes_needed / self.current_hashrate
-            
-            # Format the time nicely
-            if time_seconds < 60:
-                time_str = f"{time_seconds:.0f}s"
-            elif time_seconds < 3600:
-                minutes = time_seconds / 60
-                time_str = f"{minutes:.1f}m"
-            elif time_seconds < 86400:
-                hours = time_seconds / 3600
-                time_str = f"{hours:.1f}h"
-            else:
-                days = time_seconds / 86400
-                time_str = f"{days:.1f}d"
-            
-            self.time_to_block_label.setText(f"~{time_str}")
-        
-        except Exception as e:
-            logger.debug(f"Error calculating time to block: {e}")
-            self.time_to_block_label.setText("--")
-    
+        """Time-to-block is not shown: it required a hashrate we do not have.
+
+        Kept as a no-op so callers (and the difficulty update path) stay simple.
+        """
+        return
+
     def on_mining_event(self, event: MiningEvent) -> None:
         """Handle mining events from any thread.
         
@@ -445,24 +442,6 @@ class DashboardTab(QWidget):
             is_running = status == 'running'
             self.start_button.setEnabled(not is_running)
             self.stop_button.setEnabled(is_running)
-        
-        elif event.event_type == EventType.HASHRATE_UPDATE:
-            hashrate = event.data.get('hashrate', 0)
-            self.current_hashrate = hashrate
-            
-            if hashrate >= 1e9:
-                hr_str = f"{hashrate/1e9:.2f} GH/s"
-            elif hashrate >= 1e6:
-                hr_str = f"{hashrate/1e6:.2f} MH/s"
-            elif hashrate >= 1e3:
-                hr_str = f"{hashrate/1e3:.2f} KH/s"
-            else:
-                hr_str = f"{hashrate:.0f} H/s"
-            
-            self.hashrate_label.setText(hr_str)
-            
-            # Update time to block when hashrate changes
-            self._update_time_to_block()
         
         elif event.event_type == EventType.BLOCK_FOUND:
             count = event.data.get('block_count', 0)

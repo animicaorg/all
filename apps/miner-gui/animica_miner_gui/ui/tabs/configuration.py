@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Optional
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -26,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 class ConfigurationTab(QWidget):
     """Configuration editor tab."""
+
+    #: Emitted with the new MiningAppConfig after a successful save.
+    configSaved = Signal(object)
     
     def __init__(self, config: MiningAppConfig, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -126,6 +130,12 @@ class ConfigurationTab(QWidget):
             
             save_config(new_config)
             self.config = new_config
+            # Rebinding self.config only updated THIS tab. Every other tab was
+            # constructed with the original MiningAppConfig object and kept
+            # holding it, so a payout address saved here never reached the
+            # Wallet tab — it kept showing "Not configured" after a successful
+            # save. Broadcast instead.
+            self.configSaved.emit(new_config)
             
             self.status_label.setText("✓ Configuration saved successfully")
             self.status_label.setStyleSheet("color: green;")

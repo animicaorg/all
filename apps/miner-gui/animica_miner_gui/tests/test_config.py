@@ -21,8 +21,12 @@ def test_config_defaults():
     config = MiningAppConfig()
     
     assert config.version == "1.0"
-    assert config.network.network_type == NetworkType.DEVNET
+    # Mainnet by default: this is a miner people download and point at the
+    # live chain, and packaged builds ship no local node for devnet to use.
+    assert config.network.network_type == NetworkType.MAINNET
+    # No explicit override, but it must still resolve to a usable endpoint.
     assert config.network.rpc_url is None
+    assert config.network.resolved_rpc_url() == "https://rpc.animica.org/rpc"
     assert config.miner.mining_mode == MiningMode.SOLO
     assert config.cpu.enabled is True
     assert config.ui.dark_theme is True

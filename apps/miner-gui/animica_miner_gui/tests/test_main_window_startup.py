@@ -24,6 +24,14 @@ def test_main_window_init_without_rpc(qapp):
     config.network.rpc_url = None
 
     with patch("animica_miner_gui.ui.main_window.load_config", return_value=config), \
-         patch("animica_miner_gui.backend.node_controller.NodeController.start"):
+         patch("animica_miner_gui.backend.node_controller.NodeController.start"), \
+         patch(
+             "animica_miner_gui.backend.node_controller.NodeController.connect_remote_now",
+             return_value=False,
+         ):
         window = MainWindow()
+        # Nothing connected, so no endpoint was recorded...
         assert window.config.network.rpc_url is None
+        # ...but the config must still resolve to a usable endpoint. Returning
+        # None here is what left every surface showing "--" forever.
+        assert window.config.network.resolved_rpc_url() == "https://rpc.animica.org/rpc"
