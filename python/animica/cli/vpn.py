@@ -40,22 +40,6 @@ def _wallet():
     return Wallet.load_or_create(_wallet_path())
 
 
-def _validate_anm_address(addr: str) -> bool:
-    """True iff `addr` is a valid ml_dsa_65 anim1 address (bech32m). Best-effort: if the
-    validator can't be imported (bare checkout without pq on the path), fall back to a prefix
-    check so the CLI still runs — the marketplace re-validates server-side regardless."""
-    if not addr.startswith("anim1"):
-        return False
-    try:
-        from pq.py.address import validate_address
-    except Exception:
-        return True  # server-side isAnimicaAddress is the authoritative gate
-    try:
-        return bool(validate_address(addr, expect_hrp="anim", allowed_alg_ids={0x1003}))
-    except Exception:
-        return False
-
-
 def _emit(obj, as_json: bool):
     if as_json:
         console.print_json(_json.dumps(obj, default=str))
@@ -203,21 +187,15 @@ def exit_serve(region: str = typer.Option("unknown"),
                                                   help="Also run an HTTP proxy for the extension's browser-proxy mode"),
                proxy_port: int = typer.Option(8443),
                capacity_mbps: int = typer.Option(100),
-               address: str = typer.Option("", "--address",
-                                           help="anim1… address your bandwidth-reward IOUs settle to "
-                                                "(deferred settlement). Defaults to this exit's operator wallet."),
                i_am_not_the_validator: bool = typer.Option(False, "--i-am-not-the-validator",
                                                            help="Override co-location guard on a node host")):
     """Run the exit daemon (foreground). Off by default; requires accepted ToS + a free UDP port."""
     from animica.vpn.exit_daemon import ExitConfig, ExitDaemon
     w = _wallet()
-    payout = address.strip()
-    if payout and not _validate_anm_address(payout):
-        console.print(f"[red]--address is not a valid anim1 address:[/red] {payout}"); raise typer.Exit(1)
     cfg = ExitConfig(region=region, country=country, city=city, label=label,
                      capacity_mbps=capacity_mbps, listen_port=port,
                      enable_browser_proxy=browser_proxy, browser_proxy_port=proxy_port,
-                     payout_address=payout, allow_validator=i_am_not_the_validator)
+                     allow_validator=i_am_not_the_validator)
     d = ExitDaemon(w, cfg)
     try:
         d.preflight()
@@ -227,8 +205,6 @@ def exit_serve(region: str = typer.Option("unknown"),
         console.print(f"[red]exit failed to start:[/red] {e}"); raise typer.Exit(1)
     console.print(f"[green]● exit online[/green] id={exit_id} region={region} udp={port}"
                   + (f" browser-proxy=:{proxy_port}" if browser_proxy else ""))
-    console.print(f"  bandwidth rewards (IOUs) → [b]{payout or w.address}[/b]"
-                  + ("" if payout else " [dim](operator wallet)[/dim]"))
     console.print("[yellow]Third-party traffic egresses from this IP. Ctrl-C to stop.[/yellow]")
     try:
         d.run()
@@ -241,10 +217,8 @@ def exit_serve(region: str = typer.Option("unknown"),
 
 @exit_app.command("stop")
 def exit_stop():
-    """Force-remove any leftover exit interface + firewall rules (idempotent, cross-platform)."""
-    from animica.vpn import firewall, platform_net
-    from animica.vpn.exit_daemon import state_dir
-    confdir = state_dir()
-    firewall.remove_exit(confdir=confdir)
-    platform_net.exit_iface_down(confdir=confdir)
-    console.print("[dim]exit interface + firewall rules removed (if present).[/dim]")
+    """Force-remove any leftover exit interface + nft table (idempotent)."""
+    from animica.vpn import WG_IFACE, nftables, wg
+    wg.iface_del(WG_IFACE)
+    nftables.remove_exit()
+    console.print("[dim]exit interface + nft table removed (if present).[/dim]")

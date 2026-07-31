@@ -2029,21 +2029,16 @@ def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int
     # This keeps tx.getStatus aligned with canonical chain state even when auxiliary indexes lag.
     if bdb is not None:
         target = _b(tx_hash_hex)
-        # 2026-07-25: this is a LINEAR backwards scan that deserializes every block
-        # in range out of SQLite and re-hashes each tx. At depth 4096 a single
-        # lookup for a txid that is not in tx_index (unknown/old/pending txid —
-        # exactly what status pollers ask for) reads 4096 blocks. Several clients
-        # polling tx.getStatus/getTransactionByHash saturated the whole
-        # ThreadPoolExecutor (py-spy showed every worker inside
-        # _lookup_persisted_tx -> get_block_by_height -> sqlite), held the GIL, and
-        # starved the asyncio loop -> miner.getBlockTemplate timed out -> the pool
-        # could not build jobs -> chain stalled. Drop the fallback window to a
-        # recent-reorg-depth window; tx_index still serves normal lookups, this is
-        # only the "auxiliary index lagged" fallback. Env-overridable.
-        # 128 (not 64): DEFAULT_MAX_REORG_DEPTH=96 (core/chain/block_import.py) and
-        # the ~120-block tx validity window bound how far back a tx this fallback
-        # could legitimately rescue may sit, so 128 covers every real case at ~0.5s
-        # worst case instead of the ~18s the old 4096 default cost.
+        # Bounded fallback. This is a LINEAR backwards scan that deserializes every
+        # block out of SQLite and re-hashes each tx; it is reached ONLY when both the
+        # receipt index (PFX_RXI) and tx_index (PFX_TXI) MISS — i.e. for a pending or
+        # unknown txid, which is exactly what tx-status pollers ask about. Measured at
+        # ~4.4ms/block, the old 4096 default cost ~18s of SQLite-lock-holding CPU per
+        # miss; because every DB read is serialised on one connection+lock and all sync
+        # RPC handlers share one executor, a few pollers starved miner.getBlockTemplate
+        # and stalled block production. 128 covers every case this fallback could
+        # legitimately rescue (DEFAULT_MAX_REORG_DEPTH=96, ~120-block tx validity
+        # window); indexed lookups are unaffected. Env-overridable.
         scan_depth = int(os.getenv("ANIMICA_TX_STATUS_SCAN_DEPTH", "128") or 128)
         head_height: int | None = None
         try:

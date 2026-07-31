@@ -16,10 +16,9 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Optional
 
-from . import WG_IFACE, firewall, wg
+from . import WG_IFACE, nftables, wg
 from .config_gen import ClientConf, render_client_conf
 from .crypto import Wallet
-from .platform_net import IS_DARWIN
 from .registry_client import Exit, RegistryClient
 
 
@@ -54,11 +53,8 @@ def apparent_ip(timeout: int = 8) -> Optional[str]:
 
 
 def _probe_rtt_ms(host: str) -> Optional[float]:
-    # `ping -W` is SECONDS on Linux but MILLISECONDS on macOS — pass the platform's unit so the
-    # probe actually waits ~2s on both (a 2ms wait on Darwin makes every probe silently time out).
-    wait = "2000" if IS_DARWIN else "2"
     try:
-        out = subprocess.run(["ping", "-c", "1", "-W", wait, host], capture_output=True, text=True)
+        out = subprocess.run(["ping", "-c", "1", "-W", "2", host], capture_output=True, text=True)
         if out.returncode != 0:
             return None
         for tok in out.stdout.split():
@@ -146,17 +142,14 @@ def connect(wallet: Wallet, *, exit_id: Optional[str] = None, region: Optional[s
         ep_ip = exit_ep.rsplit(":", 1)[0]
         ep_port = int(exit_ep.rsplit(":", 1)[1])
         try:
-            firewall.apply_killswitch(WG_IFACE, ep_ip, ep_port, confdir=state_dir())
+            nftables.apply_killswitch(WG_IFACE, ep_ip, ep_port)
             ks_active = True
         except Exception as e:
             # FAIL CLOSED. The user explicitly asked for leak protection; if we cannot install
             # it, tearing the tunnel down is safer than running unprotected while status() would
             # have falsely reported killswitch=true. Opt out explicitly with --no-killswitch.
             subprocess.run(["wg-quick", "down", path], capture_output=True, env={**os.environ, **env})
-            try:
-                firewall.remove_killswitch(confdir=state_dir())
-            except Exception:
-                pass
+            nftables.remove_killswitch()
             raise ClientError(
                 f"killswitch could not be installed ({e}); tunnel torn down (fail-closed). "
                 f"Re-run with --no-killswitch to connect without leak protection."
@@ -180,27 +173,17 @@ def connect(wallet: Wallet, *, exit_id: Optional[str] = None, region: Optional[s
     }
 
 
-def _safe_remove_killswitch() -> None:
-    # Teardown must never crash on a missing firewall tool (e.g. no `nft` on macOS) — the
-    # tunnel is already down; a raised FileNotFoundError here would abort disconnect and leak
-    # the session file. Firewall removal is best-effort.
-    try:
-        firewall.remove_killswitch(confdir=state_dir())
-    except Exception:
-        pass
-
-
 def disconnect(wallet: Optional[Wallet] = None, reg: Optional[RegistryClient] = None) -> dict:
     sp = _session_path()
     if not os.path.exists(sp):
         # still try to tear down a stray interface
         subprocess.run(["wg-quick", "down", _conf_path()], capture_output=True)
-        _safe_remove_killswitch()
+        nftables.remove_killswitch()
         return {"status": "no active session"}
     with open(sp) as f:
         sess = json.load(f)
     subprocess.run(["wg-quick", "down", sess.get("confPath", _conf_path())], capture_output=True)
-    _safe_remove_killswitch()
+    nftables.remove_killswitch()
     if wallet is not None:
         try:
             reg = reg or RegistryClient(wallet)

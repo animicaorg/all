@@ -169,17 +169,10 @@ def _lookup_receipt_loc(tx_hash_b: bytes) -> _ReceiptLoc | None:
                     pass
 
     # 3) Scan recent canonical blocks as a resilient fallback if indexes lag.
-    # 2026-07-25: same linear-scan hazard as rpc/methods/tx.py's fallback, and this
-    # is the path wallets/exchanges poll HARDEST (tx.getTransactionReceipt /
-    # eth_getTransactionReceipt). At 4096 a single miss — i.e. any pending/unknown
-    # txid, which is exactly what a status poller asks about — costs ~18s of
-    # SQLite-lock-holding CPU (measured ~4.4ms/block). Because core/db/sqlite.py
-    # serialises every read on ONE connection + RLock, a few pollers block all RPC
-    # worker threads and starve the sync miner.getBlockTemplate handler: that is
-    # what froze the chain at 54262 for ~57min today. 128 still covers every case
-    # this fallback could legitimately rescue (DEFAULT_MAX_REORG_DEPTH=96 and the
-    # ~120-block tx validity window bound how far back a tx can appear), while the
-    # RXI/TXI indexes serve real lookups in O(1). Env-overridable; 0 disables.
+    # Same bounded-fallback rationale as rpc/methods/tx.py. This path backs
+    # tx.getTransactionReceipt / eth_getTransactionReceipt — the calls wallets and
+    # exchanges poll hardest — so leaving it at 4096 reopened the same starvation
+    # that stalls block production. Env-overridable; 0 disables the scan entirely.
     scan_depth = int(os.environ.get("ANIMICA_TX_RECEIPT_SCAN_DEPTH", "128") or 128)
     if scan_depth > 0:
         loc = _scan_receipt_loc_by_blocks(tx_hash_b, max_depth=scan_depth)
