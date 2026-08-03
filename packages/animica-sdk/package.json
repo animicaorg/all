@@ -1,0 +1,60 @@
+{
+  "name": "@animica/sdk",
+  "version": "0.1.0",
+  "description": "Official JavaScript/TypeScript SDK for the Animica post-quantum L1: JSON-RPC client, free OpenAI-compatible AI API, bech32m addresses, price and chain stats.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/animicaorg/all.git",
+    "directory": "packages/animica-sdk"
+  },
+  "homepage": "https://animica.org",
+  "bugs": {
+    "url": "https://github.com/animicaorg/all/issues"
+  },
+  "keywords": [
+    "animica",
+    "anm",
+    "blockchain",
+    "post-quantum",
+    "json-rpc",
+    "bech32m",
+    "ml-dsa",
+    "openai-compatible",
+    "ai",
+    "sdk",
+    "web3",
+    "cryptocurrency",
+    "mining"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && node scripts/postbuild.mjs",
+    "test": "npm run build && node --test test/",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+#
+# SLIM public Animica mainnet node image.
+#
+# This is the DISTRIBUTION image for third parties who want to run a node:
+#   docker build -f Dockerfile.node -t animicaorg/node:9.0.8 .
+#   docker run -d -p 8545:8545 -p 30333:30333 -v animica-data:/data animicaorg/node:9.0.8
+#
+# Do NOT confuse this with (and do NOT `docker build`) the multi-GB monorepo
+# image that runs the operator's canonical node — see README.md.
+#
+# Why --no-deps + requirements-node.txt: the PyPI `animica` package declares
+# the full AI stack (torch, transformers, diffusers, ...) as base
+# dependencies by design. A public RPC/P2P node needs none of that. The
+# pinned set in requirements-node.txt was verified to boot `python -m rpc`
+# on mainnet and keeps the image ~600 MB instead of many GB.
+
+FROM python:3.12-slim
+
+ARG ANIMICA_VERSION=9.0.8
+
+LABEL org.opencontainers.image.title="Animica node (slim)" \
+      org.opencontainers.image.description="Animica post-quantum L1 mainnet node: JSON-RPC on 8545, P2P on 30333" \
+      org.opencontainers.image.url="https://animica.org" \
+      org.opencontainers.image.source="https://github.com/animicaorg/all" \
+      org.opencontainers.image.version="${ANIMICA_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+COPY requirements-node.txt /tmp/requirements-node.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-node.txt \
+ && pip install --no-cache-dir --no-deps "animica==${ANIMICA_VERSION}" \
+ && rm /tmp/requirements-node.txt
+
+COPY healthcheck.py /usr/local/lib/animica-healthcheck.py
+
+# Non-root runtime user; /data holds chain state (genesis for mainnet ships
+# inside the package and is resolved from ANIMICA_NETWORK automatically).
+RUN useradd --uid 10001 --create-home --home-dir /data animica
+USER animica
+WORKDIR /data
+VOLUME /data
+
+ENV ANIMICA_NETWORK=mainnet \
+    ANIMICA_CHAIN_ID=1 \
+    ANIMICA_DATA_DIR=/data \
+    HOME=/data \
+    ANIMICA_RPC_HOST=0.0.0.0 \
+    ANIMICA_RPC_PORT=8545 \
+    P2P_ENABLE=true \
+    ANIMICA_P2P_PORT=30333 \
+    ANIMICA_P2P_LISTEN_TCP=0.0.0.0:30333 \
+    ANIMICA_LOG_LEVEL=INFO \
+    PYTHONUNBUFFERED=1
+
+# 8545 = JSON-RPC (+/ws, /openrpc.json, /healthz, /metrics)
+# 30333 = P2P TCP (QUIC 30334/udp and WebSocket 30335/tcp exist but are
+#         optional; enable + publish them yourself if you need them)
+EXPOSE 8545/tcp 30333/tcp
+
+HEALTHCHECK --interval=30s --timeout=6s --start-period=45s --retries=3 \
+  CMD ["python", "/usr/local/lib/animica-healthcheck.py"]
+
+ENTRYPOINT ["python", "-m", "rpc"]

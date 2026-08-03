@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
+# Default locale manifest for Animica Internet 0.1.0
+PackageIdentifier: Animica.AnimicaInternet
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Animica
+PublisherUrl: https://animica.org
+PublisherSupportUrl: https://animica.org/support
+PackageName: Animica Internet
+PackageUrl: https://animica.org/internet
+License: MIT
+Copyright: Copyright (c) Animica
+ShortDescription: Standalone .anm-only desktop browser with a built-in Animica wallet
+Description: |-
+  Animica Internet is a desktop browser for the .anm decentralized web on the
+  Animica post-quantum L1 blockchain. It resolves and renders anm:// sites
+  published on-chain via the data-availability layer, includes an embedded
+  wallet with a transaction-approval dialog (ML-DSA-65 post-quantum
+  signatures), and can reserve .anm names and publish sites directly from the
+  app.
+Moniker: animica-internet
+Tags:
+  - animica
+  - blockchain
+  - browser
+  - decentralized
+  - post-quantum
+  - wallet
+  - web3
+ReleaseNotesUrl: https://github.com/animicaorg/all/releases
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0

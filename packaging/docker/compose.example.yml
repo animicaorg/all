@@ -1,0 +1,31 @@
+# Example compose file for the SLIM public Animica node image.
+# Copy next to Dockerfile.node + requirements-node.txt + healthcheck.py, then:
+#   docker compose -f compose.example.yml up -d
+services:
+  animica-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+      args:
+        ANIMICA_VERSION: "9.0.8"
+    # Once a registry image is published, replace `build:` with e.g.:
+    # image: animicaorg/node:9.0.8
+    container_name: animica-node
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8545:8545"   # JSON-RPC — keep loopback-only unless you
+                                # really mean to expose a public RPC endpoint
+      - "30333:30333"           # P2P TCP — expose publicly so peers can dial in
+    volumes:
+      - animica-data:/data
+    environment:
+      ANIMICA_NETWORK: mainnet
+      ANIMICA_LOG_LEVEL: INFO
+      # Optional overrides:
+      # ANIMICA_RPC_PORT: "8545"
+      # ANIMICA_P2P_LISTEN_TCP: "0.0.0.0:30333"
+      # ANIMICA_P2P_ADVERTISE_ADDR: "<your-public-ip>:30333"
+    stop_grace_period: 30s
+
+volumes:
+  animica-data:
