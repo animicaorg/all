@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from decimal import Decimal
 
 import cache
 import sources
@@ -25,6 +26,11 @@ ALL_GET_PATHS = [
     "/api/emission",
     "/api/stats",
     "/api/whattomine",
+    "/api/getblockcount",
+    "/api/getdifficulty",
+    "/api/getnetworkhashps",
+    "/api/getblockreward",
+    "/api/getmoneysupply",
     "/healthz",
 ]
 
@@ -46,12 +52,29 @@ def test_supply_plaintext_defaults(client):
 def test_supply_json_format(client):
     r = client.get("/api/supply/circulating?format=json")
     assert r.status_code == 200
-    body = r.json()
-    assert body["value"] == CIRC_STR
+    assert r.headers["content-type"].startswith("application/json")
+    # CoinGecko requirement: value is a JSON NUMBER — the exact full-precision
+    # digits must appear as a bare number literal on the wire (a >100M value
+    # with 9 decimals exceeds float64 precision, so any float round-trip
+    # would corrupt the last digit).
+    assert f'"value": {CIRC_STR},' in r.text
+    body = json.loads(r.text, parse_float=Decimal)
+    assert isinstance(body["value"], Decimal)
+    assert body["value"] == Decimal(CIRC_STR)
+    assert body["value_str"] == CIRC_STR
     assert body["value_base_units"] == "105188707293574736"
     assert body["unit"] == "ANM"
     assert body["height"] == HEAD_HEIGHT
     assert body["updated_at"]
+
+
+def test_supply_json_max_is_integer_number(client):
+    r = client.get("/api/supply/max?format=json")
+    assert r.status_code == 200
+    assert f'"value": {MAX_STR},' in r.text
+    body = json.loads(r.text)
+    assert body["value"] == 900_000_000
+    assert body["value_str"] == MAX_STR
 
 
 def test_supply_full_breakdown(client):
@@ -91,6 +114,24 @@ def test_cors_present_even_on_503(client, upstream):
     assert r.headers.get("access-control-allow-origin") == "*"
 
 
+def test_options_preflight_204(client):
+    for path in ALL_GET_PATHS:
+        r = client.options(path)
+        assert r.status_code == 204, path
+        assert r.headers.get("access-control-allow-origin") == "*", path
+        assert "GET" in r.headers.get("access-control-allow-methods", ""), path
+        assert "OPTIONS" in r.headers.get("access-control-allow-methods", ""), path
+    # preflight never 405s, even on unknown paths
+    assert client.options("/no/such/path").status_code == 204
+
+
+def test_head_200_on_all_get_routes(client):
+    for path in ALL_GET_PATHS:
+        r = client.head(path)
+        assert r.status_code == 200, path
+        assert r.headers.get("access-control-allow-origin") == "*", path
+
+
 # --- stale serving from last-good snapshot -----------------------------------
 
 def test_stale_served_when_rpc_down(client, upstream):
@@ -120,10 +161,10 @@ def test_never_500_without_snapshot(client, upstream):
     # max supply is a code constant: still served
     r2 = client.get("/api/supply/max")
     assert r2.status_code == 200 and r2.text == MAX_STR
-    # health never errors
+    # health never errors, but ok tracks node reachability
     h = client.get("/healthz")
     assert h.status_code == 200
-    assert h.json()["ok"] is True
+    assert h.json()["ok"] is False
     assert h.json()["node_reachable"] is False
 
 
@@ -190,6 +231,94 @@ def test_pool_down_gives_nulls_not_errors(client, upstream):
     assert "x-animica-stale" not in r.headers
 
 
+# --- Iquidus/WhatToMine-style plain-text aliases -------------------------------
+
+def test_getblockcount(client):
+    r = client.get("/api/getblockcount")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert r.headers.get("access-control-allow-origin") == "*"
+    assert int(r.text) == HEAD_HEIGHT
+
+
+def test_getdifficulty(client):
+    r = client.get("/api/getdifficulty")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert int(r.text) == THETA_MICRO
+
+
+def test_getnetworkhashps(client):
+    r = client.get("/api/getnetworkhashps")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert "e" not in r.text.lower() and "," not in r.text  # plain decimal
+    assert abs(float(r.text) - HASHRATE_HSPS * 2**32) < 1.0
+
+
+def test_getblockreward(client):
+    r = client.get("/api/getblockreward")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert r.text == "300"  # current total block reward in ANM
+    assert float(r.text) == 300.0
+
+
+def test_getmoneysupply(client):
+    r = client.get("/api/getmoneysupply")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert r.text == TOTAL_STR
+    assert float(r.text) > 100_000_000
+
+
+def test_aliases_serve_stale_snapshot_when_node_down(client, upstream):
+    assert client.get("/api/getblockcount").status_code == 200  # warm + snapshot
+    upstream["rpc_down"] = True
+    cache.CACHE.clear()
+    r = client.get("/api/getblockcount")
+    assert r.status_code == 200
+    assert int(r.text) == HEAD_HEIGHT
+    assert r.headers.get("x-animica-stale") == "true"
+
+
+# --- non-circulating env var is ADDITIVE ---------------------------------------
+
+def test_supply_breakdown_env_extra_is_additive(client, upstream, monkeypatch):
+    extra = "anim1extraopswalletxxxxxxxxxxxxxxxxxxxxxxx"
+    # env lists an extra address AND (redundantly) a default: union, no dupes
+    monkeypatch.setenv(
+        "ANIMICA_NON_CIRCULATING",
+        f"{extra}, {sources.FOUNDATION_TREASURY_ADDRESS}",
+    )
+    cache.CACHE.clear()
+    b = client.get("/api/supply").json()
+    addrs = [e["address"] for e in b["non_circulating"]]
+    assert addrs.count(sources.FOUNDATION_TREASURY_ADDRESS) == 1  # never dropped, never duped
+    for addr, _ in sources.DEFAULT_NON_CIRCULATING:
+        assert addr in addrs  # every default survives the env override
+    assert extra in addrs
+    assert len(addrs) == len(sources.DEFAULT_NON_CIRCULATING) + 1
+    f = next(e for e in b["non_circulating"] if e["address"] == sources.FOUNDATION_TREASURY_ADDRESS)
+    assert f["balance"] == "161934.017025133"  # foundation balance still excluded
+
+
+# --- null-block resilience -----------------------------------------------------
+
+def test_refresh_survives_null_getblockbyheight(client, upstream):
+    upstream["null_blocks"] = True  # chain.getBlockByHeight returns JSON null
+    r = client.get("/api/stats")
+    assert r.status_code == 200
+    assert "x-animica-stale" not in r.headers  # a LIVE refresh, not the snapshot
+    s = r.json()
+    assert s["height"] == HEAD_HEIGHT          # everything else intact
+    assert s["difficulty"] == THETA_MICRO
+    assert s["last_block_time"] is None        # optional block-time data missing
+    assert s["avg_block_time_1h_s"] is None
+    # supply endpoints fully unaffected
+    assert client.get("/api/supply/total").text == TOTAL_STR
+
+
 # --- emission & health -------------------------------------------------------
 
 def test_emission_schedule(client):
@@ -220,3 +349,19 @@ def test_healthz_price_stale(client, upstream):
     h = client.get("/healthz").json()
     assert h["ok"] is True
     assert h["price_fresh"] is False
+
+
+def test_healthz_ok_false_when_node_down_but_still_serving(client, upstream):
+    warm = client.get("/api/supply/total")
+    assert warm.status_code == 200  # writes the last-good snapshot
+
+    upstream["rpc_down"] = True
+    cache.CACHE.clear()
+
+    r = client.get("/healthz")
+    assert r.status_code == 200          # stale-but-serving keeps HTTP 200
+    h = r.json()
+    assert h["ok"] is False              # ...but ok tracks node reachability
+    assert h["node_reachable"] is False
+    assert h["stale"] is True
+    assert h["height"] == HEAD_HEIGHT    # snapshot data still exposed

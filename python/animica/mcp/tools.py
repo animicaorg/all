@@ -296,8 +296,10 @@ class ToolSpec:
 
 
 def _spec(fn: Callable[..., str], category: str) -> ToolSpec:
-    doc = (fn.__doc__ or "").strip().split("\n")[0].strip()
-    return ToolSpec(name=fn.__name__, fn=fn, category=category, summary=doc)
+    # First paragraph (not first line): summaries wrap across lines, and cutting
+    # at "\n" shipped truncated mid-sentence descriptions to MCP clients.
+    doc = (fn.__doc__ or "").strip().split("\n\n")[0]
+    return ToolSpec(name=fn.__name__, fn=fn, category=category, summary=" ".join(doc.split()))
 
 
 # Order matters: AI + quantum lead (marketplace-policy framing), then read-only

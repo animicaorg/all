@@ -252,7 +252,7 @@ export function validateAddress(addr: string): boolean {
   }
 }
 
-/** Shorten an address for display: anim1z…946ga */
+/** Shorten an address for display: anim1z…r946ga */
 export function shortAddress(addr: string, keep = 6): string {
   if (addr.length <= 2 * keep + 3) return addr;
   return `${addr.slice(0, keep)}…${addr.slice(-keep)}`;

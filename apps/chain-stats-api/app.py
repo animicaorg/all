@@ -15,10 +15,11 @@ Guarantees:
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 import cache
@@ -39,18 +40,30 @@ _STALE_TTL_S = 10.0  # brief cache for the stale path so a dead node isn't hamme
 # ---------------------------------------------------------------------------
 # CORS on EVERY response (aggregators poll without an Origin header, so
 # starlette's CORSMiddleware — which requires Origin — is not enough).
+# OPTIONS (browser preflight) is short-circuited to 204 + CORS headers here,
+# before routing, so it can never 405.
 # ---------------------------------------------------------------------------
 
 @app.middleware("http")
 async def cors_everything(request: Request, call_next):
-    try:
-        response = await call_next(request)
-    except Exception:  # belt-and-braces: even unexpected errors return JSON
-        response = JSONResponse({"error": "internal error"}, status_code=503)
+    if request.method == "OPTIONS":
+        response = Response(status_code=204)
+    else:
+        try:
+            response = await call_next(request)
+        except Exception:  # belt-and-braces: even unexpected errors return JSON
+            response = JSONResponse({"error": "internal error"}, status_code=503)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
+
+
+def GET(path: str):
+    """GET route that also answers HEAD (FastAPI's @app.get registers GET only,
+    which made every HEAD request 405). The ASGI server suppresses the body on
+    HEAD responses per HTTP semantics."""
+    return app.api_route(path, methods=["GET", "HEAD"])
 
 
 # ---------------------------------------------------------------------------
@@ -124,31 +137,36 @@ def _supply_response(kind: str, request: Request):
     value_str = sources.base_units_to_anm_str(bu)
     headers = _stale_headers(stale)
     if request.query_params.get("format") == "json":
-        return JSONResponse(
-            {
-                "value": value_str,
-                "value_base_units": str(bu),
-                "unit": "ANM",
-                "height": data["height"] if data else None,
-                "updated_at": data["updated_at"] if data else _now_iso(),
-            },
-            headers=headers,
+        # CoinGecko requires "value" to be a JSON NUMBER. value_str is already
+        # a plain full-precision decimal, i.e. a valid JSON number literal, so
+        # the body is built manually — no float round-trip anywhere, the exact
+        # digits go on the wire. value_str is kept alongside for safety.
+        body = (
+            "{"
+            f'"value": {value_str}, '
+            f'"value_str": {json.dumps(value_str)}, '
+            f'"value_base_units": {json.dumps(str(bu))}, '
+            '"unit": "ANM", '
+            f'"height": {json.dumps(data["height"] if data else None)}, '
+            f'"updated_at": {json.dumps(data["updated_at"] if data else _now_iso())}'
+            "}"
         )
+        return Response(content=body, media_type="application/json", headers=headers)
     # DEFAULT: text/plain decimal in whole-ANM units — what CG/CMC consume.
     return PlainTextResponse(value_str, headers=headers)
 
 
-@app.get("/api/supply/circulating")
+@GET("/api/supply/circulating")
 def supply_circulating(request: Request):
     return _supply_response("circulating", request)
 
 
-@app.get("/api/supply/total")
+@GET("/api/supply/total")
 def supply_total(request: Request):
     return _supply_response("total", request)
 
 
-@app.get("/api/supply/max")
+@GET("/api/supply/max")
 def supply_max(request: Request):
     return _supply_response("max", request)
 
@@ -167,7 +185,7 @@ _METHODOLOGY = (
 )
 
 
-@app.get("/api/supply")
+@GET("/api/supply")
 def supply_full():
     data, stale, exc = _try_aggregate()
     if data is None:
@@ -204,7 +222,7 @@ def supply_full():
 # Emission schedule (static protocol facts + current values when available)
 # ---------------------------------------------------------------------------
 
-@app.get("/api/emission")
+@GET("/api/emission")
 def emission():
     data, stale, _exc = _try_aggregate()
     current = None
@@ -309,7 +327,7 @@ def _iso_or_none(epoch_ts: Optional[int]) -> Optional[str]:
     return datetime.fromtimestamp(epoch_ts, tz=timezone.utc).isoformat(timespec="seconds")
 
 
-@app.get("/api/stats")
+@GET("/api/stats")
 def stats():
     data, stale, exc = _try_aggregate()
     if data is None:
@@ -361,7 +379,7 @@ def stats():
 # WhatToMine-shaped view (flat, top-level fields)
 # ---------------------------------------------------------------------------
 
-@app.get("/api/whattomine")
+@GET("/api/whattomine")
 def whattomine():
     data, stale, exc = _try_aggregate()
     if data is None:
@@ -402,18 +420,84 @@ def whattomine():
 
 
 # ---------------------------------------------------------------------------
+# Iquidus/WhatToMine-style plain-text aliases (bare number, text/plain, same
+# cached snapshot + stale semantics as the supply routes)
+# ---------------------------------------------------------------------------
+
+def _plain_float(v: float) -> str:
+    """Float -> plain decimal text: never scientific notation, no trailing zeros."""
+    s = f"{v:.3f}"
+    return s.rstrip("0").rstrip(".") if "." in s else s
+
+
+@GET("/api/getblockcount")
+def getblockcount():
+    data, stale, exc = _try_aggregate()
+    if data is None:
+        return _unavailable(exc)
+    return PlainTextResponse(str(data["height"]), headers=_stale_headers(stale))
+
+
+@GET("/api/getdifficulty")
+def getdifficulty():
+    data, stale, exc = _try_aggregate()
+    if data is None:
+        return _unavailable(exc)
+    return PlainTextResponse(str(data["theta_micro"]), headers=_stale_headers(stale))
+
+
+@GET("/api/getnetworkhashps")
+def getnetworkhashps():
+    data, stale, exc = _try_aggregate()
+    if data is None:
+        return _unavailable(exc)
+    hs = data["hashrate"].get("network_hashrate_hs")
+    if hs is None:
+        # theta-derived fallback (same formula, single-block estimate):
+        # e^(thetaMicro/1e6) expected hashes / observed (or target) block time.
+        blocks = data["blocks"]
+        bt = blocks.get("avg_block_time_1h_s") or blocks["block_time_target_s"]
+        exp_hashes = data.get("expected_hashes_per_block")
+        if exp_hashes and bt:
+            hs = exp_hashes / bt
+    if hs is None:
+        return _unavailable(exc)
+    return PlainTextResponse(_plain_float(float(hs)), headers=_stale_headers(stale))
+
+
+@GET("/api/getblockreward")
+def getblockreward():
+    data, stale, exc = _try_aggregate()
+    if data is None:
+        return _unavailable(exc)
+    bu = data["reward"]["block_subsidy_base_units"]
+    return PlainTextResponse(sources.base_units_to_anm_str(bu), headers=_stale_headers(stale))
+
+
+@GET("/api/getmoneysupply")
+def getmoneysupply():
+    data, stale, exc = _try_aggregate()
+    if data is None:
+        return _unavailable(exc)
+    bu = data["supply"]["total_base_units"]
+    return PlainTextResponse(sources.base_units_to_anm_str(bu), headers=_stale_headers(stale))
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 
-@app.get("/healthz")
+@GET("/healthz")
 def healthz():
     data, stale, _exc = _try_aggregate()
     node_reachable = data is not None and not stale
     price = sources.read_price()  # cheap local-file read; independent of cache
     price_fresh = bool(price and price.get("fresh"))
+    # ok tracks node reachability: stale-but-serving stays HTTP 200, but ok is
+    # false whenever the node is down so monitors see the outage.
     return JSONResponse(
         {
-            "ok": True,
+            "ok": node_reachable,
             "node_reachable": node_reachable,
             "price_fresh": price_fresh,
             "stale": stale if data is not None else None,

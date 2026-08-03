@@ -56,21 +56,51 @@ test("fetchPrice custom url + non-2xx -> HttpError", async () => {
 });
 
 test("fetchStats hits default URL and preserves unknown fields", async () => {
+  // Shape captured live from the chain-stats service /api/stats (2026-08-03).
   const doc = {
-    height: 63080,
-    chainId: 1,
-    thetaMicro: 25617353,
-    networkHashrate: 2.32e9,
-    blockTime: 60,
-    totalSupply: "105349741.31",
+    name: "Animica",
+    symbol: "ANM",
+    chain_id: 1,
+    algorithm: "SHA3-256 PoW (PoIES)",
+    height: 63130,
+    difficulty: 25645361,
+    difficulty_unit: "thetaMicro (PoIES acceptance threshold Theta in micro-nats)",
+    expected_hashes_per_block: 137289956910.727,
+    network_hashrate_hs: 1843871486.5668,
+    pool_observed_hashrate_hs: 59652323.5555,
+    block_time_target_s: 60,
+    avg_block_time_1h_s: 78.37,
+    block_reward: 300.0,
+    block_reward_breakdown: { miner: 255.0, foundation: 45.0 },
+    last_block_time: "2026-08-03T20:11:09+00:00",
+    price_usd: 6.716e-5,
+    price_btc: null,
+    volume_24h_usd: 49.2554,
+    market_url: "https://nonkyc.io/market/ANM_USDT",
+    pools: [
+      {
+        name: "Animica Official Pool",
+        url: "https://pool.animica.org",
+        stratum: "stratum+tcp://pool.animica.org:3333",
+        fee_bps: 0,
+        payout_scheme: "pps",
+      },
+    ],
+    supply: { total_anm: 105365641.32, circulating_anm: 105201457.3, max_anm: 900000000.0 },
+    updated_at: "2026-08-03T20:11:51+00:00",
     someFutureField: { nested: true },
   };
   const fetchStub = makeFetchStub(() => jsonResponse(doc));
   const stats = await fetchStats({ fetch: fetchStub });
   assert.equal(fetchStub.calls[0].url, "https://animica.org/api/stats");
   assert.equal(DEFAULT_STATS_URL, "https://animica.org/api/stats");
-  assert.equal(stats.height, 63080);
-  assert.equal(stats.thetaMicro, 25617353);
+  assert.equal(stats.height, 63130);
+  assert.equal(stats.difficulty, 25645361);
+  assert.equal(stats.network_hashrate_hs, 1843871486.5668);
+  assert.deepEqual(stats.block_reward_breakdown, { miner: 255.0, foundation: 45.0 });
+  assert.equal(stats.price_btc, null);
+  assert.equal(stats.pools[0].stratum, "stratum+tcp://pool.animica.org:3333");
+  assert.equal(stats.supply.max_anm, 900000000.0);
   assert.deepEqual(stats.someFutureField, { nested: true });
 });
 

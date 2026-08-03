@@ -62,7 +62,13 @@ export { DEFAULT_PRICE_URL, fetchPrice } from "./price.js";
 export type { AnmPrice, FetchPriceOptions } from "./price.js";
 
 export { DEFAULT_STATS_URL, fetchStats } from "./stats.js";
-export type { ChainStats, FetchStatsOptions } from "./stats.js";
+export type {
+  ChainStats,
+  ChainStatsPool,
+  ChainStatsRewardBreakdown,
+  ChainStatsSupply,
+  FetchStatsOptions,
+} from "./stats.js";
 
 export { HttpError } from "./http.js";
 export type { FetchLike, HttpOptions } from "./http.js";

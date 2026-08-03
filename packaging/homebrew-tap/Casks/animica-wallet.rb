@@ -20,7 +20,7 @@ cask "animica-wallet" do
   version "0.2.6"
   sha256 "898b56d9c06d46d4ec91098d3076c8e1f8ebed4b5df5d02e9befa4fec773e3b0"
 
-  url "https://animica.org/wallet/animica-wallet-macos.dmg"
+  url "https://animica.org/wallet/0.2.6/animica-wallet-macos.dmg"
   name "Animica Wallet"
   desc "Desktop wallet for the Animica post-quantum blockchain (ML-DSA-65)"
   homepage "https://animica.org/wallet"

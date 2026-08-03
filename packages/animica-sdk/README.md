@@ -98,7 +98,7 @@ const rec = decodeAddress("anim1..."); // { hrp, algId, digest, payload } — th
 rec.algId === ALG_ID_ML_DSA_65;
 
 const addr = encodeAddress(payload34Bytes); // Uint8Array -> "anim1..."
-shortAddress(addr);                          // "anim1z…946ga"
+shortAddress(addr);                          // "anim1z…r946ga"
 ```
 
 ### Price — ANM/USDT
@@ -116,11 +116,16 @@ console.log(p.last, p.base_volume, p.market_url); // from nonkyc.io
 import { fetchStats } from "@animica/sdk";
 
 const s = await fetchStats(); // https://animica.org/api/stats
-console.log(s.height, s.thetaMicro, s.networkHashrate);
+console.log(s.height, s.difficulty, s.network_hashrate_hs); // difficulty = Θ in micro-nats
+console.log(s.block_reward, s.block_reward_breakdown?.miner, s.avg_block_time_1h_s);
+console.log(s.price_usd, s.supply?.circulating_anm, s.pools?.[0]?.stratum);
 ```
 
-The stats document is typed loosely (`ChainStats`) while the public stats API
-stabilizes — every field is optional; unknown fields are preserved.
+The public `https://animica.org/api/stats` URL goes live with the animica.org
+deploy; until then — or to point at your own mirror — pass an override URL:
+`fetchStats({ url: "http://127.0.0.1:8560/api/stats" })`. The document is typed
+as `ChainStats`, mirroring the API's snake_case fields exactly; every field is
+optional and unknown fields are preserved.
 
 ## Payments & signing
 

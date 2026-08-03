@@ -27,7 +27,25 @@ and pool data from the live mainnet node.
 | `GET /api/emission` | JSON | Full emission schedule (halvings, splits, cap math) |
 | `GET /api/stats` | JSON | Rich chain/network/pool/market stats |
 | `GET /api/whattomine` | JSON | Flat WhatToMine-style fields |
+| `GET /api/getblockcount` | `text/plain` number | Current height |
+| `GET /api/getdifficulty` | `text/plain` number | `thetaMicro` (see note below) |
+| `GET /api/getnetworkhashps` | `text/plain` number | Theta-derived network hashrate, raw H/s |
+| `GET /api/getblockreward` | `text/plain` number | Current total block reward, ANM |
+| `GET /api/getmoneysupply` | `text/plain` number | Total supply, ANM |
 | `GET /healthz` | JSON | `{ok, node_reachable, price_fresh}` (public as `/healthz-stats`) |
+
+All `GET` routes also answer `HEAD`, and `OPTIONS` returns `204` with the CORS
+headers (browser preflight).
+
+### Iquidus / WhatToMine plain-text aliases
+
+The five `/api/get*` endpoints mirror the classic Iquidus-explorer API shape:
+bare number, `Content-Type: text/plain`, CORS `*`, served from the same cached
+snapshot (and stale semantics) as the supply routes. Semantics note: Animica's
+"difficulty" is **`thetaMicro`** — an exponential acceptance threshold, not a
+Bitcoin-style difficulty — and `getnetworkhashps` is the theta-derived raw
+hashrate `e^(thetaMicro/1e6) / block_time` H/s, the same formulas `/api/stats`
+already uses (see "Difficulty & network-hashrate semantics" below).
 
 ### Supply endpoints (CoinGecko / CoinMarketCap format)
 
@@ -41,8 +59,11 @@ $ curl https://animica.org/api/supply/circulating
 ```
 
 Append `?format=json` for
-`{"value": "...", "value_base_units": "...", "unit": "ANM", "height": ..., "updated_at": "..."}`
-(the value is a decimal **string** to preserve full precision).
+`{"value": ..., "value_str": "...", "value_base_units": "...", "unit": "ANM", "height": ..., "updated_at": "..."}`.
+`value` is a JSON **number** (CoinGecko requires a numerical value) emitted
+with the exact full-precision decimal digits — the body is built without any
+float round-trip. `value_str` carries the same digits as a decimal string for
+consumers that must avoid lossy JSON-number parsing.
 
 These URLs are safe to poll every 30 minutes (or faster); responses are cached
 30 s server-side. No auth, no API key, HTTPS, stable paths.
@@ -67,10 +88,12 @@ These URLs are safe to poll every 30 minutes (or faster); responses are cached
      future protocol allocation to them is excluded automatically.
 * The address list can be extended without a code change via the
   `ANIMICA_NON_CIRCULATING` environment variable (comma-separated bech32m
-  addresses). If the Foundation designates additional operational wallets as
-  non-circulating, they will be added there and the change is reflected
-  immediately in `/api/supply` (the per-address breakdown keeps the
-  computation auditable).
+  addresses). The variable is strictly **additive**: its addresses are
+  unioned with the built-in defaults, so the foundation treasury and the four
+  system addresses can never be dropped by configuration. If the Foundation
+  designates additional operational wallets as non-circulating, they will be
+  added there and the change is reflected immediately in `/api/supply` (the
+  per-address breakdown keeps the computation auditable).
 * **Max supply** is `900,000,000 ANM` — a code-enforced hard cap
   (`MAX_MONEY` in `consensus/rewards.py`: block rewards are capped to
   `MAX_MONEY − premine − cumulative subsidy` and drop to 0 at the cap).
@@ -146,7 +169,7 @@ required).
 | `ANIMICA_STATS_PRICE_URL` | `https://animica.org/anm-price.json` | price fallback URL |
 | `ANIMICA_STATS_SNAPSHOT_PATH` | `/var/lib/animica-stats/last_good.json` | last-good snapshot |
 | `ANIMICA_STATS_CACHE_TTL` | `30` | aggregate cache TTL (s) |
-| `ANIMICA_NON_CIRCULATING` | (defaults above) | comma-separated non-circulating addresses |
+| `ANIMICA_NON_CIRCULATING` | (empty) | comma-separated extra non-circulating addresses, ADDED to the built-in defaults (defaults can never be dropped) |
 | `ANIMICA_STATS_HTTP_TIMEOUT` | `8` | upstream timeout (s, hard-capped at 10) |
 | `ANIMICA_STATS_POOL_FEE_BPS` | `0` | published PPS pool fee |
 

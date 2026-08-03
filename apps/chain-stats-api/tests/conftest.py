@@ -101,7 +101,7 @@ def _rpc_dispatch(method: str, params: dict):
 def upstream(monkeypatch, tmp_path):
     """Install a MockTransport for every httpx client sources creates, point the
     price file + snapshot path at tmp files, and clear the TTL cache."""
-    state = {"rpc_down": False, "pool_down": False}
+    state = {"rpc_down": False, "pool_down": False, "null_blocks": False}
 
     price_file = tmp_path / "anm-price.json"
     price_file.write_text(json.dumps(price_doc(time.time())))
@@ -117,7 +117,10 @@ def upstream(monkeypatch, tmp_path):
             if state["rpc_down"]:
                 raise httpx.ConnectError("mock: node down", request=request)
             body = json.loads(request.content)
-            result = _rpc_dispatch(body["method"], body.get("params") or {})
+            if body["method"] == "chain.getBlockByHeight" and state["null_blocks"]:
+                result = None  # node returns JSON null (e.g. block not found)
+            else:
+                result = _rpc_dispatch(body["method"], body.get("params") or {})
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
         if url.port == 8550:
             if state["pool_down"]:

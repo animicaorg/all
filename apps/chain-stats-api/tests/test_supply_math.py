@@ -98,3 +98,34 @@ def test_circulating_is_total_minus_noncirculating_sum():
     balances = [161934017025133, 0, 0, 0, 0]
     assert total - sum(balances) == 105188707293574736
     assert sources.base_units_to_anm_str(total - sum(balances)) == "105188707.293574736"
+
+
+# --- non_circulating_list: ANIMICA_NON_CIRCULATING is ADDITIVE ---------------
+
+def test_non_circulating_default_without_env(monkeypatch):
+    monkeypatch.delenv("ANIMICA_NON_CIRCULATING", raising=False)
+    assert sources.non_circulating_list() == sources.DEFAULT_NON_CIRCULATING
+
+
+def test_non_circulating_env_extends_defaults(monkeypatch):
+    extra1 = "anim1extraoperationalwalletxxxxxxxxxxxxxxx"
+    extra2 = "anim1anotherextrawalletxxxxxxxxxxxxxxxxxxx"
+    monkeypatch.setenv("ANIMICA_NON_CIRCULATING", f" {extra1} ,, {extra2}")
+    lst = sources.non_circulating_list()
+    addrs = [a for a, _ in lst]
+    # union: every default is still present — the env can only ADD
+    for addr, _ in sources.DEFAULT_NON_CIRCULATING:
+        assert addr in addrs
+    assert extra1 in addrs and extra2 in addrs
+    assert len(addrs) == len(sources.DEFAULT_NON_CIRCULATING) + 2
+    assert len(set(addrs)) == len(addrs)  # no duplicates
+
+
+def test_non_circulating_foundation_impossible_to_drop(monkeypatch):
+    # even an env value that only re-lists a system address cannot evict the
+    # foundation treasury (the old replace semantics would have)
+    monkeypatch.setenv("ANIMICA_NON_CIRCULATING", "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+    addrs = [a for a, _ in sources.non_circulating_list()]
+    assert sources.FOUNDATION_TREASURY_ADDRESS in addrs
+    assert addrs.count("anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx") == 1
+    assert len(addrs) == len(sources.DEFAULT_NON_CIRCULATING)

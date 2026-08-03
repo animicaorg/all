@@ -141,16 +141,18 @@ def pool_fee_bps() -> int:
 
 
 def non_circulating_list() -> List[Tuple[str, str]]:
-    """Non-circulating addresses: env ANIMICA_NON_CIRCULATING (comma-separated)
-    overrides the default (4 params system addresses + foundation treasury)."""
+    """Non-circulating addresses: the built-in defaults (foundation treasury +
+    4 params system addresses) UNION any extras from ANIMICA_NON_CIRCULATING
+    (comma-separated). The env var is strictly ADDITIVE — it can never drop a
+    default, so the foundation treasury is always excluded from circulating."""
+    out: List[Tuple[str, str]] = list(DEFAULT_NON_CIRCULATING)
+    seen = {addr for addr, _ in out}
     raw = os.environ.get("ANIMICA_NON_CIRCULATING", "").strip()
-    if not raw:
-        return list(DEFAULT_NON_CIRCULATING)
-    out: List[Tuple[str, str]] = []
     for part in raw.split(","):
         addr = part.strip()
-        if not addr:
+        if not addr or addr in seen:
             continue
+        seen.add(addr)
         out.append((addr, _KNOWN_LABELS.get(addr, "non-circulating (configured via ANIMICA_NON_CIRCULATING)")))
     return out
 
@@ -375,17 +377,21 @@ def gather() -> Dict[str, Any]:
         avg_block_time_1h_s: Optional[float] = None
         try:
             head_blk = rpc_call("chain.getBlockByHeight", {"height": height}, client=c)
+            if not isinstance(head_blk, dict):
+                head_blk = {}  # null / non-dict RPC result -> optional data missing
             ts_head = int(head_blk.get("timestamp") or 0)
             if ts_head > 0:
                 last_block_ts = ts_head
                 prev_height = max(1, height - 60)
                 if prev_height < height:
                     prev_blk = rpc_call("chain.getBlockByHeight", {"height": prev_height}, client=c)
+                    if not isinstance(prev_blk, dict):
+                        prev_blk = {}
                     ts_prev = int(prev_blk.get("timestamp") or 0)
                     if 0 < ts_prev < ts_head:
                         avg_block_time_1h_s = round((ts_head - ts_prev) / (height - prev_height), 2)
-        except SourceError:
-            pass
+        except (SourceError, AttributeError, KeyError, TypeError, ValueError):
+            pass  # block-time is optional; its failure must never poison the refresh
 
     price = read_price()
     pool = fetch_pool()

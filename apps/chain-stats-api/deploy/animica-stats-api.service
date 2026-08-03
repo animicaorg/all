@@ -22,7 +22,9 @@ WorkingDirectory=/root/animica/apps/chain-stats-api
 # Environment=ANIMICA_STATS_PRICE_FILE=/var/www/animica.org/anm-price.json
 # Environment=ANIMICA_STATS_SNAPSHOT_PATH=/var/lib/animica-stats/last_good.json
 # Environment=ANIMICA_STATS_CACHE_TTL=30
-# Environment=ANIMICA_NON_CIRCULATING=anim1...,anim1...   (comma-separated override)
+# Environment=ANIMICA_NON_CIRCULATING=anim1...,anim1...   (comma-separated; ADDED to the
+#   built-in defaults — foundation treasury + 4 system addresses always stay excluded;
+#   list only the extra addresses)
 ExecStart=/root/animica/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8560 --workers 1 --no-access-log
 Restart=always
 RestartSec=3
