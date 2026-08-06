@@ -26,6 +26,42 @@ except Exception:  # pragma: no cover
 
 
 log = get_logger("mining.stratum_client")
+
+
+def _parse_set_difficulty(params: object) -> tuple[Optional[float], Optional[int]]:
+    """Extract (share_target, theta_micro) from any mining.set_difficulty shape.
+
+    Returns (None, None) when nothing usable is present — the caller keeps its
+    previous values rather than raising, because an exception here kills the
+    read loop and with it the miner's connection. Accepts the structured
+    Animica form, snake_case variants, and the classic stratum-v1 list form
+    ``params: [difficulty]`` (which carries no ratio, so it yields nothing and
+    is simply ignored).
+    """
+    share_target: Optional[float] = None
+    theta_micro: Optional[int] = None
+    if isinstance(params, dict):
+        for key in ("shareTarget", "share_target", "shareRatio", "share_ratio"):
+            if params.get(key) is not None:
+                try:
+                    value = float(params[key])
+                except (TypeError, ValueError):
+                    continue
+                if value > 0.0:
+                    share_target = min(value, 1.0)
+                break
+        for key in ("thetaMicro", "theta_micro", "thetaTargetMicro", "theta_target_micro"):
+            if params.get(key) is not None:
+                try:
+                    parsed = int(params[key])
+                except (TypeError, ValueError):
+                    continue
+                if parsed > 0:
+                    theta_micro = parsed
+                break
+    return share_target, theta_micro
+
+
 JSON = Dict[str, Any]
 
 
@@ -287,6 +323,14 @@ class StratumClient:
         #   ANIMICA_AICF_DISABLE=1                 — opt out (pure-PoW only)
         import os as _os
         features: dict = {"framing": self.framing}
+        # Ask the pool for sub-block share targets (9.1.0+). Without this the
+        # pool sends shareTarget=1.0 — the block target — so the only
+        # submittable hash is a whole block and PPS pays block finders only.
+        # This client thresholds on θµ·shareTarget and never consults the block
+        # target, so it needs no other change to mine sub-block shares.
+        # ANIMICA_MINER_NO_SUBBLOCK=1 opts back out.
+        if not _os.environ.get("ANIMICA_MINER_NO_SUBBLOCK", "").strip():
+            features["subblockShares"] = {"version": 1}
         if not _os.environ.get("ANIMICA_AICF_DISABLE", "").strip():
             aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
             tiers_forced = bool(aicf_tiers_env)
@@ -552,13 +596,30 @@ class StratumClient:
         params = obj.get("params") or {}
 
         if method == str(Method.SET_DIFFICULTY.value):
-            self.share_target = float(params["shareTarget"])
-            self.theta_micro = int(params["thetaMicro"])
-            log.info(
-                f"[client] difficulty shareTarget={self.share_target} thetaMicro={self.theta_micro}"
-            )
-            if self.on_set_difficulty:
-                await self.on_set_difficulty(self.share_target, self.theta_micro)
+            # Parse DEFENSIVELY. This handler used to subscript
+            # params["shareTarget"] / params["thetaMicro"] directly, so any
+            # set_difficulty that wasn't the exact expected shape (classic v1
+            # list params, a renamed/missing field) raised inside the read loop
+            # and tore the connection down — subscribe, set_difficulty, dead, no
+            # authorize, no job, no mining. That is the failure signature of the
+            # 2026-07-10 incident that cost ~2h of mainnet block production.
+            # A difficulty message we don't understand must never stop mining:
+            # keep the previous values and carry on.
+            share_target, theta_micro = _parse_set_difficulty(params)
+            if share_target is None and theta_micro is None:
+                log.warning(
+                    f"[client] ignoring unparseable set_difficulty params={params!r}"
+                )
+            else:
+                if share_target is not None:
+                    self.share_target = share_target
+                if theta_micro is not None:
+                    self.theta_micro = theta_micro
+                log.info(
+                    f"[client] difficulty shareTarget={self.share_target} thetaMicro={self.theta_micro}"
+                )
+                if self.on_set_difficulty:
+                    await self.on_set_difficulty(self.share_target, self.theta_micro)
 
         elif method == str(Method.NOTIFY.value):
             self.last_job = params

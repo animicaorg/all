@@ -155,6 +155,10 @@ class StratumPoolServer:
             # re-applies the wire-difficulty floor before every emission.
             session_vardiff_enabled=False,
         )
+        # Hand the server the sub-block ratio policy. It applies ONLY to
+        # sessions that advertised support on mining.subscribe, so xmrig/ASIC/
+        # older clients keep the floored block-target share they get today.
+        self._server.set_subblock_ratio_policy(self.subblock_ratio_for_theta)
         # XMR (Monero RandomX) dual-mining infrastructure. Initialised
         # lazily in start() once the pool config has been validated.
         # See python/animica/stratum_pool/xmr.py for the components.
@@ -341,6 +345,34 @@ class StratumPoolServer:
         if upper < lower:
             upper = lower
         return lower, upper
+
+    def subblock_ratio_for_theta(self, theta_micro: int) -> Optional[float]:
+        """Share ratio for sub-block-capable sessions, or None to leave them on
+        the normal (xmrig-floored) target.
+
+        Solves ``credit_fraction == 1/S`` for the ratio, where credit_fraction
+        is the probability a share also solves a block, ``exp(-θ(1-r)/MICRO)``:
+
+            r = 1 - MICRO·ln(S) / θ
+
+        so a share is worth 1/S of a block in expectation and the pool-wide
+        share rate is S/block_time regardless of hashrate. Returns None when θ
+        is too small to carve S shares out of a block without crossing
+        ``subblock_min_ratio`` — better to keep block-only shares for a job than
+        to hand out a target that floods.
+        """
+        cfg = self._config
+        if not getattr(cfg, "subblock_shares_enabled", False):
+            return None
+        theta = max(int(theta_micro or 0), 0)
+        if theta <= 0:
+            return None
+        shares_per_block = max(2, int(getattr(cfg, "shares_per_block", 64) or 64))
+        ratio = 1.0 - (MICRO * math.log(shares_per_block)) / float(theta)
+        floor_ratio = float(getattr(cfg, "subblock_min_ratio", 0.5) or 0.0)
+        if not (0.0 < ratio < 1.0) or ratio < floor_ratio:
+            return None
+        return ratio
 
     @staticmethod
     def _ratio_to_threshold_micro(theta_micro: int, ratio: float) -> int:

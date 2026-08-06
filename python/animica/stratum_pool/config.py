@@ -99,6 +99,28 @@ class PoolConfig:
     # The holdback is not a fee: unconsumed reserve stays in cap_remaining and
     # flows back to future block winners once small-share demand is met.
     pps_block_reserve_bps: int = 500
+    # Sub-block shares (9.1.0). The wire share target is a RATIO of θ, and the
+    # xmrig-compat floor pins it at 1.0 == θ == the block target, so a "share"
+    # IS a block here and PPS pays only block finders. Rather than lower the
+    # floor for everyone (a sub-1.0 wire difficulty puts the xmrig build into a
+    # connect→set_difficulty→disconnect loop; doing that on 2026-07-10 cost ~2h
+    # of mainnet block production), sub-block targets go ONLY to sessions that
+    # explicitly advertise support on mining.subscribe. Every other client —
+    # xmrig, ASIC dashboards, any miner predating this — keeps the exact target
+    # it gets today.
+    #
+    # shares_per_block (S) is the knob: the ratio is derived per job from live θ
+    # so a share is worth 1/S of a block in expectation. The pool-wide share
+    # rate is then simply S / block_time, independent of hashrate (rate =
+    # H·p_share = H·p_block·S = S/T_block), so S bounds the share flood by
+    # construction. At S=64 with ~30s blocks that is ~2 shares/s pool-wide,
+    # each worth ~1/64 of a block reward.
+    subblock_shares_enabled: bool = True
+    shares_per_block: int = 64
+    # Hard floor on the derived ratio: a θ shock (or an absurd S) must not be
+    # able to open the floodgates. If the derived ratio would fall below this,
+    # sub-block shares are disabled for that job rather than clamped.
+    subblock_min_ratio: float = 0.5
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -253,6 +275,24 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         else _env("ANIMICA_POOL_PPS_BLOCK_RESERVE_BPS", "500") or 500
     )
     pps_block_reserve_bps = min(10_000, max(0, pps_block_reserve_bps))
+    subblock_shares_enabled = _as_bool(
+        overrides.get("subblock_shares_enabled"),
+        _env("ANIMICA_POOL_SUBBLOCK_SHARES", "true"),
+    )
+    shares_per_block = int(
+        overrides.get("shares_per_block")
+        or _env("ANIMICA_POOL_SHARES_PER_BLOCK", "64")
+        or 64
+    )
+    # S must exceed 1 for a sub-block share to mean anything (S=1 is a block),
+    # and is capped so a typo cannot ask for a share rate the pool can't persist.
+    shares_per_block = min(100_000, max(2, shares_per_block))
+    subblock_min_ratio = float(
+        overrides.get("subblock_min_ratio")
+        or _env("ANIMICA_POOL_SUBBLOCK_MIN_RATIO", "0.5")
+        or 0.5
+    )
+    subblock_min_ratio = min(1.0, max(0.0, subblock_min_ratio))
 
     if not str(host or "").strip():
         raise ValueError("host must be non-empty")
@@ -347,4 +387,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         credit_cap_mined_base=credit_cap_mined_base,
         credit_cap_credited_base=credit_cap_credited_base,
         pps_block_reserve_bps=pps_block_reserve_bps,
+        subblock_shares_enabled=subblock_shares_enabled,
+        shares_per_block=shares_per_block,
+        subblock_min_ratio=subblock_min_ratio,
     )

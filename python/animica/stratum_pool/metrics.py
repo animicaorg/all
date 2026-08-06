@@ -83,6 +83,19 @@ class PoolMetrics:
         # climbing value while cap headroom sits at 0 is the signature of the
         # PPS-degenerates-to-finder-only failure; surfaced in accounting_summary.
         self._credit_clamped_total: int = 0
+        # Credit-cap headroom cache. The cap sums the whole blocks table on
+        # EVERY accepted share (~12ms at 45k rows), which was fine at ~1 share
+        # per 6 minutes but not at the sub-block share rate (~2/s, and the table
+        # grows ~2900 rows/day). Correctness is preserved exactly, not
+        # approximated: credit issued since the snapshot is subtracted locally,
+        # and a newly mined block invalidates the snapshot immediately so fresh
+        # coinbase is never withheld from the miners it should back.
+        self._cap_cache_value: Optional[int] = None
+        self._cap_cache_at: float = 0.0
+        self._cap_cache_spent: int = 0
+        self._cap_cache_ttl: float = max(
+            0.0, float(os.environ.get("ANIMICA_POOL_CREDIT_CAP_CACHE_TTL", "30"))
+        )
         self._started = time.time()
         self._db_lock = Lock()
         self._db = self._init_db(config.db_url)
@@ -1048,6 +1061,10 @@ class PoolMetrics:
                 ),
             )
             if is_block:
+                # New coinbase => new backed headroom. Invalidate so the very
+                # next share can be credited against it (a stale snapshot would
+                # withhold this block's reward for up to the cache TTL).
+                self._cap_cache_invalidate()
                 statements += 1
                 self._db.execute(
                     """
@@ -1093,6 +1110,8 @@ class PoolMetrics:
                     (job_id,)
                 )
                 self._commit_db_now()
+        # Mined coinbase went DOWN — the headroom snapshot is now too generous.
+        self._cap_cache_invalidate()
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -1447,6 +1466,13 @@ class PoolMetrics:
         cfg = self._config
         mined_base = int(getattr(cfg, "credit_cap_mined_base", 0) or 0)
         credited_base = int(getattr(cfg, "credit_cap_credited_base", 0) or 0)
+        if (
+            self._cap_cache_value is not None
+            and self._cap_cache_ttl > 0.0
+            and (time.monotonic() - self._cap_cache_at) < self._cap_cache_ttl
+        ):
+            # Exact: the snapshot minus what has been credited against it since.
+            return max(0, self._cap_cache_value - self._cap_cache_spent)
         if self._db is not None:
             with self._db_lock:
                 mined_total = int(
@@ -1477,7 +1503,23 @@ class PoolMetrics:
                 int(r.get("total_credit") or 0)
                 for r in self._worker_balances_cache.values()
             )
-        return max(0, (mined_total - mined_base) - (credited_total - credited_base))
+        remaining = max(0, (mined_total - mined_base) - (credited_total - credited_base))
+        self._cap_cache_value = remaining
+        self._cap_cache_at = time.monotonic()
+        self._cap_cache_spent = 0
+        return remaining
+
+    def _cap_cache_note_credit(self, amount: int) -> None:
+        """Account credit issued against the current headroom snapshot."""
+        if amount > 0 and self._cap_cache_value is not None:
+            self._cap_cache_spent += int(amount)
+
+    def _cap_cache_invalidate(self) -> None:
+        """Drop the headroom snapshot (called when mined coinbase changes, so a
+        fresh block's reward becomes spendable headroom immediately)."""
+        self._cap_cache_value = None
+        self._cap_cache_at = 0.0
+        self._cap_cache_spent = 0
 
     def _ena_fee_split(
         self, miner_address: str, pps_credit: int, solo_credit: int
@@ -1747,7 +1789,7 @@ class PoolMetrics:
                             0, cap_remaining - (cap_remaining * reserve_bps) // 10_000
                         )
                 if pps_credit > allowed:
-                    logger.debug(
+                    logger.debug(  # noqa: E501 - message below
                         "credit cap clamped pps share credit %d -> %d (worker=%s remaining=%d)",
                         pps_credit,
                         max(0, allowed),
@@ -1760,6 +1802,9 @@ class PoolMetrics:
                 if solo_credit > cap_remaining:
                     self._credit_clamped_total += solo_credit - max(0, cap_remaining)
                     solo_credit = max(0, cap_remaining)
+                # Spend against the headroom snapshot so the cached value stays
+                # exact between refreshes.
+                self._cap_cache_note_credit(pps_credit + solo_credit)
 
             if (
                 accounting_mode == "pps"
@@ -3371,6 +3416,15 @@ class PoolMetrics:
             "num_workers": active_miners,
             "num_connections": stats.get("clients", 0),
             "authorized_sessions": stats.get("authorized_sessions", 0),
+            # Sessions mining a sub-block target (i.e. earning PPS credit
+            # without finding blocks). 0 while every connected miner predates
+            # the 9.1.0 opt-in.
+            "subblock_sessions": stats.get("subblock_sessions", 0),
+            "shares_per_block": int(
+                getattr(self._config, "shares_per_block", 0) or 0
+            )
+            if getattr(self._config, "subblock_shares_enabled", False)
+            else 0,
             "round_duration_seconds": self._config.poll_interval,
             "round_shares": len(share_events),
             "round_estimated_reward": current_reward,
