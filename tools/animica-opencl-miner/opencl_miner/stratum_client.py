@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -133,8 +134,16 @@ class StratumClient:
     # ------------- protocol -------------
 
     async def subscribe(self) -> SubscribeReply:
+        # subblockShares: ask the pool for a share target below the block
+        # target so non-winning work earns PPS credit (9.1.0+). Without it the
+        # pool sends shareTarget=1.0 == θ and the only submittable hash is a
+        # whole block. This miner already scans against θ_share_micro =
+        # θµ·shareTarget (see job.py JobConfig), so nothing else changes.
+        features = {"framing": self.framing}
+        if not os.environ.get("ANIMICA_MINER_NO_SUBBLOCK", "").strip():
+            features["subblockShares"] = {"version": 1}
         req = req_subscribe(
-            agent=self.agent, features={"framing": self.framing}
+            agent=self.agent, features=features
         )  # uses Method.SUBSCRIBE
         req["id"] = self._next_id()
         fut: asyncio.Future = self.loop.create_future()

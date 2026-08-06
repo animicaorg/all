@@ -831,7 +831,11 @@ class StratumCpuMiner:
             "mining.subscribe",
             {
                 "agent": "animica-cpu-miner/0.1",
-                "features": {"framing": "lines"},
+                # subblockShares: ask for a target below the block target so
+                # non-winning work earns PPS credit (9.1.0+). Without it the
+                # pool sends shareTarget=1.0 == θ and only whole blocks are
+                # submittable. This miner already thresholds on θµ·shareTarget.
+                "features": {"framing": "lines", "subblockShares": {"version": 1}},
                 "algo": "hashshare",
             },
         )

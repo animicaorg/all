@@ -440,3 +440,43 @@ async def test_real_miner_client_survives_hostile_set_difficulty(monkeypatch):
     finally:
         await client.close()
         await srv.stop()
+
+
+# --------------------------------------------------------------------------
+# every in-repo miner must ask for sub-block shares
+# --------------------------------------------------------------------------
+
+
+def test_all_inrepo_miners_advertise_subblock_optin():
+    """`animica up` must earn per share without the operator configuring
+    anything, and so must every other miner we ship. The opt-in lives in each
+    miner's mining.subscribe features; a new miner that forgets it silently
+    goes back to earning only on blocks it finds, which is exactly the bug
+    9.1.0 exists to fix. Pin the invariant on the source."""
+    repo = Path(__file__).resolve().parents[4]
+    miners = [
+        repo / "mining" / "stratum_client.py",                 # animica up / miner start
+        repo / "python" / "animica" / "stratum_pool" / "reference_cpu_miner.py",
+        repo / "python" / "animica" / "animica_cpu_miner_repoexact.py",
+        repo / "tools" / "animica-opencl-miner" / "opencl_miner" / "stratum_client.py",
+    ]
+    missing = []
+    for path in miners:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if "subblockShares" not in text:
+            missing.append(str(path.relative_to(repo)))
+    assert not missing, (
+        "these shipped miners never ask the pool for sub-block shares, so they "
+        f"only earn when they find a whole block: {missing}"
+    )
+
+
+def test_up_reports_subblock_status():
+    # The earnings shape differs enormously between per-share and per-block, so
+    # `animica up` must say which one the operator is getting.
+    repo = Path(__file__).resolve().parents[4]
+    up = (repo / "python" / "animica" / "cli" / "up.py").read_text(encoding="utf-8")
+    assert "_report_subblock" in up
+    assert "per-share payouts" in up

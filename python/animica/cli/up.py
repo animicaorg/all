@@ -9,6 +9,7 @@ existing invocation behaves exactly as before.
 from __future__ import annotations
 
 import json as _json
+import os
 from typing import List, Optional
 
 import typer
@@ -194,12 +195,41 @@ def up(ctx: typer.Context,
     if summary["enabled_but_pending"]:
         console.print(f"[yellow]enabled but not yet runnable: "
                       f"{', '.join(summary['enabled_but_pending'])}[/yellow]")
+    _report_subblock(components, console)
     _ensure_media_models(caps, components, console)
     _ensure_llm_model(caps, components, console)
     _ensure_media_miner(components, console)
     _ensure_inference_worker(components, console, addr)
     _ensure_animal(console)
     Supervisor(components).run()
+
+
+def _report_subblock(components, console) -> None:
+    """Tell the operator whether this miner will earn per share or only per block.
+
+    The miner asks for a sub-block share target automatically (the stratum
+    client advertises features.subblockShares), so there is nothing to enable —
+    but on a pool that predates 9.1.0, or with ANIMICA_MINER_NO_SUBBLOCK set,
+    payouts still only land when this machine finds a whole block. That is a
+    big enough difference in earnings shape that it should not be silent.
+    """
+    try:
+        enabled = {c.name for c in components if getattr(c, "enabled", False)}
+        if "miner" not in enabled:
+            return
+        if os.environ.get("ANIMICA_MINER_NO_SUBBLOCK", "").strip():
+            console.print(
+                "[yellow]per-share payouts: OFF[/yellow] [dim](ANIMICA_MINER_NO_SUBBLOCK is set — "
+                "you will only earn when this machine finds a whole block)[/dim]"
+            )
+            return
+        console.print(
+            "[green]per-share payouts: on[/green] [dim](requesting a sub-block share target; "
+            "needs a pool on animica >=9.1.0 — otherwise you earn only on blocks you find)[/dim]"
+        )
+    except Exception:
+        # Never let a status line stop mining.
+        pass
 
 
 def _ensure_inference_worker(components, console, address) -> None:
