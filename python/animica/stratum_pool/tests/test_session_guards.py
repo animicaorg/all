@@ -128,8 +128,13 @@ async def test_idle_sessions_are_reaped(monkeypatch):
         assert await _wait_for(lambda: len(srv._sessions) == 1)
         # Silent client: no subscribe, no authorize, nothing. Must be reaped.
         assert await _wait_for(lambda: len(srv._sessions) == 0, timeout=6.0)
-        eof = await asyncio.wait_for(reader.read(), timeout=5.0)
-        assert eof == b""
+        # The keepalive interval and the reap deadline are both ~1s here, so a
+        # difficulty push can already be buffered when the reaper closes. What
+        # matters is that the stream ENDS; drain whatever was in flight first.
+        while True:
+            chunk = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+            if chunk == b"":
+                break
     finally:
         writer.close()
         await srv.stop()

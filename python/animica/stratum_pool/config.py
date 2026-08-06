@@ -115,7 +115,14 @@ class PoolConfig:
     # H·p_share = H·p_block·S = S/T_block), so S bounds the share flood by
     # construction. At S=64 with ~30s blocks that is ~2 shares/s pool-wide,
     # each worth ~1/64 of a block reward.
-    subblock_shares_enabled: bool = True
+    # DEFAULT OFF. The feature is sound but its first deployment surfaced two
+    # money bugs that only exist once sub-block shares do (miner-supplied
+    # d_ratio priced the credit; a non-block share had no replay guard because
+    # it never reaches the node). Both are fixed in 9.1.2, and an adversarial
+    # review of the rest is still being verified — so an operator opts IN
+    # deliberately with ANIMICA_POOL_SUBBLOCK_SHARES=1 rather than inheriting it
+    # from an upgrade.
+    subblock_shares_enabled: bool = False
     shares_per_block: int = 64
     # Hard floor on the derived ratio: a θ shock (or an absurd S) must not be
     # able to open the floodgates. If the derived ratio would fall below this,
@@ -277,7 +284,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
     pps_block_reserve_bps = min(10_000, max(0, pps_block_reserve_bps))
     subblock_shares_enabled = _as_bool(
         overrides.get("subblock_shares_enabled"),
-        _env("ANIMICA_POOL_SUBBLOCK_SHARES", "true"),
+        _env("ANIMICA_POOL_SUBBLOCK_SHARES", "false"),
     )
     shares_per_block = int(
         overrides.get("shares_per_block")
@@ -286,7 +293,11 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
     )
     # S must exceed 1 for a sub-block share to mean anything (S=1 is a block),
     # and is capped so a typo cannot ask for a share rate the pool can't persist.
-    shares_per_block = min(100_000, max(2, shares_per_block))
+    # Capped at 1024: shares/sec = S / block_time, so a large S is a share
+    # flood the pool must persist and credit. At S=1024 with ~85s blocks that is
+    # already ~12 shares/s; the ratio floor alone cannot catch this because
+    # ln(S) grows too slowly (S=100k still yields r>0.55 at live θ).
+    shares_per_block = min(1024, max(2, shares_per_block))
     subblock_min_ratio = float(
         overrides.get("subblock_min_ratio")
         or _env("ANIMICA_POOL_SUBBLOCK_MIN_RATIO", "0.5")

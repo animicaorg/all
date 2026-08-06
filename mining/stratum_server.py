@@ -133,6 +133,32 @@ class Session:
         self.last_seen = time.time()
 
 
+def _share_identity(params: Any) -> Optional[tuple]:
+    """Identity of a submitted solution, for replay detection.
+
+    A solution is the (nonce, extranonce2) pair — everything else in the submit
+    is derived or advisory. Returns None when no nonce can be found, in which
+    case the share is simply not deduped (the validator will reject it anyway).
+    """
+    if not isinstance(params, dict):
+        return None
+    nonce = params.get("nonce")
+    if nonce in (None, ""):
+        hs = params.get("hashshare")
+        if isinstance(hs, dict):
+            nonce = hs.get("nonce")
+    if nonce in (None, ""):
+        return None
+    # Normalise 0x-prefixed / bare hex / int so "0x1", "1" and 1 collide.
+    try:
+        nonce_key: Any = int(str(nonce), 16) if isinstance(nonce, str) else int(nonce)
+    except (TypeError, ValueError):
+        nonce_key = str(nonce).strip().lower()
+    extranonce2 = params.get("extranonce2")
+    en2 = str(extranonce2).strip().lower() if extranonce2 not in (None, "") else ""
+    return (nonce_key, en2)
+
+
 def _parse_subblock_optin(features: Any) -> bool:
     """True when a subscribe `features` dict opts in to sub-block share targets.
 
@@ -574,6 +600,16 @@ class StratumServer:
         # Sends left running past a broadcast deadline; held so the event loop
         # keeps a strong reference until they complete.
         self._detached_sends: set = set()
+        # Accepted (job_id, nonce, extranonce2) triples, so the same solution can
+        # never be credited twice. REQUIRED once sub-block shares exist: a
+        # non-block share is accepted locally and never reaches the node
+        # (stratum_pool/core.py returns early for `not is_block`), so nothing
+        # else dedupes it — a miner could replay one valid share for unlimited
+        # PPS credit. Block shares were always covered because the node reports
+        # duplicates. Keyed pool-wide, not per session, so a second connection
+        # cannot re-submit another session's solution either. Bounded: one entry
+        # set per cached job, evicted with the job.
+        self._seen_shares: Dict[str, set] = {}
         # Policy hook: θµ -> share ratio for sub-block-capable sessions, or None
         # to leave them on the normal floored target. Owned by the pool (it has
         # the config and the live θ); the server only applies it, and only to
@@ -731,6 +767,7 @@ class StratumServer:
 
         for jid in stale_ids:
             self._jobs.pop(jid, None)
+            self._seen_shares.pop(jid, None)
             with suppress(ValueError):
                 self._job_order.remove(jid)
             if jid == self._current_job_id:
@@ -739,8 +776,15 @@ class StratumServer:
         while len(self._job_order) > self._max_cached_jobs:
             drop_id = self._job_order.pop(0)
             self._jobs.pop(drop_id, None)
+            self._seen_shares.pop(drop_id, None)
             if drop_id == self._current_job_id:
                 self._current_job_id = self._job_order[-1] if self._job_order else None
+        # A share can only be replayed against a job we would still accept, so
+        # the dedup set never outlives its job. Belt-and-braces against any
+        # path that adds a key without a cached job.
+        if len(self._seen_shares) > self._max_cached_jobs * 2:
+            for jid in [j for j in self._seen_shares if j not in self._jobs]:
+                self._seen_shares.pop(jid, None)
 
     def _find_authorized_session_by_address(self, address: str) -> Optional[Session]:
         addr = (address or "").strip()
@@ -1942,8 +1986,40 @@ class StratumServer:
             params_with_context["_worker"] = session.worker
             params_with_context["_address"] = resolved_address
             params_with_context["_pool_mode"] = session.pool_mode
-            if params_with_context.get("shareTarget") in (None, ""):
-                params_with_context["shareTarget"] = float(session.share_target)
+            # The share target is the POOL's assignment, never the miner's
+            # claim. PPS credit is priced from this ratio
+            # (credit_fraction = exp(-θ(1-r)/MICRO)), so a miner that mines the
+            # easy sub-block target and then claims d_ratio/shareTarget = 1.0
+            # would be paid a full block reward per share — 64x over-credit at
+            # S=64, silently, because validation uses the session target
+            # (_job_for_session) while pricing used to trust these fields.
+            # Harmless before 9.1.0 (every session was pinned at 1.0, the
+            # maximum); exploitable the moment sub-block targets exist. OVERWRITE
+            # both, unconditionally.
+            params_with_context["shareTarget"] = float(session.share_target)
+            params_with_context["d_ratio"] = float(session.share_target)
+            # Replay guard: the same solution must never be credited twice.
+            share_key = _share_identity(params)
+            if share_key is not None and share_key in self._seen_shares.get(job_id, ()):
+                self._rejected += 1
+                session.shares_rejected += 1
+                log.warning(
+                    f"[Stratum] duplicate share worker={session.worker} "
+                    f"session={session.session_id} job={job_id}"
+                )
+                if session.is_v1:
+                    await self._send(
+                        session, res_submit_v1(id_val, False, reason="duplicate share")
+                    )
+                else:
+                    await self._send(
+                        session,
+                        res_submit(
+                            id_val, False, reason="duplicate share",
+                            is_block=False, tx_count=0,
+                        ),
+                    )
+                return
             job_for_validation = self._job_for_session(session, job)
             ok, reason, is_block, tx_count = await self._validator.validate(
                 job_for_validation, params_with_context
@@ -1951,16 +2027,21 @@ class StratumServer:
             if ok:
                 self._accepted += 1
                 session.shares_accepted += 1
+                # Record only on ACCEPT: a share rejected for a transient
+                # reason (notably transport_error on the node submit) must stay
+                # re-submittable, or a timeout would permanently burn a
+                # solution — including a block.
+                if share_key is not None:
+                    self._seen_shares.setdefault(job_id, set()).add(share_key)
             else:
                 self._rejected += 1
                 session.shares_rejected += 1
             session.last_share_at = time.time()
             session.last_share_status = "accepted" if ok else "rejected"
+            # Same rule as pricing: report the target we ASSIGNED, not what the
+            # miner claimed, so dashboards and /api/miners can't be spoofed either.
             share_ratio = float(
-                params.get("d_ratio")
-                or params.get("shareTarget")
-                or session.share_target
-                or job_for_validation.share_target
+                session.share_target or job_for_validation.share_target or 0.0
             )
             session.current_difficulty = (
                 share_target_to_difficulty(session.theta_micro, share_ratio)

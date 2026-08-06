@@ -984,7 +984,15 @@ class StratumPoolServer:
         tx_count: int,
     ) -> None:
         try:
-            await self._maybe_auto_adjust_share_target(job, ok=ok, reason=reason)
+            # Sub-block sessions must NOT feed the pool-wide vardiff. That loop
+            # tunes the ONE global target every other client is given (including
+            # v1/xmrig, whose wire difficulty must stay >= the compat floor), and
+            # an opted-in session produces ~S times more accepted shares — it
+            # would dominate the sample window and steer the global target from
+            # a population it does not represent. Their target is set by policy,
+            # not by vardiff, so there is nothing to learn from their samples.
+            if not getattr(session, "supports_subblock", False):
+                await self._maybe_auto_adjust_share_target(job, ok=ok, reason=reason)
         finally:
             if self._external_submit_hook is not None:
                 await self._external_submit_hook(

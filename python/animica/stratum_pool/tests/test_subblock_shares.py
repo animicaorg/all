@@ -22,10 +22,21 @@ from core.utils.pow import MICRO
 from animica.stratum_pool.config import PoolConfig
 from animica.stratum_pool.job_manager import JobManager
 from animica.stratum_pool.stratum_server import StratumPoolServer
-from mining.stratum_server import Session, StratumServer, _parse_subblock_optin
+from mining.stratum_server import (Session, StratumJob, StratumServer,
+                                   _parse_subblock_optin)
 from mining.stratum_client import _parse_set_difficulty
 
 THETA = 25_600_000  # live-ish mainnet θµ
+
+
+async def _wait_for(predicate, timeout=5.0, interval=0.02):
+    import time as _t
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(interval)
+    return False
 
 
 class DummyAdapter:
@@ -33,6 +44,9 @@ class DummyAdapter:
 
 
 def _pool(**kw) -> StratumPoolServer:
+    # The feature ships default-OFF (operators opt in), so policy tests must
+    # enable it explicitly.
+    kw.setdefault("subblock_shares_enabled", True)
     cfg = PoolConfig(**kw)
     return StratumPoolServer(DummyAdapter(), cfg, JobManager(DummyAdapter(), cfg))
 
@@ -69,6 +83,17 @@ def test_share_rate_is_shares_per_block_over_block_time():
 
 def test_policy_disabled_returns_none():
     assert _pool(subblock_shares_enabled=False).subblock_ratio_for_theta(THETA) is None
+
+
+def test_feature_is_default_off():
+    # An upgrade must not silently switch a pool over; the operator opts in.
+    assert PoolConfig().subblock_shares_enabled is False
+    assert (
+        StratumPoolServer(
+            DummyAdapter(), PoolConfig(), JobManager(DummyAdapter(), PoolConfig())
+        ).subblock_ratio_for_theta(THETA)
+        is None
+    )
 
 
 def test_policy_refuses_when_theta_too_small_for_s():
@@ -108,7 +133,7 @@ def test_config_clamps_hostile_values():
             "pool_address": "anim1x",
         }
     )
-    assert hostile.shares_per_block <= 100_000
+    assert hostile.shares_per_block <= 1024
     assert hostile.subblock_min_ratio <= 1.0
 
 
@@ -480,3 +505,212 @@ def test_up_reports_subblock_status():
     up = (repo / "python" / "animica" / "cli" / "up.py").read_text(encoding="utf-8")
     assert "_report_subblock" in up
     assert "per-share payouts" in up
+
+
+# --------------------------------------------------------------------------
+# the miner may not price its own shares
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_miner_cannot_inflate_credit_by_claiming_full_ratio(monkeypatch):
+    """PPS credit is priced from exp(-θ(1-r)/MICRO) where r is the share ratio.
+    If r came from the SUBMIT payload, an opted-in miner could mine the easy
+    sub-block target (64x more shares) and stamp d_ratio=1.0 on each one to be
+    paid a whole block reward per share — 64x theft, silent, because validation
+    uses the session's real target. The pool must overwrite both d_ratio and
+    shareTarget with the target it assigned."""
+    monkeypatch.setenv("ANIMICA_STRATUM_IDLE_TIMEOUT_SECS", "0")
+    monkeypatch.setenv("ANIMICA_STRATUM_HANDSHAKE_TIMEOUT_SECS", "0")
+
+    seen = {}
+
+    class CapturingValidator:
+        async def validate(self, job, submit_params):
+            seen.update(submit_params)
+            return True, None, False, 0
+
+    srv = StratumServer(
+        host="127.0.0.1", port=0, keepalive_secs=0.0, validator=CapturingValidator()
+    )
+    srv._default_share_target = 1.0
+    srv._default_theta_micro = THETA
+    srv.set_subblock_ratio_policy(lambda theta: 0.8375)
+    await srv.start()
+    port = srv._server.sockets[0].getsockname()[1]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "mining.subscribe",
+                        "params": {
+                            "agent": "greedy/1",
+                            "features": {"subblockShares": True},
+                        },
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        writer.write(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 9,
+                        "method": "mining.authorize",
+                        "params": {"worker": "greedy", "address": "anim1greedyminer"},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        await writer.drain()
+        assert await _wait_for(
+            lambda: any(
+                s.authorized and s.share_target < 1.0 for s in srv._sessions.values()
+            )
+        )
+        session = next(iter(srv._sessions.values()))
+        job = StratumJob(
+            job_id="job-greedy",
+            header={"number": 7},
+            share_target=1.0,
+            theta_micro=THETA,
+            raw={},
+        )
+        srv._jobs["job-greedy"] = job
+        srv._current_job_id = "job-greedy"
+
+        # The miner lies: easy target mined, full-block ratio claimed.
+        writer.write(
+            (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "mining.submit",
+                        "params": {
+                            "worker": session.session_id,
+                            "jobId": "job-greedy",
+                            "extranonce2": "0x00",
+                            "d_ratio": 1.0,
+                            "shareTarget": 1.0,
+                            "hashshare": {"nonce": "0x1", "body": {"hMicro": 1}},
+                        },
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        await writer.drain()
+        assert await _wait_for(lambda: "d_ratio" in seen, timeout=5.0)
+
+        # Both pricing inputs must equal the ASSIGNED target, not the claim.
+        assert seen["d_ratio"] == pytest.approx(0.8375), seen["d_ratio"]
+        assert seen["shareTarget"] == pytest.approx(0.8375), seen["shareTarget"]
+        # And the reported difficulty is not spoofable either.
+        assert session.current_difficulty == pytest.approx(0.8375)
+    finally:
+        writer.close()
+        await srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_share_is_rejected_and_transient_failure_is_retryable(monkeypatch):
+    """A sub-block share never reaches the node (stratum_pool/core.py returns
+    early for `not is_block`), so nothing else dedupes it — one valid solution
+    could be replayed for unlimited PPS credit. Block shares were always covered
+    because the node reports duplicates. Dedup must be pool-wide, and must NOT
+    burn a solution whose submit failed transiently (a transport timeout on a
+    real block would otherwise be unrecoverable)."""
+    monkeypatch.setenv("ANIMICA_STRATUM_IDLE_TIMEOUT_SECS", "0")
+    monkeypatch.setenv("ANIMICA_STRATUM_HANDSHAKE_TIMEOUT_SECS", "0")
+
+    outcome = {"ok": True}
+    calls = {"n": 0}
+
+    class ScriptedValidator:
+        async def validate(self, job, submit_params):
+            calls["n"] += 1
+            return outcome["ok"], (None if outcome["ok"] else "transport_error:timeout"), False, 0
+
+    srv = StratumServer(
+        host="127.0.0.1", port=0, keepalive_secs=0.0, validator=ScriptedValidator()
+    )
+    srv._default_theta_micro = THETA
+    await srv.start()
+    port = srv._server.sockets[0].getsockname()[1]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+
+    def submit(nonce, sid, req_id):
+        return (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0", "id": req_id, "method": "mining.submit",
+                    "params": {
+                        "worker": sid, "jobId": "job-1", "extranonce2": "0x00",
+                        "hashshare": {"nonce": nonce, "body": {"hMicro": 1}},
+                    },
+                }
+            ) + "\n"
+        ).encode()
+
+    try:
+        writer.write(
+            (json.dumps({"jsonrpc": "2.0", "id": 1, "method": "mining.subscribe",
+                         "params": {"agent": "t/1", "features": {}}}) + "\n").encode()
+        )
+        await writer.drain()
+        assert await _wait_for(lambda: len(srv._sessions) == 1)
+        session = next(iter(srv._sessions.values()))
+        srv._jobs["job-1"] = StratumJob(
+            job_id="job-1", header={"number": 7}, share_target=1.0,
+            theta_micro=THETA, raw={},
+        )
+        srv._job_order.append("job-1")
+        srv._current_job_id = "job-1"
+
+        # 1st submit accepted, 2nd identical submit must be refused.
+        writer.write(submit("0xabc", session.session_id, 2))
+        await writer.drain()
+        assert await _wait_for(lambda: session.shares_accepted == 1, timeout=5.0)
+        writer.write(submit("0xabc", session.session_id, 3))
+        await writer.drain()
+        assert await _wait_for(lambda: session.shares_rejected == 1, timeout=5.0)
+        assert session.shares_accepted == 1
+        # Equivalent nonce spellings must collide, not slip through.
+        writer.write(submit("abc", session.session_id, 4))
+        await writer.drain()
+        assert await _wait_for(lambda: session.shares_rejected == 2, timeout=5.0)
+
+        # A share that FAILED transiently stays re-submittable.
+        outcome["ok"] = False
+        writer.write(submit("0xdef", session.session_id, 5))
+        await writer.drain()
+        assert await _wait_for(lambda: session.shares_rejected == 3, timeout=5.0)
+        outcome["ok"] = True
+        writer.write(submit("0xdef", session.session_id, 6))
+        await writer.drain()
+        assert await _wait_for(lambda: session.shares_accepted == 2, timeout=5.0), \
+            "a transiently-failed solution was permanently burned"
+    finally:
+        writer.close()
+        await srv.stop()
+
+
+def test_shares_per_block_cap_bounds_the_share_rate():
+    from animica.stratum_pool.config import load_config_from_env
+    cfg = load_config_from_env(
+        overrides={"shares_per_block": 100_000, "rpc_url": "http://x",
+                   "pool_address": "anim1x", "subblock_shares_enabled": True}
+    )
+    # The ratio floor cannot catch a huge S (ln grows too slowly: S=100k still
+    # yields r>0.55 at live θ), so the cap has to.
+    assert cfg.shares_per_block <= 1024
+    pool = _pool(shares_per_block=100_000, subblock_min_ratio=0.5)
+    assert pool.subblock_ratio_for_theta(THETA) is not None  # would have passed the floor
