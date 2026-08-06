@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -18,6 +19,8 @@ from mining.stratum_server import StratumServer
 
 from .config import PoolConfig
 from .job_manager import JobManager
+
+logger = logging.getLogger("stratum_pool.metrics")
 
 ShareEvent = Dict[str, object]
 AccountingEvent = Dict[str, object]
@@ -76,6 +79,10 @@ class PoolMetrics:
         self._worker_balances_cache: Dict[tuple[str, str, str], Dict[str, object]] = {}
         self._payout_records: list[dict[str, object]] = []
         self._payout_record_seq: int = 0
+        # Credit denied by the cap since process start (nano). A persistently
+        # climbing value while cap headroom sits at 0 is the signature of the
+        # PPS-degenerates-to-finder-only failure; surfaced in accounting_summary.
+        self._credit_clamped_total: int = 0
         self._started = time.time()
         self._db_lock = Lock()
         self._db = self._init_db(config.db_url)
@@ -1722,10 +1729,36 @@ class PoolMetrics:
             # No-op unless credit_cap_enabled.
             if getattr(self._config, "credit_cap_enabled", False):
                 cap_remaining = self._credit_cap_remaining()
-                if pps_credit > cap_remaining:
-                    pps_credit = max(0, cap_remaining)
+                allowed = cap_remaining
+                if accounting_mode == "pps" and is_block:
+                    # The block row was persisted just before this credit, so
+                    # cap_remaining now contains the reward this share minted.
+                    # A dominant miner's winning share (assigned ratio ~1.0 →
+                    # priced at ~full reward) would drain it all, leaving 0
+                    # headroom for every non-winning share until the next block
+                    # — PPS then only ever pays block finders. Hold back a
+                    # slice for the between-block shares; leftovers stay in
+                    # cap_remaining and return to future winners.
+                    reserve_bps = int(
+                        getattr(self._config, "pps_block_reserve_bps", 0) or 0
+                    )
+                    if reserve_bps > 0:
+                        allowed = max(
+                            0, cap_remaining - (cap_remaining * reserve_bps) // 10_000
+                        )
+                if pps_credit > allowed:
+                    logger.debug(
+                        "credit cap clamped pps share credit %d -> %d (worker=%s remaining=%d)",
+                        pps_credit,
+                        max(0, allowed),
+                        worker,
+                        cap_remaining,
+                    )
+                    self._credit_clamped_total += pps_credit - max(0, allowed)
+                    pps_credit = max(0, allowed)
                 cap_remaining = max(0, cap_remaining - pps_credit)
                 if solo_credit > cap_remaining:
+                    self._credit_clamped_total += solo_credit - max(0, cap_remaining)
                     solo_credit = max(0, cap_remaining)
 
             if (
@@ -1857,6 +1890,7 @@ class PoolMetrics:
             "rejected_shares": int(rejected_shares or 0),
             "workers_with_balance": int(workers_with_balance or 0),
             "ledger_entries": int((ledger_count or [0])[0] or 0),
+            "credit_clamped_since_start": str(int(self._credit_clamped_total)),
             "updated_at": (
                 datetime.fromtimestamp(float(updated_ts), tz=timezone.utc).isoformat()
                 if updated_ts
@@ -1887,6 +1921,7 @@ class PoolMetrics:
             "rejected_shares": int(rejected_shares),
             "workers_with_balance": len(rows),
             "ledger_entries": len(self._accounting_events),
+            "credit_clamped_since_start": str(int(self._credit_clamped_total)),
             "updated_at": (
                 datetime.fromtimestamp(updated_ts, tz=timezone.utc).isoformat()
                 if updated_ts > 0
@@ -1919,6 +1954,42 @@ class PoolMetrics:
             ).fetchone()
         total = float(row[0] or 0.0) if row else 0.0
         return total / window_seconds if window_seconds > 0 else 0.0
+
+    def _active_miner_count(self, window_seconds: float = 900.0) -> int:
+        """Distinct miners genuinely present: addresses with an accepted share
+        inside the window (DB, falling back to in-memory events) plus addresses
+        holding a currently-authorized session. Deliberately NOT the open-socket
+        count — one client holding hundreds of idle sockets is one miner."""
+        addresses: set = set()
+        cutoff = time.time() - window_seconds
+        if self._db is not None:
+            with self._db_lock:
+                rows = self._db.execute(
+                    "SELECT DISTINCT address FROM shares "
+                    "WHERE status = 'accepted' AND ts >= ? "
+                    "AND address IS NOT NULL AND address != '' "
+                    "AND address != 'unknown-address'",
+                    (cutoff,),
+                ).fetchall()
+            addresses.update(str(r[0]).strip() for r in rows if r and r[0])
+        else:
+            for ev in self._share_events:
+                if (
+                    float(ev.get("timestamp") or 0.0) >= cutoff
+                    and ev.get("status") == "accepted"
+                ):
+                    addr = str(ev.get("address") or "").strip()
+                    if addr and addr != "unknown-address":
+                        addresses.add(addr)
+        try:
+            for snap in self._server.session_snapshots():
+                if snap.get("authorized"):
+                    addr = str(snap.get("address") or "").strip()
+                    if addr and addr != "unknown-address":
+                        addresses.add(addr)
+        except Exception:
+            pass
+        return len(addresses)
 
     # --- ACCURATE raw hashrate (H/s) --------------------------------------
     # Sum the per-share `work` (expected raw SHA3 hashes = 2**256/share_target)
@@ -3258,6 +3329,7 @@ class PoolMetrics:
         current_reward = str(self._reward_from_raw(getattr(job, "raw", None)))
         accounting = self.accounting_summary()
         payout = self.payout_status()
+        active_miners = self._active_miner_count(900.0)
         result = {
             "pool_name": "Animica Stratum Pool",
             "network": self._config.network or f"chain-{self._config.chain_id}",
@@ -3282,8 +3354,14 @@ class PoolMetrics:
             or self._hashrate_from_events(share_events, 900),
             "hashrate_1h": self._hashrate_from_db(3600)
             or self._hashrate_from_events(share_events, 3600),
-            "num_miners": stats.get("clients", 0),
-            "num_workers": stats.get("clients", 0),
+            # Real miners (unique addresses with a recent accepted share or an
+            # authorized session) — NOT open sockets. One client held 835 idle
+            # sockets on 2026-08-06 and the old clients-based count showed
+            # "838 miners"; raw sessions now live in num_connections.
+            "num_miners": active_miners,
+            "num_workers": active_miners,
+            "num_connections": stats.get("clients", 0),
+            "authorized_sessions": stats.get("authorized_sessions", 0),
             "round_duration_seconds": self._config.poll_interval,
             "round_shares": len(share_events),
             "round_estimated_reward": current_reward,

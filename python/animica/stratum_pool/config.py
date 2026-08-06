@@ -90,6 +90,15 @@ class PoolConfig:
     credit_cap_enabled: bool = False
     credit_cap_mined_base: int = 0
     credit_cap_credited_base: int = 0
+    # When the credit cap is active and a PPS block-winning share is credited,
+    # hold back this fraction (bps) of the remaining headroom for the
+    # NON-winning shares that arrive between blocks. Without it the winner's
+    # own share consumes the entire headroom its block just minted, pinning
+    # cap_remaining at 0 so every other miner's share credit clamps to zero —
+    # i.e. PPS silently degenerates into "paid only if you find the block".
+    # The holdback is not a fee: unconsumed reserve stays in cap_remaining and
+    # flows back to future block winners once small-share demand is met.
+    pps_block_reserve_bps: int = 500
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -238,6 +247,12 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         or _env("ANIMICA_POOL_CREDIT_CAP_CREDITED_BASE", "0")
         or 0
     )
+    pps_block_reserve_bps = int(
+        overrides.get("pps_block_reserve_bps")
+        if overrides.get("pps_block_reserve_bps") is not None
+        else _env("ANIMICA_POOL_PPS_BLOCK_RESERVE_BPS", "500") or 500
+    )
+    pps_block_reserve_bps = min(10_000, max(0, pps_block_reserve_bps))
 
     if not str(host or "").strip():
         raise ValueError("host must be non-empty")
@@ -331,4 +346,5 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         credit_cap_enabled=credit_cap_enabled,
         credit_cap_mined_base=credit_cap_mined_base,
         credit_cap_credited_base=credit_cap_credited_base,
+        pps_block_reserve_bps=pps_block_reserve_bps,
     )
