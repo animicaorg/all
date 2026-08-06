@@ -15,6 +15,7 @@ from threading import Lock
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from core.utils.pow import MICRO
+from mining.pow_validation import derive_share_target_int as _derive_share_target_int
 from mining.stratum_server import StratumServer
 
 from .config import PoolConfig
@@ -93,6 +94,12 @@ class PoolMetrics:
         self._cap_cache_value: Optional[int] = None
         self._cap_cache_at: float = 0.0
         self._cap_cache_spent: int = 0
+        # How far back /api/miners/<id> looks when resolving a worker id. An
+        # unknown id used to LIKE-scan all history (~291ms) with the DB lock
+        # held; worker_balances is the fallback for anything older.
+        self._miner_lookup_window_s: float = max(
+            3600.0, float(os.environ.get("ANIMICA_POOL_MINER_LOOKUP_WINDOW_S", "604800"))
+        )
         self._cap_cache_ttl: float = max(
             0.0, float(os.environ.get("ANIMICA_POOL_CREDIT_CAP_CACHE_TTL", "30"))
         )
@@ -333,6 +340,14 @@ class PoolMetrics:
         # unlike the legacy `difficulty` column which is just the share ratio.
         self._ensure_column(conn, "shares", "work", "REAL")
         self._ensure_column(conn, "worker_balances", "paid_out", "INTEGER NOT NULL DEFAULT 0")
+        # Credit the cap could not back YET. Headroom arrives in block-sized
+        # lumps while credit is issued continuously, so without this a share
+        # that lands in the wrong moment is paid nothing and the loss is
+        # permanent — and it lands hardest on sub-block miners, who submit
+        # most often. Deferred amounts are flushed from later headroom.
+        self._ensure_column(
+            conn, "worker_balances", "deferred_credit", "INTEGER NOT NULL DEFAULT 0"
+        )
         self._ensure_column(conn, "payouts", "raw_tx", "TEXT")
         self._ensure_column(conn, "payouts", "nonce", "INTEGER")
         self._ensure_column(conn, "payouts", "retry_count", "INTEGER NOT NULL DEFAULT 0")
@@ -348,6 +363,10 @@ class PoolMetrics:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_status_ts ON shares(status, ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_address_ts ON shares(address, ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_worker_ts ON shares(worker, ts)")
+        # blocks-per-address is a lifetime stat rendered on every /api/miners
+        # call; without this it GROUP BYs a full scan of a table that grows
+        # ~2900 rows/day.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_blocks_address ON blocks(address)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blocks_ts ON blocks(ts)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_balances_mode_address ON worker_balances(mode, address)"
@@ -379,6 +398,23 @@ class PoolMetrics:
             target_int = int(getattr(job, "share_target_int", 0) or 0)
         except (TypeError, ValueError):
             target_int = 0
+        if target_int <= 0:
+            # StratumJob (what the stratum path actually passes here) has NO
+            # share_target_int, so this used to fall through to the Bitcoin-style
+            # difficulty*2**32 — a formula unrelated to Animica's targets, off by
+            # ~34x at the block target and misreporting every sub-block share.
+            # Derive the real target from θ and the ratio the session was
+            # assigned, exactly as validation does.
+            try:
+                theta_micro = int(getattr(job, "theta_micro", 0) or 0)
+            except (TypeError, ValueError):
+                theta_micro = 0
+            ratio = max(0.0, min(1.0, float(difficulty or 0.0)))
+            if theta_micro > 0 and ratio > 0.0:
+                try:
+                    target_int = int(_derive_share_target_int(theta_micro, ratio))
+                except Exception:
+                    target_int = 0
         if target_int > 0:
             return float(_TWO_POW_256) / float(target_int)
         return max(0.0, float(difficulty or 0.0)) * 4_294_967_296.0
@@ -940,7 +976,7 @@ class PoolMetrics:
             difficulty = max(1.0, difficulty)
         # Raw SHA3 hashes this share represents (2**256 / share_target_int).
         # Summed over a window this gives the true H/s — see _expected_share_work.
-        share_work = self._expected_share_work(job, difficulty)
+        share_work = self._expected_share_work(job, assigned_ratio)
         # PPS credit weight = the fraction of a block this share is worth in
         # expectation = P(a share also solves a block) = block_target/share_target
         # = exp(-θ·(1-ratio)/MICRO). Computed analytically from θ and the assigned
@@ -1398,13 +1434,14 @@ class PoolMetrics:
                     """
                     SELECT address, worker
                     FROM shares
-                    WHERE address IS NOT NULL
+                    WHERE ts >= ?
+                      AND address IS NOT NULL
                       AND address != ''
                       AND (worker = ? OR worker LIKE ? OR worker LIKE ? OR worker LIKE ?)
                     ORDER BY ts DESC
                     LIMIT 20
                     """,
-                    patterns,
+                    (time.time() - self._miner_lookup_window_s, *patterns),
                 ).fetchall()
                 if not rows:
                     rows = self._db.execute(
@@ -1577,6 +1614,65 @@ class PoolMetrics:
             defer_commit=defer_commit,
         )
 
+    def _deferred_credit(self, mode: str, worker: str, address: str) -> int:
+        """Credit the cap denied this worker earlier and still owes it."""
+        # The DB is authoritative here, NOT the balance cache: _apply_balance_delta
+        # creates a fresh cache row with deferred_credit=0, and it can run after a
+        # defer has already been persisted — a cache-first read would then shadow a
+        # real debt with zero and the miner would never be paid it.
+        if self._db is None:
+            row = self._worker_balances_cache.get((mode, worker, address))
+            return max(0, int((row or {}).get("deferred_credit") or 0))
+        with self._db_lock:
+            found = self._db.execute(
+                "SELECT deferred_credit FROM worker_balances "
+                "WHERE mode = ? AND worker = ? AND address = ?",
+                (mode, worker, address),
+            ).fetchone()
+        return max(0, int((found or [0])[0] or 0))
+
+    def _defer_credit(
+        self,
+        mode: str,
+        worker: str,
+        address: str,
+        delta: int,
+        ts: float,
+        *,
+        defer_commit: bool = False,
+    ) -> None:
+        """Move `delta` into (positive) or out of (negative) deferred credit.
+
+        Deferred credit is NOT paid out — payouts read total_credit — so it can
+        never let the pool owe more than it mined. It only records that a share
+        did real work the cap could not back yet, so the next headroom pays it
+        instead of it being silently destroyed.
+        """
+        delta = int(delta)
+        if delta == 0:
+            return
+        row = self._worker_balances_cache.get((mode, worker, address))
+        if row is not None:
+            row["deferred_credit"] = max(0, int(row.get("deferred_credit") or 0) + delta)
+            row["updated_ts"] = ts
+        if self._db is None:
+            return
+        with self._db_lock:
+            self._db.execute(
+                """
+                INSERT INTO worker_balances (
+                    mode, worker, address, deferred_credit, updated_ts
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(mode, worker, address) DO UPDATE SET
+                    deferred_credit = MAX(
+                        0, worker_balances.deferred_credit + excluded.deferred_credit
+                    ),
+                    updated_ts = excluded.updated_ts
+                """,
+                (mode, worker, address, max(0, delta) if delta > 0 else delta, ts),
+            )
+            self._record_db_write(defer_commit=defer_commit, now_ts=ts)
+
     def _apply_balance_delta(
         self,
         *,
@@ -1607,6 +1703,7 @@ class PoolMetrics:
                 "accepted_shares": 0,
                 "accepted_blocks": 0,
                 "rejected_shares": 0,
+                "deferred_credit": 0,
                 "updated_ts": ts,
                 "last_share_ts": 0.0,
             }
@@ -1788,20 +1885,51 @@ class PoolMetrics:
                         allowed = max(
                             0, cap_remaining - (cap_remaining * reserve_bps) // 10_000
                         )
+                # Pay back what the cap denied this worker EARLIER, before
+                # granting anything new — otherwise a share that arrived just
+                # before a block is robbed permanently while one arriving just
+                # after is paid in full, purely on timing.
+                flushed = 0
+                owed = self._deferred_credit(accounting_mode, worker, address)
+                if owed > 0 and allowed > 0:
+                    flushed = min(owed, allowed)
+                    allowed -= flushed
+                    cap_remaining = max(0, cap_remaining - flushed)
+                    logger.debug(
+                        "flushing deferred credit %d for worker=%s", flushed, worker
+                    )
                 if pps_credit > allowed:
+                    shortfall = pps_credit - max(0, allowed)
                     logger.debug(  # noqa: E501 - message below
-                        "credit cap clamped pps share credit %d -> %d (worker=%s remaining=%d)",
+                        "credit cap deferred pps share credit %d -> %d (worker=%s remaining=%d)",
                         pps_credit,
                         max(0, allowed),
                         worker,
                         cap_remaining,
                     )
-                    self._credit_clamped_total += pps_credit - max(0, allowed)
+                    self._credit_clamped_total += shortfall
+                    self._defer_credit(
+                        accounting_mode, worker, address, shortfall, ts,
+                        defer_commit=defer_commit,
+                    )
                     pps_credit = max(0, allowed)
                 cap_remaining = max(0, cap_remaining - pps_credit)
                 if solo_credit > cap_remaining:
-                    self._credit_clamped_total += solo_credit - max(0, cap_remaining)
+                    shortfall = solo_credit - max(0, cap_remaining)
+                    self._credit_clamped_total += shortfall
+                    self._defer_credit(
+                        accounting_mode, worker, address, shortfall, ts,
+                        defer_commit=defer_commit,
+                    )
                     solo_credit = max(0, cap_remaining)
+                if flushed > 0:
+                    # Settle the flush: it becomes real credit for this worker
+                    # and leaves the deferred column.
+                    pps_credit += flushed
+                    self._defer_credit(
+                        accounting_mode, worker, address, -flushed, ts,
+                        defer_commit=defer_commit,
+                    )
                 # Spend against the headroom snapshot so the cached value stays
                 # exact between refreshes.
                 self._cap_cache_note_credit(pps_credit + solo_credit)
@@ -3627,6 +3755,11 @@ class PoolMetrics:
                     GROUP BY address
                     """
                 ).fetchall()
+                # Bounded to the SAME window as the stats query above. Unbounded,
+                # this self-join scanned the entire shares table twice (measured
+                # ~291ms) inside _db_lock on every /api/miners call — untenable
+                # once sub-block shares raise the row rate ~100x. Rows outside the
+                # window are not rendered anyway.
                 mode_rows = self._db.execute(
                     """
                     SELECT s.address, s.mode, s.ts
@@ -3634,14 +3767,15 @@ class PoolMetrics:
                     JOIN (
                         SELECT address, MAX(ts) AS max_ts
                         FROM shares
-                        WHERE address IS NOT NULL AND address != ''
+                        WHERE ts >= ? AND address IS NOT NULL AND address != ''
                         GROUP BY address
                     ) AS latest
                       ON latest.address = s.address
                      AND latest.max_ts = s.ts
-                    WHERE s.address IS NOT NULL AND s.address != ''
+                    WHERE s.ts >= ? AND s.address IS NOT NULL AND s.address != ''
                     ORDER BY s.ts DESC
-                    """
+                    """,
+                    (cutoff_max, cutoff_max),
                 ).fetchall()
             for row in rows:
                 (

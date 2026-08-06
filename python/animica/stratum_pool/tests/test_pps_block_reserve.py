@@ -151,3 +151,43 @@ async def test_solo_block_credit_unaffected_by_reserve(tmp_path):
     )
     await _accept(metrics, WINNER, is_block=True)
     assert _credit(metrics, WINNER) == REWARD
+
+
+@pytest.mark.asyncio
+async def test_clamped_credit_is_deferred_then_paid(tmp_path):
+    """Cap headroom arrives in block-sized lumps while credit is issued
+    continuously, so a share landing at the wrong moment used to be paid nothing
+    — permanently, and hardest on sub-block miners who submit most often. The
+    shortfall must be remembered and paid from later headroom."""
+    # reserve_bps=500 is the shipped default: the block winner leaves a slice of
+    # its own block's headroom for the shares that arrive between blocks.
+    metrics = _metrics(tmp_path, reserve_bps=500)
+    # No mined coinbase yet => zero headroom => this share can pay nothing.
+    await _accept(metrics, SMALL, is_block=False, d_ratio=0.5, job_id="s-1")
+    assert _credit(metrics, SMALL) == 0
+    owed = metrics._deferred_credit("pps", "rig", SMALL)
+    assert owed > 0, "shortfall was destroyed instead of deferred"
+
+    # A block mints headroom; the reserve leaves some of it unspent, and the
+    # worker's next share settles part of the debt out of it.
+    await _accept(metrics, WINNER, is_block=True, job_id="b-1", height=8)
+    await _accept(metrics, SMALL, is_block=False, d_ratio=0.5, job_id="s-2")
+    paid = _credit(metrics, SMALL)
+    assert paid > 0, "deferred credit was never flushed"
+    assert paid <= owed, "flushed more than was owed"
+    # Still bounded by what the pool actually mined.
+    assert _credit(metrics, SMALL) + _credit(metrics, WINNER) <= REWARD
+
+
+@pytest.mark.asyncio
+async def test_deferred_credit_is_not_payable(tmp_path):
+    # Deferred credit must never look like a balance the pool owes now, or the
+    # cap's whole purpose (never credit more than mined) is defeated.
+    metrics = _metrics(tmp_path, reserve_bps=0)
+    await _accept(metrics, SMALL, is_block=False, d_ratio=0.5, job_id="s-1")
+    assert metrics._deferred_credit("pps", "rig", SMALL) > 0
+    with metrics._db_lock:
+        row = metrics._db.execute(
+            "SELECT COALESCE(SUM(total_credit),0) FROM worker_balances"
+        ).fetchone()
+    assert int(row[0] or 0) == 0

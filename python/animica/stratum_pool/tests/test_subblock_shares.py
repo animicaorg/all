@@ -85,15 +85,16 @@ def test_policy_disabled_returns_none():
     assert _pool(subblock_shares_enabled=False).subblock_ratio_for_theta(THETA) is None
 
 
-def test_feature_is_default_off():
-    # An upgrade must not silently switch a pool over; the operator opts in.
-    assert PoolConfig().subblock_shares_enabled is False
+def test_feature_default_on_with_working_kill_switch():
+    # On by default as of 9.2.0, but one env var must still take it out.
+    assert PoolConfig().subblock_shares_enabled is True
     assert (
         StratumPoolServer(
             DummyAdapter(), PoolConfig(), JobManager(DummyAdapter(), PoolConfig())
         ).subblock_ratio_for_theta(THETA)
-        is None
+        is not None
     )
+    assert _pool(subblock_shares_enabled=False).subblock_ratio_for_theta(THETA) is None
 
 
 def test_policy_refuses_when_theta_too_small_for_s():

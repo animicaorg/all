@@ -25,6 +25,7 @@ shares with ``ShareValidator`` and submits either:
 """
 
 import asyncio
+import os
 import hashlib
 import json
 import logging
@@ -1109,13 +1110,53 @@ class MiningCoreAdapter:
             or template.get("disableBlockTimeLimits")
         ):
             payload["disable_block_time_limits"] = True
-        try:
-            result: Json = await self._rpc_call("miner.submitBlock", payload)
-        except TransportError as exc:
-            # Network/timeout on submission — surface a structured rejection so the
-            # validator returns a clean reason instead of letting the exception
-            # bubble into the generic "share validation failed" trap. The block
-            # candidate is lost for this share; the miner will mine a new one.
+        # RETRY a block on transport errors. This is a real, mined block: on
+        # 2026-08-06 worker "abcd" found one, the node RPC timed out under load,
+        # and it was discarded — ~255 ANM gone, for a fault entirely on our side
+        # of the socket. Retrying is safe because submission is idempotent at the
+        # node: a block that actually landed comes back as duplicate=true, which
+        # the caller already handles (is_duplicate below). Shares are NOT retried
+        # (one is worth 1/S of a block and another will arrive in seconds); only
+        # blocks, and only for transport faults — never for a rejection the node
+        # actually reasoned about.
+        attempts = max(1, int(os.environ.get("ANIMICA_POOL_BLOCK_SUBMIT_ATTEMPTS", "3")))
+        backoff = max(0.0, float(os.environ.get("ANIMICA_POOL_BLOCK_SUBMIT_BACKOFF", "0.25")))
+        last_exc: Optional[BaseException] = None
+        rpc_error: Optional[BaseException] = None
+        result = None
+        for attempt in range(1, attempts + 1):
+            try:
+                result = await self._rpc_call("miner.submitBlock", payload)
+                last_exc = None
+                break
+            except RpcError as exc:
+                # The node reasoned about this block and said no (stale template,
+                # bad work, ...). Retrying cannot change that answer.
+                rpc_error = exc
+                break
+            except TransportError as exc:
+                last_exc = exc
+                if attempt >= attempts:
+                    break
+                self._log.warning(
+                    "stratum_block_submit_retry",
+                    extra={
+                        "job_id": job.job_id,
+                        "template_id": job.template_id,
+                        "attempt": attempt,
+                        "attempts": attempts,
+                        "error": str(exc),
+                        "is_block": True,
+                    },
+                )
+                if backoff:
+                    await asyncio.sleep(backoff * attempt)
+        if last_exc is not None:
+            exc = last_exc
+            # Every attempt hit a transport fault — surface a structured
+            # rejection so the validator returns a clean reason instead of
+            # letting the exception bubble into the generic "share validation
+            # failed" trap. The block is lost; the miner will mine a new one.
             error_reason = f"transport_error:{exc}"
             self._log.warning(
                 "stratum_block_submit_result",
@@ -1150,7 +1191,8 @@ class MiningCoreAdapter:
                 head_changed=False,
             )
             return False, error_reason, is_block, tx_count
-        except RpcError as exc:
+        if rpc_error is not None:
+            exc = rpc_error
             error_reason = f"rpc:{exc.code}:{exc}"
             error_data = getattr(exc, "data", None)
             stale_reason = ""

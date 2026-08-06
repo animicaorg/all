@@ -972,6 +972,15 @@ class StratumServer:
             return float(share_target)
         return min(float(share_target), ratio)
 
+    def _is_subblock_active(self, session: Session) -> bool:
+        """True when this session is really mining below the block target."""
+        if not session.supports_subblock or session.is_v1:
+            return False
+        try:
+            return float(session.share_target) < float(self._default_share_target)
+        except (TypeError, ValueError):
+            return False
+
     async def set_global_difficulty(
         self, share_target: float, theta_micro: Optional[int] = None
     ) -> None:
@@ -1311,6 +1320,9 @@ class StratumServer:
             log.warning(f"[Stratum] resync notify build failed: {e}")
             return
         await self._send(session, msg)
+        # Record it like any other delivery, otherwise the next broadcast treats
+        # this job as unsent for the session and pushes it a second time.
+        self._mark_job_seen(session, job.job_id, session.session_id, True)
 
     def _resolve_session_pool_mode(
         self,
@@ -2241,10 +2253,13 @@ class StratumServer:
             "clients": len(self._sessions),
             "authorized_sessions": authorized,
             "unique_miners": len(unique_addresses),
+            # Sessions ACTUALLY mining a sub-block target. Counting mere opt-in
+            # over-reported: _effective_share_target also refuses v1, solo, a
+            # disabled/None policy and a theta too small to carve S shares, so a
+            # pool with the feature off still showed opted-in miners as if they
+            # were earning per share.
             "subblock_sessions": sum(
-                1
-                for s in self._sessions.values()
-                if s.supports_subblock and not s.is_v1
+                1 for s in self._sessions.values() if self._is_subblock_active(s)
             ),
             "refused_connections": self._refused_total,
             "capped_ips": sum(
