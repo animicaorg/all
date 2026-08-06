@@ -1957,9 +1957,15 @@ class PoolMetrics:
 
     def _active_miner_count(self, window_seconds: float = 900.0) -> int:
         """Distinct miners genuinely present: addresses with an accepted share
-        inside the window (DB, falling back to in-memory events) plus addresses
-        holding a currently-authorized session. Deliberately NOT the open-socket
-        count — one client holding hundreds of idle sockets is one miner."""
+        inside the window (DB, falling back to in-memory events), plus
+        authorized sessions that have themselves produced an accepted share.
+
+        Deliberately NOT the open-socket count — one client holding hundreds of
+        idle sockets is one miner. And the session half REQUIRES a real share:
+        `mining.authorize` accepts any well-formed-looking address without
+        proof, so counting merely-authorized sessions would let an abuser
+        re-inflate this number with fabricated addresses (the very defect this
+        replaced). Work, not a claimed identity, is what makes a miner."""
         addresses: set = set()
         cutoff = time.time() - window_seconds
         if self._db is not None:
@@ -1983,10 +1989,13 @@ class PoolMetrics:
                         addresses.add(addr)
         try:
             for snap in self._server.session_snapshots():
-                if snap.get("authorized"):
-                    addr = str(snap.get("address") or "").strip()
-                    if addr and addr != "unknown-address":
-                        addresses.add(addr)
+                if not snap.get("authorized"):
+                    continue
+                if int(snap.get("shares_accepted") or 0) <= 0:
+                    continue
+                addr = str(snap.get("address") or "").strip()
+                if addr and addr != "unknown-address":
+                    addresses.add(addr)
         except Exception:
             pass
         return len(addresses)

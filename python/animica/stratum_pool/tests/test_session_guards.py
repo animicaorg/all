@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from animica.stratum_pool.config import PoolConfig
 from animica.stratum_pool.metrics import PoolMetrics
-from mining.stratum_server import Session, StratumServer
+from mining.stratum_server import Session, StratumServer  # noqa: F401
 
 
 class DummyJobManager:
@@ -223,14 +223,160 @@ async def test_unique_miners_stat_dedupes_addresses(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_unterminated_line_is_bounded(monkeypatch):
+    # decode_lines only consumes complete "\n"-delimited envelopes, so a client
+    # that streams forever without a newline grew the per-session buffer without
+    # limit (~100MB in 17s measured) while looking active to the reaper.
+    monkeypatch.setenv("ANIMICA_STRATUM_MAX_LINE_BYTES", "65536")
+    monkeypatch.setenv("ANIMICA_STRATUM_IDLE_TIMEOUT_SECS", "0")
+    monkeypatch.setenv("ANIMICA_STRATUM_HANDSHAKE_TIMEOUT_SECS", "0")
+    srv, port = await _start_server(keepalive_secs=0.0)
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        assert await _wait_for(lambda: len(srv._sessions) == 1)
+        blob = b"A" * 16384
+        for _ in range(16):  # 256KB, no newline anywhere
+            writer.write(blob)
+            try:
+                await asyncio.wait_for(writer.drain(), timeout=2.0)
+            except Exception:
+                break
+        # Server must reject and close rather than buffer indefinitely. The
+        # close may surface as the error line, a clean EOF, or an RST (unread
+        # inbound data in the socket buffer makes Linux send RST on close).
+        assert await _wait_for(lambda: len(srv._sessions) == 0, timeout=8.0)
+        try:
+            data = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+            assert b"line too long" in data or data == b""
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+    finally:
+        writer.close()
+        await srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_refusal_logging_is_throttled_and_counted(monkeypatch, caplog):
+    # Refusals are attacker-paced; one log line each would let a connect flood
+    # push out the share/job/payout lines that matter (shared journald bucket).
+    monkeypatch.setenv("ANIMICA_STRATUM_MAX_SESSIONS_PER_IP", "2")
+    monkeypatch.setenv("ANIMICA_STRATUM_REFUSE_LOG_INTERVAL", "3600")
+    srv, port = await _start_server(keepalive_secs=0.0)
+    conns = []
+    try:
+        for _ in range(2):
+            conns.append(await asyncio.open_connection("127.0.0.1", port))
+        assert await _wait_for(lambda: len(srv._sessions) == 2)
+        with caplog.at_level("WARNING", logger="mining.stratum_server"):
+            for _ in range(12):
+                r, w = await asyncio.open_connection("127.0.0.1", port)
+                conns.append((r, w))
+                await asyncio.wait_for(r.read(), timeout=5.0)
+        refuse_lines = [
+            rec for rec in caplog.records if "refusing connections" in rec.getMessage()
+        ]
+        assert len(refuse_lines) == 1, f"expected 1 throttled log, got {len(refuse_lines)}"
+        stats = srv.stats()
+        assert stats["refused_connections"] == 12
+        assert stats["capped_ips"] == 1
+    finally:
+        for _, w in conns:
+            w.close()
+        await srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_authorized_without_shares_is_not_a_miner(monkeypatch):
+    # mining.authorize accepts any plausible-looking address with no proof, so
+    # counting merely-authorized sessions lets an abuser re-inflate the miner
+    # count with fabricated addresses. Only work counts.
+    monkeypatch.setenv("ANIMICA_STRATUM_IDLE_TIMEOUT_SECS", "0")
+    monkeypatch.setenv("ANIMICA_STRATUM_HANDSHAKE_TIMEOUT_SECS", "0")
+    srv, port = await _start_server(keepalive_secs=0.0)
+    conns = []
+    try:
+        for i in range(5):
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            conns.append((reader, writer))
+            writer.write(_authorize_line(f"anim1fabricated{i}"))
+            await writer.drain()
+        assert await _wait_for(
+            lambda: sum(1 for s in srv._sessions.values() if s.authorized) == 5
+        )
+        metrics = PoolMetrics(PoolConfig(db_url=""), DummyJobManager(), srv)
+        # Five authorized addresses, zero accepted shares -> zero miners.
+        assert metrics._active_miner_count(900.0) == 0
+        # Credit one session with a share; only that one becomes a miner.
+        next(iter(srv._sessions.values())).shares_accepted = 1
+        assert metrics._active_miner_count(900.0) == 1
+    finally:
+        for _, w in conns:
+            w.close()
+        await srv.stop()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_deadline_does_not_wait_for_wedged_peer(monkeypatch):
+    # A non-reading peer must not hold job publication (and therefore the
+    # template loop / block production) for the full 60s send timeout.
+    monkeypatch.setenv("ANIMICA_STRATUM_BROADCAST_DEADLINE", "1")
+    monkeypatch.setenv("ANIMICA_STRATUM_SEND_TIMEOUT", "60")
+    monkeypatch.setenv("ANIMICA_STRATUM_IDLE_TIMEOUT_SECS", "0")
+    monkeypatch.setenv("ANIMICA_STRATUM_HANDSHAKE_TIMEOUT_SECS", "0")
+    srv, port = await _start_server(keepalive_secs=0.0)
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        assert await _wait_for(lambda: len(srv._sessions) == 1)
+        session = next(iter(srv._sessions.values()))
+
+        # Simulate a wedged peer: drain() never returns.
+        class WedgedWriter:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def write(self, data):
+                return None
+
+            async def drain(self):
+                await asyncio.sleep(3600)
+
+            def is_closing(self):
+                return False
+
+            def close(self):
+                self._inner.close()
+
+            async def wait_closed(self):
+                return None
+
+            def get_extra_info(self, *a, **k):
+                return self._inner.get_extra_info(*a, **k)
+
+        session.writer = WedgedWriter(session.writer)
+        started = asyncio.get_event_loop().time()
+        await srv._broadcast({"jsonrpc": "2.0", "method": "mining.ping"})
+        elapsed = asyncio.get_event_loop().time() - started
+        assert elapsed < 3.0, f"broadcast waited {elapsed:.1f}s on a wedged peer"
+        # The wedged session is left undecided (not falsely dropped).
+        assert len(srv._sessions) == 1
+    finally:
+        writer.close()
+        await srv.stop()
+
+
+@pytest.mark.asyncio
 async def test_active_miner_count_ignores_socket_pileup():
     job_manager = DummyJobManager()
-    # 835 authorized snapshots, all one address (the 2026-08-06 shape) plus a
-    # second real miner's accepted share in the window and one stale share.
+    # 835 authorized, share-producing snapshots all on ONE address (the
+    # 2026-08-06 shape) plus a second real miner's accepted share in the window
+    # and one stale share.
     pileup = [
-        {"authorized": True, "address": "anim1flooder"} for _ in range(835)
+        {"authorized": True, "address": "anim1flooder", "shares_accepted": 3}
+        for _ in range(835)
     ]
-    pileup.append({"authorized": False, "address": "anim1lurker"})
+    pileup.append(
+        {"authorized": False, "address": "anim1lurker", "shares_accepted": 9}
+    )
     metrics = PoolMetrics(
         PoolConfig(db_url=""), job_manager, StaticSessionServer(pileup)
     )

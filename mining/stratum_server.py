@@ -501,6 +501,15 @@ class StratumServer:
         self._handshake_timeout_secs = max(
             0.0, float(os.environ.get("ANIMICA_STRATUM_HANDSHAKE_TIMEOUT_SECS", "180"))
         )
+        # Max bytes we will buffer for ONE un-terminated line. decode_lines
+        # only consumes complete newline-delimited envelopes, so a client that
+        # streams forever without a newline grows this session's buffer without
+        # limit (measured ~100MB in 17s on one socket) — and it stays "active"
+        # for the reaper because bytes keep arriving. Legit stratum lines are
+        # well under 64KiB. 0 disables the bound.
+        self._max_line_bytes = max(
+            0, int(os.environ.get("ANIMICA_STRATUM_MAX_LINE_BYTES", str(1 << 20)))
+        )
         self._session_low_reject_streak_threshold = 3
         self._session_high_accept_streak_threshold = 24
         base_target = max(float(self._default_share_target), 1e-9)
@@ -517,6 +526,27 @@ class StratumServer:
         # appearing in _sessions — counting sessions would let a burst of
         # simultaneous connects sail past the cap before any of them registers.
         self._ip_conn_counts: Dict[str, int] = {}
+        # Refusals are attacker-paced (one TCP handshake each), and the pool
+        # logs synchronously to journald where every line shares one rate-limit
+        # bucket with share/job/payout INFO. An unthrottled per-refusal warning
+        # would let a connect flood suppress the logs that matter. Count always,
+        # log at most once per window per IP.
+        self._refused_total = 0
+        self._refused_by_ip: Dict[str, int] = {}
+        self._refused_log_ts: Dict[str, float] = {}
+        self._refused_log_interval = max(
+            0.0, float(os.environ.get("ANIMICA_STRATUM_REFUSE_LOG_INTERVAL", "60"))
+        )
+        # How long a broadcast (job notify / difficulty) may hold its caller
+        # before slow peers are left behind. The template loop awaits job
+        # publication, so this bounds the pool-wide stall one wedged miner can
+        # cause. 0 = wait for every send (legacy behaviour).
+        self._broadcast_deadline_secs = max(
+            0.0, float(os.environ.get("ANIMICA_STRATUM_BROADCAST_DEADLINE", "5"))
+        )
+        # Sends left running past a broadcast deadline; held so the event loop
+        # keeps a strong reference until they complete.
+        self._detached_sends: set = set()
 
         # Stats
         self._accepted = 0
@@ -846,7 +876,9 @@ class StratumServer:
                 sends.append((sid, s, push_set_difficulty_v1(difficulty)))
             else:
                 sends.append((sid, s, msg))
-        dead = await self._send_batch(sends, context="set_difficulty")
+        dead = await self._send_batch(
+            sends, context="set_difficulty", deadline=self._broadcast_deadline_secs
+        )
         for sid in dead:
             await self._drop_session(sid)
         log.info(
@@ -883,6 +915,7 @@ class StratumServer:
             sends,
             context=f"broadcast job={job.job_id}",
             on_success=lambda sid, s: self._mark_job_seen(s, job.job_id, sid, clean_jobs),
+            deadline=self._broadcast_deadline_secs,
         )
         for sid in dead:
             await self._drop_session(sid)
@@ -954,7 +987,9 @@ class StratumServer:
 
     async def _broadcast(self, obj: JSON) -> None:
         sends = [(sid, s, obj) for sid, s in list(self._sessions.items())]
-        dead = await self._send_batch(sends, context="broadcast")
+        dead = await self._send_batch(
+            sends, context="broadcast", deadline=self._broadcast_deadline_secs
+        )
         for sid in dead:
             await self._drop_session(sid)
 
@@ -964,17 +999,51 @@ class StratumServer:
         *,
         context: str,
         on_success: Optional[Callable[[str, Session], None]] = None,
+        deadline: Optional[float] = None,
     ) -> List[str]:
+        """Fan out one payload per session concurrently and report dead ones.
+
+        `deadline` bounds how long the CALLER waits, not the sends themselves.
+        Job broadcasts run on the template loop: without a deadline the batch
+        resolves only when the slowest peer does, so one non-reading miner
+        holds job publication for the full send timeout (60s default) and
+        stalls block production pool-wide. Sends still in flight past the
+        deadline are left running — cancelling mid-write corrupts the stream —
+        and are simply not waited on; they finish or hit their own send timeout
+        and get reaped on a later pass. A slow peer therefore misses this job,
+        not the whole pool.
+        """
         if not sends:
             return []
-        outcomes = await asyncio.gather(
-            *(
+        tasks = [
+            asyncio.ensure_future(
                 self._send_with_timeout(sid, session, payload, context=context)
-                for sid, session, payload in sends
             )
-        )
+            for sid, session, payload in sends
+        ]
+        if deadline and deadline > 0:
+            done, pending = await asyncio.wait(tasks, timeout=deadline)
+            if pending:
+                log.warning(
+                    f"[Stratum] {context}: {len(pending)}/{len(tasks)} sends still "
+                    f"in flight after {deadline}s — not waiting (slow peers miss "
+                    f"this message)"
+                )
+                for task in pending:
+                    # Keep a reference so the task isn't GC'd mid-write, and
+                    # swallow its eventual result/exception.
+                    self._detached_sends.add(task)
+                    task.add_done_callback(self._detached_sends.discard)
+        else:
+            await asyncio.wait(tasks)
         dead: List[str] = []
-        for (sid, session, _), ok in zip(sends, outcomes):
+        for (sid, session, _), task in zip(sends, tasks):
+            if not task.done():
+                continue  # still in flight past the deadline: undecided, not dead
+            try:
+                ok = task.result()
+            except Exception:
+                ok = False
             if ok:
                 if on_success is not None:
                     on_success(sid, session)
@@ -1252,10 +1321,18 @@ class StratumServer:
         if self._max_sessions_per_ip > 0 and peer_ip:
             held = self._ip_conn_counts.get(peer_ip, 0)
             if held >= self._max_sessions_per_ip:
-                log.warning(
-                    f"[Stratum] refusing {peer}: {held} connections already "
-                    f"open from {peer_ip} (cap {self._max_sessions_per_ip})"
-                )
+                self._refused_total += 1
+                refused_for_ip = self._refused_by_ip.get(peer_ip, 0) + 1
+                self._refused_by_ip[peer_ip] = refused_for_ip
+                now = time.time()
+                last_logged = self._refused_log_ts.get(peer_ip, 0.0)
+                if now - last_logged >= self._refused_log_interval:
+                    self._refused_log_ts[peer_ip] = now
+                    log.warning(
+                        f"[Stratum] refusing connections from {peer_ip}: "
+                        f"{held} already open (cap {self._max_sessions_per_ip}); "
+                        f"{refused_for_ip} refused from this IP so far"
+                    )
                 try:
                     writer.write(
                         (
@@ -1434,6 +1511,23 @@ class StratumServer:
                             session, make_error(None, RpcErrorCodes.PARSE_ERROR, str(e))
                         )
                         continue
+                    # decode_lines leaves an un-terminated tail in place; a
+                    # client that never sends "\n" would grow it forever.
+                    if self._max_line_bytes and len(buf) > self._max_line_bytes:
+                        log.warning(
+                            f"[Stratum] dropping {peer}: unterminated line "
+                            f"exceeded {self._max_line_bytes} bytes"
+                        )
+                        with suppress(Exception):
+                            await self._send(
+                                session,
+                                make_error(
+                                    None,
+                                    RpcErrorCodes.INVALID_REQUEST,
+                                    "line too long",
+                                ),
+                            )
+                        break
                     for obj in decoded:
                         await self._process_message(session, obj)
         except asyncio.CancelledError:  # pragma: no cover
@@ -1927,6 +2021,12 @@ class StratumServer:
             "clients": len(self._sessions),
             "authorized_sessions": authorized,
             "unique_miners": len(unique_addresses),
+            "refused_connections": self._refused_total,
+            "capped_ips": sum(
+                1
+                for ip, n in self._ip_conn_counts.items()
+                if self._max_sessions_per_ip and n >= self._max_sessions_per_ip
+            ),
             "accepted": self._accepted,
             "rejected": self._rejected,
             "uptime_sec": int(time.time() - self._started_ts),
