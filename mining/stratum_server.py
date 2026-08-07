@@ -86,6 +86,10 @@ class Session:
     session_id: str
     writer: asyncio.StreamWriter
     framing: str = "lines"  # "lines" | "lenpref"
+    # Remote IP the connection arrived from; drives the per-IP session cap and
+    # lets stats group sessions by origin. None when the transport has no
+    # peername (unix sockets in tests).
+    peer_ip: Optional[str] = None
     extranonce1: Hex = ""
     extranonce2_size: int = 8
     worker: Optional[str] = None
@@ -98,6 +102,12 @@ class Session:
     share_target: float = 0.01
     theta_micro: int = 800_000
     last_seen: float = field(default_factory=lambda: time.time())
+    # Wall-clock of the last INBOUND bytes from this client. Distinct from
+    # last_seen, which touch() also refreshes on OUTBOUND keepalive pushes
+    # (_push_difficulty) — using last_seen for idle detection makes a silent
+    # client look active forever because our own heartbeat keeps resetting it.
+    # The idle reaper must key off this field only.
+    last_inbound: float = field(default_factory=lambda: time.time())
     connected_since: float = field(default_factory=lambda: time.time())
     jobs_seen: List[str] = field(default_factory=list)
     shares_accepted: int = 0
@@ -477,6 +487,29 @@ class StratumServer:
             "pps" if self._pool_mode == "both" else self._pool_mode
         )
         self._session_vardiff_enabled = bool(session_vardiff_enabled)
+        # Abuse guards. On 2026-08-06 a single client held 835 idle sockets on
+        # the solo port — authorized once per socket, then never spoke again —
+        # inflating the "miners" stat and walking the process toward fd
+        # exhaustion. Cap concurrent sessions per remote IP and reap sessions
+        # that stop sending. Legit miners reconnect transparently; 0 disables.
+        self._max_sessions_per_ip = max(
+            0, int(os.environ.get("ANIMICA_STRATUM_MAX_SESSIONS_PER_IP", "64"))
+        )
+        self._idle_timeout_secs = max(
+            0.0, float(os.environ.get("ANIMICA_STRATUM_IDLE_TIMEOUT_SECS", "900"))
+        )
+        self._handshake_timeout_secs = max(
+            0.0, float(os.environ.get("ANIMICA_STRATUM_HANDSHAKE_TIMEOUT_SECS", "180"))
+        )
+        # Max bytes we will buffer for ONE un-terminated line. decode_lines
+        # only consumes complete newline-delimited envelopes, so a client that
+        # streams forever without a newline grows this session's buffer without
+        # limit (measured ~100MB in 17s on one socket) — and it stays "active"
+        # for the reaper because bytes keep arriving. Legit stratum lines are
+        # well under 64KiB. 0 disables the bound.
+        self._max_line_bytes = max(
+            0, int(os.environ.get("ANIMICA_STRATUM_MAX_LINE_BYTES", str(1 << 20)))
+        )
         self._session_low_reject_streak_threshold = 3
         self._session_high_accept_streak_threshold = 24
         base_target = max(float(self._default_share_target), 1e-9)
@@ -485,6 +518,36 @@ class StratumServer:
         if self._session_max_share_target < self._session_min_share_target:
             self._session_max_share_target = self._session_min_share_target
 
+        # Live connection count per remote IP, maintained from accept to
+        # close in _handle_client. The cap must count CONNECTIONS, not
+        # `_sessions` entries: during the cryptonote protocol sniff (up to 10s,
+        # or forever for a client that never sends a newline) and for the whole
+        # life of a cryptonote session, a connection holds an fd without ever
+        # appearing in _sessions — counting sessions would let a burst of
+        # simultaneous connects sail past the cap before any of them registers.
+        self._ip_conn_counts: Dict[str, int] = {}
+        # Refusals are attacker-paced (one TCP handshake each), and the pool
+        # logs synchronously to journald where every line shares one rate-limit
+        # bucket with share/job/payout INFO. An unthrottled per-refusal warning
+        # would let a connect flood suppress the logs that matter. Count always,
+        # log at most once per window per IP.
+        self._refused_total = 0
+        self._refused_by_ip: Dict[str, int] = {}
+        self._refused_log_ts: Dict[str, float] = {}
+        self._refused_log_interval = max(
+            0.0, float(os.environ.get("ANIMICA_STRATUM_REFUSE_LOG_INTERVAL", "60"))
+        )
+        # How long a broadcast (job notify / difficulty) may hold its caller
+        # before slow peers are left behind. The template loop awaits job
+        # publication, so this bounds the pool-wide stall one wedged miner can
+        # cause. 0 = wait for every send (legacy behaviour).
+        self._broadcast_deadline_secs = max(
+            0.0, float(os.environ.get("ANIMICA_STRATUM_BROADCAST_DEADLINE", "5"))
+        )
+        # Sends left running past a broadcast deadline; held so the event loop
+        # keeps a strong reference until they complete.
+        self._detached_sends: set = set()
+
         # Stats
         self._accepted = 0
         self._rejected = 0
@@ -492,6 +555,14 @@ class StratumServer:
 
         # Background heartbeat tasks per session
         self._heartbeats: Dict[str, asyncio.Task] = {}
+        # Server-level idle reaper. Deliberately NOT part of the per-session
+        # heartbeat: the heartbeat's keepalive push awaits an un-timed
+        # writer.drain(), so a client that stops reading wedges that coroutine
+        # forever (and a failed send ends it) — a reaper riding it would die
+        # with it. One independent task sweeping all sessions cannot be
+        # wedged by any single client, and closing a wedged session's writer
+        # is what unblocks its stuck heartbeat.
+        self._reaper_task: Optional[asyncio.Task] = None
 
     # ---------------- lifecycle ----------------
 
@@ -509,6 +580,8 @@ class StratumServer:
                 str(s.getsockname()) for s in self._solo_server.sockets or []
             )
             log.info(f"[Stratum] SOLO listening on {solo_sockets} (95%-to-finder)")
+        if self._idle_timeout_secs > 0 or self._handshake_timeout_secs > 0:
+            self._reaper_task = asyncio.create_task(self._reap_idle_sessions_loop())
 
     async def _handle_client_solo(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -522,7 +595,52 @@ class StratumServer:
         finally:
             _SOLO_FORCED.reset(token)
 
+    async def _reap_idle_sessions_loop(self) -> None:
+        """Close sessions whose client stopped sending. Keyed off
+        `last_inbound` (inbound bytes only — NOT last_seen, which our own
+        outbound keepalives refresh), so a session past its timeout is a
+        client holding the socket without mining (vardiff keeps real miners
+        submitting well inside the window; 2026-08-06 one client parked 835
+        authorized, forever-silent sessions). Unauthorized sessions get the
+        shorter handshake deadline (a handshake timeout of 0 falls back to the
+        idle timeout; set both to 0 to disable reaping entirely). Closing the
+        writer EOFs the session's read loop, which runs the normal disconnect
+        cleanup — and also unwedges a heartbeat stuck in drain() on a
+        never-reading client."""
+        interval = min(
+            t for t in (self._idle_timeout_secs, self._handshake_timeout_secs, 30.0)
+            if t > 0
+        )
+        while True:
+            await asyncio.sleep(interval)
+            now = time.time()
+            for session in list(self._sessions.values()):
+                if session.writer.is_closing():
+                    continue
+                if session.authorized:
+                    reap_after = self._idle_timeout_secs
+                else:
+                    reap_after = (
+                        self._handshake_timeout_secs or self._idle_timeout_secs
+                    )
+                idle = now - session.last_inbound
+                if reap_after > 0 and idle >= reap_after:
+                    log.info(
+                        f"[Stratum] reaping idle session={session.session_id} "
+                        f"ip={session.peer_ip} worker={session.worker} "
+                        f"authorized={session.authorized} idle={int(idle)}s"
+                    )
+                    try:
+                        session.writer.close()
+                    except Exception:
+                        pass
+
     async def stop(self) -> None:
+        if self._reaper_task is not None:
+            self._reaper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._reaper_task
+            self._reaper_task = None
         for task in list(self._conn_tasks.keys()):
             task.cancel()
         for hb in list(self._heartbeats.values()):
@@ -758,7 +876,9 @@ class StratumServer:
                 sends.append((sid, s, push_set_difficulty_v1(difficulty)))
             else:
                 sends.append((sid, s, msg))
-        dead = await self._send_batch(sends, context="set_difficulty")
+        dead = await self._send_batch(
+            sends, context="set_difficulty", deadline=self._broadcast_deadline_secs
+        )
         for sid in dead:
             await self._drop_session(sid)
         log.info(
@@ -795,6 +915,7 @@ class StratumServer:
             sends,
             context=f"broadcast job={job.job_id}",
             on_success=lambda sid, s: self._mark_job_seen(s, job.job_id, sid, clean_jobs),
+            deadline=self._broadcast_deadline_secs,
         )
         for sid in dead:
             await self._drop_session(sid)
@@ -840,10 +961,17 @@ class StratumServer:
         # 4 bytes of extranonce1 is common; we allow 8 hex chars (4 bytes)
         extranonce1 = "0x" + secrets.token_hex(4)
         forced_solo = bool(_SOLO_FORCED.get())
+        peername = writer.get_extra_info("peername")
+        peer_ip = (
+            peername[0]
+            if isinstance(peername, (tuple, list)) and peername
+            else None
+        )
         s = Session(
             session_id=sid,
             writer=writer,
             framing=framing,
+            peer_ip=peer_ip,
             extranonce1=extranonce1,
             extranonce2_size=self._extranonce2_size,
             pool_mode="solo" if forced_solo else self._default_session_pool_mode,
@@ -859,7 +987,9 @@ class StratumServer:
 
     async def _broadcast(self, obj: JSON) -> None:
         sends = [(sid, s, obj) for sid, s in list(self._sessions.items())]
-        dead = await self._send_batch(sends, context="broadcast")
+        dead = await self._send_batch(
+            sends, context="broadcast", deadline=self._broadcast_deadline_secs
+        )
         for sid in dead:
             await self._drop_session(sid)
 
@@ -869,17 +999,51 @@ class StratumServer:
         *,
         context: str,
         on_success: Optional[Callable[[str, Session], None]] = None,
+        deadline: Optional[float] = None,
     ) -> List[str]:
+        """Fan out one payload per session concurrently and report dead ones.
+
+        `deadline` bounds how long the CALLER waits, not the sends themselves.
+        Job broadcasts run on the template loop: without a deadline the batch
+        resolves only when the slowest peer does, so one non-reading miner
+        holds job publication for the full send timeout (60s default) and
+        stalls block production pool-wide. Sends still in flight past the
+        deadline are left running — cancelling mid-write corrupts the stream —
+        and are simply not waited on; they finish or hit their own send timeout
+        and get reaped on a later pass. A slow peer therefore misses this job,
+        not the whole pool.
+        """
         if not sends:
             return []
-        outcomes = await asyncio.gather(
-            *(
+        tasks = [
+            asyncio.ensure_future(
                 self._send_with_timeout(sid, session, payload, context=context)
-                for sid, session, payload in sends
             )
-        )
+            for sid, session, payload in sends
+        ]
+        if deadline and deadline > 0:
+            done, pending = await asyncio.wait(tasks, timeout=deadline)
+            if pending:
+                log.warning(
+                    f"[Stratum] {context}: {len(pending)}/{len(tasks)} sends still "
+                    f"in flight after {deadline}s — not waiting (slow peers miss "
+                    f"this message)"
+                )
+                for task in pending:
+                    # Keep a reference so the task isn't GC'd mid-write, and
+                    # swallow its eventual result/exception.
+                    self._detached_sends.add(task)
+                    task.add_done_callback(self._detached_sends.discard)
+        else:
+            await asyncio.wait(tasks)
         dead: List[str] = []
-        for (sid, session, _), ok in zip(sends, outcomes):
+        for (sid, session, _), task in zip(sends, tasks):
+            if not task.done():
+                continue  # still in flight past the deadline: undecided, not dead
+            try:
+                ok = task.result()
+            except Exception:
+                ok = False
             if ok:
                 if on_success is not None:
                     on_success(sid, session)
@@ -1147,7 +1311,68 @@ class StratumServer:
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        # Per-IP connection cap, enforced at accept time on a live counter so
+        # neither the protocol-sniff window nor cryptonote sessions (which
+        # never enter _sessions) can slip past it. One misbehaving client
+        # opening sockets in bursts must not exhaust the fd budget.
         peer = writer.get_extra_info("peername")
+        peer_ip = peer[0] if isinstance(peer, (tuple, list)) and peer else None
+        counted_ip: Optional[str] = None
+        if self._max_sessions_per_ip > 0 and peer_ip:
+            held = self._ip_conn_counts.get(peer_ip, 0)
+            if held >= self._max_sessions_per_ip:
+                self._refused_total += 1
+                refused_for_ip = self._refused_by_ip.get(peer_ip, 0) + 1
+                self._refused_by_ip[peer_ip] = refused_for_ip
+                now = time.time()
+                last_logged = self._refused_log_ts.get(peer_ip, 0.0)
+                if now - last_logged >= self._refused_log_interval:
+                    self._refused_log_ts[peer_ip] = now
+                    log.warning(
+                        f"[Stratum] refusing connections from {peer_ip}: "
+                        f"{held} already open (cap {self._max_sessions_per_ip}); "
+                        f"{refused_for_ip} refused from this IP so far"
+                    )
+                try:
+                    writer.write(
+                        (
+                            json.dumps(
+                                make_error(
+                                    None,
+                                    RpcErrorCodes.INVALID_REQUEST,
+                                    "too many connections from your IP",
+                                )
+                            )
+                            + "\n"
+                        ).encode("utf-8")
+                    )
+                    await asyncio.wait_for(writer.drain(), timeout=5.0)
+                except Exception:
+                    pass
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                return
+            self._ip_conn_counts[peer_ip] = held + 1
+            counted_ip = peer_ip
+        try:
+            await self._handle_client_inner(reader, writer, peer)
+        finally:
+            if counted_ip is not None:
+                remaining = self._ip_conn_counts.get(counted_ip, 0) - 1
+                if remaining > 0:
+                    self._ip_conn_counts[counted_ip] = remaining
+                else:
+                    self._ip_conn_counts.pop(counted_ip, None)
+
+    async def _handle_client_inner(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        peer: object,
+    ) -> None:
         sock = writer.get_extra_info("socket")
         try:
             if sock:
@@ -1262,6 +1487,7 @@ class StratumServer:
                 chunk = await reader.read(65536)
                 if not chunk:
                     break
+                session.last_inbound = time.time()
 
                 if session.framing == "lenpref":
                     try:
@@ -1285,6 +1511,23 @@ class StratumServer:
                             session, make_error(None, RpcErrorCodes.PARSE_ERROR, str(e))
                         )
                         continue
+                    # decode_lines leaves an un-terminated tail in place; a
+                    # client that never sends "\n" would grow it forever.
+                    if self._max_line_bytes and len(buf) > self._max_line_bytes:
+                        log.warning(
+                            f"[Stratum] dropping {peer}: unterminated line "
+                            f"exceeded {self._max_line_bytes} bytes"
+                        )
+                        with suppress(Exception):
+                            await self._send(
+                                session,
+                                make_error(
+                                    None,
+                                    RpcErrorCodes.INVALID_REQUEST,
+                                    "line too long",
+                                ),
+                            )
+                        break
                     for obj in decoded:
                         await self._process_message(session, obj)
         except asyncio.CancelledError:  # pragma: no cover
@@ -1758,14 +2001,32 @@ class StratumServer:
 
     def stats(self) -> JSON:
         mode_counts = {"pps": 0, "solo": 0}
+        authorized = 0
+        unique_addresses: set[str] = set()
         for session in self._sessions.values():
             mode = _normalize_pool_mode(
                 session.pool_mode, default=self._default_session_pool_mode
             )
             if mode in mode_counts:
                 mode_counts[mode] += 1
+            if session.authorized:
+                authorized += 1
+                addr = (session.address or "").strip()
+                if addr:
+                    unique_addresses.add(addr)
         return {
+            # `clients` is raw open sessions — an fd/abuse metric, NOT a miner
+            # count (one client can hold hundreds of sockets). Miner-facing
+            # stats must use `unique_miners` / the summary's num_miners.
             "clients": len(self._sessions),
+            "authorized_sessions": authorized,
+            "unique_miners": len(unique_addresses),
+            "refused_connections": self._refused_total,
+            "capped_ips": sum(
+                1
+                for ip, n in self._ip_conn_counts.items()
+                if self._max_sessions_per_ip and n >= self._max_sessions_per_ip
+            ),
             "accepted": self._accepted,
             "rejected": self._rejected,
             "uptime_sec": int(time.time() - self._started_ts),
@@ -1781,6 +2042,7 @@ class StratumServer:
                 "session_id": s.session_id,
                 "worker": s.worker,
                 "address": s.address,
+                "peer_ip": s.peer_ip,
                 "pool_mode": s.pool_mode,
                 "authorized": s.authorized,
                 "share_target": s.share_target,

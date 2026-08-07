@@ -39,6 +39,9 @@ from rich.table import Table
 from agent_runtime.agentic import (
     AgentTurn,
     PermissionPolicy,
+    PERMISSION_MODES,
+    DEFAULT_PERMISSION_MODE,
+    category_of,
     ToolSpec,
     run_agent_loop,
 )
@@ -118,7 +121,12 @@ class _SlashHandler:
         t.add_column()
         for line in [
             ("/help",          "Show this list."),
-            ("/quit",          "Exit the chat REPL."),
+            ("/quit, /exit",   "Exit the chat REPL."),
+            ("/mode [name]",   "Show or change how tool calls are approved: "
+                                "plan (reads only), manual (ask before writes, "
+                                "shell, delete), auto-edit (edits apply, shell "
+                                "asks), auto (everything). Widening to auto asks "
+                                "for confirmation."),
             ("/balance",       "Refresh and print wallet balance."),
             ("/history",       "List the turns in this session."),
             ("/save",          "Save the session transcript to "
@@ -128,6 +136,11 @@ class _SlashHandler:
             ("/tier <id>",     "Prefer a specific tier (tiny|small|flagship|large)."),
             ("/clear",         "Clear the screen and forget history."),
             ("/status",        "Show provider cascade status."),
+            ("/swarm <task>",  "Multi-agent: plans the task into parallel "
+                                "subtasks, runs them at once, has each result "
+                                "adversarially reviewed, then merges what "
+                                "survived. Free tier runs 2 agents, Pro runs 8."),
+            ("/licence [key]",  "Show your tier, or store a Pro licence key."),
             ("/agent <task>",  "Run an agentic task with tool calls "
                                 "(read/write/edit/bash, gated). Operates "
                                 "in the current /cwd — point it at a repo "
@@ -153,6 +166,201 @@ class _SlashHandler:
         ]:
             t.add_row(*line)
         self.console.print(t)
+
+
+    def _cmd_exit(self, rest: str) -> None:
+        """`/exit` — the same as /quit. Both Claude Code and Codex accept it, and
+        typing it here used to print 'unknown command'."""
+        self._cmd_quit(rest)
+
+    def _cmd_q(self, rest: str) -> None:
+        self._cmd_quit(rest)
+
+    def _cmd_mode(self, rest: str) -> None:
+        """`/mode [name]` — show or change how tool calls get approved."""
+        policy: PermissionPolicy = self.state.get("agent_policy") or PermissionPolicy()
+        want = rest.strip().lower()
+
+        if not want:
+            t = Table(title="Approval modes", show_header=True, box=None)
+            t.add_column("", style="bold")
+            t.add_column("mode", style="bold cyan")
+            t.add_column("what it does")
+            for name, spec in PERMISSION_MODES.items():
+                here = "→" if name == policy.mode else " "
+                t.add_row(here, name, spec["blurb"])
+            self.console.print(t)
+            self.console.print(
+                f"currently [bold cyan]{policy.label}[/bold cyan]. "
+                "change with [bold]/mode <name>[/bold]."
+            )
+            if policy.session_allowed:
+                self.console.print(
+                    "session exceptions: " + ", ".join(sorted(policy.session_allowed))
+                )
+            return
+
+        try:
+            new_mode = PermissionPolicy.normalize_mode(want)
+        except ValueError as exc:
+            self.console.print(f"[yellow]{exc}[/yellow]")
+            return
+
+        # Widening to full auto is the one direction that can cost you a
+        # repository, so it is confirmed rather than accepted silently.
+        if new_mode == "auto" and policy.mode != "auto":
+            self.console.print(
+                "[red]auto mode approves every tool call, including bash and "
+                "delete, with no further prompts.[/red]"
+            )
+            try:
+                if input("type 'auto' to confirm: ").strip().lower() != "auto":
+                    self.console.print("[dim]unchanged[/dim]")
+                    return
+            except EOFError:
+                self.console.print("[dim]unchanged[/dim]")
+                return
+
+        policy.mode = new_mode
+        self.state["agent_policy"] = policy
+        self.console.print(
+            f"approval mode: [bold cyan]{policy.label}[/bold cyan] — {policy.blurb}"
+        )
+
+
+    def _cmd_swarm(self, rest: str) -> None:
+        """`/swarm <task>` — multi-agent: plan, fan out, adversarially verify, merge.
+
+        The single-agent `/agent` is one context doing one thing at a time. On this
+        network a cold miner turn costs a couple of minutes, so running subtasks in
+        parallel is not just broader, it is faster in wall-clock — N subagents cost
+        about the slowest one, not N times the wait.
+        """
+        task = rest.strip()
+        if not task:
+            self.console.print("[yellow]usage: /swarm <task description>[/yellow]")
+            return
+
+        from agent_runtime.orchestrator import run_swarm, max_agents_for, PRO_MAX_AGENTS
+        from agent_runtime import entitlements as ent_mod
+
+        ent = self.state.get("entitlements") or ent_mod.resolve()
+        self.state["entitlements"] = ent
+
+        verdict = ent_mod.check_agent_task(ent)
+        if not verdict.allowed:
+            self.console.print(f"[yellow]{verdict.reason}[/yellow]")
+            if verdict.upgrade_hint:
+                self.console.print(f"[dim]{verdict.upgrade_hint}[/dim]")
+            return
+
+        width = max_agents_for(ent)
+        policy: PermissionPolicy = self.state.get("agent_policy") or PermissionPolicy()
+        cwd = self.state.get("agent_cwd") or os.getcwd()
+
+        self.console.print(
+            f"[bold]swarm[/bold] · {width} agent(s) · {policy.label} mode · {cwd}"
+        )
+        if not ent.is_pro:
+            self.console.print(
+                f"[dim]free tier: {width} parallel agents, "
+                f"{verdict.iterations} iterations each. $9.99/mo raises it to "
+                f"{PRO_MAX_AGENTS} agents and {ent_mod.PRO_AGENT_ITERATIONS} "
+                f"iterations — {ent_mod.PRICING_URL}[/dim]"
+            )
+
+        def on_event(kind: str, fields: dict) -> None:
+            if kind == "phase":
+                n = fields.get("count")
+                self.console.print(
+                    f"[cyan]▸ {fields.get('name')}[/cyan]"
+                    + (f" ({n})" if n else "")
+                )
+            elif kind == "plan":
+                for i, st in enumerate(fields.get("subtasks") or []):
+                    self.console.print(f"   {i + 1}. {st}")
+            elif kind == "agent_start":
+                self.console.print(f"   [dim]agent {fields['index'] + 1} started[/dim]")
+            elif kind == "agent_done":
+                mark = "✓" if fields.get("completed") else "·"
+                self.console.print(
+                    f"   {mark} agent {fields['index'] + 1} "
+                    f"({fields.get('iterations')} iters, "
+                    f"{fields.get('cost', 0):.4f} ANIMICA)"
+                )
+            elif kind == "agent_error":
+                self.console.print(f"   [red]✗ agent {fields['index'] + 1}: "
+                                   f"{fields.get('error')}[/red]")
+            elif kind == "agent_skipped":
+                self.console.print(f"   [yellow]· agent {fields['index'] + 1} skipped: "
+                                   f"{fields.get('reason')}[/yellow]")
+            elif kind == "verdict":
+                v = fields.get("verdict")
+                colour = "green" if v == "confirmed" else "yellow"
+                self.console.print(f"   [{colour}]{v}[/{colour}] "
+                                   f"· subtask {fields['index'] + 1}")
+            elif kind == "warn":
+                self.console.print(f"   [yellow]{fields.get('message')}[/yellow]")
+
+        submit = _build_agent_submit(
+            self.cascade,
+            tier_preferred=self.state.get("tier_preferred"),
+            yolo=True,
+            console=self.console,
+            max_output_tokens=512,
+        )
+        result = run_swarm(
+            task=task,
+            submit_turn=submit,
+            policy=policy,
+            permission_prompter=_permission_prompter(self.console),
+            cwd=cwd,
+            max_agents=width,
+            max_iterations=verdict.iterations,
+            max_cost=float(self.state.get("agent_max_cost") or 2.0),
+            verify=True,
+            on_event=on_event,
+        )
+        ent_mod.record_agent_task()
+
+        self.console.print()
+        if result.synthesis:
+            self.console.print(Markdown(result.synthesis))
+        else:
+            self.console.print("[yellow]the swarm produced nothing usable[/yellow]")
+        refuted = [r for r in result.results if r.verdict == "refuted"]
+        self.console.print(
+            f"\n[dim]{len(result.surviving)}/{len(result.results)} subtask(s) survived"
+            + (f", {len(refuted)} refuted by review" if refuted else "")
+            + f" · {result.total_cost:.4f} ANIMICA · {result.wall_ms / 1000:.1f}s"
+            + (f" · stopped: {result.stop_reason}" if result.stop_reason != "done" else "")
+            + "[/dim]"
+        )
+
+    def _cmd_licence(self, rest: str) -> None:
+        """`/licence [key]` — show or set the Pro licence key."""
+        from agent_runtime import entitlements as ent_mod
+        key = rest.strip()
+        if key:
+            path = ent_mod.write_licence(key)
+            self.state["entitlements"] = None      # force a re-check
+            self.console.print(f"licence stored in {path} (mode 0600)")
+        ent = ent_mod.resolve()
+        self.state["entitlements"] = ent
+        # describe() already names the tier, so don't print it twice.
+        self.console.print(f"tier: [bold cyan]{ent.describe()}[/bold cyan]")
+        self.console.print(f"[dim]key: {ent_mod.masked(ent_mod.read_licence())} "
+                           f"· source: {ent.source}"
+                           + (f" · {ent.reason}" if ent.reason else "") + "[/dim]")
+        if not ent.is_pro:
+            used = ent_mod.agent_tasks_used_today()
+            self.console.print(
+                f"[dim]{used}/{ent.agent_tasks_per_day} agentic tasks used today · "
+                f"{ent_mod.PRICING_URL}[/dim]"
+            )
+
+    def _cmd_license(self, rest: str) -> None:
+        self._cmd_licence(rest)
 
     def _cmd_quit(self, _: str) -> None:
         self.state["exit"] = True
@@ -439,30 +647,77 @@ class _SlashHandler:
 # --------------------------------------------------------------------------- #
 
 
+_CATEGORY_WARNING = {
+    "write": "will change files on disk",
+    "destroy": "will DELETE",
+    "exec": "will run code on this machine with your permissions",
+    "net": "will send a request off this machine",
+}
+
+
+
+def _resolve_policy(mode: str, yolo_tools: bool, read_only: bool) -> PermissionPolicy:
+    """Build the policy from --permission-mode, letting the older flags win.
+
+    `--yolo-tools` and `--read-only` predate the modes and are kept because
+    scripts use them. They are exact aliases for `auto` and `plan`, so passing
+    both a mode and a flag is not ambiguous — the flag is the more specific
+    statement and wins, and the contradictory pair is refused outright.
+    """
+    if yolo_tools and read_only:
+        raise typer.BadParameter("--yolo-tools and --read-only contradict each other")
+    if yolo_tools:
+        return PermissionPolicy("auto")
+    if read_only:
+        return PermissionPolicy("plan")
+    try:
+        return PermissionPolicy(mode)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 def _permission_prompter(console: Console):
-    """Build a prompter that asks the user about non-safe tool calls."""
+    """Ask about a tool call, saying plainly what it will do.
+
+    The old prompt printed the tool name and its arguments and asked
+    "Allow? [y]es / [s]ession / [n]o". Two things were missing, and both matter
+    when the answer is a habit rather than a decision: what *kind* of action it
+    is (editing a file and running a shell command read identically as a name
+    plus arguments), and any way to say "stop asking me about edits" short of
+    restarting with a flag that also auto-approves `rm -rf`.
+    """
     def _prompt(tool: ToolSpec, args: dict) -> str:
-        console.print(
-            f"\n[yellow]⚠ tool {tool.name} requires permission[/yellow]"
-        )
-        # Pretty-print the arguments — but truncate long content fields
-        # so the prompt fits a terminal.
-        pretty = {}
+        cat = category_of(tool)
+        warn = _CATEGORY_WARNING.get(cat, "requires permission")
+        colour = "red" if cat in ("exec", "destroy") else "yellow"
+        console.print(f"\n[{colour}]⚠ {tool.name} — {warn}[/{colour}]")
+
+        # Pretty-print the arguments — but truncate long content fields so the
+        # prompt fits a terminal. The command or path is the part being judged,
+        # so it is never the part that gets cut.
         for k, v in args.items():
             sv = str(v)
             if len(sv) > 400:
-                sv = sv[:400] + f"... (+{len(sv)-400} more)"
-            pretty[k] = sv
-        for k, v in pretty.items():
-            console.print(f"  [bold]{k}:[/bold] {v}")
+                sv = sv[:400] + f"… (+{len(sv) - 400} more chars)"
+            console.print(f"  [bold]{k}:[/bold] {sv}")
+
+        widen = ("all writes from now on" if cat in ("write", "net")
+                 else "EVERYTHING from now on, including shell")
         try:
-            ans = input("Allow? [y]es / [s]ession / [n]o: ").strip().lower()
+            ans = input(
+                f"Allow? [y]es once / [s]ession ({tool.name} only) / "
+                f"[a]lways ({widen}) / [n]o: "
+            ).strip().lower()
         except EOFError:
+            # A closed stdin is not consent. This is why the CLI is usable in a
+            # pipe at all: it denies instead of hanging or assuming yes.
             return "deny"
         if ans in {"y", "yes"}:
             return "allow"
         if ans in {"s", "session"}:
             return "allow_session"
+        if ans in {"a", "always"}:
+            return "allow_mode"
         return "deny"
     return _prompt
 
@@ -914,7 +1169,15 @@ def main(
     ),
     read_only: bool = typer.Option(
         False, "--read-only",
-        help="In agentic mode, refuse all non-safe tools (write/edit/bash/...).",
+        help="Alias for --permission-mode plan.",
+    ),
+    permission_mode: str = typer.Option(
+        DEFAULT_PERMISSION_MODE, "--permission-mode", "-p",
+        help="How tool calls are approved: 'plan' (reads only), 'manual' "
+             "(default — ask before writing, deleting, running shell), "
+             "'auto-edit' (edits apply automatically, shell still asks), or "
+             "'auto' (everything, including shell and delete). Switch mid-session "
+             "with /mode.",
     ),
     max_iterations: int = typer.Option(
         10, "--max-iterations",
@@ -992,7 +1255,7 @@ def main(
         except (ConfigError, WalletError) as exc:
             console.print(f"[red]{exc.render()}[/red]")
             raise typer.Exit(code=2)
-        policy = PermissionPolicy(yolo=yolo_tools, read_only=read_only)
+        policy = _resolve_policy(permission_mode, yolo_tools, read_only)
         run_one_agent_task(
             console=console,
             cascade=cascade,
@@ -1053,7 +1316,7 @@ def main(
     rc = _run_repl(
         cfg, rpc_url=endpoint, wallet_path=wallet,
         yolo=yolo, console=console, wallet_label=wallet_label,
-        agent_policy=PermissionPolicy(yolo=yolo_tools, read_only=read_only),
+        agent_policy=_resolve_policy(permission_mode, yolo_tools, read_only),
         agent_max_iters=max_iterations, agent_max_cost=max_cost,
         agent_cwd=cwd or os.getcwd(),
         resume_thread_id=thread,
