@@ -867,44 +867,168 @@ def parse_tool_call(text: str) -> Optional[ParsedToolCall]:
 # --------------------------------------------------------------------------- #
 
 
+# What a tool actually does, which is what an approval decision turns on.
+#
+# `is_safe` is a single bit and cannot express the distinction people actually
+# want: "edit my files without asking, but ask before you run a shell command."
+# Categories can. A tool absent from this map falls back to its `is_safe` flag,
+# so a tool added later is gated rather than silently permitted.
+TOOL_CATEGORY: dict[str, str] = {
+    # reads — no side effects
+    "read_file": "read", "list_files": "read", "glob": "read", "tree": "read",
+    "grep": "read", "file_stat": "read", "diff_files": "read",
+    "think": "read", "todo": "read", "done": "read",
+    "balance": "read", "chain_head": "read", "animica_rpc": "read",
+    # reaches the network — safe locally, but it leaves the machine
+    "fetch_url": "net",
+    # changes files
+    "write_file": "write", "edit_file": "write", "search_and_replace": "write",
+    "append_file": "write", "mkdir": "write", "move_file": "write",
+    "apply_patch": "write",
+    # removes things
+    "delete_file": "destroy",
+    # runs arbitrary code
+    "bash": "exec", "python_eval": "exec",
+}
+
+# Ordered least to most dangerous, so a mode can be described as a ceiling.
+PERMISSION_MODES: dict[str, dict] = {
+    # Read-only reconnaissance. Nothing leaves the machine, nothing changes.
+    "plan": {"auto": {"read"}, "label": "plan", "blurb": "reads only; writes, shell and network refused"},
+    # The default. Reads are free; anything with a consequence is asked about.
+    "manual": {"auto": {"read"}, "label": "manual", "blurb": "asks before writing, deleting, running shell or fetching"},
+    # Edits flow, execution does not — the mode most coding sessions want.
+    "auto-edit": {"auto": {"read", "write", "net"}, "label": "auto-edit",
+                  "blurb": "writes and edits apply automatically; shell and delete still ask"},
+    # Everything. Named so it cannot be chosen by accident.
+    "auto": {"auto": {"read", "write", "net", "destroy", "exec"}, "label": "auto",
+             "blurb": "EVERYTHING auto-approved, including shell and delete"},
+}
+
+DEFAULT_PERMISSION_MODE = "manual"
+
+
+def category_of(tool: ToolSpec) -> str:
+    """A tool's category, defaulting so an unmapped tool is never auto-allowed
+    just because nobody classified it."""
+    cat = TOOL_CATEGORY.get(tool.name)
+    if cat:
+        return cat
+    return "read" if tool.is_safe else "exec"
+
+
 @dataclass
 class PermissionPolicy:
     """Decide whether a tool call can run.
 
-    - read_only=True  : only safe tools allowed; refuse the rest.
-    - yolo=True       : auto-allow everything (CAREFUL — model can rm -rf).
-    - otherwise        : safe tools auto-allow; non-safe prompts the user.
+    Four modes, from `plan` (reads only) through `manual` (the default: ask
+    before anything with a consequence) and `auto-edit` (edits apply, shell
+    still asks) to `auto` (everything).
+
+    The mode is meant to be *visible* wherever the agent runs. An agent that
+    auto-approves shell commands without saying so is the failure this replaced:
+    `--yolo-tools` was one boolean, off-screen, and indistinguishable from
+    careful behaviour until something was already deleted.
+
+    `yolo=` and `read_only=` are still accepted so existing callers and the old
+    flags keep working; they map onto `auto` and `plan`.
     """
 
-    yolo: bool = False
-    read_only: bool = False
+    mode: str = DEFAULT_PERMISSION_MODE
     # Per-tool overrides: name -> "allow" | "deny" | "ask"
     overrides: dict = field(default_factory=dict)
     # Persistent "yes to all of these in this session"
     session_allowed: set = field(default_factory=set)
 
+    def __init__(self, mode: str = DEFAULT_PERMISSION_MODE, *, yolo: bool = False,
+                 read_only: bool = False, overrides: dict | None = None,
+                 session_allowed: set | None = None) -> None:
+        if yolo and read_only:
+            raise ValueError("yolo and read_only are contradictory; pick one mode")
+        if yolo:
+            mode = "auto"
+        elif read_only:
+            mode = "plan"
+        self.mode = self.normalize_mode(mode)
+        self.overrides = dict(overrides or {})
+        self.session_allowed = set(session_allowed or ())
+
+    @staticmethod
+    def normalize_mode(mode: str) -> str:
+        m = str(mode or "").strip().lower().replace("_", "-")
+        aliases = {
+            "yolo": "auto", "auto-all": "auto", "bypass": "auto",
+            "read-only": "plan", "readonly": "plan", "ro": "plan",
+            "ask": "manual", "default": "manual", "prompt": "manual",
+            "acceptedits": "auto-edit", "accept-edits": "auto-edit", "edits": "auto-edit",
+        }
+        m = aliases.get(m, m)
+        if m not in PERMISSION_MODES:
+            raise ValueError(
+                f"unknown permission mode {mode!r}; choose one of "
+                + ", ".join(PERMISSION_MODES)
+            )
+        return m
+
+    # -- introspection, so the UI can always state what is armed -------------
+    @property
+    def label(self) -> str:
+        return PERMISSION_MODES[self.mode]["label"]
+
+    @property
+    def blurb(self) -> str:
+        return PERMISSION_MODES[self.mode]["blurb"]
+
+    @property
+    def is_read_only(self) -> bool:
+        return self.mode == "plan"
+
+    @property
+    def auto_approves_everything(self) -> bool:
+        return self.mode == "auto"
+
+    def auto_categories(self) -> set:
+        return set(PERMISSION_MODES[self.mode]["auto"])
+
+    def would_ask(self, tool: ToolSpec) -> bool:
+        """Would this tool prompt right now? Used to preview a mode change."""
+        if self.overrides.get(tool.name) in ("allow", "deny"):
+            return False
+        if tool.name in self.session_allowed:
+            return False
+        return category_of(tool) not in self.auto_categories()
+
     def evaluate(self, tool: ToolSpec, args: dict, *, prompter) -> tuple[bool, str]:
+        cat = category_of(tool)
         override = self.overrides.get(tool.name)
         if override == "deny":
-            return False, "denied by --deny policy"
+            return False, "denied by policy"
         if override == "allow":
-            return True, "allowed by --allow policy"
-        if self.read_only and not tool.is_safe:
-            return False, "blocked: --read-only mode"
-        if tool.is_safe:
-            return True, "safe (auto-allow)"
-        if self.yolo:
-            return True, "yolo (auto-allow)"
+            return True, "allowed by policy"
+
+        auto = self.auto_categories()
+        if cat in auto:
+            return True, f"{cat} auto-allowed in {self.label} mode"
+
+        # plan mode refuses rather than asking: its whole purpose is that the
+        # session cannot change anything, and a prompt is a way to change that.
+        if self.mode == "plan":
+            return False, f"blocked: plan mode refuses {cat} tools ({tool.name})"
+
         if tool.name in self.session_allowed:
-            return True, "session-allowed earlier"
-        # Prompt the user.
+            return True, "allowed for this session earlier"
+
         decision = prompter(tool, args)
         if decision == "allow":
-            return True, "user allowed (once)"
+            return True, "allowed once"
         if decision == "allow_session":
             self.session_allowed.add(tool.name)
-            return True, "user allowed for session"
-        return False, "user denied"
+            return True, "allowed for this session"
+        if decision == "allow_mode":
+            # "always do this kind of thing" — widen the mode, not just one tool.
+            self.mode = "auto-edit" if cat in ("write", "net") else "auto"
+            return True, f"switched to {self.label} mode"
+        return False, "denied"
 
 
 # --------------------------------------------------------------------------- #
