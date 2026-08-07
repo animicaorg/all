@@ -125,7 +125,7 @@ main() {
     fi
     say ""
     say "${D}free: unlimited chat, 10 agentic tasks/day, 2 parallel agents."
-    say "\$9.99/mo lifts all three — $PRICING_URL${N}"
+    say "A paid plan lifts all three — $PRICING_URL${N}"
     say ""
     say "${D}uninstall: rm -rf $HOME_DIR && rm -f $BIN_DIR/animica${N}"
     say ""
