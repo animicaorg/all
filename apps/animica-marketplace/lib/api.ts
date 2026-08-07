@@ -41,6 +41,9 @@ export function requireScope(ctx: AuthContext, scope: ApiScope) {
 export class ApiError extends Error {
   status: number;
   code: string;
+  // Optional structured payload surfaced in the error envelope (e.g. plan_limit errors carry
+  // {feature, limit, used, requiredPlan, upgradeUrl} so clients render contextual upgrade CTAs).
+  details?: Record<string, unknown>;
   constructor(status: number, code: string, message: string) {
     super(message);
     this.status = status;
@@ -146,7 +149,10 @@ export function mixedPreflight(req: NextRequest, methods?: string): NextResponse
 
 export function err(e: unknown) {
   if (e instanceof ApiError) {
-    return NextResponse.json({ error: { code: e.code, message: e.message } }, { status: e.status });
+    return NextResponse.json(
+      { error: { code: e.code, message: e.message, ...(e.details ? { details: jsonSafe(e.details) } : {}) } },
+      { status: e.status },
+    );
   }
   const msg = e instanceof Error ? e.message : 'internal error';
   return NextResponse.json({ error: { code: 'internal', message: msg } }, { status: 500 });

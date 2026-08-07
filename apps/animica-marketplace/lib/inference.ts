@@ -25,7 +25,7 @@ interface ChatOpts {
 export async function chat(messages: ChatMessage[], opts: ChatOpts = {}): Promise<ChatResult> {
   const paid = opts.paid ?? true;
   const base = paid ? config.poolV1 : config.freeV1;
-  const model = opts.model ?? (paid ? 'anm-fast-8b' : 'animica-chat');
+  const model = opts.model ?? (paid ? 'anm-fast-8b' : 'kimi-k3');
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (paid && config.poolKey) headers['authorization'] = `Bearer ${config.poolKey}`;
 

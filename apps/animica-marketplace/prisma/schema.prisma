@@ -24,8 +24,12 @@ datasource db {
 model Account {
   id          String   @id @default(cuid())
   address     String   @unique // bech32m anim1..., ml_dsa_65 (algId 0x1003) only
+  // Public developer handle -> animica.dev/developers/<handle>. Nullable: only developers who
+  // publish need one, and it is claimed once (case-insensitive, reserved-word checked).
+  handle      String?  @unique
   displayName String?
   bio         String?
+  websiteUrl  String?
   avatarUrl   String?
   isAgent     Boolean  @default(false) // self-declared; informational only
   role        Role     @default(USER)
@@ -50,6 +54,27 @@ model Account {
   vpnSessions  VpnSession[]
   mediaItems   MediaItem[]
 
+  planSubscriptions    PlanSubscription[]
+  workers              Worker[]
+  ownedWorkspaces      Workspace[]
+  workspaceMemberships WorkspaceMember[]
+
+  // --- Animica Python Cloud ---
+  cloudApps       CloudApp[]      @relation("CloudAppOwner")
+  cloudFunctions  CloudFunction[] @relation("CloudFunctionOwner")
+  cloudAgents     CloudAgent[]    @relation("CloudAgentOwner")
+  cloudCalls      CloudExecution[] @relation("CloudExecutionCaller")
+  cloudEarnings   CloudExecution[] @relation("CloudExecutionDeveloper")
+  cloudProviders  CloudProvider[]
+  cloudGrants     CloudGrant[]
+  cloudSecrets    CloudSecret[]
+  cloudPurchases  CloudAppPurchase[]
+  cloudReviews    CloudReview[]
+  cloudCredits    CloudCredit[]
+  billingPayments BillingPayment[]
+  usageCharges    UsageCharge[]
+  foundingDev     FoundingDeveloper?
+
   @@index([role])
 }
 
@@ -70,6 +95,10 @@ model ApiKey {
   scopes          String[] // read, buy, use, publish, withdraw
   status          KeyStatus @default(ACTIVE)
   rateLimitPerMin Int       @default(120)
+  // basic = the classic self-serve marketplace key (unchanged behavior).
+  // production = tier-gated key (Pro+): counted against the plan's api_keys limit and
+  // minted with the plan's api_rate_limit. Suspended (not revoked) on downgrade.
+  kind            String    @default("basic") // basic | production
   lastUsedAt      DateTime?
   createdAt       DateTime  @default(now())
   revokedAt       DateTime?
@@ -80,6 +109,10 @@ model ApiKey {
 enum KeyStatus {
   ACTIVE
   REVOKED
+  // Plan-limit suspension (downgrade): key stops resolving but is NOT revoked — flips back
+  // to ACTIVE when the account re-upgrades or frees a slot. resolveApiKey already rejects
+  // anything != ACTIVE, so no auth-path change is needed.
+  SUSPENDED
 }
 
 // ---------------------------------------------------------------------------
@@ -783,6 +816,10 @@ enum DomainStatus {
   ACTIVE
   EXPIRED
   GRACE
+  // Plan-limit suspension (subscription downgrade): the gateway 404s it (status != ACTIVE),
+  // search hides it, and — unlike EXPIRED — the name canNOT be re-registered by someone else.
+  // Content + ownership are preserved; flips back to ACTIVE when a slot frees up.
+  SUSPENDED
 }
 
 model DomainEvent {
@@ -1482,4 +1519,1167 @@ model MediaTip {
   createdAt   DateTime  @default(now())
 
   @@index([itemId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Platform subscriptions (fiat SaaS tiers) + Animica Workers — docs/subscriptions.md
+//
+// "AI is free. Put it to work." Tiers attach to the wallet-keyed Account (the identity that
+// owns keys, listings, .anm domains and Workers). USD/PayPal accounting here is DELIBERATELY
+// separate from the nANM ledger: a tier buys platform capability, never ANM.
+// ---------------------------------------------------------------------------
+
+// Tier catalog (like HireService for /hire): rendered on /pricing, PayPal plans minted by
+// scripts/subs-setup.ts. `key` is a string (not an enum) so an enterprise/custom tier can be
+// added without a type migration. limitsJson overrides the code defaults in lib/planConfig.ts,
+// making every limit adjustable without a deploy.
+model Plan {
+  id            String   @id @default(cuid())
+  key           String   @unique // free | starter | pro | operator | business (extensible)
+  name          String
+  tagline       String   @default("")
+  description   String   @default("")
+  features      String[] @default([]) // marketing checklist rendered on /pricing
+  icon          String   @default("⚡")
+  priceUsdCents Int      @default(0) // 999 / 2999 / 7999 / 19999; 0 => free (no PayPal plan)
+  paypalPlanId  String? // live PayPal billing plan id; null for the free plan
+  limitsJson    String   @default("{}") // JSON overrides merged over PLAN_DEFAULTS[key]
+  featured      Boolean  @default(false) // "MOST POPULAR" ribbon (pro)
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(100)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  subscriptions PlanSubscription[]
+}
+
+// One account⇄PayPal-subscription binding. History-preserving: an account may accumulate
+// rows over time (drafts, cancels, upgrades); the CURRENT plan is resolved in lib/plan.ts
+// (latest row whose status grants entitlements). paypalSubscriptionId is @unique so one
+// PayPal subscription can never pay for two rows (P2002 = already linked).
+model PlanSubscription {
+  id                     String    @id @default(cuid())
+  accountId              String
+  account                Account   @relation(fields: [accountId], references: [id])
+  planKey                String // snapshot of Plan.key at order time
+  plan                   Plan      @relation(fields: [planKey], references: [key])
+  status                 SubStatus @default(PENDING)
+  priceUsdCents          Int // snapshot — what this subscriber actually pays
+  paypalPlanId           String? // snapshot — the PayPal plan this sub was approved against
+  paypalSubscriptionId   String?   @unique // I-...
+  payerEmail             String? // PayPal subscriber email (admin console + receipts)
+  currentPeriodEnd       DateTime? // billing_info.next_billing_time; advanced on each SALE.COMPLETED
+  graceUntil             DateTime? // dunning window end while PAST_DUE/GRACE_PERIOD
+  lastPaymentAt          DateTime?
+  lastPaymentAmountCents Int?
+  failedPayments         Int       @default(0)
+  lastWebhookAt          DateTime?
+  lastWebhookType        String?
+  lastError              String? // most recent billing problem (shown in /admin/billing)
+  canceledAt             DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([accountId, status])
+  @@index([status, updatedAt])
+  @@index([planKey])
+}
+
+enum SubStatus {
+  PENDING // draft created at checkout start; never granted entitlements
+  ACTIVE
+  PAST_DUE // payment failed; paid limits kept, user warned, new paid-resource creation blocked
+  GRACE_PERIOD // dunning window running out
+  SUSPENDED // PayPal suspended / grace lapsed: free limits, Workers paused, config preserved
+  CANCELED // terminal for this row (a replayed webhook can never resurrect it)
+}
+
+// Processed PayPal webhook deliveries, keyed by PayPal's event id — THE replay/idempotency
+// guard (the spec requires persisted event ids; unlike hire, entitlement grants here are not
+// all absolute-state writes). Insert-first: a duplicate insert (P2002) short-circuits to 200
+// before any state change.
+model BillingEvent {
+  id             String   @id // PayPal event id (WH-...)
+  eventType      String
+  resourceId     String? // raw resource.id from the event
+  subscriptionId String? // resolved I-... id when determinable
+  accountId      String?
+  summary        String?
+  payloadJson    String   @default("{}")
+  processedAt    DateTime @default(now())
+
+  @@index([subscriptionId, processedAt])
+  @@index([eventType, processedAt])
+}
+
+// Monthly metered usage, bucketed per UTC calendar month (period = 'YYYY-MM'). Consumption is
+// an atomic conditional increment (used + n <= limit) — race-safe under concurrent runs.
+model UsageCounter {
+  id        String   @id @default(cuid())
+  accountId String
+  feature   String // worker_executions | ...
+  period    String // 'YYYY-MM' (UTC)
+  used      Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, feature, period])
+  @@index([accountId, period])
+}
+
+// An Animica Worker: an agent that performs authorized work automatically (scheduled /
+// recurring / externally triggered), vs a normal agent that only responds when asked.
+// Execution config mirrors Listing's serving config; execution itself is the MediaJob
+// claim-lease pattern over WorkerRun rows, driven by scripts/worker-runner.ts.
+model Worker {
+  id          String       @id @default(cuid())
+  accountId   String
+  account     Account      @relation(fields: [accountId], references: [id])
+  workspaceId String? // optional team scoping (Pro+)
+  workspace   Workspace?   @relation(fields: [workspaceId], references: [id])
+  name        String
+  purpose     String       @default("")
+  status      WorkerStatus @default(ACTIVE)
+  // Why the worker is DISABLED/PLAN_LIMIT (failure threshold, emergency stop, downgrade...).
+  statusReason String?
+
+  // Execution config
+  systemPrompt String @default("")
+  taskPrompt   String @default("") // what to do on each run
+  model        String @default("kimi-k3")
+  temperature  Float  @default(0.7)
+  toolsJson    String @default("[]") // subset of: "webhook", "anm_publish"
+  webhookUrl   String? // https endpoint owned by the user; result POSTed there (SSRF-guarded)
+  anmName      String? // .anm name this worker may publish to — must be owned by accountId
+
+  // Schedule
+  scheduleKind    String    @default("manual") // manual | interval
+  intervalMinutes Int? // clamped to the plan's worker_min_interval_minutes
+  nextRunAt       DateTime?
+  lastRunAt       DateTime?
+
+  // Safety rails (user-settable within platform caps; enforced by the runner)
+  maxRunSeconds       Int @default(120)
+  failureThreshold    Int @default(5) // consecutive failures before auto-DISABLED
+  consecutiveFailures Int @default(0)
+
+  // External trigger (Operator+): sha256 of a single-purpose anm_trg_ bearer token.
+  triggerTokenHash String? @unique
+
+  runsTotal Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  runs WorkerRun[]
+
+  @@index([accountId, status])
+  @@index([status, nextRunAt])
+  @@index([workspaceId])
+}
+
+enum WorkerStatus {
+  ACTIVE
+  PAUSED // user-paused; schedule frozen
+  DISABLED // kill switch or failure threshold; user must explicitly re-enable
+  PLAN_LIMIT // over the plan's worker count after a downgrade; config preserved
+}
+
+// One Worker execution. Quota accounting: every run (schedule/manual/external) consumes 1
+// from the account's monthly worker_executions counter at enqueue time.
+model WorkerRun {
+  id           String          @id @default(cuid())
+  workerId     String
+  worker       Worker          @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  accountId    String // denormalized for quota/analytics queries
+  status       WorkerRunStatus @default(PENDING)
+  trigger      String          @default("schedule") // schedule | manual | external
+  priority     Int             @default(0) // plan execution_priority at enqueue time
+  attempts     Int             @default(0)
+  leaseUntil   DateTime? // heartbeat-extended while RUNNING; expired lease => requeue/fail
+  scheduledFor DateTime?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  durationMs   Int?
+  output       String? // truncated result text
+  error        String?
+  tokensIn     Int             @default(0)
+  tokensOut    Int             @default(0)
+  logsJson     String          @default("[]") // step log [{t, msg}]
+  createdAt    DateTime        @default(now())
+
+  @@index([status, priority, createdAt])
+  @@index([workerId, createdAt])
+  @@index([accountId, createdAt])
+}
+
+enum WorkerRunStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+  CANCELLED
+  TIMEOUT
+}
+
+// Singleton (id='workers') — the administrator kill switch + runner heartbeat, mirroring
+// AnimalEngineState. paused=true stops scheduling AND claiming on the next tick.
+model WorkerEngineState {
+  id           String    @id @default("workers")
+  paused       Boolean   @default(false)
+  note         String?
+  lastTickAt   DateTime?
+  lastTickInfo String?
+  updatedAt    DateTime  @updatedAt
+}
+
+// Teams/workspaces (Pro+; Business gets many => agency client separation). Access is granted
+// ONLY by a WorkspaceMember row — never by knowing an id.
+model Workspace {
+  id           String   @id @default(cuid())
+  ownerId      String
+  owner        Account  @relation(fields: [ownerId], references: [id])
+  name         String
+  kind         String   @default("team") // team | client
+  // White-label / custom branding (Operator+), rendered on customer-facing worker views.
+  brandName    String?
+  brandLogoUrl String?
+  brandColor   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  members WorkspaceMember[]
+  workers Worker[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  accountId   String
+  account     Account       @relation(fields: [accountId], references: [id])
+  role        WorkspaceRole @default(MEMBER)
+  status      String        @default("active") // active | inactive_plan_limit
+  createdAt   DateTime      @default(now())
+
+  @@unique([workspaceId, accountId])
+  @@index([accountId])
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// Subscription funnel + adoption analytics (admin dashboard). Deliberately PII-light:
+// account ids only, no emails/IPs.
+model BillingAnalyticsEvent {
+  id          String   @id @default(cuid())
+  kind        String // pricing_view | checkout_start | checkout_success | checkout_error | upgrade | downgrade | cancel | payment_failed | reactivation | plan_limit_hit
+  accountId   String?
+  planKey     String?
+  fromPlanKey String?
+  meta        String   @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([kind, createdAt])
+}
+
+// ===========================================================================
+// ANIMICA PYTHON CLOUD
+//
+//   "Write Python. Deploy to Animica. Get paid when people use it."
+//
+// Execution truth model (measured, not assumed — see docs/python-cloud.md):
+//   * Animica consensus does NOT execute arbitrary Python. vm_py CALL txs revert on mainnet
+//     by design (raw-exec is fail-closed; enabling it would be node RCE). What IS real and
+//     consensus-carried is the DEPLOY tx (kind t=1), which stores {code, manifest} bytes in
+//     state and lands in a block. So every deployment is ANCHORED on-chain (source hash +
+//     artifact hash + DA blob id inside a signed DEPLOY tx) and EXECUTED off-chain, either in
+//     a hardened local container or on the Animica compute-provider fleet.
+//   * Money is real in both directions: users fund balances with finality-verified on-chain
+//     deposits, and developers/providers withdraw through the existing payout worker
+//     (`animica tx send`). Every nANM that moves does so through lib/ledger.ts post().
+//
+// Accounting invariants:
+//   * CloudExecution is the authoritative per-execution financial record. Every aggregate
+//     shown anywhere (earnings, analytics, /admin/profitability) is reproducible from these
+//     rows plus LedgerEntry — never from a mutable counter.
+//   * priceNanm = platformFeeNanm + developerNanm + providerNanm   (exactly, no rounding drift)
+//   * contributionNanm = platformFeeNanm - cogsNanm                (Animica's real profit)
+//   * USD (subscriptions) and nANM (execution economy) are accounted SEPARATELY and only
+//     joined for reporting, at an explicitly recorded ANM/USD reference price.
+// ===========================================================================
+
+// --- Catalog: apps & functions ---------------------------------------------
+
+// An App is a product: one or more functions, a marketplace listing, its own pricing.
+// Deliberately NOT the legacy `Listing` model — apps are Python Cloud native and must not
+// inherit the retired AI-marketplace surface.
+model CloudApp {
+  id          String        @id @default(cuid())
+  slug        String        @unique // /apps/[slug]
+  ownerId     String
+  owner       Account       @relation("CloudAppOwner", fields: [ownerId], references: [id])
+  name        String
+  tagline     String        @default("")
+  description String        @default("")
+  category    CloudCategory @default(UTILITIES)
+  iconEmoji   String        @default("🐍")
+  iconUrl     String?
+  bannerUrl   String?
+  docsMd      String        @default("")
+  tags        String[]      @default([])
+
+  status     CloudStatus     @default(DRAFT)
+  visibility CloudVisibility @default(PUBLIC)
+
+  // Pricing is a snapshot-at-purchase concern; these are the CURRENT terms.
+  pricingModel CloudPricingModel @default(PAY_PER_USE)
+  priceNanm    BigInt            @default(0) // ONE_TIME purchase price / SUBSCRIPTION monthly price
+  // Capabilities the app declares it needs; users authorize these before first run.
+  capabilities String[]          @default([])
+
+  // Denormalized counters are CACHES ONLY (§92) — every one is recomputable from
+  // CloudExecution / CloudAppPurchase / CloudReview and is refreshed by the stats worker.
+  execCount     Int    @default(0)
+  installCount  Int    @default(0)
+  ratingSum     Int    @default(0)
+  ratingCount   Int    @default(0)
+  revenueNanm   BigInt @default(0)
+
+  publishedAt DateTime?
+  suspendedAt DateTime?
+  suspendedReason String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  functions  CloudFunction[]
+  purchases  CloudAppPurchase[]
+  reviews    CloudReview[]
+  executions CloudExecution[]
+  agents     CloudAgent[]
+
+  @@index([status, visibility, publishedAt])
+  @@index([ownerId])
+  @@index([category, status])
+}
+
+enum CloudCategory {
+  AI
+  AGENTS
+  DEVELOPER_TOOLS
+  AUTOMATION
+  DATA
+  GAMES
+  PRODUCTIVITY
+  BLOCKCHAIN
+  UTILITIES
+  APIS
+}
+
+enum CloudStatus {
+  DRAFT
+  PUBLISHED
+  SUSPENDED
+  ARCHIVED
+}
+
+enum CloudVisibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum CloudPricingModel {
+  FREE
+  PAY_PER_USE // metered: base + resource units (the default)
+  ONE_TIME // buy once, then pay-per-use at cost
+  SUBSCRIPTION // monthly ANM subscription
+}
+
+// A deployed Python function. The unit of execution, pricing and metering.
+model CloudFunction {
+  id      String   @id @default(cuid())
+  ownerId String
+  owner   Account  @relation("CloudFunctionOwner", fields: [ownerId], references: [id])
+  appId   String?
+  app     CloudApp? @relation(fields: [appId], references: [id])
+
+  slug        String // unique per owner — public endpoint is /api/cloud/v1/fn/{ownerSlug}/{slug}
+  name        String
+  description String @default("")
+
+  runtime    String @default("python3.12")
+  entrypoint String @default("main") // module-level callable name
+
+  status     CloudStatus     @default(DRAFT)
+  visibility CloudVisibility @default(PUBLIC)
+
+  // Execution envelope. Hard-clamped server-side against CLOUD_LIMITS (never trusted from UI).
+  timeoutMs Int @default(30000)
+  memoryMb  Int @default(256)
+
+  // Capability grants this function is allowed to request at runtime (AI_INFERENCE, CALL_FUNCTION,
+  // READ_CHAIN, SPEND_ANM, PERSIST_STATE, SCHEDULE). Enforced by the sandbox host broker.
+  capabilities String[] @default([])
+
+  // Developer-set surcharge, added on top of metered cost. 0 => pure cost-plus metering.
+  priceModel     CloudPricingModel @default(PAY_PER_USE)
+  perCallNanm    BigInt            @default(0)
+  requiresAuth   Boolean           @default(false) // public endpoint requires an API key
+
+  currentVersion Int    @default(0)
+  execCount      Int    @default(0) // cache; authoritative count is COUNT(CloudExecution)
+  revenueNanm    BigInt @default(0) // cache; authoritative is SUM(CloudExecution.developerNanm)
+
+  suspendedAt     DateTime?
+  suspendedReason String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  versions    CloudFunctionVersion[]
+  deployments CloudDeployment[]
+  executions  CloudExecution[]
+  schedules   CloudSchedule[]
+  secrets     CloudSecret[]
+  agents      CloudAgent[]
+
+  @@unique([ownerId, slug])
+  @@index([status, visibility])
+  @@index([appId])
+}
+
+// Immutable source snapshot. NEVER updated after creation (§6) — a redeploy makes a new row.
+model CloudFunctionVersion {
+  id         String        @id @default(cuid())
+  functionId String
+  function   CloudFunction @relation(fields: [functionId], references: [id], onDelete: Cascade)
+  version    Int
+
+  source     String // the Python source, verbatim
+  sourceSha3 String // sha3-256(source utf-8), hex — bound into the on-chain anchor
+  artifactSha3 String // sha3-256(canonical artifact zip) — what the sandbox actually runs
+  sizeBytes  Int
+
+  entrypoint String
+  packages   String[] @default([]) // requested packages, validated against the package policy
+  envKeys    String[] @default([]) // names only; values live in CloudSecret
+
+  // Validation report produced BEFORE deploy (AST scan, import policy, entrypoint check).
+  validationJson String @default("{}")
+  estimateNanm   BigInt @default(0) // cost estimate shown to the developer at deploy time
+
+  createdById String
+  createdAt   DateTime @default(now())
+
+  deployments CloudDeployment[]
+  executions  CloudExecution[]
+
+  @@unique([functionId, version])
+  @@index([sourceSha3])
+}
+
+// One deployment attempt, tracked through the full lifecycle (§5).
+model CloudDeployment {
+  id         String               @id @default(cuid())
+  functionId String
+  function   CloudFunction        @relation(fields: [functionId], references: [id], onDelete: Cascade)
+  versionId  String
+  version    CloudFunctionVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  status CloudDeployStatus @default(DRAFT)
+
+  // Real on-chain anchor: a DEPLOY (t=1) tx whose manifest binds owner+function+hashes+blob.
+  daBlobId       String? // da.put blob id (content-addressed source/artifact commitment)
+  anchorTxid     String? @unique
+  anchorHeight   Int?
+  anchorConfirms Int     @default(0)
+  registryName   String? // aicf.fn.deploy registry name, when the node registry accepted it
+
+  deployerAddress String? // the wallet that signed the anchor
+  endpoint        String? // public URL once ACTIVE
+
+  error     String?
+  logsJson  String   @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  activatedAt DateTime?
+
+  @@index([functionId, createdAt])
+  @@index([status])
+}
+
+enum CloudDeployStatus {
+  DRAFT
+  VALIDATING
+  BUILDING
+  AWAITING_SIGNATURE
+  BROADCASTING
+  CONFIRMING
+  ACTIVE
+  FAILED
+  PAUSED
+  ARCHIVED
+}
+
+// --- Agents -----------------------------------------------------------------
+
+// A persistent, capability-bounded program with its own Animica identity.
+model CloudAgent {
+  id      String  @id @default(cuid())
+  ownerId String
+  owner   Account @relation("CloudAgentOwner", fields: [ownerId], references: [id])
+
+  slug        String  @unique
+  name        String
+  description String  @default("")
+  appId       String?
+  app         CloudApp? @relation(fields: [appId], references: [id])
+  functionId  String
+  function    CloudFunction @relation(fields: [functionId], references: [id], onDelete: Cascade)
+
+  // The agent's own Animica address — a real bech32m address it can be paid at.
+  address String? @unique
+
+  status CloudAgentStatus @default(PAUSED)
+
+  // Autonomy budget. Enforced atomically by the host broker on every spend.
+  capabilities     String[] @default([])
+  maxSpendPerRunNanm BigInt @default(0)
+  dailySpendCapNanm  BigInt @default(0)
+  spentTodayNanm     BigInt @default(0)
+  spendDayKey        String @default("") // 'YYYY-MM-DD' UTC; reset marker
+
+  lastRunAt DateTime?
+  runsTotal Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  executions CloudExecution[]
+
+  @@index([ownerId, status])
+}
+
+enum CloudAgentStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+  SUSPENDED
+}
+
+// --- Execution & metering ---------------------------------------------------
+
+// THE authoritative record of one function invocation and its full economics (§8, §75).
+model CloudExecution {
+  id        String @id @default(cuid())
+  requestId String @unique // public, returned in every response + receipt
+
+  functionId String
+  function   CloudFunction        @relation(fields: [functionId], references: [id])
+  versionId  String
+  version    CloudFunctionVersion @relation(fields: [versionId], references: [id])
+  appId      String?
+  app        CloudApp?            @relation(fields: [appId], references: [id])
+  agentId    String?
+  agent      CloudAgent?          @relation(fields: [agentId], references: [id])
+
+  // Who paid, who earns. callerAccountId is null for anonymous free-tier calls.
+  callerAccountId    String?
+  caller             Account? @relation("CloudExecutionCaller", fields: [callerAccountId], references: [id])
+  callerKind         String   @default("user") // user | agent | schedule | internal
+  developerAccountId String
+  developer          Account  @relation("CloudExecutionDeveloper", fields: [developerAccountId], references: [id])
+  providerId         String?
+  provider           CloudProvider? @relation(fields: [providerId], references: [id])
+
+  // Nested calls (§18). depth 0 = top-level; rootId groups a whole trace.
+  parentExecutionId String?
+  parent            CloudExecution?  @relation("CloudExecutionTrace", fields: [parentExecutionId], references: [id])
+  children          CloudExecution[] @relation("CloudExecutionTrace")
+  rootId            String?
+  depth             Int              @default(0)
+
+  status     CloudExecStatus @default(QUEUED)
+  lane       String          @default("local") // local | fleet
+  errorCode  String?
+  error      String?
+  httpStatus Int?
+
+  queuedAt   DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+  durationMs Int       @default(0)
+
+  // Measured resource usage.
+  cpuMs        Int    @default(0)
+  memoryMbMs   BigInt @default(0)
+  aiTokensIn   Int    @default(0)
+  aiTokensOut  Int    @default(0)
+  aiCalls      Int    @default(0)
+  egressBytes  Int    @default(0)
+  bytesIn      Int    @default(0)
+  bytesOut     Int    @default(0)
+
+  // Customer-facing money (nANM). priceNanm == platformFee + developer + provider, exactly.
+  quotedNanm      BigInt @default(0) // pre-authorized reservation
+  priceNanm       BigInt @default(0) // final charge
+  platformFeeNanm BigInt @default(0)
+  developerNanm   BigInt @default(0)
+  providerNanm    BigInt @default(0)
+  feeBps          Int    @default(2000) // policy SNAPSHOT — historical accounting never rewrites (§88)
+
+  // Internal cost accounting (§74). Never exposed to customers.
+  cogsNanm         BigInt @default(0) // total direct variable cost
+  cogsAiNanm       BigInt @default(0)
+  cogsComputeNanm  BigInt @default(0)
+  cogsInfraNanm    BigInt @default(0)
+  cogsPromoNanm    BigInt @default(0) // platform-absorbed cost of credit-funded execution
+  contributionNanm BigInt @default(0) // platformFeeNanm - cogsNanm (may be negative)
+  creditNanm       BigInt @default(0) // portion of priceNanm paid from promotional credits
+  billed           Boolean @default(false) // true once the ledger settlement posted
+  freeTier         Boolean @default(false) // consumed a free allowance instead of ANM
+  pricingPolicyId  String? // which PricingPolicy version priced this execution
+
+  createdAt DateTime @default(now())
+
+  logs CloudExecutionLog[]
+  job  CloudJob?
+
+  @@index([functionId, createdAt])
+  @@index([developerAccountId, createdAt])
+  @@index([callerAccountId, createdAt])
+  @@index([status, queuedAt])
+  @@index([rootId])
+  @@index([appId, createdAt])
+  @@index([createdAt])
+}
+
+enum CloudExecStatus {
+  QUEUED
+  DISPATCHED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  TIMEOUT
+  CANCELLED
+  REJECTED
+}
+
+// Structured logs, retention-bounded per plan (§30, §72 log_retention).
+model CloudExecutionLog {
+  id          String         @id @default(cuid())
+  executionId String
+  execution   CloudExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  ts          DateTime       @default(now())
+  level       String         @default("info") // debug | info | warn | error
+  message     String
+  seq         Int            @default(0)
+
+  @@index([executionId, seq])
+  @@index([ts])
+}
+
+// --- Compute providers (the fleet) ------------------------------------------
+
+// A node operator serving Python Cloud jobs. Mirrors the proven MediaMiner pattern:
+// self-registration, sha3-hashed bearer token, lease-based claiming.
+model CloudProvider {
+  id        String  @id @default(cuid())
+  accountId String?
+  account   Account? @relation(fields: [accountId], references: [id])
+  address   String // ANM payout address (bech32m)
+  name      String  @default("")
+  keyHash   String  @unique // sha3-256(bearer token) — raw never stored
+
+  capabilities String[] @default([]) // e.g. ["python3.12", "gpu"]
+  cpuCores     Int      @default(1)
+  memoryMb     Int      @default(1024)
+  gpu          String?
+
+  status       CloudProviderStatus @default(ACTIVE)
+  lastSeenAt   DateTime            @default(now())
+  jobsClaimed  Int                 @default(0)
+  jobsDone     Int                 @default(0)
+  jobsFailed   Int                 @default(0)
+  reputation   Int                 @default(0)
+
+  // Earnings are REAL spendable ledger credits (posted through lib/ledger.ts), not an IOU.
+  // earnedNanm caches SUM(CloudExecution.providerNanm) for this provider.
+  earnedNanm BigInt @default(0)
+
+  suspendedReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobs       CloudJob[]
+  executions CloudExecution[]
+
+  @@index([status, lastSeenAt])
+  @@index([address])
+}
+
+enum CloudProviderStatus {
+  ACTIVE
+  IDLE
+  SUSPENDED
+  DISABLED
+}
+
+// A unit of dispatched work. One-to-one with a fleet-lane execution.
+model CloudJob {
+  id          String         @id @default(cuid())
+  executionId String         @unique
+  execution   CloudExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  providerId  String?
+  provider    CloudProvider? @relation(fields: [providerId], references: [id])
+
+  status     CloudJobStatus @default(PENDING)
+  priority   Int            @default(0)
+  attempts   Int            @default(0)
+  leaseUntil DateTime?
+
+  payloadJson String @default("{}") // artifact ref + packed call, never secrets in the clear
+  resultJson  String?
+  error       String?
+
+  createdAt  DateTime  @default(now())
+  claimedAt  DateTime?
+  finishedAt DateTime?
+
+  @@index([status, priority, createdAt])
+  @@index([providerId, status])
+  @@index([leaseUntil])
+}
+
+enum CloudJobStatus {
+  PENDING
+  CLAIMED
+  RUNNING
+  DONE
+  FAILED
+  EXPIRED
+}
+
+// --- Capabilities, secrets, schedules ---------------------------------------
+
+// A user's explicit authorization for an app/agent to use sensitive capabilities and
+// (optionally) spend ANM on their behalf. Enforced atomically at every spend (§19, §20).
+model CloudGrant {
+  id        String  @id @default(cuid())
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  subjectKind String // app | agent | function
+  subjectId   String
+
+  capabilities String[] @default([])
+
+  maxPerCallNanm  BigInt   @default(0)
+  maxPerExecNanm  BigInt   @default(0)
+  dailyCapNanm    BigInt   @default(0)
+  spentTodayNanm  BigInt   @default(0)
+  spendDayKey     String   @default("")
+  allowedPayees   String[] @default([]) // empty => only functions inside the same app
+
+  expiresAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([accountId, subjectKind, subjectId])
+  @@index([accountId])
+}
+
+// Encrypted developer secret. Ciphertext only; injected into authorized executions and
+// redacted from logs (§28).
+model CloudSecret {
+  id         String         @id @default(cuid())
+  ownerId    String
+  owner      Account        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  functionId String?
+  function   CloudFunction? @relation(fields: [functionId], references: [id], onDelete: Cascade)
+
+  name       String // ENV_STYLE_NAME
+  ciphertext String // vault.seal() AES-256-GCM
+  hint       String @default("") // last 4 chars, for the UI
+  lastUsedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([ownerId, functionId, name])
+  @@index([ownerId])
+}
+
+// Scheduled invocation (§29).
+model CloudSchedule {
+  id         String        @id @default(cuid())
+  functionId String
+  function   CloudFunction @relation(fields: [functionId], references: [id], onDelete: Cascade)
+  ownerId    String
+
+  kind            String  @default("interval") // interval | cron
+  intervalMinutes Int?
+  cron            String?
+  payloadJson     String  @default("{}")
+
+  enabled     Boolean   @default(true)
+  nextRunAt   DateTime?
+  lastRunAt   DateTime?
+  lastStatus  String?
+  runsTotal   Int       @default(0)
+  failures    Int       @default(0)
+  disabledReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled, nextRunAt])
+  @@index([ownerId])
+}
+
+// --- Marketplace: purchases, reviews, reports -------------------------------
+
+model CloudAppPurchase {
+  id        String   @id @default(cuid())
+  appId     String
+  app       CloudApp @relation(fields: [appId], references: [id], onDelete: Cascade)
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  kind            String // one_time | subscription
+  amountNanm      BigInt @default(0)
+  platformFeeNanm BigInt @default(0)
+  developerNanm   BigInt @default(0)
+  feeBps          Int    @default(2000) // snapshot (§88)
+
+  status    String    @default("ACTIVE") // ACTIVE | EXPIRED | REFUNDED
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([appId, accountId, kind])
+  @@index([accountId, createdAt])
+}
+
+// Only genuine users may review: enforced by requiring a purchase or a successful execution.
+model CloudReview {
+  id        String   @id @default(cuid())
+  appId     String
+  app       CloudApp @relation(fields: [appId], references: [id], onDelete: Cascade)
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  rating    Int
+  body      String   @default("")
+  hidden    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([appId, accountId])
+  @@index([appId, createdAt])
+}
+
+model CloudReport {
+  id          String   @id @default(cuid())
+  subjectKind String // app | function | developer
+  subjectId   String
+  reporterId  String?
+  reason      String
+  detail      String   @default("")
+  status      String   @default("OPEN") // OPEN | REVIEWING | ACTIONED | DISMISSED
+  resolution  String?
+  resolvedBy  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@index([subjectKind, subjectId])
+}
+
+// Every admin action that touches money, pricing, or availability (§39, §94).
+model CloudAuditLog {
+  id        String   @id @default(cuid())
+  actor     String // admin account id or 'token:<prefix>'
+  action    String
+  subject   String
+  before    String   @default("{}")
+  after     String   @default("{}")
+  reason    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+}
+
+// A denied code fingerprint — blocks a known-malicious artifact from ever deploying again.
+model CloudCodeDenylist {
+  sha3      String   @id
+  reason    String
+  addedBy   String
+  createdAt DateTime @default(now())
+}
+
+// --- Commercial engine: pricing policy, costs, USD revenue ------------------
+
+// Versioned economic configuration (§59, §94). The ACTIVE row prices new executions; old rows
+// are retained so historical accounting is reproducible and never rewritten (§88, §92).
+model PricingPolicy {
+  id        String   @id @default(cuid())
+  version   Int      @unique
+  active    Boolean  @default(false)
+  note      String   @default("")
+
+  // Customer pricing (nANM).
+  baseCallNanm      BigInt @default(100000) // 0.0001 ANM floor per invocation
+  cpuMsNanm         BigInt @default(20) // per CPU-millisecond
+  memMbMsNanm       BigInt @default(1) // per MB-millisecond
+  aiTokenInNanm     BigInt @default(1000)
+  aiTokenOutNanm    BigInt @default(3000)
+  egressKbNanm      BigInt @default(50)
+  gpuMsNanm         BigInt @default(400)
+
+  // Splits (basis points, must sum with platform to 10000).
+  platformFeeBps  Int @default(2000) // Animica take rate
+  providerShareBps Int @default(1000) // of the total price, when a fleet provider ran it
+
+  // Internal unit COSTS (§74) — what Animica actually pays, in nANM-equivalent.
+  costCpuMsNanm    BigInt @default(6)
+  costMemMbMsNanm  BigInt @default(1)
+  costAiTokenNanm  BigInt @default(400)
+  costEgressKbNanm BigInt @default(10)
+  costPerCallNanm  BigInt @default(20000) // fixed infra allocation per execution
+
+  // Margin protection (§76).
+  targetMarginBps Int @default(6000) // 60%
+  enforceMinMargin Boolean @default(true)
+
+  // Free tier (§35, §78).
+  freeExecutionsPerDay   Int    @default(50)
+  freeExecutionsPerMonth Int    @default(500)
+  freeAiTokensPerDay     Int    @default(20000)
+  freeTierMonthlyCeilingNanm BigInt @default(0) // 0 => no ceiling configured
+
+  // ANM/USD risk policy (§79).
+  anmUsdFloorMicros BigInt @default(0) // price floor used when the market ref is below this
+
+  createdBy String   @default("system")
+  createdAt DateTime @default(now())
+
+  executionsPriced Int @default(0)
+
+  @@index([active])
+}
+
+// Immutable audit of every pricing change (§94).
+model PricingChange {
+  id        String   @id @default(cuid())
+  actor     String
+  field     String
+  oldValue  String
+  newValue  String
+  policyId  String?
+  reason    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// The ANM/USD reference used for a given financial report. Sourced from the existing
+// anm-price feed (nonkyc); NEVER invented (§79).
+model AnmPriceSnapshot {
+  id         String   @id @default(cuid())
+  usdMicros  BigInt // USD price of 1 ANM, in micro-dollars
+  source     String // 'nonkyc' | 'manual'
+  observedAt DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([observedAt])
+}
+
+// A verified USD payment (PayPal capture). Authoritative USD revenue record (§70, §81).
+model BillingPayment {
+  id             String   @id @default(cuid())
+  accountId      String
+  account        Account  @relation(fields: [accountId], references: [id])
+  subscriptionId String?
+  planKey        String?
+  paypalCaptureId String  @unique // idempotency anchor
+  paypalSubscriptionId String?
+  amountCents    Int
+  currency       String   @default("USD")
+  status         String   @default("COMPLETED") // COMPLETED | REFUNDED | FAILED
+  kind           String   @default("subscription") // subscription | service | enterprise
+  payerEmail     String?
+  occurredAt     DateTime
+  rawJson        String   @default("{}")
+  createdAt      DateTime @default(now())
+
+  @@index([accountId, occurredAt])
+  @@index([occurredAt])
+  @@index([status, occurredAt])
+}
+
+// Metered overage beyond a plan's included allowance (§73). Accrues during the period and is
+// charged (USD) or debited (ANM) at close.
+model UsageCharge {
+  id         String   @id @default(cuid())
+  accountId  String
+  account    Account  @relation(fields: [accountId], references: [id])
+  period     String // 'YYYY-MM' UTC
+  feature    String // executions | compute_units | ai_units | storage_mb
+  units      BigInt   @default(0)
+  unitPriceCents Int  @default(0)
+  amountCents    Int  @default(0)
+  amountNanm     BigInt @default(0)
+  asset      String   @default("USD") // USD | ANM
+  status     String   @default("ACCRUING") // ACCRUING | INVOICED | PAID | WAIVED
+  invoicedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([accountId, period, feature])
+  @@index([period, status])
+}
+
+// Daily rollup of the whole business (§82). A CACHE — every field is recomputable from
+// CloudExecution + BillingPayment + LedgerEntry, and the reconciliation job proves it.
+model FinanceDaily {
+  day String @id // 'YYYY-MM-DD' UTC
+
+  // ANM economy
+  grossVolumeNanm   BigInt @default(0)
+  platformRevNanm   BigInt @default(0)
+  developerPayNanm  BigInt @default(0)
+  providerPayNanm   BigInt @default(0)
+  cogsNanm          BigInt @default(0)
+  contributionNanm  BigInt @default(0)
+  freeTierCogsNanm  BigInt @default(0)
+
+  // USD business
+  usdRevenueCents Int @default(0)
+  mrrCents        Int @default(0)
+  newMrrCents     Int @default(0)
+  churnedMrrCents Int @default(0)
+
+  executions      Int @default(0)
+  freeExecutions  Int @default(0)
+  activeDevelopers Int @default(0)
+  payingAccounts  Int @default(0)
+
+  anmUsdMicros BigInt @default(0) // reference price used for this day's USD-equivalents
+  computedAt   DateTime @default(now())
+
+  @@index([computedAt])
+}
+
+// Daily reconciliation report (§91). Never mutates balances — it only reports.
+model ReconciliationReport {
+  id        String   @id @default(cuid())
+  day       String
+  scope     String // anm_ledger | usd_paypal | provider | execution
+  ok        Boolean  @default(true)
+  expected  String   @default("0")
+  observed  String   @default("0")
+  deltaAbs  String   @default("0")
+  detail    String   @default("{}")
+  createdAt DateTime @default(now())
+
+  @@unique([day, scope])
+  @@index([ok, createdAt])
+}
+
+// Operational + economic alerts surfaced to admins (§90).
+model FinanceAlert {
+  id         String    @id @default(cuid())
+  kind       String // negative_margin | ai_cost_spike | compute_spike | free_tier_abuse | provider_payout | ledger_mismatch | webhook_failure | settlement_failure | payment_failure | usage_anomaly
+  severity   String    @default("warn") // info | warn | critical
+  title      String
+  detail     String    @default("{}")
+  subject    String? // execution id / account id / provider id
+  resolvedAt DateTime?
+  resolvedBy String?
+  createdAt  DateTime  @default(now())
+
+  @@index([resolvedAt, createdAt])
+  @@index([kind, createdAt])
+}
+
+// Enterprise sales pipeline (§86).
+model EnterpriseInquiry {
+  id           String   @id @default(cuid())
+  name         String
+  company      String
+  email        String
+  workload     String   @default("")
+  aiNeeds      String   @default("")
+  computeNeeds String   @default("")
+  monthlyExecs String   @default("")
+  dedicated    Boolean  @default(false)
+  message      String   @default("")
+  accountId    String?
+  status       String   @default("NEW") // NEW | CONTACTED | QUALIFIED | WON | LOST
+  notes        String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+// --- Founding Developer program ---------------------------------------------
+
+// The first 100 accepted developers. Every benefit here is a REAL, enforced record:
+//   * proUntil            -> resolved by the entitlement layer as a Pro-equivalent grant
+//   * creditsNanm         -> a CloudCredit grant drawn down before the ANM balance
+//   * feeBps / feeUntil   -> overrides the platform take rate for THIS developer's sales,
+//                            snapshotted onto every execution and purchase (§88: changing the
+//                            global rate never rewrites history, and neither does expiry)
+//   * featured            -> marketplace placement flag, gated on a qualifying published app
+// seq is assigned atomically at acceptance and is capped at FOUNDING_DEV_SEATS.
+model FoundingDeveloper {
+  id        String   @id @default(cuid())
+  accountId String   @unique
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  seq       Int?     @unique // 1..100, assigned on acceptance
+  status    String   @default("APPLIED") // APPLIED | ACCEPTED | REJECTED | REVOKED
+
+  handle   String @default("")
+  email    String @default("")
+  pitch    String @default("")
+
+  proUntil     DateTime? // 3 months of Pro from acceptance
+  feeBps       Int       @default(1000) // 10% instead of the standard 20%
+  feeUntil     DateTime? // one year from acceptance
+  creditsNanm  BigInt    @default(0) // granted execution credits
+  featured     Boolean   @default(false)
+
+  acceptedAt   DateTime?
+  acceptedBy   String?
+  revokedAt    DateTime?
+  revokedReason String?
+  notes        String   @default("")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+// Promotional ANM execution credits. Drawn down BEFORE the account's real ledger balance so a
+// developer can be given runway without minting spendable/withdrawable ANM. Credit-funded
+// executions still pay the developer and provider for real — the platform absorbs that as a
+// promo cost recorded in CloudExecution.cogsPromoNanm, so margins stay honest (§74, §75).
+model CloudCredit {
+  id        String   @id @default(cuid())
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  grantedNanm BigInt @default(0)
+  usedNanm    BigInt @default(0)
+  reason      String @default("")
+  source      String @default("promo") // promo | founding | support | migration
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  createdBy   String @default("system")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([accountId, expiresAt])
 }

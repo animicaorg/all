@@ -1,13 +1,16 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { api, fmtDate, inputStyle, labelStyle, Msg } from '../ui';
+import PlanUpsell from '@/components/PlanUpsell';
 
 // API keys — list, mint and revoke anm_mkt_ keys. A key with the 'publish' scope drives the same
 // store API this console uses (create listings, upload builds, edit prices) for CI / automation.
-// Data: GET /keys ; POST /keys {name, scopes} (raw shown once) ; DELETE /keys?id=.
+// Data: GET /keys ; POST /keys {name, scopes, kind?} (raw shown once) ; DELETE /keys?id=.
 //
 // A devportal session can only grant the scopes it holds — read, publish, withdraw — so those are
 // the developer-relevant scopes offered here (the server rejects any escalation beyond them).
+// kind:'production' mints a plan-gated production key (higher rate limit, counted against the
+// plan's api_keys limit — Pro+); the 402 plan_limit envelope becomes an inline upgrade CTA.
 
 const GRANTABLE: { scope: string; label: string; hint: string }[] = [
   { scope: 'read', label: 'read', hint: 'read catalog, balance, own listings' },
@@ -18,19 +21,31 @@ const GRANTABLE: { scope: string; label: string; hint: string }[] = [
 function Mint({ onMinted }: { onMinted: () => void }) {
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<Record<string, boolean>>({ read: true, publish: true, withdraw: false });
+  const [production, setProduction] = useState(false);
   const [busy, setBusy] = useState(false);
   const [raw, setRaw] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [upsell, setUpsell] = useState(false);
 
   async function mint() {
-    setBusy(true); setMsg(null); setRaw('');
+    setBusy(true); setMsg(null); setRaw(''); setUpsell(false);
     try {
       const chosen = GRANTABLE.map((g) => g.scope).filter((s) => scopes[s]);
       if (chosen.length === 0) { setMsg({ ok: false, text: 'select at least one scope' }); setBusy(false); return; }
-      const d = await api('/api/mkt/v1/keys', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: name.trim() || 'key', scopes: chosen }),
+      // Raw fetch (not ui.tsx api()) so the 402 envelope's code survives — plan_limit renders
+      // the upgrade box instead of a bare error line.
+      const r = await fetch('/api/mkt/v1/keys', {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim() || 'key', scopes: chosen,
+          ...(production ? { kind: 'production' } : {}),
+        }),
       });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (d?.error?.code === 'plan_limit') { setUpsell(true); return; }
+        throw new Error(d?.error?.message || `${r.status} ${r.statusText}`);
+      }
       setRaw(d.apiKey);
       setName('');
       onMinted();
@@ -59,10 +74,24 @@ function Mint({ onMinted }: { onMinted: () => void }) {
           </div>
         </div>
       </div>
+      <label style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13.5, cursor: 'pointer', marginTop: 14 }}>
+        <input type="checkbox" checked={production} onChange={(e) => setProduction(e.target.checked)} />
+        <span>Production key</span>
+        <span className="muted" style={{ fontSize: 12 }}>
+          — higher rate limits for live apps; counted against your plan (Pro+)
+        </span>
+      </label>
       <div style={{ marginTop: 14 }}>
         <button className="btn primary" onClick={mint} disabled={busy}>{busy ? 'Minting…' : 'Mint key'}</button>
         <Msg msg={msg} />
       </div>
+      {upsell && (
+        <PlanUpsell
+          message="Production API access is available with Animica Pro."
+          details={{ feature: 'api_keys', requiredPlan: 'pro', upgradeUrl: '/pricing?highlight=pro' }}
+          ctaLabel="Upgrade to Pro — $29.99/month"
+        />
+      )}
 
       {raw && (
         <div style={{ marginTop: 16, border: '1px solid var(--good)', borderRadius: 10, padding: 14, background: 'rgba(36,209,139,0.06)' }}>
@@ -121,7 +150,14 @@ export default function Keys() {
             {keys.map((k) => (
               <div key={k.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 18px', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
                 <div style={{ minWidth: 160 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{k.name}</div>
+                  <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 7 }}>
+                    {k.name}
+                    {k.kind === 'production' && (
+                      <span className="pill" style={{ fontSize: 10, color: 'var(--accent-2)', borderColor: 'var(--accent-2)', fontWeight: 600 }}>
+                        production
+                      </span>
+                    )}
+                  </div>
                   <code className="inline mono" style={{ fontSize: 11.5 }}>{k.prefix}…</code>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

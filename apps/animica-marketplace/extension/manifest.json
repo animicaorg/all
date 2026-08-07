@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Animica Internet — .anm browser & dVPN",
+  "version": "1.2.0",
+  "description": "Browse the sovereign .anm namespace and route this browser through the Animica decentralized VPN — pick an exit location, resolve names, and search the index like Google.",
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+    "default_title": "Animica — .anm search & dVPN"
+  },
+  "omnibox": { "keyword": "anm" },
+  "permissions": ["declarativeNetRequest", "proxy", "storage"],
+  "optional_permissions": ["webRequest", "webRequestAuthProvider"],
+  "host_permissions": ["*://*.anm/*", "https://animica.dev/*"],
+  "optional_host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "declarative_net_request": {
+    "rule_resources": [{ "id": "anm_redirect", "enabled": true, "path": "rules.json" }]
+  }
+}

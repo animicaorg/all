@@ -1,0 +1,25 @@
+# Animica Python Cloud — schedule runner oneshot (fires due CloudSchedule rows via
+# invokeFunction with callerKind=schedule; owner pays; plan floor + auto-disable + global cap).
+# TEMPLATE ONLY — this repo file is NOT installed/enabled by the Python Cloud change itself.
+# INSTALL (operator):
+#   cp deploy/systemd/animica-cloud-scheduler.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now animica-cloud-scheduler.timer
+# ARM (executes user functions and spends their ANM; default below is observe-only):
+#   set CLOUD_SCHEDULER_ENABLED=1 in .env.production (EnvironmentFile overrides Environment=).
+# Second kill switch: CLOUD_SCHEDULES_ENABLED=0 (feature flag) stops a tick even while armed.
+
+[Unit]
+Description=Animica Python Cloud scheduler (due CloudSchedule rows -> invokeFunction; conditional nextRunAt claim; cron+interval; plan floor; auto-disable)
+Documentation=file:/root/animica/apps/animica-marketplace/scripts/cloud-scheduler.ts
+After=network-online.target postgresql.service docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/animica/apps/animica-marketplace
+# Conservative defaults — .env.production (EnvironmentFile) overrides these to arm.
+Environment=CLOUD_SCHEDULER_ENABLED=0
+EnvironmentFile=/root/animica/apps/animica-marketplace/.env.production
+# flock = first belt (whole-run single instance); the worker's pg advisory lock is the second.
+ExecStart=/usr/bin/flock -n /run/lock/animica-cloud-scheduler.lock /root/animica/apps/animica-marketplace/node_modules/.bin/tsx scripts/cloud-scheduler.ts
+NoNewPrivileges=true

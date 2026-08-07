@@ -13,7 +13,9 @@ export async function GET(req: NextRequest) {
     const domains = await prisma.anmDomain.findMany({
       where: { ownerId: ctx.accountId },
       orderBy: { registeredAt: 'desc' },
-      select: { name: true, kind: true, contentCid: true, agentHandle: true, status: true, expiresAt: true, nodeProviders: true },
+      // id included so /settings/billing's over-limit picker can reference rows for
+      // POST /billing/keep {kind:'deployments', keepIds:[…]}.
+      select: { id: true, name: true, kind: true, contentCid: true, agentHandle: true, status: true, expiresAt: true, nodeProviders: true },
     });
     return ok({ domains: jsonSafe(domains.map((d) => ({ ...d, fqdn: `${d.name}.anm` }))) });
   } catch (e) {

@@ -56,7 +56,10 @@ export const CATEGORIES = [
   'Finance', 'Science', 'Gaming', 'Personal', 'Enterprise',
 ] as const;
 
-export const API_SCOPES = ['read', 'buy', 'use', 'publish', 'withdraw', 'names', 'message', 'host', 'vpn'] as const;
+// 'workers' gates Animica Workers + workspace management: creating/editing/starting an
+// autonomous worker (and minting its trigger token) is strictly more powerful than reading,
+// so a read-scoped key must never reach it.
+export const API_SCOPES = ['read', 'buy', 'use', 'publish', 'withdraw', 'names', 'message', 'host', 'vpn', 'workers'] as const;
 
 // Hosting rewards: IOU accrual rate for proven content availability (bytes-hours).
 // Honest accounting — accrues as an IOU, NOT a spendable balance credit, until treasury-funded

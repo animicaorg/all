@@ -1,0 +1,24 @@
+# Animica Python Cloud — janitor oneshot (plan-retention log deletes, orphan container reap,
+# CloudJob lease sweep, stale-provider IDLE, RUNNING watchdog, expired-grant stamping).
+# TEMPLATE ONLY — this repo file is NOT installed/enabled by the Python Cloud change itself.
+# INSTALL (operator):
+#   cp deploy/systemd/animica-cloud-janitor.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now animica-cloud-janitor.timer
+# ARM (deletes logs and kills containers; default below is observe-only counts):
+#   set CLOUD_JANITOR_ENABLED=1 in .env.production (EnvironmentFile overrides Environment=).
+
+[Unit]
+Description=Animica Python Cloud janitor (log retention per owner plan; reap orphaned sandboxes; expire job leases; idle stale providers; close stuck executions; expire grants)
+Documentation=file:/root/animica/apps/animica-marketplace/scripts/cloud-janitor.ts
+After=network-online.target postgresql.service docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/animica/apps/animica-marketplace
+# Conservative defaults — .env.production (EnvironmentFile) overrides these to arm.
+Environment=CLOUD_JANITOR_ENABLED=0
+EnvironmentFile=/root/animica/apps/animica-marketplace/.env.production
+# flock = first belt (whole-run single instance); the worker's pg advisory lock is the second.
+ExecStart=/usr/bin/flock -n /run/lock/animica-cloud-janitor.lock /root/animica/apps/animica-marketplace/node_modules/.bin/tsx scripts/cloud-janitor.ts
+NoNewPrivileges=true

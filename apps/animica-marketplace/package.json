@@ -1,0 +1,43 @@
+{
+  "name": "animica-marketplace",
+  "version": "8.0.0",
+  "private": true,
+  "description": "Animica AI Marketplace \u2014 the ANM-native app store for AI agents, RAGs, and generative media, built into animica.dev",
+  "scripts": {
+    "dev": "next dev -p 4950 -H 127.0.0.1",
+    "build": "prisma generate && next build",
+    "start": "next start -p 4950 -H 127.0.0.1",
+    "db:push": "prisma db push --skip-generate",
+    "db:studio": "prisma studio",
+    "test": "node --test --import tsx test/*.test.ts",
+    "worker:payouts": "tsx scripts/payout-worker.ts",
+    "worker:deposits": "tsx scripts/deposit-watcher.ts",
+    "worker:embed": "tsx scripts/embed-worker.ts",
+    "worker:store-payments": "tsx scripts/store-payment-watcher.ts",
+    "worker:store-anchor": "tsx scripts/license-anchor-worker.ts",
+    "worker:store-renewals": "tsx scripts/subscription-renewal-worker.ts",
+    "worker:workers": "tsx scripts/worker-runner.ts",
+    "setup:subs": "tsx scripts/subs-setup.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.5.0",
+    "@noble/post-quantum": "^0.2.1",
+    "@prisma/client": "5.22.0",
+    "next": "14.2.18",
+    "nodemailer": "^6.10.1",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/nodemailer": "^8.0.1",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "prisma": "5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4"
+  }
+}

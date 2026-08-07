@@ -1,0 +1,26 @@
+# Animica marketplace — creator withdrawal payout worker (REQUESTED -> SENT -> CONFIRMED).
+# TEMPLATE ONLY — this repo file is NOT installed/enabled by the store change itself.
+# INSTALL (operator):
+#   cp deploy/systemd/animica-store-payouts.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now animica-store-payouts.timer
+# ARM (money-moving; default below is observe-only dry-run):
+#   set PAYOUT_ENABLED=1 in .env.production (the existing lib/config.ts gate; caps
+#   PAYOUT_MAX_PER_TX_ANM / PAYOUT_MAX_PER_DAY_ANM apply).
+
+[Unit]
+Description=Animica marketplace payout worker (holds already debited; sends via animica CLI treasury wallet with per-tx/day caps)
+Documentation=file:/root/animica/apps/animica-marketplace/scripts/payout-worker.ts
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/animica/apps/animica-marketplace
+# Conservative defaults — .env.production (EnvironmentFile) overrides these to arm.
+Environment=PAYOUT_ENABLED=0
+# Money-moving submissions go through the box's own node, never a public RPC
+# (same convention as animica-iou-settle.service).
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+EnvironmentFile=/root/animica/apps/animica-marketplace/.env.production
+ExecStart=/usr/bin/flock -n /run/lock/animica-store-payouts.lock /root/animica/apps/animica-marketplace/node_modules/.bin/tsx scripts/payout-worker.ts
+NoNewPrivileges=true

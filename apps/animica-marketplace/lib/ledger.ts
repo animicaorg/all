@@ -9,11 +9,33 @@ import { config } from './config';
 type Tx = Prisma.TransactionClient;
 
 async function post(tx: Tx, accountId: string, deltaNanm: bigint, kind: any, ref?: string, memo?: string) {
+  // ATOMIC guarded update — do NOT reintroduce a read-then-absolute-write here.
+  //
+  // The previous shape (read balanceNanm, compute balanceAfter in JS, write it back) is a
+  // lost-update race under Postgres READ COMMITTED, which is what Prisma uses by default: two
+  // concurrent debits of the same account both read the same balance and both write it, so the
+  // account is debited once while TWO ledger rows are appended. That silently breaks the
+  // Account.balanceNanm == SUM(LedgerEntry.deltaNanm) invariant and mints real, withdrawable ANM.
+  // It went unnoticed while the only writers were low-concurrency purchase flows; Animica Python
+  // Cloud settles on every execution, so it is reachable from the public invoke endpoint.
+  //
+  // Instead: a single UPDATE whose WHERE clause performs the funds check and whose SET is a
+  // relative increment. Postgres takes a row lock for the duration of the transaction, so racing
+  // posts serialize on it, and `count !== 1` means the guard rejected the debit.
+  const guard =
+    deltaNanm < 0n
+      ? { id: accountId, balanceNanm: { gte: -deltaNanm } } // debit: must not go negative
+      : { id: accountId };
+  const res = await tx.account.updateMany({ where: guard, data: { balanceNanm: { increment: deltaNanm } } });
+  if (res.count !== 1) {
+    const exists = await tx.account.findUnique({ where: { id: accountId }, select: { id: true } });
+    if (!exists) throw new Error('account not found');
+    throw new LedgerError('INSUFFICIENT_FUNDS', 'insufficient balance');
+  }
+  // Read back inside the same transaction: our own UPDATE holds the row lock, so this is the
+  // true post-state and no concurrent writer can interleave before we append the entry.
   const acct = await tx.account.findUnique({ where: { id: accountId }, select: { balanceNanm: true } });
-  if (!acct) throw new Error('account not found');
-  const balanceAfter = acct.balanceNanm + deltaNanm;
-  if (balanceAfter < 0n) throw new LedgerError('INSUFFICIENT_FUNDS', 'insufficient balance');
-  await tx.account.update({ where: { id: accountId }, data: { balanceNanm: balanceAfter } });
+  const balanceAfter = acct!.balanceNanm;
   await tx.ledgerEntry.create({
     data: { accountId, deltaNanm, kind, ref: ref ?? null, memo: memo ?? null, balanceAfter },
   });
@@ -26,6 +48,40 @@ export class LedgerError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+// The ONLY sanctioned way for another module to move balance. Exported (rather than copied)
+// so Animica Python Cloud settlement still funnels through the same funds check, the same
+// balanceAfter snapshot and the same append-only discipline that keeps
+// Account.balanceNanm == SUM(LedgerEntry.deltaNanm) true. Callers MUST already be inside a
+// prisma.$transaction — settlement is all-or-nothing by construction.
+export async function postInTx(
+  tx: Tx,
+  accountId: string,
+  deltaNanm: bigint,
+  kind: LedgerKindName,
+  ref?: string,
+  memo?: string,
+) {
+  return post(tx, accountId, deltaNanm, kind, ref, memo);
+}
+
+export type LedgerKindName =
+  | 'DEPOSIT'
+  | 'PURCHASE_DEBIT'
+  | 'SALE_CREDIT'
+  | 'FEE'
+  | 'FORK_ROYALTY'
+  | 'USAGE_DEBIT'
+  | 'WITHDRAWAL'
+  | 'WITHDRAWAL_REFUND'
+  | 'REFUND'
+  | 'ADJUSTMENT';
+
+// Treasury/foundation resolution, exported for the Python Cloud settlement path so platform
+// fees land in exactly the same ledger account the rest of the platform uses.
+export async function treasuryAccount(tx: Tx) {
+  return ensureTreasury(tx);
 }
 
 // Credit a verified on-chain deposit (called only after finality + observed balance delta).

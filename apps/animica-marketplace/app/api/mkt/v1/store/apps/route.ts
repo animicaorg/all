@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { authenticate, requireScope, err, ApiError, withIdempotency, publicOk, mixedPreflight, withCredentialedCors } from '@/lib/api';
 import { prisma } from '@/lib/db';
+import { requireSellerEntitlement } from '@/lib/plan';
 import { createAppListing, normalizeAppCategory } from '@/lib/appStore';
 import { STORE_TYPES, LATEST_BUILD_SELECT, assetUrl, asApiError } from '@/lib/storeCatalog';
 import { topScoresByListing } from '@/lib/gameSocial';
@@ -99,6 +100,11 @@ export async function POST(req: NextRequest) {
     if (!body.name || typeof body.name !== 'string') throw new ApiError(400, 'bad_request', 'name required');
 
     return withCredentialedCors(req, await withIdempotency(req, ctx, body, async () => {
+      // Free cannot SELL: seeding a PAID price requires marketplace_selling (Pro+). An
+      // all-FREE (or price-less) create stays ungated — Game Lab free publish keeps working.
+      if (Array.isArray(body.prices) && body.prices.some((p: any) => ['ONE_TIME', 'SUBSCRIPTION'].includes(p?.model))) {
+        await requireSellerEntitlement(ctx.accountId);
+      }
       const listing = await createAppListing({
         ownerId: ctx.accountId,
         name: body.name,

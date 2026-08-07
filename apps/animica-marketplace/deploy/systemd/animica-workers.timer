@@ -1,0 +1,12 @@
+# TEMPLATE ONLY — install per the .service header; not enabled by the repo change.
+[Unit]
+Description=Run the Animica Workers runner every minute (scheduler + executor tick)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

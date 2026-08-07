@@ -1,0 +1,22 @@
+# Animica app store — custodial subscription renewal worker (consent-gated ledger debits).
+# TEMPLATE ONLY — this repo file is NOT installed/enabled by the store change itself.
+# INSTALL (operator):
+#   cp deploy/systemd/animica-store-renewals.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now animica-store-renewals.timer
+# ARM (money-moving; default below is observe-only dry-run):
+#   set STORE_RENEWALS_ENABLED=1 in .env.production (EnvironmentFile overrides Environment=).
+
+[Unit]
+Description=Animica store subscription renewals (due autoRenew subs with StoreConsent -> ledger debit + new period; 3-day grace + dunning)
+Documentation=file:/root/animica/apps/animica-marketplace/scripts/subscription-renewal-worker.ts
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/animica/apps/animica-marketplace
+# Conservative defaults — .env.production (EnvironmentFile) overrides these to arm.
+Environment=STORE_RENEWALS_ENABLED=0
+EnvironmentFile=/root/animica/apps/animica-marketplace/.env.production
+ExecStart=/usr/bin/flock -n /run/lock/animica-store-renewals.lock /root/animica/apps/animica-marketplace/node_modules/.bin/tsx scripts/subscription-renewal-worker.ts
+NoNewPrivileges=true

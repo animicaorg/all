@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { authenticate, requireScope, ok, err, ApiError, withCredentialedCors, credentialedPreflight } from '@/lib/api';
 import { prisma } from '@/lib/db';
+import { requireSellerEntitlement } from '@/lib/plan';
 import { STORE_TYPES, asApiError } from '@/lib/storeCatalog';
 import { jsonSafe } from '@/lib/nanm';
 
@@ -56,7 +57,7 @@ interface CleanPrice { model: string; amountNanm: bigint; periodDays: number; la
 
 export async function PUT(req: NextRequest, { params }: { params: { slug: string } }) {
   try {
-    const { listing } = await requireOwnedStoreListing(req, params.slug);
+    const { ctx, listing } = await requireOwnedStoreListing(req, params.slug);
     const body = await req.json().catch(() => ({}));
     const arr = Array.isArray(body.prices) ? body.prices : null;
     if (!arr) throw new ApiError(400, 'bad_request', 'prices (array) required');
@@ -84,6 +85,11 @@ export async function PUT(req: NextRequest, { params }: { params: { slug: string
       const label = typeof p?.label === 'string' && p.label.trim() ? p.label.trim().slice(0, 60) : null;
       return { model, amountNanm, periodDays, label };
     });
+
+    // Free cannot SELL: setting any PAID price requires marketplace_selling (Pro+).
+    // An all-FREE replacement set stays ungated (incl. dropping paid prices after a
+    // downgrade — the escape hatch must never be behind the paywall it escapes).
+    if (clean.some((c) => c.model !== 'FREE')) await requireSellerEntitlement(ctx.accountId);
 
     await prisma.$transaction(async (tx) => {
       await tx.price.updateMany({ where: { listingId: listing.id, active: true }, data: { active: false } });

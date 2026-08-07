@@ -13,7 +13,10 @@ export function hashKey(raw: string): string {
   return createHash('sha256').update(raw).digest('hex');
 }
 
-export async function createApiKey(accountId: string, opts: { name?: string; scopes?: ApiScope[]; rateLimitPerMin?: number } = {}) {
+export async function createApiKey(
+  accountId: string,
+  opts: { name?: string; scopes?: ApiScope[]; rateLimitPerMin?: number; kind?: string } = {},
+) {
   const raw = mintRawKey();
   const scopes = (opts.scopes && opts.scopes.length ? opts.scopes : ['read', 'use']).filter((s) =>
     (API_SCOPES as readonly string[]).includes(s),
@@ -26,6 +29,9 @@ export async function createApiKey(accountId: string, opts: { name?: string; sco
       prefix: raw.slice(0, 16),
       scopes,
       rateLimitPerMin: opts.rateLimitPerMin ?? 120,
+      // 'production' = tier-gated key (plan-counted, plan rate limit) — the keys route
+      // gates minting via requireCanCreateApiKey; default 'basic' behaves as always.
+      kind: opts.kind ?? 'basic',
     },
   });
   return { raw, key }; // raw returned exactly once

@@ -5,6 +5,7 @@ import { normalizeName } from '@/lib/ans';
 import { ensureAccount } from '@/lib/accounts';
 import { isAnimicaAddress } from '@/lib/address';
 import { jsonSafe } from '@/lib/nanm';
+import { canCreateDeployment } from '@/lib/plan';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,9 +23,31 @@ export async function POST(req: NextRequest, { params }: { params: { name: strin
     const to = String(body.toAddress ?? '').trim().toLowerCase();
     if (!isAnimicaAddress(to)) throw new ApiError(400, 'bad_address', 'valid anim1 recipient required');
     const recipient = await ensureAccount(to);
-    const updated = await prisma.anmDomain.update({ where: { name }, data: { ownerId: recipient.id } });
-    await prisma.domainEvent.create({ data: { domainId: domain.id, kind: 'transfer', detail: `-> ${to.slice(0, 16)}…` } });
-    return ok({ domain: jsonSafe({ ...updated, fqdn: `${name}.anm` }), transferredTo: to });
+    // A transfer is unsolicited: the sender picks the recipient. If the incoming name would
+    // put the recipient over their deployment limit, it must arrive SHELVED rather than
+    // ACTIVE — otherwise the enforcement sweep's keep-oldest rule could take one of the
+    // recipient's OWN live sites offline to make room for a name they never asked for.
+    // They activate it themselves from /settings/billing (or by upgrading).
+    const { ok: hasSlot } = await canCreateDeployment(recipient.id);
+    const landing = domain.status === 'ACTIVE' && !hasSlot ? 'SUSPENDED' : domain.status;
+    const updated = await prisma.anmDomain.update({
+      where: { name },
+      data: { ownerId: recipient.id, status: landing },
+    });
+    await prisma.domainEvent.create({
+      data: {
+        domainId: domain.id,
+        kind: 'transfer',
+        detail: `-> ${to.slice(0, 16)}…${landing === 'SUSPENDED' && domain.status === 'ACTIVE' ? ' (shelved: recipient at plan limit)' : ''}`,
+      },
+    });
+    return ok({
+      domain: jsonSafe({ ...updated, fqdn: `${name}.anm` }),
+      transferredTo: to,
+      ...(landing === 'SUSPENDED' && domain.status === 'ACTIVE'
+        ? { note: 'recipient is at their .anm deployment limit — the name arrived suspended and can be activated from /settings/billing' }
+        : {}),
+    });
   } catch (e) {
     return err(e);
   }
