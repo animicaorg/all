@@ -119,6 +119,16 @@ def _ensure_account(state: Any, addr: bytes) -> None:
         m[addr] = 0
 
 
+def _call_amount_of(payload: Any) -> int:
+    """The ANM attached to a CALL payload; 0 for every payload that predates it."""
+    try:
+        from consensus.value_call import call_amount_of
+
+        return call_amount_of(payload)
+    except Exception:  # noqa: BLE001 — a missing helper must never block execution
+        return 0
+
+
 def _get_balance(state: Any, addr: bytes) -> int:
     if hasattr(state, "get_balance"):
         return int(state.get_balance(addr))  # type: ignore[attr-defined]
@@ -1327,6 +1337,35 @@ def apply_call(
 
     state_snap = _take_state_snapshot(state)
     try:
+        # FORK_VALUE_CALL (9.5.0): move the ANM attached to the call BEFORE execution,
+        # caller -> callee. Deliberately placed INSIDE the snapshot region so revert
+        # semantics return it for free: any exception below lands in
+        # _revert_state_snapshot, which restores both balances. The docstring of this
+        # function already promised "value attached to the call is not transferred on
+        # REVERT" — this is what makes that true of a real amount.
+        #
+        # Below the fork height debit_credit_for_call raises, and an under-funded call
+        # raises too; both surface as a clean REVERT with nothing moved, which is the
+        # right outcome — it can never execute and leave the callee short.
+        _call_value = _call_amount_of(_extract_payload_value(tx))
+        if _call_value:
+            from consensus.value_call import debit_credit_for_call
+
+            _moved = debit_credit_for_call(
+                amount=_call_value,
+                sender_balance=_get_balance(state, sender),
+                height=_as_int(getattr(block_env, "height", 0)),
+                chain_id=_as_int(getattr(block_env, "chain_id", 1)) or 1,
+            )
+            if _moved:
+                _payee = _as_bytes(
+                    _get(_extract_payload_value(tx), "to",
+                         default=_get(tx, "to", "recipient")),
+                    expect_len=ADDRESS_LEN,
+                )
+                _set_balance(state, sender, _get_balance(state, sender) - _moved)
+                _set_balance(state, _payee, _get_balance(state, _payee) + _moved)
+
         _apply_call_vm(
             state=state,
             tx=tx,
