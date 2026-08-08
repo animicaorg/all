@@ -330,6 +330,33 @@ FORK_BOUNDED_RETARGET = "bounded_retarget"
 # emission. Retunable via ANIMICA_FORK_VALUE_CALL_HEIGHT.
 FORK_VALUE_CALL = "value_call"
 
+# FORK_FINALITY_DEPTH (9.5.0) — make the reorg bound UNIFORM. Activation height 75,000.
+#
+# A depth bound already exists and is already enforced: DEFAULT_MAX_REORG_DEPTH = 96,
+# checked in consensus.fork_choice.WeightForkChoice.add_block, which simply declines to
+# make a tip canonical when the reorg would be deeper. What does NOT exist is agreement
+# about the number — ANIMICA_MAX_REORG_DEPTH is an unbounded operator override, so today
+# one node can be set to 0 (refuses EVERY reorg, and therefore strands itself on the
+# next natural one-block fork — exactly the self-wedge that pinned checkpoints keep
+# having to clean up) while another is set to 10^9 (accepts an arbitrarily deep reorg).
+#
+# From H the effective bound is CLAMPED into [MIN_REORG_DEPTH, FINALITY_DEPTH]:
+#   * the ceiling gives the finality property — a block FINALITY_DEPTH deep is
+#     irreversible on every node regardless of local configuration;
+#   * the floor makes the self-wedge misconfiguration impossible.
+#
+# WHAT THIS DOES NOT DO, stated plainly because it is the reason it was requested: it
+# would NOT have prevented the 28,167 / 38,728 / 44,854 wedges. Every one of those was
+# a natural ONE-BLOCK fork (see the comments on PINNED_CHECKPOINTS_BY_NETWORK above), so
+# a depth-96 guard never fired and a depth-100 guard never would. Those were caused by
+# the headers pipeline discarding the winning sibling, not by a deep reorg. Finality is
+# worth having on its own terms; it is not a fix for that outage class.
+#
+# It also never REJECTS a block — the guard only declines to make a tip canonical — so
+# it cannot turn a node that is merely behind into a permanently split one. Retunable
+# via ANIMICA_FORK_FINALITY_DEPTH_HEIGHT.
+FORK_FINALITY_DEPTH = "finality_depth"
+
 # FORK_VPN_RELAY_REWARDS (8.0.1, REALIZED in 9.0.0 as IOU settlement) — from H,
 # each block MAY settle service IOUs (dVPN relay/exit, AICF inference, media,
 # hosting — any operator-issued IOU ledger) with REAL per-block payouts, capped
@@ -406,6 +433,8 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_BOUNDED_RETARGET: 75_000,
         # Value-carrying CALL (9.5.0). Operator-chosen height 75,000.
         FORK_VALUE_CALL: 75_000,
+        # Uniform reorg bound / finality (9.5.0). Operator-chosen height 75,000.
+        FORK_FINALITY_DEPTH: 75_000,
         # dVPN relay block rewards (8.0.1). Operator-chosen height 50,000 (shared with
         # the consensus ANS fork gate). SELF-GATING + INERT: emits zero relay outputs
         # until an on-chain relay-contribution root is sealed, which requires the
@@ -425,6 +454,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_TREASURY_25: 0,
         FORK_BOUNDED_RETARGET: 0,
         FORK_VALUE_CALL: 0,
+        FORK_FINALITY_DEPTH: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
@@ -435,6 +465,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_TREASURY_25: 0,
         FORK_BOUNDED_RETARGET: 0,
         FORK_VALUE_CALL: 0,
+        FORK_FINALITY_DEPTH: 0,
     },
 }
 

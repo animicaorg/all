@@ -148,6 +148,7 @@ class ForkChoice:
         genesis_weight_micro: WeightMicro = 0,
         genesis_height: int = 0,
         max_reorg_depth: Optional[int] = None,
+        chain_id: int = 1,
         max_orphans: int = 10000,  # Limit orphan storage to prevent DoS
     ) -> None:
         g = _hex_to_bytes(genesis_hash)
@@ -161,6 +162,7 @@ class ForkChoice:
             h=g, height=int(genesis_height), cum_weight_micro=int(genesis_weight_micro)
         )
         self.max_reorg_depth = max_reorg_depth
+        self.chain_id = int(chain_id or 1)
         self.max_orphans = max_orphans  # Maximum orphans to prevent DoS
         self._genesis: bytes = g
         # Blocks proven invalid at application time (e.g. a committed stateRoot that
@@ -366,8 +368,23 @@ class ForkChoice:
         # Reorg guard?
         detached, attached = self.reorg_path(old_best.h, candidate.h)
         depth = len(detached)
-        if self.max_reorg_depth is not None and depth > self.max_reorg_depth:
-            # Ignore excessive reorgs; keep best unchanged.
+        # FORK_FINALITY_DEPTH (9.5.0): clamp the bound so every node agrees about what
+        # is reversible. Evaluated HERE rather than at construction because the clamp is
+        # height-gated and the candidate's height is only known per-block. Below the fork
+        # height this returns self.max_reorg_depth unchanged, so replay is unaffected.
+        _bound = self.max_reorg_depth
+        try:
+            from consensus.finality import effective_reorg_depth
+
+            _bound = effective_reorg_depth(
+                self.max_reorg_depth, int(candidate.height), chain_id=int(self.chain_id)
+            )
+        except Exception:  # noqa: BLE001 — a params lookup must never break fork choice
+            pass
+        if _bound is not None and depth > _bound:
+            # Ignore excessive reorgs; keep best unchanged. NOTE this only declines to
+            # make the tip canonical — the block is not rejected, so a node that is
+            # merely behind can still converge later.
             return False, depth, [], []
 
         self._best = BestTip(
