@@ -1,3 +1,4 @@
+import { promises as fs } from 'node:fs';
 import { prisma } from '../lib/db';
 import { config } from '../lib/config';
 import { getAddressBalance, getHead, getTransaction } from '../lib/chain';
@@ -88,6 +89,51 @@ async function sentLast24hNanm(): Promise<bigint> {
   return agg._sum.amountNanm ?? 0n;
 }
 
+/**
+ * Why the treasury wallet cannot be used, or null when it is fine.
+ *
+ * Reads the wallets file the CLI is given (ANIMICA_WALLETS_FILE) and looks for the
+ * label `--from` will be passed. Also cross-checks MKT_TREASURY_ADDRESS when set: a
+ * label and an address that disagree means the balance guard is watching a different
+ * wallet than the one being spent, which is worse than no guard because it reads as
+ * protection.
+ */
+async function treasuryWalletMissing(): Promise<string | null> {
+  const label = config.treasuryLabel;
+  if (!label) return 'MKT_TREASURY_LABEL is empty';
+  let raw: string;
+  try {
+    raw = await fs.readFile(config.walletsFile, 'utf8');
+  } catch (e: any) {
+    return `cannot read wallets file ${config.walletsFile}: ${String(e?.message ?? e)}`;
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return `wallets file ${config.walletsFile} is not valid JSON`;
+  }
+  const bag = parsed?.wallets ?? parsed;
+  const entries: Array<[string, any]> = Array.isArray(bag)
+    ? bag.map((w: any) => [w?.label, w])
+    : Object.entries(bag ?? {});
+  const hit = entries.find(([k, w]) => (w?.label ?? k) === label);
+  if (!hit) {
+    const known = entries.map(([k, w]) => w?.label ?? k).filter(Boolean).slice(0, 12);
+    return `no wallet labelled "${label}" in ${config.walletsFile}`
+      + (known.length ? ` (found: ${known.join(', ')})` : '');
+  }
+  const addr = hit[1]?.address;
+  if (!addr) return `wallet "${label}" has no address`;
+  if (config.treasuryAddress && config.treasuryAddress !== addr) {
+    return `MKT_TREASURY_ADDRESS (${config.treasuryAddress.slice(0, 16)}…) does not match `
+      + `wallet "${label}" (${String(addr).slice(0, 16)}…); the balance guard would watch `
+      + 'the wrong wallet';
+  }
+  return null;
+}
+
+
 async function main() {
   const { dryRun: flagDryRun } = parseFlags();
   const dryRun = flagDryRun || !config.payoutEnabled;
@@ -115,6 +161,34 @@ async function main() {
     }
   } else {
     log('warn', 'treasury_address_unset', { detail: 'MKT_TREASURY_ADDRESS unset — skipping on-chain balance guard' });
+  }
+
+  // PRE-FLIGHT: does the wallet we sign from actually exist?
+  //
+  // `sendAnmNanm` spawns `animica tx send --from <MKT_TREASURY_LABEL>`, and SENDING
+  // is claimed BEFORE that spawn so a crash can never double-send. The cost of that
+  // ordering is that a send which cannot even start still burns the row: it lands in
+  // SENDING, and stuck SENDING rows are deliberately never auto-retried because the
+  // tx may have broadcast. A label that resolves to nothing would therefore strand
+  // the first real withdrawal permanently, with the creator's balance already
+  // debited — and it would do it silently, because the worker's own logs would show
+  // a normal claim followed by a CLI error.
+  //
+  // Found exactly that on arming: MKT_TREASURY_LABEL was 'animica-marketplace' and
+  // no such wallet existed in the wallets file. Checking here turns a stranded
+  // withdrawal into a loud no-op.
+  if (!dryRun) {
+    const missing = await treasuryWalletMissing();
+    if (missing) {
+      log('error', 'treasury_wallet_unusable', {
+        label: config.treasuryLabel,
+        detail: missing,
+        action: 'no withdrawal was claimed; fix the wallet label or address and re-run',
+      });
+      log('info', 'run_done', { queued: 0, sent: 0, failed: 0, deferred: 0,
+                                confirmed, dayUsedNanm: dayUsed.toString(), aborted: true });
+      return;
+    }
   }
 
   const queue = await prisma.withdrawal.findMany({
