@@ -163,7 +163,11 @@
         + "on every <strong style='color:#fff'>full node, pool and exchange</strong>: a node "
         + "still on 9.3.x computes the old split and "
         + "<strong style='color:#fff'>diverges from the network</strong> at 70,000." + count
-        + " <span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
+        + " Then CHECK IT TOOK: "
+        + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">animica --version</span>"
+        + " must report <strong style='color:#fff'>9.4.0</strong> or later &mdash; if it does not, the "
+        + "release has not reached your index yet and you are NOT upgraded. "
+        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
     }
     var msg = el("div", "flex:1 1 320px;font-size:14px;line-height:1.45", msgHtml);
 

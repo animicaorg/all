@@ -93,35 +93,73 @@ def test_each_policy_gives_its_own_reason():
     assert srv._is_rejected("anim1good") is None
 
 
+def _serving_srv(enforce: bool, *, served: bool = False):
+    """A bare server with the serving gate configured and the registry stubbed."""
+    srv = StratumPoolServer.__new__(StratumPoolServer)
+    srv._config = SimpleNamespace(require_inference_serving=enforce)
+    srv._serving_rejected = set()
+    srv._served_cache = {}
+    srv._log = logging.getLogger("test.serving_gate")
+
+    class _Adapter:
+        async def _rpc_call(self, method, params):
+            assert method == "aicf.workerStatus"
+            return {"jobs_completed": 952 if served else 0}
+
+    srv._adapter = _Adapter()
+    return srv
+
+
+def test_a_miner_that_has_actually_served_is_admitted_even_advertising_nothing():
+    """MEASURED on the live registry: the worker with 952 completed jobs advertises
+    tiers=[], because a claim carries the tier from the CALLER's request, not from
+    what the worker announced. Gating on the advertisement alone bans the network's
+    most productive server."""
+    srv = _serving_srv(True, served=True)
+    sess = SimpleNamespace(address="anim1busyserver", authorized=True)
+    assert asyncio.run(srv._enforce_inference_serving(sess, {"aicf": {"tiers": []}})) is True
+    assert sess.authorized is True
+    assert srv._serving_rejected == set()
+
+
+def test_a_failed_registry_probe_admits_rather_than_bans():
+    """Refusing to pay someone because an RPC timed out is the worse error."""
+    srv = _serving_srv(True, served=False)
+
+    class _Broken:
+        async def _rpc_call(self, *a, **k):
+            raise RuntimeError("node unreachable")
+
+    srv._adapter = _Broken()
+    sess = SimpleNamespace(address="anim1unknown", authorized=True)
+    assert asyncio.run(srv._enforce_inference_serving(sess, {})) is True
+    assert sess.authorized is True
+
+
 def test_serving_gate_is_off_by_default_and_admits_a_non_serving_miner():
     """DEFAULT OFF is load-bearing: zero workers advertise a tier today, so enabling
     it would reject every connected miner and stop the pool producing blocks."""
-    srv = StratumPoolServer.__new__(StratumPoolServer)
-    srv._config = SimpleNamespace(require_inference_serving=False)
-    srv._serving_rejected = set()
-    srv._log = logging.getLogger("test.serving_gate")
+    srv = _serving_srv(False)
     s2 = SimpleNamespace(address="anim1nogpu", authorized=True)
-    assert srv._enforce_inference_serving(s2, {}) is True
+    assert asyncio.run(srv._enforce_inference_serving(s2, {})) is True
     assert s2.authorized is True
     assert srv._serving_rejected == set()
 
 
 def test_serving_gate_when_enabled_refuses_a_miner_that_serves_nothing():
-    srv = StratumPoolServer.__new__(StratumPoolServer)
-    srv._config = SimpleNamespace(require_inference_serving=True)
-    srv._serving_rejected = set()
-    srv._log = logging.getLogger("test.serving_gate")
+    # served=False: the registry agrees it has never served, so nothing rescues it.
+    srv = _serving_srv(True, served=False)
 
     # No aicf key at all, an empty list, and a list of blanks all mean "serves nothing".
     for features in ({}, {"aicf": {}}, {"aicf": {"tiers": []}}, {"aicf": {"tiers": ["", " "]}}):
         sess = SimpleNamespace(address="anim1nogpu", authorized=True)
-        assert srv._enforce_inference_serving(sess, features) is False, features
+        assert asyncio.run(srv._enforce_inference_serving(sess, features)) is False, features
         assert sess.authorized is False
     assert "anim1nogpu" in srv._serving_rejected
 
     # Advertising a real tier admits it AND clears the earlier rejection.
     good = SimpleNamespace(address="anim1nogpu", authorized=True)
-    assert srv._enforce_inference_serving(good, {"aicf": {"tiers": ["standard"]}}) is True
+    assert asyncio.run(srv._enforce_inference_serving(good, {"aicf": {"tiers": ["standard"]}})) is True
     assert good.authorized is True
     assert "anim1nogpu" not in srv._serving_rejected
 

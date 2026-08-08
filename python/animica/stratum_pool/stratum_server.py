@@ -118,6 +118,8 @@ class StratumPoolServer:
         # lifecycle as _version_rejected: set at authorize time, consulted by the
         # share validator, cleared the moment the miner advertises a tier.
         self._serving_rejected: set[str] = set()
+        # address -> (has_served, monotonic_ts); 5-minute TTL.
+        self._served_cache: dict[str, tuple[bool, float]] = {}
         self._validator = PoolShareValidator(
             adapter,
             pool_mode=config.pool_mode,
@@ -232,25 +234,27 @@ class StratumPoolServer:
             address or "?", verdict["reported"], verdict["minimum"])
         return False
 
-    def _enforce_inference_serving(self, session: object, features: dict) -> bool:
+    async def _enforce_inference_serving(self, session: object, features: dict) -> bool:
         """Apply the pool-level inference-serving requirement at authorize time.
 
         The complaint this answers: a PoW miner can earn here while serving no
-        inference at all. That is possible because mining and serving are separate
-        subsystems — the miner advertises serving as an extra capability
-        (`features.aicf.tiers`) and only does so when `transformers`+`torch` are
-        importable, otherwise it deliberately advertises nothing rather than serve
-        echo stubs.
+        inference. It can, because mining and serving are separate subsystems — the
+        miner advertises serving as an extra capability (`features.aicf.tiers`) and
+        only does so when `transformers`+`torch` are importable, otherwise it
+        deliberately advertises nothing rather than serve echo stubs.
 
-        This gate makes serving a condition of earning ON THIS POOL, using the same
-        mechanism as the version gate: the address goes into the rejected set, so
-        the share validator refuses its shares, and no AICF row is created.
+        ADVERTISED TIERS ARE NOT THE TRUTH ABOUT WHO SERVES. Measured on the live
+        registry: the worker with 952 completed jobs advertises `tiers=[]`, because a
+        claim carries the tier from the CALLER's request, not from what the worker
+        announced on subscribe. Gating on the advertisement alone would have banned
+        one of the network's most productive servers. So a miner is admitted when it
+        either advertises a tier OR the node's registry shows it has actually
+        completed jobs — demonstrated service always beats a missing announcement.
 
-        It is POLICY, NOT CONSENSUS, and it cannot be otherwise: the AICF worker
-        registry is a node-local SQLite file that appears nowhere in execution/,
-        core/ or consensus/, so no block-validity or reward rule can read it —
-        two honest nodes would disagree about the same block and the chain would
-        split every time. A pool can refuse to pay; a chain cannot verify.
+        POLICY, NOT CONSENSUS, and it cannot be otherwise: the registry is a
+        node-local SQLite file absent from execution/, core/ and consensus/, so no
+        reward or validity rule can read it without honest nodes disagreeing about
+        the same block. A pool can refuse to pay; a chain cannot verify.
 
         Returns True when the miner may continue.
         """
@@ -260,10 +264,16 @@ class StratumPoolServer:
                       or getattr(session, "worker", None) or "")
         aicf = (features or {}).get("aicf") or {}
         tiers = aicf.get("tiers") if isinstance(aicf, dict) else None
-        serving = bool(isinstance(tiers, list) and [t for t in tiers if str(t).strip()])
-        if serving:
+        if isinstance(tiers, list) and [t for t in tiers if str(t).strip()]:
             if address:
                 self._serving_rejected.discard(address)
+            return True
+        # No advertisement. Before refusing, ask whether it has actually served.
+        if address and await self._has_served(address):
+            self._serving_rejected.discard(address)
+            self._log.info(
+                "admitting miner on DEMONSTRATED service despite tiers=%r: address=%s",
+                tiers, address)
             return True
         if address:
             self._serving_rejected.add(address)
@@ -276,6 +286,30 @@ class StratumPoolServer:
             "(install torch+transformers, or unset ANIMICA_POOL_REQUIRE_INFERENCE_SERVING)",
             address or "?", tiers)
         return False
+
+    async def _has_served(self, address: str) -> bool:
+        """True if the node's AICF registry credits this address with completed jobs.
+
+        Best-effort and FAIL-OPEN: if the registry cannot be reached we admit the
+        miner rather than ban it on a failed lookup. Refusing to pay someone because
+        an RPC timed out is the worse error. Cached briefly so an authorize storm
+        does not hammer the node.
+        """
+        import time as _t
+        now = _t.monotonic()
+        hit = self._served_cache.get(address)
+        if hit and now - hit[1] < 300.0:
+            return bool(hit[0])
+        served = True  # fail-open default
+        try:
+            res = await self._adapter._rpc_call("aicf.workerStatus", {"address": address})
+            info = res if isinstance(res, dict) else {}
+            served = int(info.get("jobs_completed") or 0) > 0
+        except Exception:  # noqa: BLE001 — a failed probe must not ban a miner
+            self._log.debug("serving probe failed for %s; admitting", address, exc_info=True)
+            served = True
+        self._served_cache[address] = (served, now)
+        return served
 
     async def _register_aicf_worker(self, session: object, features: dict) -> None:
         """Auto-register the authorized miner as an AICF worker.
@@ -296,7 +330,7 @@ class StratumPoolServer:
         if not self._enforce_version(session, features):
             return
         # Pool-level serving policy: optionally refuse miners that serve no inference.
-        if not self._enforce_inference_serving(session, features):
+        if not await self._enforce_inference_serving(session, features):
             return
         if not getattr(session, "authorized", False):
             return
