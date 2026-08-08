@@ -73,18 +73,33 @@ def _tool_list_files(path: str = ".", max_entries: int = 200) -> str:
         return f"ERROR: path does not exist: {path}"
     if not p.is_dir():
         return f"ERROR: not a directory: {path}"
+    # The old format was `f          15  a.py` — three unlabelled columns. A model
+    # asked "how many files are here?" answered "15", because the byte size is the
+    # only number on the line and nothing said what it was. Labelling the columns
+    # and stating the count outright costs a few tokens and removes the ambiguity.
     entries = []
+    files = dirs = 0
+    truncated = False
     for child in sorted(p.iterdir()):
         try:
-            kind = "d" if child.is_dir() else "f"
-            size = child.stat().st_size if child.is_file() else 0
-            entries.append(f"{kind}  {size:>10}  {child.name}")
+            is_dir = child.is_dir()
+            if is_dir:
+                dirs += 1
+                entries.append(f"dir   {child.name}/")
+            else:
+                files += 1
+                entries.append(f"file  {child.name}  ({child.stat().st_size} bytes)")
         except OSError:
             continue
         if len(entries) >= max_entries:
-            entries.append(f"... (truncated at {max_entries})")
+            truncated = True
             break
-    return f"# ls {p}\n" + "\n".join(entries)
+    header = (f"# {p} contains {files} file(s) and {dirs} director"
+              f"{'y' if dirs == 1 else 'ies'}")
+    body = "\n".join(entries) if entries else "(empty)"
+    if truncated:
+        body += f"\n... (listing truncated at {max_entries} entries)"
+    return f"{header}\n{body}"
 
 
 def _tool_grep(pattern: str, path: str = ".", max_results: int = 100) -> str:
