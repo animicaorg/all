@@ -13,6 +13,9 @@ export const metadata: Metadata = {
     'The portal to the Animica Internet: search every .anm site, get the browser, and deploy your own native site in minutes.',
   alternates: { canonical: 'https://animica.dev/portal' },
   openGraph: {
+    // Next replaces the parent's whole `openGraph` object when a page declares its
+    // own, so the layout's default image does NOT survive here — it has to be named.
+    images: ['/og.png'],
     title: 'Animica Internet — portal',
     description: 'Search the .anm web, get the browser, and deploy your own native site.',
     url: 'https://animica.dev/portal',

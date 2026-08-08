@@ -28,23 +28,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script type="application/ld+json">
-{ "@context":"https://schema.org","@graph":[
- {"@type":"Organization","@id":"https://animica.dev/#org","name":"Animica","url":"https://animica.dev/","logo":"https://animica.dev/animica-mark.svg","sameAs":["https://github.com/animicaorg/all","https://pypi.org/project/animica/","https://animica.org/"]},
- {"@type":"WebSite","@id":"https://animica.dev/#site","url":"https://animica.dev/","name":"animica.dev","publisher":{"@id":"https://animica.dev/#org"}},
- {"@type":"WebAPI","name":"Animica Free AI API","description":"Free, OpenAI-compatible inference with post-quantum proof-of-inference receipts. No API key.","documentation":"https://animica.dev/llms.txt","termsOfService":"https://animica.dev/","provider":{"@id":"https://animica.dev/#org"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}},
- {"@type":"Product","name":"Animica Python Cloud","description":"Deploy a Python function to animica.dev, receive a public HTTPS endpoint, and earn ANM every time someone runs it. Deployments are anchored on-chain; execution runs off-chain in a hardened sandbox. Developers keep 80% of every execution.","brand":{"@id":"https://animica.dev/#org"},"url":"https://animica.dev/apps","offers":[
-   {"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://animica.dev/cloud/pricing","availability":"https://schema.org/InStock"},
-   {"@type":"Offer","name":"Starter","price":"4.99","priceCurrency":"USD","url":"https://animica.dev/cloud/pricing","availability":"https://schema.org/InStock"},
-   {"@type":"Offer","name":"Pro","price":"14.99","priceCurrency":"USD","url":"https://animica.dev/cloud/pricing","availability":"https://schema.org/InStock"},
-   {"@type":"Offer","name":"Business","price":"99.99","priceCurrency":"USD","url":"https://animica.dev/cloud/pricing","availability":"https://schema.org/InStock"}]},
- {"@type":"FAQPage","mainEntity":[
-   {"@type":"Question","name":"Is the AI really free?","acceptedAnswer":{"@type":"Answer","text":"Yes. The OpenAI-compatible endpoint at https://animica.dev/v1 needs no API key and no signup. Compute is funded by the Animica foundation treasury. Rate limit is 30 requests/minute per IP."}},
-   {"@type":"Question","name":"Can AI agents use it?","acceptedAnswer":{"@type":"Answer","text":"Yes — it is designed for agents. Machine-readable manifests are at /llms.txt, /openapi.json, /.well-known/ai-plugin.json and /.well-known/agents.json. No key is required."}},
-   {"@type":"Question","name":"What is a proof-of-inference receipt?","acceptedAnswer":{"@type":"Answer","text":"A content-addressed, ML-DSA-65 (post-quantum) signed record of the model, prompt hash, output hash and seed that anyone can verify offline."}}
- ]}
-]}
-</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://animica.dev/#org","name":"Animica","url":"https://animica.dev/","logo":"https://animica.dev/animica-mark.svg","sameAs":["https://github.com/animicaorg/all","https://pypi.org/project/animica/","https://animica.org/"]},{"@type":"WebSite","@id":"https://animica.dev/#site","url":"https://animica.dev/","name":"animica.dev","publisher":{"@id":"https://animica.dev/#org"}},{"@type":"WebAPI","name":"Animica Free AI API","description":"Free, OpenAI-compatible inference with post-quantum proof-of-inference receipts. No API key.","documentation":"https://animica.dev/llms.txt","termsOfService":"https://animica.dev/","provider":{"@id":"https://animica.dev/#org"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}},{"@type":"Product","name":"Animica Python Cloud","description":"Deploy a Python function to animica.dev, receive a public HTTPS endpoint, and earn ANM every time someone runs it. Deployments are anchored on-chain; execution runs off-chain in a hardened sandbox. Developers keep 80% of every execution.","brand":{"@id":"https://animica.dev/#org"},"url":"https://animica.dev/apps","offers":[{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://animica.dev/pricing","availability":"https://schema.org/InStock"},{"@type":"Offer","name":"Starter","price":"4.99","priceCurrency":"USD","url":"https://animica.dev/pricing","availability":"https://schema.org/InStock"},{"@type":"Offer","name":"Pro","price":"14.99","priceCurrency":"USD","url":"https://animica.dev/pricing","availability":"https://schema.org/InStock"},{"@type":"Offer","name":"Operator","price":"39.99","priceCurrency":"USD","url":"https://animica.dev/pricing","availability":"https://schema.org/InStock"},{"@type":"Offer","name":"Business","price":"99.99","priceCurrency":"USD","url":"https://animica.dev/pricing","availability":"https://schema.org/InStock"}]},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Is the AI really free?","acceptedAnswer":{"@type":"Answer","text":"Yes. The OpenAI-compatible endpoint at https://animica.dev/v1 needs no API key and no signup. Compute is funded by the Animica foundation treasury. Rate limit is 30 requests/minute per IP."}},{"@type":"Question","name":"Can AI agents use it?","acceptedAnswer":{"@type":"Answer","text":"Yes — it is designed for agents. Machine-readable manifests are at /llms.txt, /openapi.json, /.well-known/ai-plugin.json and /.well-known/agents.json. No key is required."}},{"@type":"Question","name":"What is a proof-of-inference receipt?","acceptedAnswer":{"@type":"Answer","text":"A content-addressed, ML-DSA-65 (post-quantum) signed record of the model, prompt hash, output hash and seed that anyone can verify offline."}}]}]}</script>
 <style>
   :root{
     --bg:#05140F; --paper:#08201A; --card:#123524; --ink:#E8F4EE; --ink-2:#A9C4B8;
@@ -673,7 +657,7 @@
   body.cg-on[data-view="chat"] .hero #cgWelcome{ display:block; }
 
   #cgWelcome{ text-align:center; padding:8vh 0 22px; }
-  #cgWelcome h1{
+  #cgWelcome h1, #cgWelcome h2{
     font-size:clamp(24px,3.4vw,34px); font-weight:400; letter-spacing:-.02em; color:var(--ink);
   }
   #cgWelcome p{ margin-top:10px; color:var(--muted); font-size:14.5px; }
@@ -813,7 +797,7 @@
   <a class="cg-nav" data-view="overview" href="#build-on-animica"><i></i>Overview</a>
 
   <div class="cg-rail-foot">
-    <a href="/portal.html">Docs</a>
+    <a href="/docs">Docs</a>
     <a href="/hire">Hire me</a>
     <a href="https://nonkyc.io/market/ANM_USDT" target="_blank" rel="noopener">♥ Support Animica</a>
   </div>
@@ -826,7 +810,7 @@
 
   <!-- Primary links only. Everything else lives in the menu, so nothing has to
        be hidden at narrow widths the way it used to be. -->
-  <div class="links">
+  <div class="links"><a href="/cli">CLI</a>
     <a href="#chat">Chat</a>
     <a href="#build">Build</a>
     <a href="#agent">Agent</a>
@@ -881,7 +865,7 @@
         <a href="#agents">For AI agents</a>
         <a href="#cli">CLI</a>
     <a href="#pricing">Pricing</a>
-        <a href="/portal.html">Docs</a>
+        <a href="/docs">Docs</a>
       </div>
     </div>
   </div>
@@ -987,7 +971,7 @@
         <button class="cg-type" id="cgTypeCode" type="button" role="tab" aria-selected="true">Chat &amp; code</button>
         <button class="cg-type" id="cgTypeMedia" type="button" role="tab" aria-selected="false">Media</button>
       </div>
-      <h1 id="cgGreet">What can I build for you?</h1>
+      <h2 id="cgGreet">What can I build for you?</h2>
       <p>Free, no key, no signup — the same AI your Workers and agents run.</p>
       <div class="cg-chips" id="cgChipsCode">
         <button class="cg-chip" type="button" data-q="Write a Python function that summarises an RSS feed and return just the code.">Summarise an RSS feed</button>
@@ -1101,6 +1085,7 @@ animica cloud deploy handler.py</code></pre>
     <p class="sub-say">An agentic coding assistant that reads your files, edits them, runs commands and
       checks its own work &mdash; the way Claude Code and Codex do. <b>No API key, no wallet and no GPU.</b>
       Inference comes from the same miner network that serves this page.</p>
+    <p class="sub-say"><a href="/cli"><b>Full CLI guide &rarr;</b></a> &mdash; install, the four approval modes, <span class="mono">/swarm</span>, <span class="mono">AGENTS.md</span>, and what a paid plan lifts.</p>
 
     <div class="cli-install">
       <div class="cli-step"><span class="cli-n">1</span>
@@ -1264,7 +1249,7 @@ animica deploy handler.py     <span class="cm"># validates, uploads, anchors on-
           <li>Production API keys &middot; 120 req/min</li>
           <li>14-day logs &middot; metered overages</li>
         </ul>
-        <a class="sub-cta" href="/cloud/pricing">Choose Starter &rarr;</a>
+        <a class="sub-cta" href="/pricing">Choose Starter &rarr;</a>
       </article>
 
       <article class="sub-tier sub-tier--pop">
@@ -1281,7 +1266,7 @@ animica deploy handler.py     <span class="cm"># validates, uploads, anchors on-
           <li><b>100</b> scheduled jobs (5 min)</li>
           <li>600 req/min API limit</li>
         </ul>
-        <a class="sub-cta" href="/cloud/pricing">Choose Pro &rarr;</a>
+        <a class="sub-cta" href="/pricing">Choose Pro &rarr;</a>
       </article>
 
       <article class="sub-tier">
@@ -1298,7 +1283,7 @@ animica deploy handler.py     <span class="cm"># validates, uploads, anchors on-
           <li>Advanced monitoring</li>
           <li>Premium support</li>
         </ul>
-        <a class="sub-cta" href="/cloud/pricing">Choose Business &rarr;</a>
+        <a class="sub-cta" href="/pricing">Choose Business &rarr;</a>
       </article>
 
       <article class="sub-tier">
@@ -1315,7 +1300,7 @@ animica deploy handler.py     <span class="cm"># validates, uploads, anchors on-
           <li>Volume pricing</li>
           <li>Dedicated account team</li>
         </ul>
-        <a class="sub-cta" href="/cloud/pricing#enterprise">Contact sales &rarr;</a>
+        <a class="sub-cta" href="/hire">Contact sales &rarr;</a>
       </article>
 
     </div>
@@ -1327,7 +1312,7 @@ animica deploy handler.py     <span class="cm"># validates, uploads, anchors on-
       run your functions is separate, is denominated in ANM, and is <b>80% yours on every tier</b>.</p>
 
     <div class="sub-links">
-      <a class="sub-link" href="/cloud/pricing">All plans &amp; limits &rarr;</a>
+      <a class="sub-link" href="/pricing">All plans &amp; limits &rarr;</a>
       <a class="sub-link" href="/workers">Workers are free &rarr;</a>
       <a class="sub-link" href="/settings/billing">Manage your plan &rarr;</a>
     </div>

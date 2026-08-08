@@ -65,10 +65,16 @@ PRO_AGENT_ITERATIONS = 50
 # How long a verified Pro licence is honoured without re-checking.
 GRACE_DAYS = 7
 
+# Quotes the CHEAPEST paid plan, and quotes it as a floor ("from"), because the
+# CLI is bundled into every paid tier rather than sold at one price. It said
+# "$9.99/mo" — a price that has never existed since the ladder was halved, so the
+# one place a free user is told what upgrading costs was telling them a made-up
+# number. If the ladder moves again, this line moves with it.
+_CHEAPEST_PAID_USD = "4.99"
 _UPGRADE_HINT = (
     f"free tier: {FREE_AGENT_TASKS_PER_DAY} agentic tasks/day, "
     f"{FREE_AGENT_ITERATIONS} iterations each. "
-    f"$9.99/mo lifts both — {PRICING_URL}"
+    f"Paid plans from ${_CHEAPEST_PAID_USD}/mo lift both — {PRICING_URL}"
 )
 
 

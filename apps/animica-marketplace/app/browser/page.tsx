@@ -13,6 +13,9 @@ export const metadata: Metadata = {
     'Open any .anm name instantly at animica.dev/anm/<name> — no install needed. Or add the optional Chromium extension to resolve *.anm and search the whole index from your address bar.',
   alternates: { canonical: 'https://animica.dev/browser' },
   openGraph: {
+    // Next replaces the parent's whole `openGraph` object when a page declares its
+    // own, so the layout's default image does NOT survive here — it has to be named.
+    images: ['/og.png'],
     title: 'Animica Browser — browse the .anm internet',
     description:
       'Every .anm name works right now, no install. Optional extension resolves *.anm and searches the index from your address bar.',

@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>animica chat — free agentic coding CLI, no API key</title>
+<meta name="description" content="An agentic coding assistant in your terminal. Reads and edits your files, runs commands, asks before anything with a consequence. No API key, no account, no GPU.">
+<link rel="canonical" href="https://animica.dev/cli">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Animica">
+<meta property="og:title" content="animica chat — free agentic coding CLI, no API key">
+<meta property="og:description" content="pip install animica, then animica chat. It reads and edits files in your working directory and asks before anything with a consequence.">
+<meta property="og:url" content="https://animica.dev/cli">
+<meta property="og:image" content="https://animica.dev/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="animica chat — free agentic coding CLI, no API key">
+<meta name="twitter:description" content="pip install animica, then animica chat. Agentic coding in your terminal, keyless.">
+<meta name="twitter:image" content="https://animica.dev/og.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#05140F; --paper:#08201A; --card:#123524; --ink:#E8F4EE; --ink-2:#A9C4B8;
+    --muted:#86A69A; --line:#1D5340; --line-2:#276B53;
+    --clay:#14C79B; --clay-ink:#0E9E7A; --blue:#2E63FF; --gold:#FFC24B;
+    --r-1:8px; --r-2:12px; --r-3:20px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--clay-ink)}
+  a:hover{text-decoration:underline}
+  h1,h2,h3{font-family:"Fraunces","Georgia",serif;font-weight:500;line-height:1.1;letter-spacing:-.01em;margin:0}
+  code,kbd,pre{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+  :focus-visible{outline:2px solid var(--clay);outline-offset:3px;border-radius:var(--r-1)}
+  .wrap{max-width:52rem;margin:0 auto;padding:0 22px}
+
+  header{position:sticky;top:0;z-index:20;background:rgba(5,20,15,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;gap:20px;height:64px;max-width:52rem;margin:0 auto;padding:0 22px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:"Fraunces",serif;font-weight:600;font-size:19px;color:var(--ink);text-decoration:none}
+  .nav .sp{flex:1}
+  .nav a.lk{color:var(--ink-2);font-size:14.5px;text-decoration:none}
+  .nav a.lk:hover{color:var(--ink)}
+
+  .hero{padding:64px 0 26px}
+  .kicker{font-family:"JetBrains Mono",monospace;font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--clay);margin:0 0 14px}
+  h1{font-size:clamp(30px,5.2vw,50px)}
+  h1 em{font-style:normal;color:var(--clay)}
+  .lede{color:var(--ink-2);font-size:18px;margin:18px 0 0;max-width:40rem}
+
+  pre{background:var(--paper);border:1px solid var(--line);border-radius:var(--r-2);
+      padding:16px 18px;overflow-x:auto;font-size:14px;line-height:1.7;margin:18px 0}
+  pre .cm{color:var(--muted)}
+  pre b{color:var(--clay);font-weight:500}
+  p code{background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:.9em;color:var(--ink)}
+
+  section{padding:34px 0;border-top:1px solid var(--line)}
+  section h2{font-size:clamp(22px,3.2vw,30px);margin-bottom:6px}
+  section p{color:var(--ink-2);margin:12px 0}
+  .sub{color:var(--muted);font-size:15px}
+
+  .modes{display:grid;gap:12px;margin:20px 0;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))}
+  .mode{border:1px solid var(--line);border-radius:var(--r-2);padding:14px 16px;background:var(--paper)}
+  .mode--def{border-color:var(--line-2);box-shadow:inset 0 0 0 1px rgba(20,199,155,.14)}
+  .mode b{font-family:"JetBrains Mono",monospace;color:var(--clay);font-size:14px;font-weight:500}
+  .mode p{margin:6px 0 0;font-size:14.5px;color:var(--ink-2)}
+
+  table{width:100%;border-collapse:collapse;margin:20px 0;font-size:15px}
+  th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:500;font-size:13.5px;letter-spacing:.03em;text-transform:uppercase}
+  td b{color:var(--clay);font-weight:500}
+  .tbl-wrap{overflow-x:auto}
+
+  .note{border-left:2px solid var(--gold);background:rgba(255,194,75,.06);
+        padding:14px 18px;border-radius:0 var(--r-2) var(--r-2) 0;margin:22px 0}
+  .note p{margin:0;color:var(--ink-2)}
+  .note b{color:var(--gold);font-weight:500}
+
+  .cta{display:inline-block;background:var(--blue);color:#fff;text-decoration:none;
+       padding:11px 20px;border-radius:var(--r-1);font-weight:600;font-size:15px;margin-top:8px}
+  .cta:hover{text-decoration:none;filter:brightness(1.08)}
+  .cta--ghost{background:transparent;border:1px solid var(--line-2);color:var(--ink)}
+
+  footer{border-top:1px solid var(--line);margin-top:40px;padding:26px 0 60px;color:var(--muted);font-size:14px}
+  footer a{color:var(--ink-2)}
+  ul{color:var(--ink-2);padding-left:1.15rem}
+  li{margin:7px 0}
+</style>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+ {"@type":"SoftwareApplication","name":"animica chat","applicationCategory":"DeveloperApplication",
+  "operatingSystem":"Linux, macOS, Windows","url":"https://animica.dev/cli",
+  "description":"An agentic coding assistant that runs in a terminal. Reads and edits files in the working directory, runs commands, and asks before anything with a consequence. Requires no API key and no account.",
+  "softwareVersion":"9.3.3","downloadUrl":"https://pypi.org/project/animica/",
+  "installUrl":"https://animica.dev/install.sh","license":"https://www.apache.org/licenses/LICENSE-2.0",
+  "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
+  "publisher":{"@type":"Organization","name":"Animica","url":"https://animica.dev"}},
+ {"@type":"BreadcrumbList","itemListElement":[
+   {"@type":"ListItem","position":1,"name":"Animica","item":"https://animica.dev/"},
+   {"@type":"ListItem","position":2,"name":"CLI","item":"https://animica.dev/cli"}]},
+ {"@type":"FAQPage","mainEntity":[
+  {"@type":"Question","name":"Do I need an API key?","acceptedAnswer":{"@type":"Answer","text":"No. The model is served by the Animica miner network through a public keyless endpoint, so pip install animica and animica chat is the whole setup. A key is accepted if you have one, but nothing requires it."}},
+  {"@type":"Question","name":"How fast is it?","acceptedAnswer":{"@type":"Answer","text":"A turn typically takes 30 to 150 seconds, because inference comes from volunteer miners rather than a datacentre. It streams as it writes and re-submits to another miner when one does not answer. If you need sub-second replies, this is not the right tool."}},
+  {"@type":"Question","name":"Can it change my files without asking?","acceptedAnswer":{"@type":"Answer","text":"Not in the default mode. manual mode asks before writing a file, deleting, running a shell command or fetching a URL. plan mode refuses those outright and will not even offer a prompt. auto-edit applies edits but still asks before shell and delete. auto approves everything and requires typed confirmation to switch into mid-session."}},
+  {"@type":"Question","name":"What does a paid plan add?","acceptedAnswer":{"@type":"Answer","text":"Unlimited agentic tasks instead of ten a day, fifty tool-call rounds per task instead of ten, and eight parallel agents in /swarm instead of two. Chat itself is unlimited on the free tier."}}]}
+]}
+</script>
+</head>
+<body>
+
+<header>
+  <nav class="nav">
+    <a class="brand" href="/">
+      <img src="/animica-mark.svg" alt="" width="26" height="26">
+      Animica
+    </a>
+    <span class="sp"></span>
+    <a class="lk" href="/docs">Docs</a>
+    <a class="lk" href="/pricing">Pricing</a>
+    <a class="lk" href="/">Home</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="hero">
+    <p class="kicker">Terminal &middot; animica chat</p>
+    <h1>An agentic coding assistant with <em>no API key</em>.</h1>
+    <p class="lede">
+      <code>animica chat</code> reads and edits the files in your working directory, runs commands,
+      and asks before anything with a consequence &mdash; the way Claude Code and Codex do.
+      There is no account to make, no key to paste, and no GPU to own.
+    </p>
+    <pre><span class="cm"># a venv keeps it out of your system Python</span>
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+<b>pip install animica</b>
+<b>animica chat</b></pre>
+    <p class="sub">
+      On Windows the activate line is <code>.venv\Scripts\activate</code>. Prefer one command?
+      <code>curl -fsSL https://animica.dev/install.sh | sh</code> &mdash; and you can
+      <a href="/install.sh">read it first</a>; it needs no sudo.
+    </p>
+  </div>
+
+  <div class="note">
+    <p>
+      <b>The honest part, before you install anything.</b>
+      Inference comes from volunteer miners, not a datacentre, so a turn usually takes
+      <b>30&ndash;150 seconds</b> &mdash; and right now very few machines serve chat, so the first
+      request after an idle period is the slowest. The CLI streams as it writes and re-submits to
+      another miner when one does not answer, but it will never feel like a hosted API. If you need
+      sub-second replies, use something else and come back when the network is bigger.
+    </p>
+  </div>
+
+  <section>
+    <h2>What it actually does</h2>
+    <p>
+      Tools are live on every message &mdash; there is no separate agent mode. Ask what a function
+      does and ask for it to be fixed in the same session.
+    </p>
+    <ul>
+      <li>Reads, greps and globs your files; writes, edits and moves them; runs shell commands and Python.</li>
+      <li>Streams its answer as it arrives, so a long wait shows work rather than a spinner.</li>
+      <li>Reads an <code>AGENTS.md</code> (or <code>CLAUDE.md</code>, <code>.animica/instructions.md</code>)
+          from the directory or any parent, and says in the banner which file it is following.</li>
+      <li>Takes a pipe: <code>pytest 2&gt;&amp;1 | animica chat "why is this failing?"</code></li>
+      <li>Sessions are plain JSON on your machine. <code>animica chat -c</code> continues the last one.</li>
+      <li>Arrow-key history, and <code>/swarm</code> for parallel agents.</li>
+    </ul>
+    <pre><span class="cm"># one shot, then exit</span>
+animica chat <b>"find the N+1 query in this repo and fix it"</b>
+
+<span class="cm"># start with edits pre-approved, shell still asks</span>
+animica chat <b>-p auto-edit</b></pre>
+  </section>
+
+  <section>
+    <h2>You decide what it may touch</h2>
+    <p>
+      Four approval modes, switchable mid-session with <code>/mode</code> or set at start with
+      <code>--permission-mode</code>. The mode is always on screen, because an agent that
+      auto-approves shell commands without saying so is indistinguishable from a careful one
+      until something is already gone.
+    </p>
+    <div class="modes">
+      <div class="mode"><b>plan</b><p>Reads only. Writes, shell and network are refused &mdash; it will not even ask.</p></div>
+      <div class="mode mode--def"><b>manual</b><p>The default. Asks before writing a file, deleting, running a shell command or fetching a URL.</p></div>
+      <div class="mode"><b>auto-edit</b><p>Edits apply as it goes; shell and delete still ask. What most coding sessions want.</p></div>
+      <div class="mode"><b>auto</b><p>Everything, unattended. Switching into it mid-session makes you type <code>auto</code> to confirm.</p></div>
+    </div>
+    <p class="sub">
+      Modes are built on a tool <em>category</em> map rather than one safe/unsafe bit, which is what
+      lets &ldquo;edit freely, ask before shell&rdquo; exist as a real setting. A tool nobody has
+      categorised is treated as executable, so it stays gated.
+    </p>
+  </section>
+
+  <section>
+    <h2><code>/swarm</code> &mdash; and a reviewer that tries to prove it wrong</h2>
+    <p>
+      Type <code>/swarm audit this codebase for auth bugs</code> inside a session. It splits the work
+      into parallel subtasks, runs them together, then has a <strong>separate agent try to refute
+      each result</strong> and merges only what survives. A review that comes back inconclusive
+      counts as refuted, not confirmed.
+    </p>
+    <p class="sub">
+      Free runs two agents at once, a paid plan runs eight. The cost cap bounds work
+      <em>started</em>, not turns already in flight &mdash; so an overrun of up to one turn per
+      running agent is expected, and it is documented rather than pretended away.
+    </p>
+  </section>
+
+  <section>
+    <h2>Free, and where the ceiling is</h2>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>&nbsp;</th><th>Free</th><th>Any paid plan</th></tr></thead>
+      <tbody>
+        <tr><td>Chat</td><td><b>unlimited</b></td><td><b>unlimited</b></td></tr>
+        <tr><td>Agentic tasks</td><td>10 a day</td><td><b>unlimited</b></td></tr>
+        <tr><td>Tool-call rounds per task</td><td>10</td><td><b>50</b></td></tr>
+        <tr><td>Parallel agents in <code>/swarm</code></td><td>2</td><td><b>8</b></td></tr>
+        <tr><td>Approval modes</td><td>all four</td><td>all four</td></tr>
+        <tr><td>API key required</td><td>none</td><td>none</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      The CLI is part of <strong>every</strong> paid plan rather than a separate subscription, and
+      plans start at $4.99/mo. Paste the licence key from your plan into a session with
+      <code>/licence &lt;key&gt;</code>.
+    </p>
+    <p class="sub">
+      The free caps are a JSON counter in your own home directory. Anyone who wants to delete it
+      can &mdash; it is friction on a free tier, not DRM, and saying otherwise would be silly for an
+      open-source CLI.
+    </p>
+    <a class="cta" href="/pricing">See plans &rarr;</a>
+    <a class="cta cta--ghost" href="/docs">Read the docs &rarr;</a>
+  </section>
+
+  <section>
+    <h2>Deploy from the same terminal</h2>
+    <p>
+      Write a Python function, deploy it to Animica Cloud, and get paid when people call it.
+    </p>
+    <pre>animica cloud login
+animica cloud init            <span class="cm"># writes a handler.py to start from</span>
+<b>animica deploy handler.py</b>     <span class="cm"># validates, uploads, anchors on-chain, activates</span></pre>
+    <p class="sub">
+      Then <code>animica cloud invoke</code>, <code>logs</code>, <code>status</code> and
+      <code>earnings</code> do what they say. <code>animica deploy</code> is a shortcut for
+      <code>animica cloud deploy</code>.
+    </p>
+  </section>
+
+  <section>
+    <h2>Serving it yourself</h2>
+    <p>
+      The slowness above is a capacity problem, and the same package is the fix: <code>animica up</code>
+      serves chat to the network and earns ANM for the work. A machine that can import
+      <code>torch</code> and <code>transformers</code> starts advertising capacity on its own.
+    </p>
+    <a class="cta cta--ghost" href="https://animica.org">How mining works &rarr;</a>
+  </section>
+
+</main>
+
+<footer class="wrap">
+  <p>
+    <a href="/">Animica</a> &middot;
+    <a href="/pricing">Pricing</a> &middot;
+    <a href="/docs">Docs</a> &middot;
+    <a href="/install.sh">install.sh</a> &middot;
+    <a href="https://pypi.org/project/animica/">PyPI</a>
+  </p>
+  <p>Apache-2.0. Published as <code>animica</code> on PyPI.</p>
+</footer>
+
+<script defer src="https://animica.dev/anm-upgrade-banner.js?v=9320"></script>
+</body>
+</html>
