@@ -1106,10 +1106,14 @@ class BlockImporter:
                 return
 
             # Update theta for the next block.
+            # Pass the height so FORK_BOUNDED_RETARGET can gate itself. Without it
+            # the retarget silently keeps the legacy unclamped emergency valve.
             self.difficulty_state = diff.update_theta(
                 self.difficulty_state,
                 dt_seconds=float(dt_seconds),
                 blocks_skipped=1,
+                height=int(block_height),
+                chain_id=int(self.params.chain_id),
             )
             self._difficulty_samples += 1
             self._difficulty_epoch_theta = int(self.difficulty_state.theta_micro)

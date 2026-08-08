@@ -226,6 +226,20 @@ class TxDeploy:
 class TxCall:
     to: bytes
     data: bytes  # ABI-encoded call payload (function selector + args)
+    # FORK_VALUE_CALL (9.5.0): ANM carried by the call itself, debited from the caller
+    # and credited to the callee before execution, returned on revert.
+    #
+    # Until this existed, a CALL could not move value, which is why Animica Pay cannot
+    # do an atomic 98/2 merchant split and had to settle for accounting-exact instead,
+    # and why a valueless CALL can grief a payment. Every contract that wants to be
+    # paid has to fake it.
+    #
+    # DEFAULT 0 AND OMITTED FROM to_obj() WHEN ZERO. That is not cosmetic: to_obj() IS
+    # the canonical form the signing preimage and the txid are computed over, so
+    # emitting "amount" unconditionally would change the bytes of every CALL ever
+    # signed — new txids, broken signatures, a chain that rejects its own history.
+    # Omitting it keeps every existing CALL byte-identical.
+    amount: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -235,13 +249,26 @@ class TxCall:
             raise TypeError("TxCall.data must be bytes")
         if len(self.data) == 0:
             raise ValueError("TxCall.data must be non-empty")
+        if not isinstance(self.amount, int) or isinstance(self.amount, bool):
+            raise TypeError("TxCall.amount must be int")
+        if self.amount < 0:
+            raise ValueError("TxCall.amount must be ≥ 0")
 
     def to_obj(self) -> Mapping[str, Any]:
-        return {"to": self.to, "data": bytes(self.data)}
+        obj: Dict[str, Any] = {"to": self.to, "data": bytes(self.data)}
+        if int(self.amount) != 0:
+            obj["amount"] = int(self.amount)
+        return obj
 
     @staticmethod
     def from_obj(o: Mapping[str, Any]) -> "TxCall":
-        return TxCall(to=bytes(o["to"]), data=bytes(o["data"]))
+        # `amount` absent == 0, which is what every pre-fork CALL encodes as. A
+        # non-zero amount is only VALID from FORK_VALUE_CALL; that is a consensus
+        # check (see consensus.value_call.check_call_value), not a parsing one, so a
+        # pre-fork node still decodes the tx and then rejects it deterministically
+        # rather than failing to parse and diverging on the reason.
+        return TxCall(to=bytes(o["to"]), data=bytes(o["data"]),
+                      amount=int(o.get("amount", 0)))
 
 
 TxPayload = TxTransfer | TxDeploy | TxCall

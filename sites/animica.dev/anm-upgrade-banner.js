@@ -25,10 +25,18 @@
  *   FORK_TREASURY_25: the foundation-treasury share of every block subsidy goes from
  *   15% to 25% (miner 85% -> 75%). The subsidy TOTAL and the halving schedule are
  *   unchanged, so emission and MAX_MONEY are untouched — only the division changes.
- *   A node below 9.4.0 computes a 15% treasury output at height 70,000 and REJECTS
- *   the network's coinbase, so it diverges on the first post-activation block. Every
- *   full node, pool and balance-tracking exchange must run >=9.4.0 (or set
- *   ANIMICA_FORK_TREASURY_25_HEIGHT) BEFORE 70,000.
+ *   HOW AN UN-UPGRADED NODE FAILS — corrected 2026-08-09, the first description was
+ *   wrong. There is NO rejection and NO fork. `_compute_block_reward_amount`
+ *   (block_import.py:702) has ZERO callers and the only coinbase validation
+ *   (_validate_coinbase_outputs_nonzero, :386) checks solely for a zero-address
+ *   output — coinbase AMOUNTS are never checked against compute_block_reward. But
+ *   state application credits balances from the node's OWN compute_block_reward
+ *   (block_import.py:~2796 reward_outputs), not from the block's coinbase tx. So a
+ *   9.3.x node accepts byte-identical blocks and credits a 15% treasury forever:
+ *   a SILENT, PERMANENT ledger divergence with no orphan, no stall and no error.
+ *   That is quieter than a fork and therefore more dangerous for anyone reading
+ *   balances. Every full node, pool and balance-tracking exchange must run >=9.4.0
+ *   (or set ANIMICA_FORK_TREASURY_25_HEIGHT) BEFORE 70,000.
  * Previous headline: animica 9.3.2 — THE CLI IS AN AGENTIC CODING ASSISTANT (non-consensus).
  *   `animica chat` reads, edits and runs code in the directory you start it in, with four
  *   approval modes, parallel /swarm agents, piped stdin, and AGENTS.md support. It needs no API
@@ -147,8 +155,11 @@
       msgHtml =
         "<strong style='color:#FFC24B'>Block 70,000 has passed.</strong> "
         + "The treasury split is now <strong style='color:#fff'>75% miner / 25% foundation</strong>. "
-        + "If your node is still below <strong style='color:#fff'>9.4.0</strong> it is computing the old "
-        + "split and is <strong style='color:#fff'>on a dead fork</strong> &mdash; "
+        + "A node still below <strong style='color:#fff'>9.4.0</strong> computes the OLD split. It will "
+        + "<strong style='color:#fff'>not fork, stall or show an error</strong> &mdash; coinbase amounts "
+        + "are not validated against the schedule, so it accepts the same blocks and simply reports "
+        + "<strong style='color:#fff'>WRONG BALANCES, silently and permanently</strong>. Exchanges and "
+        + "explorers especially: there is no symptom to wait for. "
         + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span> "
         + "and restart to rejoin. Balances read from an un-upgraded node are wrong. "
         + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";

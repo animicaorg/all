@@ -96,6 +96,12 @@ MAX_SAFE_THETA_MICRO: MicroNat = 10 ** 15
 THETA_HARD_CAP_MICRO: MicroNat = 3_000_000_000
 
 
+# How many step_clamps the emergency valve may descend in a single block once
+# FORK_BOUNDED_RETARGET is active. >1 so a genuine stall still recovers quickly, but
+# finite so one slow block cannot erase the chain's work level.
+EMERGENCY_STEP_MULTIPLE = 4
+
+
 def micro_to_nats(theta_micro: MicroNat) -> float:
     return float(theta_micro) / _MICRO
 
@@ -212,6 +218,8 @@ def update_theta(
     dt_seconds: float,
     *,
     blocks_skipped: int = 1,
+    height: int | None = None,
+    chain_id: int = 1,
 ) -> RetargetState:
     """
     Update Θ using an EMA of ln(dt/T) and proportional gain β.
@@ -227,6 +235,14 @@ def update_theta(
     blocks_skipped : int
         Number of missing steps to roll the EMA across (≥1). The effective
         smoothing used is α_eff = 1 - (1-α)^m.
+    height : int | None
+        Height of the block being retargeted, used ONLY to gate
+        FORK_BOUNDED_RETARGET. Pass it from consensus paths so the fork applies;
+        leave None (the default) in simulators and tooling to get the legacy
+        behaviour. Making it explicit keeps this function a pure function of its
+        arguments, which is what lets every node agree.
+    chain_id : int
+        Network whose activation height applies. Defaults to mainnet.
 
     Returns
     -------
@@ -245,17 +261,65 @@ def update_theta(
         return state
 
     p = state.params
-    
+
+    # FORK_BOUNDED_RETARGET (9.5.0): height-gated, so replaying history below H
+    # reproduces the old theta byte-for-byte. `height=None` means "caller did not say"
+    # and keeps the legacy path, which is what every non-consensus caller (simulators,
+    # the doctest helpers below) wants.
+    bounded = False
+    if height is not None:
+        try:
+            from core.network_params import FORK_BOUNDED_RETARGET, is_fork_active
+            bounded = bool(is_fork_active(FORK_BOUNDED_RETARGET, int(height),
+                                          chain_id=int(chain_id)))
+        except Exception:  # noqa: BLE001 — never let a params lookup break a retarget
+            bounded = False
+
     # Emergency difficulty reduction if block time exceeds maximum
     # This allows the chain to recover quickly from extended periods without blocks
     if p.max_block_time_s is not None and dt_seconds > p.max_block_time_s:
+        emergency_r_hat = _safe_log(dt_seconds / max(1e-9, p.target_block_time_s))
+        if bounded:
+            # CLAMPED emergency descent. The legacy path below assigns
+            # theta = theta_min_micro directly, bypassing step_clamp_micro: on live
+            # mainnet params that is 26,821,504 -> 12,000,000 µnats in ONE block, and
+            # theta is log-work, so per-block work drops by e^14.8 ≈ 2.7 million times
+            # from a single slow block. Worse, it never came back: at the floor,
+            # min_block_spacing_ms pins dt to exactly the target, so r_k = ln(1) = 0,
+            # the error signal vanishes and tau never rises again.
+            #
+            # Stepping down instead still recovers a stalled chain in a handful of
+            # blocks (each step is a full step_clamp, and the valve re-fires every
+            # block while the stall persists) without destroying the work level.
+            step = int(abs(p.step_clamp_micro)) * EMERGENCY_STEP_MULTIPLE
+            theta_next = max(int(p.theta_min_micro), int(state.theta_micro) - step)
+            log.warning(
+                "Block time %.0fs exceeds maximum %.0fs. Emergency reduction CLAMPED: "
+                "theta %.3f -> %.3f nats (floor %.3f)",
+                dt_seconds, p.max_block_time_s, state.theta_micro / 1e6,
+                theta_next / 1e6, p.theta_min_micro / 1e6,
+            )
+            return RetargetState(
+                theta_micro=int(theta_next),
+                tau_nats=micro_to_nats(theta_next),
+                # Reset the EMA rather than recording ln(dt/T). The legacy branch
+                # stored the raw ratio — ln(4000/60) = 4.2 — and because the ordinary
+                # controller then spends many blocks working that memory off, theta
+                # kept sliding DOWN long after the stall ended (measured: 26.17 ->
+                # 22.79 nats over 30 on-target blocks), quietly undoing the clamp.
+                # Zero means "the correction has been applied; judge the next block on
+                # its own evidence". If the chain is still stalled the valve simply
+                # fires again and takes another bounded step.
+                ema_log_dt_over_T=0.0,
+                alpha=state.alpha,
+                params=state.params,
+            )
         log.warning(
             f"Block time {dt_seconds:.0f}s exceeds maximum {p.max_block_time_s:.0f}s. "
             f"Emergency difficulty reduction activated: theta = {p.theta_min_micro/1e6:.3f} nats"
         )
         # Set theta to minimum, reset EMA to reflect very slow blocks
         # Use a large positive r_hat to indicate blocks are much slower than target
-        emergency_r_hat = _safe_log(dt_seconds / max(1e-9, p.target_block_time_s))
         return RetargetState(
             theta_micro=int(p.theta_min_micro),
             tau_nats=micro_to_nats(p.theta_min_micro),
@@ -263,7 +327,38 @@ def update_theta(
             alpha=state.alpha,
             params=state.params,
         )
-    
+
+    # FLOOR ESCAPE. Pinned at the floor with blocks arriving no slower than target is
+    # evidence the floor is too LOW, not evidence of equilibrium — but r_k is exactly
+    # 0.0 when min_block_spacing_ms holds dt at the target, so the controller reads it
+    # as "nothing to do" and the chain stays crippled forever. Ratchet up instead.
+    if bounded:
+        floor = int(p.theta_min_micro)
+        near_floor = int(state.theta_micro) <= floor + int(abs(p.step_clamp_micro))
+        if near_floor and dt_seconds <= float(p.target_block_time_s):
+            step = int(abs(p.step_clamp_micro))
+            effective_max_escape = (
+                int(p.theta_max_micro)
+                if p.theta_max_micro is not None
+                else THETA_HARD_CAP_MICRO
+            )
+            theta_next = min(effective_max_escape, int(state.theta_micro) + step)
+            log.info(
+                "Floor escape: theta %.3f -> %.3f nats (at floor %.3f with dt=%.1fs <= "
+                "target %.1fs, where the error signal is identically zero)",
+                state.theta_micro / 1e6, theta_next / 1e6, floor / 1e6,
+                dt_seconds, float(p.target_block_time_s),
+            )
+            return RetargetState(
+                theta_micro=int(theta_next),
+                tau_nats=micro_to_nats(theta_next),
+                # Carry a small negative memory so the ordinary controller keeps
+                # pushing up on the next block instead of re-triggering this branch.
+                ema_log_dt_over_T=float(state.ema_log_dt_over_T),
+                alpha=state.alpha,
+                params=state.params,
+            )
+
     target_s = max(1e-9, float(p.target_block_time_s))
 
     # Sample of ln(dt/T)
