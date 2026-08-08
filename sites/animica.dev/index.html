@@ -811,6 +811,7 @@
   <!-- Primary links only. Everything else lives in the menu, so nothing has to
        be hidden at narrow widths the way it used to be. -->
   <div class="links"><a href="/cli">CLI</a>
+<a href="#" id="fbNav">Feedback</a>
     <a href="#chat">Chat</a>
     <a href="#build">Build</a>
     <a href="#agent">Agent</a>
@@ -2637,6 +2638,107 @@ curl https://animica.dev/v1/chat/completions \
   });
   window.addEventListener('hashchange', function(){ setTimeout(syncFromView, 0); });
   setType(location.hash === '#studio' ? 'media' : 'code');
+})();
+</script>
+
+<!-- Feedback (2026-08-08). Posts to /api/mkt/v1/site-feedback, which emails the owner.
+     NOT /api/mkt/v1/feedback — that path is the AI chat's thumbs up/down + DPO capture.
+     The destination address is NEVER in this markup: it lives in server env, so the
+     page cannot be scraped for it, and the form works for a visitor who has not
+     signed in — gating feedback behind a wallet would collect nothing. -->
+<style>
+  #fbOpen{position:fixed;right:16px;bottom:16px;z-index:2147482000;
+    background:var(--blue);color:#fff;border:0;border-radius:999px;
+    padding:11px 18px;font:600 14.5px/1 "Inter",system-ui,sans-serif;cursor:pointer;
+    box-shadow:0 6px 20px rgba(3,6,20,.4)}
+  #fbOpen:hover{filter:brightness(1.08)}
+  #fbOpen:focus-visible{outline:2px solid var(--clay);outline-offset:3px}
+  #fbDlg{border:1px solid var(--line);border-radius:14px;background:var(--paper);
+    color:var(--ink);padding:0;max-width:34rem;width:calc(100% - 32px)}
+  #fbDlg::backdrop{background:rgba(3,10,8,.66)}
+  #fbDlg form{padding:22px}
+  #fbDlg h2{font-family:"Fraunces",Georgia,serif;font-weight:500;font-size:24px;margin:0 0 6px}
+  #fbDlg p.fb-sub{color:var(--ink-2);font-size:14.5px;margin:0 0 16px}
+  #fbDlg label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}
+  #fbDlg textarea,#fbDlg input[type=email]{width:100%;background:var(--bg);color:var(--ink);
+    border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:400 15px/1.55 "Inter",system-ui,sans-serif}
+  #fbDlg textarea{min-height:8.5rem;resize:vertical}
+  #fbDlg textarea:focus,#fbDlg input:focus{outline:2px solid var(--clay);outline-offset:1px;border-color:var(--line-2)}
+  #fbHp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+  .fb-row{display:flex;gap:10px;align-items:center;margin-top:18px}
+  .fb-row .sp{flex:1}
+  #fbDlg button{font:600 14.5px/1 "Inter",system-ui,sans-serif;border-radius:8px;padding:10px 18px;cursor:pointer}
+  #fbSend{background:var(--blue);color:#fff;border:0}
+  #fbCancel{background:transparent;color:var(--ink-2);border:1px solid var(--line)}
+  #fbMsg{font-size:14px;margin:14px 0 0;min-height:1.2em}
+  #fbMsg.err{color:#FF9A8B} #fbMsg.okk{color:var(--clay)}
+  #fbCount{font-size:12.5px;color:var(--muted)}
+</style>
+<button id="fbOpen" type="button" aria-haspopup="dialog">Feedback</button>
+<dialog id="fbDlg" aria-labelledby="fbTitle">
+  <form id="fbForm" method="dialog" novalidate>
+    <h2 id="fbTitle">Tell us what you think</h2>
+    <p class="fb-sub">Bugs, confusion, something that should exist &mdash; all useful. It goes
+      straight to the people who build this.</p>
+    <label for="fbText">Your feedback</label>
+    <textarea id="fbText" maxlength="4000" required
+      placeholder="What were you trying to do, and what happened?"></textarea>
+    <p id="fbCount" aria-live="polite"></p>
+    <label for="fbEmail">Email <span style="opacity:.7">&mdash; optional, only so we can reply</span></label>
+    <input id="fbEmail" type="email" autocomplete="email" placeholder="you@example.com">
+    <div id="fbHp" aria-hidden="true"><label for="fbWebsite">Website</label><input id="fbWebsite" name="website" tabindex="-1" autocomplete="off"></div>
+    <p id="fbMsg" role="status" aria-live="polite"></p>
+    <div class="fb-row">
+      <span class="sp"></span>
+      <button id="fbCancel" type="button">Cancel</button>
+      <button id="fbSend" type="submit">Send feedback</button>
+    </div>
+  </form>
+</dialog>
+<script>
+(function(){
+  var open=document.getElementById('fbOpen'), dlg=document.getElementById('fbDlg');
+  if(!open||!dlg||!dlg.showModal) { if(open) open.hidden=true; return; }
+  var form=document.getElementById('fbForm'), text=document.getElementById('fbText'),
+      email=document.getElementById('fbEmail'), hp=document.getElementById('fbWebsite'),
+      msg=document.getElementById('fbMsg'), send=document.getElementById('fbSend'),
+      cancel=document.getElementById('fbCancel'), count=document.getElementById('fbCount');
+  function say(t,cls){ msg.textContent=t; msg.className=cls||''; }
+  function launch(e){ if(e) e.preventDefault(); say(''); dlg.showModal(); text.focus(); }
+  open.addEventListener('click',launch);
+  var nav=document.getElementById('fbNav');
+  if(nav) nav.addEventListener('click',launch);
+  cancel.addEventListener('click',function(){ dlg.close(); });
+  text.addEventListener('input',function(){
+    var n=text.value.length; count.textContent = n>3600 ? (4000-n)+' characters left' : '';
+  });
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    var body=text.value.trim();
+    if(body.length<5){ say('Please write a little more.','err'); text.focus(); return; }
+    send.disabled=true; say('Sending…');
+    fetch('/api/mkt/v1/site-feedback',{
+      method:'POST', headers:{'content-type':'application/json'},
+      body:JSON.stringify({message:body, email:email.value.trim(), website:hp.value,
+                           page:location.pathname+location.hash})
+    }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(res){
+        send.disabled=false;
+        if(res.ok && res.j && res.j.ok){
+          say('Thank you — that reached us.','okk');
+          text.value=''; email.value=''; count.textContent='';
+          setTimeout(function(){ dlg.close(); }, 1400);
+        } else {
+          // Never say "sent" when it was not. Offer the address only here, assembled
+          // at runtime so the page itself carries nothing to harvest.
+          var m=(res.j&&res.j.error&&res.j.error.message)||'That did not go through.';
+          say(m+' You can also email '+['animicaorg','gmail.com'].join('@')+' directly.','err');
+        }
+      }).catch(function(){
+        send.disabled=false;
+        say('No connection. You can also email '+['animicaorg','gmail.com'].join('@')+' directly.','err');
+      });
+  });
 })();
 </script>
 </body>
