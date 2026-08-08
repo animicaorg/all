@@ -120,7 +120,7 @@ main() {
         say "     ${B}$BIN_DIR/animica chat${N}"
     else
         say "   ${B}animica chat${N}              talk to it"
-        say "   ${B}animica chat --agentic '…'${N}  let it read and edit your code"
+        say "   ${B}animica chat '…'${N}          one shot: it reads, edits, runs tests"
         say "   ${B}animica chat${N} then ${B}/swarm …${N}  run several agents at once"
     fi
     say ""

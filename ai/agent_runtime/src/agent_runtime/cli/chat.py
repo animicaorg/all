@@ -45,6 +45,7 @@ from rich.table import Table
 
 from agent_runtime.agentic import (
     DEFAULT_PERMISSION_MODE,
+    load_project_context,
     PERMISSION_MODES,
     PermissionPolicy,
     ToolSpec,
@@ -65,6 +66,38 @@ app = typer.Typer(add_completion=False, no_args_is_help=False,
                   help="An agentic coding assistant in your terminal.")
 
 MAX_OUTPUT_TOKENS = 2048
+
+
+def _enable_line_editing() -> None:
+    """Give `input()` arrow-key history and emacs editing.
+
+    Importing readline is all it takes — CPython's `input()` uses it once present.
+    Without it, arrow-up prints `^[[A` and there is no way to fix a typo mid-line,
+    which is the first thing anyone tries in a REPL. History persists so the last
+    session's prompts are still there tomorrow.
+    """
+    try:
+        import readline
+    except ImportError:
+        return          # Windows without pyreadline; the REPL still works
+    hist = Path(os.environ.get("ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "chat_history"
+    try:
+        hist.parent.mkdir(parents=True, exist_ok=True)
+        if hist.exists():
+            readline.read_history_file(str(hist))
+    except OSError:
+        pass
+    readline.set_history_length(2000)
+    import atexit
+    atexit.register(lambda: _write_history(hist))
+
+
+def _write_history(path) -> None:
+    try:
+        import readline
+        readline.write_history_file(str(path))
+    except Exception:      # noqa: BLE001 — never fail an exit over history
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -147,6 +180,33 @@ _PROTOCOL_NOISE = re.compile(
     r"\[/?TOOL_(?:CALL|RESULT)\]|^\s*```(?:json)?\s*$", re.MULTILINE)
 
 
+MAX_PIPED_BYTES = 24_000
+
+
+def _read_piped_stdin() -> str:
+    """Return piped stdin, if this invocation has any.
+
+    `cat build.log | animica chat "why did this fail"` is one of the two or three
+    things a CLI agent is actually for, and without this the pipe is silently
+    discarded — the model answers about nothing and looks broken. Capped, because
+    a 50MB log would spend the whole context window before the question arrives.
+    """
+    if sys.stdin is None or sys.stdin.isatty():
+        return ""
+    try:
+        data = sys.stdin.read(MAX_PIPED_BYTES + 1)
+    except Exception:  # noqa: BLE001 — a closed or undecodable pipe is not fatal
+        return ""
+    if len(data) > MAX_PIPED_BYTES:
+        data = data[:MAX_PIPED_BYTES] + "\n… (input truncated)"
+    return data.strip()
+
+
+def _with_piped_input(prompt: str, piped: str) -> str:
+    return (f"{prompt}\n\nThe following was piped in on stdin:\n\n"
+            f"```\n{piped}\n```")
+
+
 def _clean_answer(text: str) -> str:
     if not text:
         return ""
@@ -194,15 +254,103 @@ def _prompter(console: Console):
 # The model                                                                   #
 # --------------------------------------------------------------------------- #
 
-def _make_submit(provider: HostedProvider):
+# Set when a streamer actually wrote to the terminal during this turn, so the
+# caller knows whether re-rendering the answer would duplicate it.
+_streamed_recently = [False]
+
+
+class _ProseStreamer:
+    """Write model output to the terminal as it arrives, minus the protocol.
+
+    A turn takes 50–145 seconds on this network, because inference comes from
+    volunteer miners. Without this the whole wait is a spinner, which is
+    indistinguishable from a hang — the single worst thing about using the CLI.
+
+    Most agentic turns are a `[TOOL_CALL]` block rather than prose, and streaming
+    raw tool JSON at someone is noise, so emission stops at `[TOOL_CALL]` and
+    resumes after `[/TOOL_CALL]`. The `· tool name` line already reports the call.
+    Tags can straddle chunk boundaries, so a short tail is held back rather than
+    printing half a marker.
+    """
+
+    OPEN = "[TOOL_CALL]"
+    CLOSE = "[/TOOL_CALL]"
+    _HOLD = max(len(OPEN), len(CLOSE))
+
+    def __init__(self, on_first, out=None) -> None:
+        self.on_first = on_first
+        self.out = out if out is not None else sys.stdout
+        self.pending = ""
+        self.muted = False
+        self.wrote = False
+        # Scoped to this turn, not the whole request. What the caller needs to know
+        # is whether the FINAL turn reached the terminal — an earlier iteration
+        # having printed something is not a reason to withhold the answer.
+        _streamed_recently[0] = False
+
+    def feed(self, chunk: str) -> None:
+        self.pending += chunk
+        while self.pending:
+            if self.muted:
+                i = self.pending.find(self.CLOSE)
+                if i == -1:
+                    # Keep only enough to recognise a split closing tag.
+                    self.pending = self.pending[-self._HOLD:]
+                    return
+                self.pending = self.pending[i + len(self.CLOSE):]
+                self.muted = False
+                continue
+            i = self.pending.find(self.OPEN)
+            if i == -1:
+                if len(self.pending) <= self._HOLD:
+                    return          # might be the start of a tag; wait for more
+                self._emit(self.pending[:-self._HOLD])
+                self.pending = self.pending[-self._HOLD:]
+                return
+            self._emit(self.pending[:i])
+            self.pending = self.pending[i + len(self.OPEN):]
+            self.muted = True
+
+    def _emit(self, text: str) -> None:
+        if not text:
+            return
+        if not self.wrote:
+            # Models routinely open a turn with a blank line or two before a tool
+            # call. Printing those pushes the output down the screen for nothing,
+            # and counting them as "streamed" would suppress the real answer.
+            text = text.lstrip()
+            if not text:
+                return
+            self.wrote = True
+            _streamed_recently[0] = True
+            self.on_first()
+        self.out.write(text)
+        self.out.flush()
+
+    def finish(self) -> None:
+        if not self.muted and self.pending.strip():
+            self._emit(self.pending)
+        self.pending = ""
+        if self.wrote:
+            self.out.write("\n")
+            self.out.flush()
+
+
+def _make_submit(provider: HostedProvider, *, stream_to=None):
     """Adapt the provider to what `run_agent_loop` wants: prompt -> (text, cost, ms).
 
     Cost is always 0.0 — kimi-k3 on the public endpoint is free, which is precisely
     why every wallet and cost flag could be deleted.
     """
     def submit(prompt: str) -> tuple[str, float, int]:
-        r = provider.serve(TurnRequest(prompt=prompt,
-                                       max_output_tokens=MAX_OUTPUT_TOKENS))
+        streamer = stream_to() if callable(stream_to) else None
+        r = provider.serve(TurnRequest(
+            prompt=prompt,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+            stream_callback=(streamer.feed if streamer else None),
+        ))
+        if streamer:
+            streamer.finish()
         return r.text, 0.0, r.latency_ms
     return submit
 
@@ -400,6 +548,7 @@ class Session:
         self.turns.append({"role": "user", "content": text})
         history = [{"role": t["role"], "content": t["content"]}
                    for t in self.turns[:-1]]
+        _streamed_recently[0] = False
 
         def on_iteration(turn) -> None:
             # ParsedToolCall is (name, arguments, raw) — not (tool, args).
@@ -411,13 +560,26 @@ class Session:
             self.console.print(f"[dim]  · {call.name}"
                                f"{' ' + str(hint)[:70] if hint else ''}[/dim]")
 
-        with self.console.status("[dim]thinking…[/dim]", spinner="dots"):
+        # A spinner that runs for the whole turn is indistinguishable from a hang at
+        # this network's latency, so it exists only until the first token lands and
+        # the model's own words take over.
+        status = self.console.status("[dim]thinking…[/dim]", spinner="dots")
+        status.start()
+        stopped = {"yes": False}
+
+        def stop_status() -> None:
+            if not stopped["yes"]:
+                stopped["yes"] = True
+                status.stop()
+
+        try:
             result = run_agent_loop(
                 user_task=text,
-                submit_turn=_make_submit(self.provider),
+                submit_turn=_make_submit(self.provider,
+                                         stream_to=lambda: _ProseStreamer(stop_status)),
                 policy=self.policy,
                 permission_prompter=_prompter(self.console),
-                on_iteration=on_iteration,
+                on_iteration=lambda t: (stop_status(), on_iteration(t)),
                 cwd=self.cwd,
                 max_iterations=verdict.iterations,
                 # Free path, so the iteration cap is the real bound. A cost cap
@@ -425,12 +587,28 @@ class Session:
                 max_cost=float(10 ** 9),
                 initial_history=history,
             )
+        except BaseException:
+            # Ctrl-C, or a network failure the REPL will report and carry on from.
+            # Either way this turn has no reply, and leaving the user message in
+            # place would send two user messages in a row on the next one — and
+            # save a half turn into the session.
+            self.turns.pop()
+            raise
+        finally:
+            stop_status()
         E.record_agent_task()
 
         answer = _clean_answer(result.final_text)
-        self.console.print()
-        self.console.print(Markdown(answer) if answer
-                           else "[yellow]no answer — try rephrasing[/yellow]")
+        # The final turn already streamed to the terminal, so re-rendering it would
+        # print everything twice. Markdown is only worth it when nothing was
+        # streamed — a turn that ended on a tool call, or one the model spent
+        # entirely on suppressed protocol.
+        if not answer:
+            self.console.print("\n[yellow]no answer — try rephrasing, or ask it to "
+                               "summarise what it found[/yellow]")
+        elif not _streamed_recently[0]:
+            self.console.print()
+            self.console.print(Markdown(answer))
         self.turns.append({"role": "assistant", "content": answer})
         _save_session(self.sid, self.cwd, self.turns)
         if result.stop_reason not in ("done", "no_tool_call"):
@@ -485,16 +663,31 @@ def main(
     if session or continue_last:
         s.cmd_resume(session or "")
 
-    # One shot: `animica chat "do the thing"`.
+    # One shot: `animica chat "do the thing"`, optionally `… | animica chat "…"`.
     if prompt:
+        piped = _read_piped_stdin()
+        if piped:
+            prompt = _with_piped_input(prompt, piped)
+            # stdin is now spent, so `_prompter` can only answer "deny" — say so
+            # rather than letting every write fail as if the model had refused.
+            if policy.mode in ("manual", "auto-edit"):
+                console.print("[dim]reading stdin, so approval prompts will be "
+                              "declined — pass -p auto-edit or -p auto to let it "
+                              "act.[/dim]")
         s.ask(prompt)
         if s.turns:
             _save_session(s.sid, s.cwd, s.turns)
         raise typer.Exit()
 
-    console.print(Panel(f"[bold]animica[/bold] · kimi-k3 · {policy.label} mode\n"
-                        f"[dim]{cwd}[/dim]",
-                        border_style="blue", padding=(0, 1)))
+    _enable_line_editing()
+    # Say which project file is steering it. Instructions that change how the agent
+    # behaves must not be invisible — someone debugging odd behaviour should be able
+    # to see that a repo's AGENTS.md is in play without reading the source.
+    ctx_name, _ = load_project_context(cwd)
+    lines = [f"[bold]animica[/bold] · kimi-k3 · {policy.label} mode", f"[dim]{cwd}[/dim]"]
+    if ctx_name:
+        lines.append(f"[dim]following {ctx_name}[/dim]")
+    console.print(Panel("\n".join(lines), border_style="blue", padding=(0, 1)))
     console.print("[dim]/help for commands · Ctrl+D to exit[/dim]\n")
 
     while not s.done:

@@ -3,14 +3,20 @@
 The shape (decided 2026-08-08)
 ------------------------------
 ======================  ==================================  ==========================
-                        free                                pro — $9.99/mo
+                        free                                pro — any paid plan
 ======================  ==================================  ==========================
 chat                    unlimited                           unlimited
 agentic tasks           10 per day                          unlimited
 agentic iterations      10 per task                         50 per task
-tier                    standard                            flagship + long context
-thread sync             local + your own DA namespace       hosted sync
+parallel /swarm agents  2                                   8
 ======================  ==================================  ==========================
+
+That table is the whole difference, and it is deliberately short. ``hosted_sync``
+and ``long_context`` exist as fields because the entitlement API returns them,
+but **nothing reads either one** — there is one model (kimi-k3) and sessions are
+local JSON files. Do not put them on a pricing page until something consumes
+them; animica.dev advertised "flagship tier" and "hosted session sync" off the
+back of these flags for a while, and neither was real.
 
 Pro is sold as a PayPal subscription on animica.dev/pricing, which issues a
 licence key. The key lives in ``~/.animica/licence`` and is sent to the

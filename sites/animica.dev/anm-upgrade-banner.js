@@ -3,30 +3,76 @@
  * Central, self-contained, cross-origin-includable. One
  *   <script defer src="https://animica.dev/anm-upgrade-banner.js"></script>
  * on any site renders a fixed bottom notice. To retire it everywhere after the
- * fork, empty this file — no per-site change needed.
+ * upgrade, empty this file — no per-site change needed.
  *
- * Height-gated facts, verified against deployed core.network_params / consensus.rewards:
- *   block 42,000 — FORK_ADDRESS_FREEZE (pip 7.0.0): a reject rule. A node not on
- *     >=7.0.0 can follow a non-canonical fork → "fork off mainnet".
- *   block 42,001 — FORK_FOUNDATION_SPLIT (pip 7.1.0): an emission re-split (85/15).
- *     A node not on >=7.1.0 stays on-chain but silently miscredits balances.
- *   Current release that includes both: animica 7.1.1.
- * Deadline shown is block 42,000 (the earliest). Ordinary users of hosted services
- * and wallets need do nothing — the copy says so, so they self-select out.
+ * Height-gated facts, verified against deployed core.network_params /
+ * execution.migrations / consensus.rewards:
+ *   block 44,444 — 7.1.9 consensus activation (treasury-scam clawback, a
+ *     STATE-MUTATING migration + address freeze). A node not on >=7.1.9 keeps
+ *     the scam accounts funded and SILENTLY DIVERGES from network balances.
+ *   animica 7.2.0 (current release, supersedes 7.1.9 — contains everything in
+ *     it) additionally fixes the 38,728 fork-wedge: nodes that took the losing
+ *     side of the 2026-07-07 one-block fork sat stuck at height 38,728 forever;
+ *     7.2.0 self-heals them at restart (pinned canonical checkpoint + sync
+ *     fork-sibling ingest) and repairs snapshot bootstrap.
+ * Height is past the last mandatory fork (50,000), so the live notice is a
+ *   non-consensus RELEASE notice, not a deadline. The CTA therefore points where
+ *   the reader can act on it (animica.dev/#cli), and the node-operator upgrade
+ *   guide is a link inside the copy instead — a "Upgrade guide →" button on a
+ *   release nobody must take sent everyone to the wrong page.
+ * Current release: animica 9.3.2 — THE CLI IS AN AGENTIC CODING ASSISTANT (non-consensus; everyone).
+ *   `animica chat` reads, edits and runs code in the directory you start it in, with four
+ *   approval modes, parallel /swarm agents, piped stdin, and AGENTS.md support. It needs no API
+ *   key, no wallet and no GPU: inference is kimi-k3 served by the miner network. Free tier is
+ *   unlimited chat + 10 agentic tasks/day; paid plans lift the caps (animica.dev/#pricing).
+ *   Nothing here is consensus-affecting, so no node MUST take it — but it SUPERSEDES 9.2.0 and
+ *   carries every fix below, so `pip install -U animica` is still the right command for a miner
+ *   who wants per-share payouts. Previous headline:
+ * animica 9.2.0 — SUB-BLOCK SHARES (re-enabled; all review findings closed) (non-consensus; miners + pool operators).
+ *   The wire share target is a RATIO of θ and the xmrig-compat floor pinned it at 1.0 == θ == the
+ *   block target, so a "share" WAS a block and PPS paid only block finders. 9.1.0 hands sub-block
+ *   (9.1.1: every shipped miner opts in automatically + `animica up` reports it) targets to sessions that opt in on mining.subscribe (features.subblockShares) — derived per job
+ *   as r = 1 - MICRO*ln(S)/θ so a share is worth 1/S of a block and the pool-wide share rate is
+ *   S/block_time. Every client that does NOT opt in (xmrig, ASIC, cryptonote, older miners) keeps
+ *   byte-for-byte the target it got before. Carries 9.0.9/9.0.10: 5% block-reserve so credit-cap
+ *   headroom is never fully drained by the winner, per-IP stratum connection cap + idle-session
+ *   reaper (one client held 835 idle sockets => "838 miners"), honest num_miners vs num_connections,
+ *   and a defensive miner-side set_difficulty parser (an unparseable push used to kill the miner).
+ * Previous: animica 9.0.8/9.0.6 — RPC unbounded-scan fix (node stall), see git history.
+ *   rpc/methods/tx.py + receipt.py fell back to an UNBOUNDED linear block scan (4096 deep)
+ *   whenever the tx/receipt index missed — i.e. for any pending/unknown txid, exactly what
+ *   status pollers ask about. ~4.4ms/block => ~18s of SQLite-lock-holding CPU per miss; a few
+ *   pollers occupied every RPC worker thread and starved miner.getBlockTemplate, so the pool
+ *   could not build jobs and BLOCK PRODUCTION STALLED (mainnet froze at 54262 for ~57min).
+ *   9.0.6 bounds both scans to 128 (env-overridable). getBlockTemplate 20s -> 29ms.
+ *   Carries 9.0.5 (mining sync-gate: a peer's false height can no longer halt production),
+ *   9.0.4 (p2p dial/handshake timeouts) and the 9.0.1 LTS line.
+ *   No genesis reset / no state change — safe-for-all; hosted-service & wallet users need do nothing.
+ * Pre-activation: mandatory-upgrade bar (7.1.9 campaign @ 44,444). Post-activation
+ * (height >= 44,444, the case today): the 44,854 stuck-node remedy notice, until
+ * RETIRE_STUCK.
+ * Balance-tracking exchanges/explorers and pools/miners MUST be on >=7.1.9
+ * before 44,444 — install 7.2.0. Ordinary users of hosted services and
+ * wallets need do nothing — the copy says so, so they self-select out.
  */
 (function () {
   "use strict";
   if (window.__anmUpgradeBanner) return;                 // idempotent
   window.__anmUpgradeBanner = true;
 
-  var FREEZE = 42000, SPLIT = 42001;
-  var NOTICE = "https://animica.dev/upgrade";
+  var DEADLINE = 50000;                                   // last MANDATORY activation (7.1.9); 8.0.x+ is non-consensus
+  var VERSION = "9.3.2";
+  var NOTICE = "https://animica.dev/#cli";                // where the reader can act on this release
+  var GUIDE = "https://animica.dev/upgrade/";             // still the right link for node operators
   var HEIGHT_URL = "https://animica.dev/net-height";
-  var KEY = "anmUpgradeDismissed-v1";
+  var KEY = "anmUpgrade-932";                             // re-show: 9.3.2 agentic CLI
   // Fail-safe retirement: if live height is never readable (cross-origin/CORS/network),
-  // still stop showing a pre-fork notice after this date. Height stays the authoritative
-  // deadline; this only ever HIDES the bar, so it can't misfire in the dangerous direction.
-  var RETIRE_AFTER = Date.parse("2026-09-01T00:00:00Z");
+  // still stop showing a pre-activation notice after this date. Height stays the
+  // authoritative deadline; this only ever HIDES the bar, so it can't misfire in the
+  // dangerous direction.
+  var RETIRE_AFTER = Date.parse("2026-12-01T00:00:00Z");
+  // 8.0.0 feature-release notice (non-consensus) retires on this date.
+  var RETIRE_STUCK = Date.parse("2026-11-15T00:00:00Z");
 
   try { if (location.host === "animica.dev" && /^\/upgrade\/?$/.test(location.pathname)) return; } catch (e) {}
   try { if (sessionStorage.getItem(KEY) === "1") return; } catch (e) {}
@@ -57,13 +103,13 @@
     window.removeEventListener("resize", onResize);
   }
 
-  function mount(blocksLeft) {
+  function mount(blocksLeft, postActivation) {
     if (document.getElementById("anm-upgrade-bar")) return;
 
     bar = el("div", [
       "position:fixed;left:0;right:0;bottom:0;z-index:2147483000",
       "font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif",
-      "background:#0b1224;color:#e8ecf6;border-top:2px solid #ffb020",
+      "background:#05140F;color:#E8F4EE;border-top:2px solid #FFC24B",
       "box-shadow:0 -10px 30px rgba(3,6,20,.45);box-sizing:border-box"
     ].join(";"));
     bar.id = "anm-upgrade-bar";
@@ -81,24 +127,46 @@
       "<path d='M128 68 L84 192 H172 L128 68 Z' fill='#2E63FF'/>" +
       "<rect x='104' y='160' width='48' height='16' rx='8' fill='#2E63FF'/></svg>");
 
-    var count = (typeof blocksLeft === "number")
-      ? " <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#9aa6c4\">(~" + blocksLeft.toLocaleString() + " blocks)</span>"
-      : "";
-    var msg = el("div", "flex:1 1 320px;font-size:14px;line-height:1.45",
-      "Every Animica <strong style='color:#fff'>full node</strong> must upgrade to " +
-      "<strong style='color:#fff'>animica 7.1.1</strong> before block " +
-      "<strong style='color:#ffb020'>42,000</strong>" + count + " to stay on mainnet. " +
-      "<span style='color:#9aa6c4'>Hosted-service &amp; wallet users: nothing to do.</span>");
+    var msgHtml;
+    if (postActivation) {
+      msgHtml =
+        "<strong style='color:#FFC24B'>9.3.2 &mdash; your terminal now writes code.</strong> "
+        + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span> "
+        + "then <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">animica chat</span> "
+        + "&mdash; it reads and edits the files in your working directory, runs commands, and "
+        + "<strong style='color:#fff'>asks before anything with a consequence</strong>. "
+        + "<strong style='color:#fff'>No API key, no wallet, no GPU</strong>: the model is served by the "
+        + "same miner network as this page. Free, with caps. "
+        + "<span style='color:#A9C4B8'>Miners &amp; pools: this release carries the per-share payout from "
+        + "9.2.0, so the same command is still the one you want. "
+        + "<a href='" + GUIDE + "' style='color:#14C79B;text-decoration:none'>Node upgrade guide</a> "
+        + "&mdash; nothing here is consensus-affecting.</span>";
+    } else {
+      var count = (typeof blocksLeft === "number")
+        ? " <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#A9C4B8\">(~" + blocksLeft.toLocaleString() + " blocks)</span>"
+        : "";
+      msgHtml =
+        "Every Animica <strong style='color:#fff'>full node</strong>, pool &amp; balance-tracking "
+        + "exchange must upgrade to <strong style='color:#fff'>animica " + VERSION + " (LTS)</strong> before block "
+        + "<strong style='color:#FFC24B'>50,000</strong>" + count + " — the <strong style='color:#fff'>IOU-settlement "
+        + "fork</strong> (service IOUs paid from the block reward, &le;20%/block). Un-upgraded nodes diverge from "
+        + "network balances once the first settlement anchor posts. 9.0.x also opens the GPU Studios "
+        + "(<a href='https://animica.dev/video' style='color:#14C79B;text-decoration:none'>video</a> / "
+        + "<a href='https://animica.dev/audio' style='color:#14C79B;text-decoration:none'>audio</a> / "
+        + "<a href='https://animica.dev/render' style='color:#14C79B;text-decoration:none'>render</a>). "
+        + "<span style='color:#A9C4B8'>Hosted-service &amp; wallet users: nothing to do.</span>";
+    }
+    var msg = el("div", "flex:1 1 320px;font-size:14px;line-height:1.45", msgHtml);
 
     var cta = el("a", [
       "flex:0 0 auto;text-decoration:none;font-weight:600;font-size:13.5px",
-      "padding:8px 15px;border-radius:9px;color:#04122a",
-      "background:linear-gradient(180deg,#37e0d8,#2bb6cf)"
-    ].join(";"), "Upgrade guide →");
+      "padding:8px 15px;border-radius:9px;color:#FFFFFF",
+      "background:#2E63FF"
+    ].join(";"), "Get the CLI →");
     cta.href = NOTICE;
 
     var x = el("button",
-      "flex:0 0 auto;background:transparent;border:1px solid #24325a;color:#9aa6c4;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:15px;line-height:1", "&times;");
+      "flex:0 0 auto;background:transparent;border:1px solid #1D5340;color:#A9C4B8;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:15px;line-height:1", "&times;");
     x.setAttribute("aria-label", "Dismiss for this session");
     x.onclick = function () { try { sessionStorage.setItem(KEY, "1"); } catch (e) {} teardown(); };
 
@@ -118,10 +186,15 @@
     else document.addEventListener("DOMContentLoaded", fn);
   }
   function decideAndMount(height) {
-    // Self-expire once the split has activated — stop showing the pre-fork CTA.
-    if (typeof height === "number" && height >= SPLIT) return;
-    var left = (typeof height === "number" && height < FREEZE) ? (FREEZE - height) : null;
-    ready(function () { mount(left); });
+    if (typeof height === "number" && height >= DEADLINE) {
+      // Post-activation: keep a lighter notice for wedged-node operators for a
+      // couple of weeks, then retire fully.
+      if (Date.now() > RETIRE_STUCK) return;
+      ready(function () { mount(null, true); });
+      return;
+    }
+    var left = (typeof height === "number" && height < DEADLINE) ? (DEADLINE - height) : null;
+    ready(function () { mount(left, false); });
   }
 
   // Try live height (CORS-enabled JSON {height:N}); render statically if it fails.

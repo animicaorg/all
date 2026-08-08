@@ -9,6 +9,7 @@ reviewed — none of them raise. So they are tested here rather than trusted.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
@@ -397,7 +398,10 @@ def test_one_agent_crashing_does_not_kill_the_swarm(tmp_path):
 
 
 def test_the_cost_cap_stops_the_swarm_and_says_so(tmp_path):
+    seen: list[str] = []
+
     def pricey(prompt: str):
+        seen.append(prompt)
         if "Decompose" in prompt:
             return ('["a","b","c","d"]', 0.9, 10)
         return ("done", 0.9, 10)
@@ -406,11 +410,29 @@ def test_the_cost_cap_stops_the_swarm_and_says_so(tmp_path):
                   permission_prompter=_deny, cwd=str(tmp_path),
                   max_agents=2, max_cost=1.0)
     assert r.stop_reason == "max_cost"
-    # The cap bounds work STARTED, not a round of in-flight turns, so an overrun
-    # of up to one turn per running agent is expected and documented. What must
-    # not happen is unbounded spending.
+    # The cap bounds work STARTED, not a round of in-flight turns: a turn's cost
+    # is unknown until it returns, so the overrun ceiling is one turn per agent
+    # that was already running. What must not happen is unbounded spending.
     assert r.total_cost < 1.0 + 2 * 0.9 + 0.01
-    assert any(x.error and "budget" in x.error for x in r.results)
+    # And once the budget is gone the swarm must not keep buying turns for the
+    # phases it has not started yet — that is where a soft cap leaks.
+    assert not any("REFUTE" in p for p in seen), "review must not run past the cap"
+    assert not any("Synthes" in p for p in seen), "synthesis must not run past the cap"
+
+
+def test_a_planning_turn_that_exhausts_the_budget_starts_no_agents(tmp_path):
+    """The one place the cap is exact: nothing has been spawned yet, so it can
+    still refuse outright instead of overrunning by a turn per agent."""
+    def pricey(prompt: str):
+        assert "Decompose" in prompt, "no agent should have been started"
+        return ('["a","b","c","d"]', 5.0, 10)
+
+    r = run_swarm(task="T", submit_turn=pricey, policy=PermissionPolicy("plan"),
+                  permission_prompter=_deny, cwd=str(tmp_path),
+                  max_agents=4, max_cost=1.0)
+    assert r.stop_reason == "max_cost"
+    assert r.results == []
+    assert r.synthesis == ""
 
 
 def test_planning_failure_degrades_to_one_agent(tmp_path):
@@ -462,3 +484,239 @@ def test_a_failed_review_does_not_count_as_confirmation(tmp_path):
                   max_agents=1, max_cost=2.0)
     assert r.results[0].verdict is None
     assert "review failed" in r.results[0].verdict_reason
+
+
+# --------------------------------------------------------------------------- #
+# Streaming, project context, line editing                                    #
+# --------------------------------------------------------------------------- #
+
+def _collect(chunks: list[str]) -> str:
+    """Feed chunks through the streamer and return what reached the terminal."""
+    from agent_runtime.cli.chat import _ProseStreamer
+    sink = io.StringIO()
+    s = _ProseStreamer(lambda: None, out=sink)
+    for c in chunks:
+        s.feed(c)
+    s.finish()
+    return sink.getvalue()
+
+
+def test_prose_streams_through_unchanged():
+    assert _collect(["Hel", "lo th", "ere."]) == "Hello there.\n"
+
+
+def test_a_tool_call_block_is_never_shown():
+    """Streaming raw tool JSON at someone is noise — the `· tool name` line already
+    reports the call."""
+    got = _collect(['Looking. [TOOL_CALL]{"tool":"read_file","args":{}}[/TOOL_CALL] Found it.'])
+    assert "read_file" not in got
+    assert "TOOL_CALL" not in got
+    assert "Looking." in got and "Found it." in got
+
+
+def test_a_tag_split_across_chunks_is_still_suppressed():
+    """The reason a tail is held back: a naive implementation prints "[TOOL" and then
+    swallows the rest."""
+    got = _collect(["think [TOOL", "_CALL]{\"tool\":\"bash\"}[/TOOL_", "CALL] done"])
+    assert "TOOL" not in got
+    assert "bash" not in got
+    assert "think" in got and "done" in got
+
+
+def test_an_unterminated_tool_call_shows_nothing_after_it():
+    """A turn cut off mid-tool-call must not dump half a JSON block on screen."""
+    got = _collect(['prose [TOOL_CALL]{"tool":"write_file","args":{"path":"x"'])
+    assert "write_file" not in got
+    assert "prose" in got
+
+
+def test_the_first_token_stops_the_spinner_exactly_once():
+    from agent_runtime.cli.chat import _ProseStreamer
+    calls = []
+    s = _ProseStreamer(lambda: calls.append(1), out=io.StringIO())
+    s.feed("a")
+    s.feed("b")
+    s.finish()
+    assert len(calls) == 1, "the spinner must be stopped once, not per chunk"
+
+
+def test_a_turn_that_is_only_a_tool_call_never_stops_the_spinner():
+    """Nothing was shown, so the caller still needs to render the answer itself."""
+    from agent_runtime.cli.chat import _ProseStreamer
+    calls = []
+    s = _ProseStreamer(lambda: calls.append(1), out=io.StringIO())
+    s.feed('[TOOL_CALL]{"tool":"grep"}[/TOOL_CALL]')
+    s.finish()
+    assert calls == []
+
+
+def test_project_instructions_are_found_and_appended_after_the_tool_contract(tmp_path):
+    """A repo's house rules must not be able to talk the agent out of the tool
+    format, so they go after it."""
+    from agent_runtime.agentic import build_system_prompt, load_project_context
+    (tmp_path / "AGENTS.md").write_text("Always reply in British English.", encoding="utf-8")
+    name, text = load_project_context(str(tmp_path))
+    assert name == "AGENTS.md"
+    assert "British English" in text
+    prompt = build_system_prompt(str(tmp_path))
+    assert prompt.index("Project instructions") > prompt.rindex("TOOL_CALL")
+
+
+def test_project_instructions_are_found_from_a_subdirectory(tmp_path):
+    from agent_runtime.agentic import load_project_context
+    (tmp_path / "AGENTS.md").write_text("root rules", encoding="utf-8")
+    deep = tmp_path / "src" / "pkg"
+    deep.mkdir(parents=True)
+    name, text = load_project_context(str(deep))
+    assert text == "root rules"
+    assert name.endswith("AGENTS.md")
+
+
+def test_the_nearest_instruction_file_wins_rather_than_merging(tmp_path):
+    """Two files disagreeing about house style is worse than reading only the
+    closest one."""
+    from agent_runtime.agentic import load_project_context
+    (tmp_path / "AGENTS.md").write_text("outer", encoding="utf-8")
+    inner = tmp_path / "sub"
+    inner.mkdir()
+    (inner / "AGENTS.md").write_text("inner", encoding="utf-8")
+    _, text = load_project_context(str(inner))
+    assert text == "inner"
+
+
+def test_an_oversized_instruction_file_is_truncated_and_says_so(tmp_path):
+    from agent_runtime.agentic import MAX_PROJECT_CONTEXT_BYTES, load_project_context
+    (tmp_path / "AGENTS.md").write_text("x" * (MAX_PROJECT_CONTEXT_BYTES + 5000), encoding="utf-8")
+    _, text = load_project_context(str(tmp_path))
+    assert "truncated" in text
+    assert len(text) < MAX_PROJECT_CONTEXT_BYTES + 200
+
+
+def test_an_empty_instruction_file_is_ignored(tmp_path):
+    """An empty AGENTS.md should not announce itself in the banner."""
+    from agent_runtime.agentic import load_project_context
+    (tmp_path / "AGENTS.md").write_text("   \n\n", encoding="utf-8")
+    name, text = load_project_context(str(tmp_path))
+    assert name is None and text is None
+
+
+def test_no_instruction_file_means_no_extra_prompt(tmp_path):
+    from agent_runtime.agentic import build_system_prompt
+    prompt = build_system_prompt(str(tmp_path))
+    assert "Project instructions" not in prompt
+
+
+# --------------------------------------------------------------------------- #
+# Piped stdin                                                                 #
+# --------------------------------------------------------------------------- #
+
+class _FakePipe(io.StringIO):
+    def isatty(self):
+        return False
+
+
+def test_piped_stdin_is_read(monkeypatch):
+    from agent_runtime.cli.chat import _read_piped_stdin
+    monkeypatch.setattr("sys.stdin", _FakePipe("Traceback...\nValueError: nope\n"))
+    assert "ValueError: nope" in _read_piped_stdin()
+
+
+def test_a_terminal_is_not_treated_as_piped_input(monkeypatch):
+    """Reading a tty here would block the interactive REPL forever."""
+    from agent_runtime.cli.chat import _read_piped_stdin
+
+    class Tty(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr("sys.stdin", Tty("should never be read"))
+    assert _read_piped_stdin() == ""
+
+
+def test_a_huge_pipe_is_truncated_rather_than_sent_whole(monkeypatch):
+    from agent_runtime.cli.chat import MAX_PIPED_BYTES, _read_piped_stdin
+    monkeypatch.setattr("sys.stdin", _FakePipe("x" * (MAX_PIPED_BYTES * 3)))
+    got = _read_piped_stdin()
+    assert "input truncated" in got
+    assert len(got) < MAX_PIPED_BYTES + 100
+
+
+def test_the_question_survives_the_pipe(monkeypatch):
+    """The prompt must not be buried: it goes first, the data second."""
+    from agent_runtime.cli.chat import _with_piped_input
+    out = _with_piped_input("why did this fail", "line one\nline two")
+    assert out.startswith("why did this fail")
+    assert "line two" in out
+
+
+# --------------------------------------------------------------------------- #
+# An interrupted turn                                                         #
+# --------------------------------------------------------------------------- #
+
+def _session(tmp_path):
+    from rich.console import Console
+    from agent_runtime.cli.chat import Session
+    return Session(Console(), PermissionPolicy("plan"), object(), str(tmp_path),
+                   "sess-test", 4)
+
+
+def test_an_interrupted_turn_leaves_no_unanswered_message(tmp_path, monkeypatch):
+    """Otherwise the next turn sends two user messages in a row, and the session
+    file records half a turn."""
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path / "state"))
+
+    def boom(**kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("agent_runtime.cli.chat.run_agent_loop", boom)
+    s = _session(tmp_path)
+    with pytest.raises(KeyboardInterrupt):
+        s.ask("do a long thing")
+    assert s.turns == []
+
+
+def test_a_failed_turn_is_not_billed_against_the_daily_cap(tmp_path, monkeypatch):
+    """record_agent_task runs after the loop, so a turn that never happened must
+    not consume one of a free user's ten."""
+    from agent_runtime import entitlements as E
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path / "state"))
+    before = E.agent_tasks_used_today()
+
+    def boom(**kwargs):
+        raise RuntimeError("network gone")
+
+    monkeypatch.setattr("agent_runtime.cli.chat.run_agent_loop", boom)
+    s = _session(tmp_path)
+    with pytest.raises(RuntimeError):
+        s.ask("something")
+    assert E.agent_tasks_used_today() == before
+
+
+def test_leading_blank_lines_are_not_output_and_do_not_count_as_streamed():
+    """Observed live: the model opens a turn with "\\n\\n\\n" then a tool call.
+    Printed, that shoves everything down the screen; counted as streamed, it
+    suppresses the answer the caller would otherwise render."""
+    from agent_runtime.cli.chat import _ProseStreamer, _streamed_recently
+    calls = []
+    s = _ProseStreamer(lambda: calls.append(1), out=io.StringIO())
+    s.feed('\n\n\n[TOOL_CALL]{"tool":"read_file"}[/TOOL_CALL]')
+    s.finish()
+    assert calls == [], "whitespace is not the first token"
+    assert _streamed_recently[0] is False
+
+
+def test_each_turn_reports_its_own_streaming_not_an_earlier_one():
+    """The flag decides whether the final answer gets rendered, so an iteration
+    that printed prose must not speak for the one after it."""
+    from agent_runtime.cli.chat import _ProseStreamer, _streamed_recently
+    first = _ProseStreamer(lambda: None, out=io.StringIO())
+    first.feed("some prose")
+    first.finish()
+    assert _streamed_recently[0] is True
+    _ProseStreamer(lambda: None)            # a new turn begins
+    assert _streamed_recently[0] is False
+
+
+def test_blank_lines_inside_prose_are_kept():
+    """Paragraph breaks in an answer are content; only the leading run is dropped."""
+    assert _collect(["\n\nfirst para\n\nsecond para"]) == "first para\n\nsecond para\n"

@@ -800,12 +800,67 @@ def _render_tool_list() -> str:
     return "\n".join(lines)
 
 
+# Project instruction files, in the order they are looked for. AGENTS.md is the
+# emerging cross-tool convention; the others are what people already have lying
+# around from other assistants, and reading them costs nothing.
+PROJECT_CONTEXT_FILES = (
+    "AGENTS.md", "ANIMICA.md", "CLAUDE.md", ".animica/instructions.md",
+    ".github/copilot-instructions.md",
+)
+MAX_PROJECT_CONTEXT_BYTES = 8000
+
+
+def load_project_context(cwd: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
+    """The repo's own instructions, if it has any: (filename, text) or (None, None).
+
+    Walks up from `cwd` to the filesystem root, so running the agent in a
+    subdirectory of a repo still picks up the file at its top. Stops at the first
+    match rather than merging several, because two files disagreeing about house
+    style is a worse outcome than reading only the nearest one.
+
+    Truncated at 8 KiB. A long instruction file competes with the actual task for
+    the model's attention, and silently spending the context window on it is worse
+    than saying it was cut.
+    """
+    start = Path(cwd or os.getcwd()).expanduser().resolve()
+    for directory in [start, *start.parents]:
+        for name in PROJECT_CONTEXT_FILES:
+            candidate = directory / name
+            try:
+                if not candidate.is_file():
+                    continue
+                text = candidate.read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                continue
+            if not text:
+                continue
+            if len(text) > MAX_PROJECT_CONTEXT_BYTES:
+                text = (text[:MAX_PROJECT_CONTEXT_BYTES]
+                        + f"\n\n[truncated at {MAX_PROJECT_CONTEXT_BYTES} bytes]")
+            try:
+                shown = str(candidate.relative_to(start))
+            except ValueError:
+                shown = str(candidate)
+            return shown, text
+    return None, None
+
+
 def build_system_prompt(cwd: Optional[str] = None) -> str:
-    return (
+    base = (
         _SYSTEM_PROMPT_TEMPLATE
         .replace("__TOOL_LIST__", _render_tool_list())
         .replace("__CWD__", cwd or os.getcwd())
     )
+    name, text = load_project_context(cwd)
+    if not text:
+        return base
+    # Appended after the tool contract, not before: the house rules of one repo
+    # must not be able to talk the agent out of how tool calls are formatted.
+    return (base
+            + f"\n\n# Project instructions (from {name})\n"
+            + "The repository you are working in ships these. Follow them unless the "
+            + "user's request contradicts them, and say so if it does.\n\n"
+            + text)
 
 
 # Back-compat for any caller that reaches for SYSTEM_PROMPT directly.
