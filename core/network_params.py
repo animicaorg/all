@@ -357,6 +357,31 @@ FORK_VALUE_CALL = "value_call"
 # via ANIMICA_FORK_FINALITY_DEPTH_HEIGHT.
 FORK_FINALITY_DEPTH = "finality_depth"
 
+# FORK_QUANTUM_BEACON (9.5.0) — the canonical chain MAY commit to attested
+# quantum-sourced randomness. Activation height 75,000, and DORMANT BY DESIGN.
+#
+# PRESENCE-GATED, NEVER REQUIRED. A block that carries no beacon commitment is valid at
+# every height, forever. Only a block that DOES commit one must commit a correct one.
+# That is deliberate and it is the whole safety argument: a liveness dependency on
+# beacon availability would mean a QRNG outage halts the chain, so there is no such
+# dependency to fail open — there is simply nothing to be unavailable. The rule can sit
+# activated and inert indefinitely, and is expected to.
+#
+# Same self-gating shape as FORK_STATE_COMMITMENT (a zero/uncommitted root is accepted,
+# so a not-yet-upgraded miner never false-rejects), for the same reason.
+#
+# WHAT IS CHECKED when a commitment is present: the beacon value is recomputed as
+# H(BEACON_DOMAIN || round || prev || aggregate_commitment) — the same construction as
+# randomness.qrng.public.build_quantum_beacon — and the committed `prev` must equal the
+# beacon value committed by the nearest ancestor that carried one. Recomputation makes it
+# unforgeable from block bytes alone; the prev-chain is what makes the CANONICAL CHAIN,
+# rather than an individual block, commit to the randomness.
+#
+# Below H a commitment is IGNORED entirely, so history is untouched and a block that
+# happened to carry a malformed one stays valid forever. Retunable via
+# ANIMICA_FORK_QUANTUM_BEACON_HEIGHT.
+FORK_QUANTUM_BEACON = "quantum_beacon"
+
 # FORK_VPN_RELAY_REWARDS (8.0.1, REALIZED in 9.0.0 as IOU settlement) — from H,
 # each block MAY settle service IOUs (dVPN relay/exit, AICF inference, media,
 # hosting — any operator-issued IOU ledger) with REAL per-block payouts, capped
@@ -435,6 +460,9 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_VALUE_CALL: 75_000,
         # Uniform reorg bound / finality (9.5.0). Operator-chosen height 75,000.
         FORK_FINALITY_DEPTH: 75_000,
+        # Quantum beacon binding (9.5.0). Activated but DORMANT: presence-gated, so
+        # until miners choose to commit a beacon this rule does nothing at all.
+        FORK_QUANTUM_BEACON: 75_000,
         # dVPN relay block rewards (8.0.1). Operator-chosen height 50,000 (shared with
         # the consensus ANS fork gate). SELF-GATING + INERT: emits zero relay outputs
         # until an on-chain relay-contribution root is sealed, which requires the
@@ -455,6 +483,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_BOUNDED_RETARGET: 0,
         FORK_VALUE_CALL: 0,
         FORK_FINALITY_DEPTH: 0,
+        FORK_QUANTUM_BEACON: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
@@ -466,6 +495,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_BOUNDED_RETARGET: 0,
         FORK_VALUE_CALL: 0,
         FORK_FINALITY_DEPTH: 0,
+        FORK_QUANTUM_BEACON: 0,
     },
 }
 
