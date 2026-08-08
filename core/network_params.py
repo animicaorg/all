@@ -253,6 +253,29 @@ FORK_FOUNDATION_SPLIT = "foundation_split"
 # adversarial review. Retunable via ANIMICA_FORK_STATE_COMMITMENT_HEIGHT.
 FORK_STATE_COMMITMENT = "state_commitment"
 
+# FORK_TREASURY_25 (9.4.0) — the foundation-treasury share of the per-block subsidy
+# goes from 15% to 25%. Operator decision, activation height 70,000.
+#
+# This changes only the DIVISION of the subsidy, never its total: miner + treasury
+# still equals the pre-split subsidy every block, the halving schedule is untouched
+# and MAX_MONEY is unaffected — exactly like FORK_FOUNDATION_SPLIT before it. The
+# percentage is a code-committed constant read through a height-gated helper (see
+# consensus/rewards.foundation_split_pct) so emission is byte-identical on every
+# node; it is never taken from params, env or wallclock at validation time.
+#
+# WHY IT IS SAFE TO GATE THIS WAY: every input is the block height, so two honest
+# nodes on the same chain always compute the same split. Forward-only and
+# grandfathered — blocks below H keep 85/15 forever and history is never
+# re-credited.
+#
+# WHAT AN OPERATOR MUST DO: run >= 9.4.0 (or set ANIMICA_FORK_TREASURY_25_HEIGHT)
+# BEFORE height 70,000. A node still on 9.3.x computes a 15% treasury output at
+# H and will reject the network's 25% coinbase — it diverges on the first
+# post-activation block. That is the entire upgrade obligation, and it is why the
+# activation height needs enough runway for miners and exchanges to take the
+# release. Retunable via ANIMICA_FORK_TREASURY_25_HEIGHT if adoption slips.
+FORK_TREASURY_25 = "treasury_25"
+
 # FORK_VPN_RELAY_REWARDS (8.0.1, REALIZED in 9.0.0 as IOU settlement) — from H,
 # each block MAY settle service IOUs (dVPN relay/exit, AICF inference, media,
 # hosting — any operator-issued IOU ledger) with REAL per-block payouts, capped
@@ -318,6 +341,11 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_STATE_COMMITMENT_HEIGHT. Self-gating on non-zero root means a
         # premature activation cannot split honest zero-root miners.
         FORK_STATE_COMMITMENT: 44_444,
+        # Treasury share 15% -> 25% (9.4.0). Operator-chosen height 70,000.
+        # A node below 9.4.0 computes the old 15% and rejects the network's
+        # coinbase from this block on, so the release has to be in operators'
+        # hands before it. Retune with ANIMICA_FORK_TREASURY_25_HEIGHT.
+        FORK_TREASURY_25: 70_000,
         # dVPN relay block rewards (8.0.1). Operator-chosen height 50,000 (shared with
         # the consensus ANS fork gate). SELF-GATING + INERT: emits zero relay outputs
         # until an on-chain relay-contribution root is sealed, which requires the
@@ -334,6 +362,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_ADDRESS_FREEZE: 0,
         FORK_FOUNDATION_SPLIT: 0,
         FORK_STATE_COMMITMENT: 0,
+        FORK_TREASURY_25: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
@@ -341,6 +370,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_ADDRESS_FREEZE: 0,
         FORK_FOUNDATION_SPLIT: 0,
         FORK_STATE_COMMITMENT: 0,
+        FORK_TREASURY_25: 0,
     },
 }
 

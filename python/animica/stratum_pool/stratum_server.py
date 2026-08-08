@@ -38,15 +38,17 @@ class PoolShareValidator:
         *,
         pool_mode: str = "pps",
         logger: Optional[logging.Logger] = None,
-        is_rejected: Optional[Callable[[str], bool]] = None,
+        is_rejected: Optional[Callable[[str], Optional[str]]] = None,
     ) -> None:
         self._adapter = adapter
         self._pool_mode = str(pool_mode or "pps").strip().lower()
         if self._pool_mode not in {"pps", "solo", "both"}:
             self._pool_mode = "pps"
         self._log = logger or logging.getLogger("animica.stratum_pool.validator")
-        # Returns True for addresses the pool has rejected on version policy.
-        self._is_rejected = is_rejected or (lambda _addr: False)
+        # Returns a REASON string for an address the pool has rejected, or None when
+        # it may mine. A bare boolean forced one message for every policy, so a miner
+        # rejected for serving no inference was told to update its version.
+        self._rejection_reason = is_rejected or (lambda _addr: None)
 
     async def validate(self, job: StratumJob, submit_params):
         address = str(submit_params.get("_address") or "").strip()
@@ -54,8 +56,9 @@ class PoolShareValidator:
             return False, "missing miner payout address", False, 0
         if not address.startswith("anim1"):
             return False, "invalid miner payout address", False, 0
-        if self._is_rejected(address):
-            return False, "miner version too old — update required", False, 0
+        rejected = self._rejection_reason(address)
+        if rejected:
+            return False, str(rejected), False, 0
         raw_template = job.raw if isinstance(job.raw, dict) else {}
         source_job_id = str(raw_template.get("_sourceJobId") or job.job_id)
         if raw_template.get("_sourceJobId") != source_job_id:
@@ -111,11 +114,15 @@ class StratumPoolServer:
         # Populated at authorize time; consulted by the share validator so old
         # miners earn nothing until they update. Reversible via config.
         self._version_rejected: set[str] = set()
+        # Addresses rejected by the pool-level inference-serving policy. Same
+        # lifecycle as _version_rejected: set at authorize time, consulted by the
+        # share validator, cleared the moment the miner advertises a tier.
+        self._serving_rejected: set[str] = set()
         self._validator = PoolShareValidator(
             adapter,
             pool_mode=config.pool_mode,
             logger=logger,
-            is_rejected=self._is_version_rejected,
+            is_rejected=self._is_rejected,
         )
         self._last_published_job_id: Optional[str] = None
         self._last_published_fingerprint: Optional[str] = None
@@ -182,6 +189,20 @@ class StratumPoolServer:
     def _is_version_rejected(self, address: str) -> bool:
         return str(address or "") in self._version_rejected
 
+    def _is_rejected(self, address: str) -> Optional[str]:
+        """Why this address may not mine here, or None if it may.
+
+        Returns the REASON so the miner is told the truth: being rejected for
+        serving no inference used to surface as "miner version too old".
+        """
+        a = str(address or "")
+        if a in self._version_rejected:
+            return "miner version too old — update required"
+        if a in self._serving_rejected:
+            return ("this pool requires inference serving — install torch+transformers "
+                    "so the miner advertises an AICF tier")
+        return None
+
     def _enforce_version(self, session: object, features: dict) -> bool:
         """Apply the pool-level miner-version policy at authorize time.
 
@@ -211,6 +232,51 @@ class StratumPoolServer:
             address or "?", verdict["reported"], verdict["minimum"])
         return False
 
+    def _enforce_inference_serving(self, session: object, features: dict) -> bool:
+        """Apply the pool-level inference-serving requirement at authorize time.
+
+        The complaint this answers: a PoW miner can earn here while serving no
+        inference at all. That is possible because mining and serving are separate
+        subsystems — the miner advertises serving as an extra capability
+        (`features.aicf.tiers`) and only does so when `transformers`+`torch` are
+        importable, otherwise it deliberately advertises nothing rather than serve
+        echo stubs.
+
+        This gate makes serving a condition of earning ON THIS POOL, using the same
+        mechanism as the version gate: the address goes into the rejected set, so
+        the share validator refuses its shares, and no AICF row is created.
+
+        It is POLICY, NOT CONSENSUS, and it cannot be otherwise: the AICF worker
+        registry is a node-local SQLite file that appears nowhere in execution/,
+        core/ or consensus/, so no block-validity or reward rule can read it —
+        two honest nodes would disagree about the same block and the chain would
+        split every time. A pool can refuse to pay; a chain cannot verify.
+
+        Returns True when the miner may continue.
+        """
+        if not bool(getattr(self._config, "require_inference_serving", False)):
+            return True
+        address = str(getattr(session, "address", None)
+                      or getattr(session, "worker", None) or "")
+        aicf = (features or {}).get("aicf") or {}
+        tiers = aicf.get("tiers") if isinstance(aicf, dict) else None
+        serving = bool(isinstance(tiers, list) and [t for t in tiers if str(t).strip()])
+        if serving:
+            if address:
+                self._serving_rejected.discard(address)
+            return True
+        if address:
+            self._serving_rejected.add(address)
+        try:  # drop authorization so nothing else routes here
+            setattr(session, "authorized", False)
+        except Exception:  # noqa: BLE001
+            pass
+        self._log.warning(
+            "rejected miner on inference-serving policy: address=%s advertised_tiers=%r "
+            "(install torch+transformers, or unset ANIMICA_POOL_REQUIRE_INFERENCE_SERVING)",
+            address or "?", tiers)
+        return False
+
     async def _register_aicf_worker(self, session: object, features: dict) -> None:
         """Auto-register the authorized miner as an AICF worker.
 
@@ -228,6 +294,9 @@ class StratumPoolServer:
         """
         # Pool-level version policy: reject old miners before anything routes.
         if not self._enforce_version(session, features):
+            return
+        # Pool-level serving policy: optionally refuse miners that serve no inference.
+        if not self._enforce_inference_serving(session, features):
             return
         if not getattr(session, "authorized", False):
             return

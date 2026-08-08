@@ -93,8 +93,13 @@ def test_mainnet_block_reward_halving_at_1_35m():
     assert total == 150_000_000_000, \
         f"Expected 150 ANM total after halving, got {total}"
     outs = dict(rewards)
-    assert outs[FOUNDATION_TREASURY_ADDRESS] == 22_500_000_000  # 15% of 150 ANM
-    assert total - outs[FOUNDATION_TREASURY_ADDRESS] == 127_500_000_000  # 85% miner
+    # 1,350,001 is above FORK_TREASURY_25 (70,000) so the share is 25%: 37.5 ANM
+    # treasury / 112.5 ANM miner. Derived from foundation_split_pct rather than
+    # hardcoded, so a future share change updates this in one place.
+    from consensus.rewards import foundation_split_pct
+    exp_treasury = (total * foundation_split_pct(1_350_001, chain_id=1)) // 100
+    assert outs[FOUNDATION_TREASURY_ADDRESS] == exp_treasury
+    assert total - outs[FOUNDATION_TREASURY_ADDRESS] == total - exp_treasury
 
 
 def test_mainnet_block_reward_second_halving_at_2_7m():
@@ -110,8 +115,10 @@ def test_mainnet_block_reward_second_halving_at_2_7m():
     assert total == 75_000_000_000, \
         f"Expected 75 ANM total after second halving, got {total}"
     outs = dict(rewards)
-    assert outs[FOUNDATION_TREASURY_ADDRESS] == 11_250_000_000  # 15% of 75 ANM
-    assert total - outs[FOUNDATION_TREASURY_ADDRESS] == 63_750_000_000  # 85% miner
+    from consensus.rewards import foundation_split_pct
+    exp_treasury = (total * foundation_split_pct(2_700_001, chain_id=1)) // 100
+    assert outs[FOUNDATION_TREASURY_ADDRESS] == exp_treasury
+    assert total - outs[FOUNDATION_TREASURY_ADDRESS] == total - exp_treasury
 
 
 def test_mainnet_emission_schedule_parsing():

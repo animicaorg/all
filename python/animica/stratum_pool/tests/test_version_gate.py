@@ -72,12 +72,58 @@ class _ExplodingAdapter:
 
 
 def test_validator_rejects_flagged_address():
-    rejected = {"anim1old"}
+    # `is_rejected` returns the REASON (or None), not a boolean: the pool now has two
+    # policies — version and inference-serving — and a bare bool meant a miner
+    # rejected for serving no inference was told "miner version too old".
+    reasons = {"anim1old": "miner version too old — update required"}
     v = PoolShareValidator(_ExplodingAdapter(),
-                           is_rejected=lambda a: a in rejected)
+                           is_rejected=lambda a: reasons.get(a))
     ok, reason, is_block, _ = asyncio.run(
         v.validate(None, {"_address": "anim1old"}))
     assert ok is False and "too old" in reason and is_block is False
+
+
+def test_each_policy_gives_its_own_reason():
+    """A miner must be told which rule it broke, or it will 'fix' the wrong thing."""
+    srv = StratumPoolServer.__new__(StratumPoolServer)
+    srv._version_rejected = {"anim1old"}
+    srv._serving_rejected = {"anim1nogpu"}
+    assert "version" in srv._is_rejected("anim1old")
+    assert "inference serving" in srv._is_rejected("anim1nogpu")
+    assert srv._is_rejected("anim1good") is None
+
+
+def test_serving_gate_is_off_by_default_and_admits_a_non_serving_miner():
+    """DEFAULT OFF is load-bearing: zero workers advertise a tier today, so enabling
+    it would reject every connected miner and stop the pool producing blocks."""
+    srv = StratumPoolServer.__new__(StratumPoolServer)
+    srv._config = SimpleNamespace(require_inference_serving=False)
+    srv._serving_rejected = set()
+    srv._log = logging.getLogger("test.serving_gate")
+    s2 = SimpleNamespace(address="anim1nogpu", authorized=True)
+    assert srv._enforce_inference_serving(s2, {}) is True
+    assert s2.authorized is True
+    assert srv._serving_rejected == set()
+
+
+def test_serving_gate_when_enabled_refuses_a_miner_that_serves_nothing():
+    srv = StratumPoolServer.__new__(StratumPoolServer)
+    srv._config = SimpleNamespace(require_inference_serving=True)
+    srv._serving_rejected = set()
+    srv._log = logging.getLogger("test.serving_gate")
+
+    # No aicf key at all, an empty list, and a list of blanks all mean "serves nothing".
+    for features in ({}, {"aicf": {}}, {"aicf": {"tiers": []}}, {"aicf": {"tiers": ["", " "]}}):
+        sess = SimpleNamespace(address="anim1nogpu", authorized=True)
+        assert srv._enforce_inference_serving(sess, features) is False, features
+        assert sess.authorized is False
+    assert "anim1nogpu" in srv._serving_rejected
+
+    # Advertising a real tier admits it AND clears the earlier rejection.
+    good = SimpleNamespace(address="anim1nogpu", authorized=True)
+    assert srv._enforce_inference_serving(good, {"aicf": {"tiers": ["standard"]}}) is True
+    assert good.authorized is True
+    assert "anim1nogpu" not in srv._serving_rejected
 
 
 # ---------------------------------------------------------------------------

@@ -580,8 +580,15 @@ def test_compute_block_reward_mainnet_split_halving():
     outs = dict(rewards)
     foundation_amt = outs[FOUNDATION_TREASURY_ADDRESS]
     miner_amt = total - foundation_amt
-    assert foundation_amt == 22500000000, f"Expected 22.5 ANM foundation (15%), got {foundation_amt}"
-    assert miner_amt == 127500000000, f"Expected 127.5 ANM miner (85%), got {miner_amt}"
+    # Height 1,350,001 is ABOVE FORK_TREASURY_25 (70,000), so the share is 25%, not
+    # 15%. Asserted through foundation_split_pct so this test tracks the fork instead
+    # of pinning a number that the next share change would silently invalidate.
+    from consensus.rewards import foundation_split_pct
+    expected_foundation = (total * foundation_split_pct(1350001, chain_id=1)) // 100
+    assert foundation_amt == expected_foundation, (
+        f"Expected {expected_foundation} foundation "
+        f"({foundation_split_pct(1350001, chain_id=1)}%), got {foundation_amt}")
+    assert miner_amt == total - expected_foundation, f"Expected 127.5 ANM miner (85%), got {miner_amt}"
 
 
 def test_instant_block_always_returns_zero_rewards():

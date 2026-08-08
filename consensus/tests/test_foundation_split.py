@@ -81,9 +81,14 @@ def test_split_conserves_and_is_exact_across_halvings(height, mparams):
     miner = total - foundation
     # conservation: nothing minted or burned by the split
     assert miner + foundation == total
-    # treasury is exactly the integer floor of 15% (remainder favors nobody unfairly:
-    # miner gets total - floor, so the two always sum to total)
-    assert foundation == (total * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+    # treasury is exactly the integer floor of the share IN EFFECT AT THIS HEIGHT
+    # (remainder favors nobody unfairly: miner gets total - floor, so the two always
+    # sum to total). Read through foundation_split_pct rather than the 15% constant,
+    # because FORK_TREASURY_25 moves the share to 25% from height 70,000 — every one
+    # of the parametrised halving heights above 70,000 is on the new share.
+    from consensus.rewards import foundation_split_pct
+    pct = foundation_split_pct(height, chain_id=1)
+    assert foundation == (total * pct) // 100
 
 
 def test_total_emission_unchanged_by_split(mparams):
@@ -215,3 +220,62 @@ def test_mainnet_p2p_params_hash_pin_unchanged():
     assert compute_network_params_hash(1).hex() == (
         "41f0acb8b3ac98ddee524a7bb1752f6af25dc596c71003fd3df4a69d899730b1"
     )
+
+
+# --------------------------------------------------------------------------- #
+# FORK_TREASURY_25 (9.4.0) — 85/15 becomes 75/25 at mainnet height 70,000      #
+# --------------------------------------------------------------------------- #
+#
+# The whole risk of this fork is an off-by-one or a site that reads the old share:
+# a node that computes a different treasury output than the network REJECTS the
+# coinbase and diverges on the very first post-activation block. So the boundary is
+# pinned to the exact block, both split sites are exercised, and emission is checked
+# to be conserved on each side.
+
+def test_the_share_changes_at_exactly_height_70000():
+    from consensus.rewards import (
+        FOUNDATION_TREASURY_SPLIT_PCT,
+        FOUNDATION_TREASURY_SPLIT_PCT_V2,
+        foundation_split_pct,
+    )
+    assert foundation_split_pct(69_998, chain_id=1) == FOUNDATION_TREASURY_SPLIT_PCT == 15
+    assert foundation_split_pct(69_999, chain_id=1) == 15, "the block before must be 15%"
+    assert foundation_split_pct(70_000, chain_id=1) == FOUNDATION_TREASURY_SPLIT_PCT_V2 == 25
+    assert foundation_split_pct(70_001, chain_id=1) == 25
+
+
+def test_the_old_share_is_never_re_credited_below_the_fork():
+    """Forward-only: history keeps 85/15 forever. If this ever returned 25 for an
+    old height, every node would recompute past coinbases and reject the chain."""
+    from consensus.rewards import foundation_split_pct
+    for h in (0, 1, 42_000, 42_001, 50_000, 67_855, 69_999):
+        assert foundation_split_pct(h, chain_id=1) == 15, h
+
+
+def test_the_new_split_still_conserves_emission(mparams):
+    """miner + treasury must equal the pre-split subsidy at every height, on both
+    sides of the fork. A rounding leak here mints or burns coin."""
+    from consensus.rewards import (
+        _subsidy_total_for_height,
+        foundation_split_pct,
+        parse_emission_schedule,
+    )
+    schedule = parse_emission_schedule(mparams)
+    for h in (69_999, 70_000, 120_000):
+        total = _subsidy_total_for_height(h, schedule)
+        pct = foundation_split_pct(h, chain_id=1)
+        treasury = (total * pct) // 100
+        miner = total - treasury
+        assert miner + treasury == total, f"emission not conserved at {h}"
+        assert treasury * 100 // total == pct or treasury == (total * pct) // 100
+        # And the direction is right: the treasury gets strictly more after the fork.
+        if h >= 70_000:
+            assert treasury > (total * 15) // 100
+
+
+def test_testnet_and_devnet_have_the_new_share_from_genesis():
+    """Otherwise a devnet chain would silently exercise the OLD path and the fork
+    would go untested until it hit mainnet."""
+    from consensus.rewards import foundation_split_pct
+    assert foundation_split_pct(0, chain_id=2) == 25
+    assert foundation_split_pct(0, chain_id=1337) == 25

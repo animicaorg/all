@@ -29,7 +29,12 @@ from typing import Any, Dict, List, Mapping, Tuple
 # Imported at module top on purpose: if this core module ever failed to import, a
 # node must fail LOUDLY at startup rather than silently skip the split at runtime
 # (which would under-credit the foundation — the exact silent-divergence hazard).
-from core.network_params import is_fork_active, FORK_FOUNDATION_SPLIT, FORK_VPN_RELAY_REWARDS
+from core.network_params import (
+    is_fork_active,
+    FORK_FOUNDATION_SPLIT,
+    FORK_TREASURY_25,
+    FORK_VPN_RELAY_REWARDS,
+)
 
 log = logging.getLogger("consensus.rewards")
 
@@ -82,6 +87,27 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
 # subsidy funds the Animica Foundation treasury from block 42,001 onward.
 FOUNDATION_TREASURY_ADDRESS = "anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga"
 FOUNDATION_TREASURY_SPLIT_PCT = 15
+
+# FORK_TREASURY_25 (9.4.0): the same subsidy, divided 75/25 instead of 85/15, from
+# mainnet height 70,000. Still emission-conserving — miner == total - treasury every
+# block — and still a code-committed constant, never params/env/wallclock.
+FOUNDATION_TREASURY_SPLIT_PCT_V2 = 25
+
+
+def foundation_split_pct(height: int, *, chain_id: int = 1) -> int:
+    """The treasury share of the subsidy at `height`, as a whole percent.
+
+    A FUNCTION rather than a constant because the share changes at a fork height,
+    and every caller must agree on the value for a given height or the coinbase
+    they compute differs and the chain splits. Its only input is the height, so two
+    honest nodes on the same chain always return the same number.
+
+    Callers must pass the SAME height they use for the halving schedule, so the
+    split and the subsidy are always read at one consistent point in the chain.
+    """
+    if is_fork_active(FORK_TREASURY_25, height, chain_id=chain_id):
+        return FOUNDATION_TREASURY_SPLIT_PCT_V2
+    return FOUNDATION_TREASURY_SPLIT_PCT
 
 # FORK_VPN_RELAY_REWARDS (8.0.1) — REALIZED in 9.0.0 as on-chain IOU settlement.
 # The per-block settlement pool is capped at 50 ANM and HALVES on the subsidy schedule
@@ -252,7 +278,11 @@ def compute_block_reward(
                 # dust created/destroyed) and is float-free (deterministic).
                 total_subsidy = miner_amount + aicf_amount + treasury_amount
                 aicf_amount = 0
-                treasury_amount = (total_subsidy * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+                # 15% until FORK_TREASURY_25, 25% from it (9.4.0). Read through the
+                # height-gated helper so this site and the capped site below can
+                # never disagree about the share at a given height.
+                _pct = foundation_split_pct(height_for_halving, chain_id=1)
+                treasury_amount = (total_subsidy * _pct) // 100
                 miner_amount = total_subsidy - treasury_amount
                 aicf_params = {}
             else:
@@ -311,7 +341,8 @@ def compute_block_reward(
                     and is_fork_active(FORK_FOUNDATION_SPLIT, height_for_halving, chain_id=1)
                 ):
                     aicf_amount_capped = 0
-                    treasury_amount_capped = (capped_total * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+                    _pct_capped = foundation_split_pct(height_for_halving, chain_id=1)
+                    treasury_amount_capped = (capped_total * _pct_capped) // 100
                     miner_amount_capped = capped_total - treasury_amount_capped
                 (
                     final_miner,

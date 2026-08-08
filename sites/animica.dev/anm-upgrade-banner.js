@@ -15,12 +15,21 @@
  *     side of the 2026-07-07 one-block fork sat stuck at height 38,728 forever;
  *     7.2.0 self-heals them at restart (pinned canonical checkpoint + sync
  *     fork-sibling ingest) and repairs snapshot bootstrap.
- * Height is past the last mandatory fork (50,000), so the live notice is a
- *   non-consensus RELEASE notice, not a deadline. The CTA therefore points where
- *   the reader can act on it (animica.dev/#cli), and the node-operator upgrade
- *   guide is a link inside the copy instead — a "Upgrade guide →" button on a
- *   release nobody must take sent everyone to the wrong page.
- * Current release: animica 9.3.2 — THE CLI IS AN AGENTIC CODING ASSISTANT (non-consensus; everyone).
+ * DEADLINE is 70,000 again — a REAL mandatory activation, so the CTA is the upgrade
+ *   guide and the pre-activation branch carries the countdown. NOTE the branches:
+ *   height < DEADLINE renders the PRE branch, and it had been left carrying the
+ *   retired 50,000 IOU copy while the new text sat in the post-activation branch
+ *   nobody would see until it was already too late. Check which branch renders at
+ *   the current height before shipping banner copy.
+ * Current release: animica 9.4.0 — MANDATORY CONSENSUS UPGRADE at block 70,000.
+ *   FORK_TREASURY_25: the foundation-treasury share of every block subsidy goes from
+ *   15% to 25% (miner 85% -> 75%). The subsidy TOTAL and the halving schedule are
+ *   unchanged, so emission and MAX_MONEY are untouched — only the division changes.
+ *   A node below 9.4.0 computes a 15% treasury output at height 70,000 and REJECTS
+ *   the network's coinbase, so it diverges on the first post-activation block. Every
+ *   full node, pool and balance-tracking exchange must run >=9.4.0 (or set
+ *   ANIMICA_FORK_TREASURY_25_HEIGHT) BEFORE 70,000.
+ * Previous headline: animica 9.3.2 — THE CLI IS AN AGENTIC CODING ASSISTANT (non-consensus).
  *   `animica chat` reads, edits and runs code in the directory you start it in, with four
  *   approval modes, parallel /swarm agents, piped stdin, and AGENTS.md support. It needs no API
  *   key, no wallet and no GPU: inference is kimi-k3 served by the miner network. Free tier is
@@ -60,12 +69,12 @@
   if (window.__anmUpgradeBanner) return;                 // idempotent
   window.__anmUpgradeBanner = true;
 
-  var DEADLINE = 50000;                                   // last MANDATORY activation (7.1.9); 8.0.x+ is non-consensus
-  var VERSION = "9.3.2";
-  var NOTICE = "https://animica.dev/#cli";                // where the reader can act on this release
+  var DEADLINE = 70000;                                   // FORK_TREASURY_25 (9.4.0) — MANDATORY
+  var VERSION = "9.4.0";
+  var NOTICE = "https://animica.dev/upgrade/";            // a consensus deadline: the guide is the action
   var GUIDE = "https://animica.dev/upgrade/";             // still the right link for node operators
   var HEIGHT_URL = "https://animica.dev/net-height";
-  var KEY = "anmUpgrade-932";                             // re-show: 9.3.2 agentic CLI
+  var KEY = "anmUpgrade-940";                             // re-show: 9.4.0 MANDATORY consensus upgrade
   // Fail-safe retirement: if live height is never readable (cross-origin/CORS/network),
   // still stop showing a pre-activation notice after this date. Height stays the
   // authoritative deadline; this only ever HIDES the bar, so it can't misfire in the
@@ -127,34 +136,34 @@
       "<path d='M128 68 L84 192 H172 L128 68 Z' fill='#2E63FF'/>" +
       "<rect x='104' y='160' width='48' height='16' rx='8' fill='#2E63FF'/></svg>");
 
+    // Blocks remaining to the activation height, when the live height is readable.
+    // A consensus deadline with a number on it gets acted on; one without does not.
+    var count = (typeof blocksLeft === "number" && blocksLeft > 0)
+      ? " <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#FFC24B\">(~"
+        + blocksLeft.toLocaleString() + " blocks left)</span>"
+      : "";
     var msgHtml;
     if (postActivation) {
       msgHtml =
-        "<strong style='color:#FFC24B'>9.3.2 &mdash; your terminal now writes code.</strong> "
+        "<strong style='color:#FFC24B'>Block 70,000 has passed.</strong> "
+        + "The treasury split is now <strong style='color:#fff'>75% miner / 25% foundation</strong>. "
+        + "If your node is still below <strong style='color:#fff'>9.4.0</strong> it is computing the old "
+        + "split and is <strong style='color:#fff'>on a dead fork</strong> &mdash; "
         + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span> "
-        + "then <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">animica chat</span> "
-        + "&mdash; it reads and edits the files in your working directory, runs commands, and "
-        + "<strong style='color:#fff'>asks before anything with a consequence</strong>. "
-        + "<strong style='color:#fff'>No API key, no wallet, no GPU</strong>: the model is served by the "
-        + "same miner network as this page. Free, with caps. "
-        + "<span style='color:#A9C4B8'>Miners &amp; pools: this release carries the per-share payout from "
-        + "9.2.0, so the same command is still the one you want. "
-        + "<a href='" + GUIDE + "' style='color:#14C79B;text-decoration:none'>Node upgrade guide</a> "
-        + "&mdash; nothing here is consensus-affecting.</span>";
+        + "and restart to rejoin. Balances read from an un-upgraded node are wrong. "
+        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
     } else {
-      var count = (typeof blocksLeft === "number")
-        ? " <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#A9C4B8\">(~" + blocksLeft.toLocaleString() + " blocks)</span>"
-        : "";
       msgHtml =
-        "Every Animica <strong style='color:#fff'>full node</strong>, pool &amp; balance-tracking "
-        + "exchange must upgrade to <strong style='color:#fff'>animica " + VERSION + " (LTS)</strong> before block "
-        + "<strong style='color:#FFC24B'>50,000</strong>" + count + " — the <strong style='color:#fff'>IOU-settlement "
-        + "fork</strong> (service IOUs paid from the block reward, &le;20%/block). Un-upgraded nodes diverge from "
-        + "network balances once the first settlement anchor posts. 9.0.x also opens the GPU Studios "
-        + "(<a href='https://animica.dev/video' style='color:#14C79B;text-decoration:none'>video</a> / "
-        + "<a href='https://animica.dev/audio' style='color:#14C79B;text-decoration:none'>audio</a> / "
-        + "<a href='https://animica.dev/render' style='color:#14C79B;text-decoration:none'>render</a>). "
-        + "<span style='color:#A9C4B8'>Hosted-service &amp; wallet users: nothing to do.</span>";
+        "<strong style='color:#FFC24B'>Upgrade before block 70,000.</strong> "
+        + "animica <strong style='color:#fff'>9.4.0</strong> moves the foundation-treasury "
+        + "share of each block subsidy from <strong style='color:#fff'>15% to 25%</strong> "
+        + "(miner 85% &rarr; 75%). Total emission and the halving schedule are "
+        + "<strong style='color:#fff'>unchanged</strong> &mdash; only the split. "
+        + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span> "
+        + "on every <strong style='color:#fff'>full node, pool and exchange</strong>: a node "
+        + "still on 9.3.x computes the old split and "
+        + "<strong style='color:#fff'>diverges from the network</strong> at 70,000." + count
+        + " <span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
     }
     var msg = el("div", "flex:1 1 320px;font-size:14px;line-height:1.45", msgHtml);
 
@@ -162,7 +171,7 @@
       "flex:0 0 auto;text-decoration:none;font-weight:600;font-size:13.5px",
       "padding:8px 15px;border-radius:9px;color:#FFFFFF",
       "background:#2E63FF"
-    ].join(";"), "Get the CLI →");
+    ].join(";"), "Upgrade guide →");
     cta.href = NOTICE;
 
     var x = el("button",

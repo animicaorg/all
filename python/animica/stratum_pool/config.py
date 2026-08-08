@@ -68,6 +68,17 @@ class PoolConfig:
     # are refused until they update. Reversible by clearing the flag.
     min_miner_version: str = ""
     require_min_version: bool = False
+    # Pool-level INFERENCE-SERVING requirement (policy only — never consensus).
+    # When set, a miner that advertises no AICF serving tier on mining.subscribe
+    # earns nothing here: same mechanism as the version gate, so its shares are
+    # refused and no AICF row is created for it.
+    #
+    # DEFAULT OFF, and that default is load-bearing. Serving is gated on the miner
+    # having `transformers`+`torch` importable, and at the time of writing ZERO
+    # workers advertise a tier — so switching this on would reject EVERY connected
+    # miner and stop the pool producing blocks. Turn it on only once real serving
+    # capacity exists, and expect to lose every miner that cannot run a model.
+    require_inference_serving: bool = False
     # ENA training-treasury fee: route this fraction (in basis points) of each
     # accepted share's ANM credit to the ENA training treasury. The miner keeps
     # the remainder. 0 disables the fee. The treasury accrues as an ordinary
@@ -242,6 +253,10 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         overrides.get("require_min_version"),
         _env("ANIMICA_POOL_REQUIRE_MIN_VERSION", "false"),
     )
+    require_inference_serving = _as_bool(
+        overrides.get("require_inference_serving"),
+        _env("ANIMICA_POOL_REQUIRE_INFERENCE_SERVING", "false"),
+    )
     ena_fee_bps = int(
         overrides.get("ena_fee_bps")
         or _env("ANIMICA_POOL_ENA_FEE_BPS", "0")
@@ -389,6 +404,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         payout_wallet=payout_wallet,
         min_miner_version=min_miner_version,
         require_min_version=require_min_version,
+        require_inference_serving=require_inference_serving,
         ena_fee_bps=ena_fee_bps,
         ena_treasury_address=ena_treasury_address,
         solo_host=solo_host,
