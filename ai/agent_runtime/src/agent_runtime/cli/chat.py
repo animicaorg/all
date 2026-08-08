@@ -65,7 +65,19 @@ app = typer.Typer(add_completion=False, no_args_is_help=False,
                   context_settings={"allow_interspersed_args": True},
                   help="An agentic coding assistant in your terminal.")
 
-MAX_OUTPUT_TOKENS = 2048
+# kimi-k3 reasons at length before it answers, inline in `content` as a `<think>`
+# block, and the answer only exists after that block CLOSES. Measured against the
+# live endpoint 2026-08-08 on the same one-sentence question:
+#
+#     700 tokens  -> 1682 bytes, all reasoning, no answer
+#    2048 tokens  -> never closed `</think>`
+#    4096 tokens  -> 1291 bytes, `</think>` closed, finish_reason=stop, real answer
+#
+# So a budget under ~4k does not buy a shorter answer, it buys NO answer — the turn
+# comes back as pure scratchpad. The retry loop doubles the budget when that
+# happens, but starting too low just spends an attempt to learn what is already
+# known here.
+MAX_OUTPUT_TOKENS = 4096
 
 
 def _enable_line_editing() -> None:
@@ -227,6 +239,24 @@ _WHAT_IT_DOES = {
 }
 
 
+def _retry_reason(reason: str) -> str:
+    """Turn a provider error into one clause a person can act on.
+
+    The raw text names the provider and the attempt number, which is noise on a
+    line that already says which attempt is next.
+    """
+    r = (reason or "").lower()
+    if "could not load a model" in r or "capacity" in r:
+        return "that miner had no model loaded"
+    if "reasoning" in r:
+        return "it thought past its token budget"
+    if "unreachable" in r or "timed out" in r or "timeout" in r:
+        return "that attempt did not come back"
+    if "no worker serving" in r or "retry shortly" in r:
+        return "no miner was free"
+    return "that attempt did not produce an answer"
+
+
 def _prompter(console: Console):
     def ask(tool: ToolSpec, args: dict) -> str:
         cat = category_of(tool)
@@ -336,21 +366,47 @@ class _ProseStreamer:
             self.out.flush()
 
 
-def _make_submit(provider: HostedProvider, *, stream_to=None):
+# Wall clock for ONE user prompt, across every agent iteration. Without this the
+# per-attempt budget is per ITERATION: a 12-iteration agentic task times 4 attempts
+# times a ~5-minute attempt is hours for a single question, and every retry costs
+# the bridge's wallet a fresh on-chain job. This is the number a person actually
+# cares about — how long before it gives up on what I asked.
+TURN_BUDGET_S = float(os.environ.get("ANIMICA_TURN_BUDGET") or 1500.0)
+
+
+def _make_submit(provider: HostedProvider, *, stream_to=None, on_retry=None,
+                 on_notice=None, budget_s: float = TURN_BUDGET_S):
     """Adapt the provider to what `run_agent_loop` wants: prompt -> (text, cost, ms).
 
     Cost is always 0.0 — kimi-k3 on the public endpoint is free, which is precisely
     why every wallet and cost flag could be deleted.
     """
+    ends_at = time.monotonic() + float(budget_s)
+
     def submit(prompt: str) -> tuple[str, float, int]:
+        left = ends_at - time.monotonic()
+        if left <= 0:
+            from agent_runtime.errors import ProviderUnavailable
+            raise ProviderUnavailable(
+                provider.name,
+                f"gave up after {budget_s / 60:.0f} minutes on this request")
+        # Every iteration shares the prompt's budget rather than getting its own.
+        provider.cfg.deadline = left
         streamer = stream_to() if callable(stream_to) else None
         r = provider.serve(TurnRequest(
             prompt=prompt,
             max_output_tokens=MAX_OUTPUT_TOKENS,
             stream_callback=(streamer.feed if streamer else None),
+            on_retry=on_retry,
         ))
         if streamer:
             streamer.finish()
+        # An answer from the configured fallback endpoint must say so. Passing a
+        # different model's output off as the miner network's would be the one
+        # dishonest thing this cascade could do.
+        if (r.metadata or {}).get("fallback") and callable(on_notice):
+            on_notice(f"answered by the fallback endpoint you configured, "
+                      f"model {r.tier} — not the miner network")
         return r.text, 0.0, r.latency_ms
     return submit
 
@@ -517,7 +573,20 @@ class Session:
                 self.console.print(f"   [{colour}]{v}[/{colour}] "
                                    f"· subtask {f['index'] + 1}")
 
-        r = run_swarm(task=task, submit_turn=_make_submit(self.provider),
+        # The swarm runs agents in parallel against a network with very few serving
+        # workers, so refusals are MORE likely here than on a single turn, not less.
+        # Its submit gets the same retry as everything else; the notice is written
+        # under the agent lines rather than through the turn spinner.
+        def swarm_notice(message: str) -> None:
+            self.console.print(f"[yellow]   · {message}[/yellow]")
+
+        r = run_swarm(task=task,
+                      submit_turn=_make_submit(
+                          self.provider,
+                          on_retry=lambda a, of, why: self.console.print(
+                              f"[dim]   · {_retry_reason(why)} — retrying "
+                              f"({a + 1} of {of})[/dim]"),
+                          on_notice=swarm_notice),
                       policy=self.policy, permission_prompter=_prompter(self.console),
                       cwd=self.cwd, max_agents=width,
                       max_iterations=verdict.iterations, on_event=on_event)
@@ -563,20 +632,72 @@ class Session:
         # A spinner that runs for the whole turn is indistinguishable from a hang at
         # this network's latency, so it exists only until the first token lands and
         # the model's own words take over.
+        # Start/stop must be symmetric: a retry stops the spinner to print a line
+        # and starts it again, so a one-shot "already stopped" flag would leave it
+        # spinning over the answer for the rest of the turn.
         status = self.console.status("[dim]thinking…[/dim]", spinner="dots")
-        status.start()
-        stopped = {"yes": False}
+        spinning = {"on": False}
+
+        # An elapsed counter, because on this network a correct answer can take two
+        # minutes and a bare spinner cannot be told apart from a hang. After a
+        # minute it also says WHY the wait is normal, so nobody kills a working
+        # request believing it is stuck.
+        import threading
+        began = time.monotonic()
+        ticker_stop = threading.Event()
+
+        def tick() -> None:
+            while not ticker_stop.wait(1.0):
+                if not spinning["on"]:
+                    continue
+                el = int(time.monotonic() - began)
+                if el < 60:
+                    msg = f"[dim]thinking… {el}s[/dim]"
+                else:
+                    msg = (f"[dim]thinking… {el // 60}m {el % 60:02d}s · a miner is "
+                           f"loading a model; this can take a few minutes[/dim]")
+                try:
+                    status.update(msg)
+                except Exception:  # noqa: BLE001 — a spinner must never end a turn
+                    pass
+
+        ticker = threading.Thread(target=tick, daemon=True)
+        ticker.start()
+
+        def spin_up() -> None:
+            if not spinning["on"]:
+                status.start()
+                spinning["on"] = True
 
         def stop_status() -> None:
-            if not stopped["yes"]:
-                stopped["yes"] = True
+            if spinning["on"]:
                 status.stop()
+                spinning["on"] = False
+
+        spin_up()
+
+        def notice(message: str) -> None:
+            stop_status()
+            self.console.print(f"[yellow]  · {message}[/yellow]")
+            spin_up()
+
+        def on_retry(attempt: int, of: int, reason: str) -> None:
+            # Waiting is normal here; being told nothing is not. Say which attempt
+            # this is and why the last one did not land, so a long wait reads as
+            # work rather than a hang.
+            stop_status()
+            self.console.print(
+                f"[dim]  · {_retry_reason(reason)} — asking the network again "
+                f"({attempt + 1} of {of})[/dim]")
+            spin_up()
 
         try:
             result = run_agent_loop(
                 user_task=text,
                 submit_turn=_make_submit(self.provider,
-                                         stream_to=lambda: _ProseStreamer(stop_status)),
+                                         stream_to=lambda: _ProseStreamer(stop_status),
+                                         on_retry=on_retry,
+                                         on_notice=notice),
                 policy=self.policy,
                 permission_prompter=_prompter(self.console),
                 on_iteration=lambda t: (stop_status(), on_iteration(t)),
@@ -595,10 +716,30 @@ class Session:
             self.turns.pop()
             raise
         finally:
+            ticker_stop.set()
             stop_status()
         E.record_agent_task()
 
         answer = _clean_answer(result.final_text)
+
+        # A network failure is not a bad question, and it is not an answer. Report
+        # it as a failure, print nothing as the assistant's words, and do NOT save
+        # it — a saved error becomes context the next turn reads back.
+        if result.stop_reason == "no_provider":
+            self.turns.pop()
+            self.console.print()
+            self.console.print("[red]✗ could not complete this request.[/red]")
+            if result.error:
+                self.console.print(f"[dim]  {result.error}[/dim]")
+            self.console.print(
+                "[dim]  Every attempt was re-submitted so a different miner could "
+                "claim it. Right now very few miners serve chat, so re-submitting "
+                "often lands on the same one — that is capacity, not your "
+                "request.[/dim]")
+            self.console.print("[dim]  Running it again frequently works. "
+                               "`animica up` serves the network yourself.[/dim]")
+            return
+
         # The final turn already streamed to the terminal, so re-rendering it would
         # print everything twice. Markdown is only worth it when nothing was
         # streamed — a turn that ended on a tool call, or one the model spent
@@ -650,7 +791,17 @@ def main(
         raise typer.BadParameter(str(exc)) from exc
 
     provider = HostedProvider()
+    # Probe more than once before refusing to start. The endpoint sits in front of
+    # a node that runs hot, so a single timed-out /models call is a blip, not an
+    # outage — and treating it as one used to make the whole CLI unusable for the
+    # session over a request that would have worked on the next try.
     ok, why = provider.is_available()
+    for _ in range(2):
+        if ok:
+            break
+        provider._probe = None
+        time.sleep(2.0)
+        ok, why = provider.is_available()
     if not ok:
         console.print(f"[red]the Animica network is unreachable: {why}[/red]")
         console.print("[dim]it serves kimi-k3 with no key — check your connection, "
@@ -684,7 +835,12 @@ def main(
     # behaves must not be invisible — someone debugging odd behaviour should be able
     # to see that a repo's AGENTS.md is in play without reading the source.
     ctx_name, _ = load_project_context(cwd)
-    lines = [f"[bold]animica[/bold] · kimi-k3 · {policy.label} mode", f"[dim]{cwd}[/dim]"]
+    # Name the model actually being served, not the one we asked for.
+    lines = [f"[bold]animica[/bold] · {provider.cfg.model} · {policy.label} mode",
+             f"[dim]{cwd}[/dim]"]
+    if provider.substituted_model:
+        asked, got = provider.substituted_model
+        lines.append(f"[yellow]{asked} is not served right now — using {got}[/yellow]")
     if ctx_name:
         lines.append(f"[dim]following {ctx_name}[/dim]")
     console.print(Panel("\n".join(lines), border_style="blue", padding=(0, 1)))

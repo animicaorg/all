@@ -1126,6 +1126,10 @@ class AgentRunResult:
     completed: bool
     total_cost: float
     stop_reason: str        # "done" | "max_iterations" | "max_cost" | "no_provider" | "user_abort"
+    # Why the provider gave up, when stop_reason == "no_provider". Kept SEPARATE
+    # from final_text on purpose: final_text is shown and remembered as the
+    # assistant's words, and an error message is not the assistant's words.
+    error: Optional[str] = None
 
 
 def _format_assistant_for_history(text: str) -> str:
@@ -1178,14 +1182,22 @@ def run_agent_loop(
     final_text = ""
     completed = False
     stop_reason = "max_iterations"
+    provider_error: Optional[str] = None
 
     for i in range(1, max_iterations + 1):
         prompt = _render_history_for_prompt(history)
         try:
             text, cost, latency_ms = submit_turn(prompt)
         except Exception as exc:
-            final_text = f"agent loop aborted: provider error: {exc}"
+            # DO NOT put this in final_text. The caller renders final_text as the
+            # assistant's reply and saves it to the session, so assigning an
+            # exception string here made a network fault into both a fake answer
+            # ("agent loop aborted: provider error: …" printed as if the model had
+            # said it) and a corrupted transcript that the next turn then read
+            # back as context. The reason belongs in stop_reason and error, where
+            # a caller can report it as a failure.
             stop_reason = "no_provider"
+            provider_error = str(exc)
             break
         total_cost += float(cost or 0.0)
 
@@ -1286,6 +1298,7 @@ def run_agent_loop(
         completed=completed,
         total_cost=total_cost,
         stop_reason=stop_reason,
+        error=provider_error,
     )
 
 

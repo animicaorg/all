@@ -720,3 +720,243 @@ def test_each_turn_reports_its_own_streaming_not_an_earlier_one():
 def test_blank_lines_inside_prose_are_kept():
     """Paragraph breaks in an answer are content; only the leading run is dropped."""
     assert _collect(["\n\nfirst para\n\nsecond para"]) == "first para\n\nsecond para\n"
+
+
+# --------------------------------------------------------------------------- #
+# Retrying until the network answers                                          #
+# --------------------------------------------------------------------------- #
+#
+# Measured against the live endpoint 2026-08-08: six consecutive requests took
+# 149s (capacity notice), 75s, 37s, 29s, 33s, 31s. The ONE failure was the first,
+# cold attempt. Giving up after a single attempt is therefore the difference
+# between "this CLI never works" and "this CLI works" — hence these tests.
+
+APOLOGY = ("⚠️ The Animica AI network couldn't complete your request just now — the "
+           "provider that picked it up wasn't able to load a language model. This is "
+           "usually temporary while GPU/CPU providers come online or finish upgrading. "
+           "Please try again in a moment.\n\nRunning a node? `pip install -U animica "
+           "&& animica up` serves chat to the network.")
+
+
+class _FakeHosted:
+    """A HostedProvider with the transport replaced, so serve()'s retry loop is
+    exercised for real rather than reimplemented in the test."""
+
+    def __init__(self, outcomes, monkeypatch):
+        from agent_runtime.provider_hosted import HostedConfig, HostedProvider
+        self.p = HostedProvider(HostedConfig(attempts=len(outcomes), deadline=999.0))
+        self.p._probe = (True, "ok")
+        self.outcomes = list(outcomes)
+        self.calls = 0
+        self.max_tokens_seen = []
+
+        def fake_stream(path, body, on_text=None, **kw):
+            self.max_tokens_seen.append(body.get("max_tokens"))
+            i = self.calls
+            self.calls += 1
+            text = self.outcomes[i] if i < len(self.outcomes) else self.outcomes[-1]
+            if on_text:
+                for ch in (text[j:j + 20] for j in range(0, len(text), 20)):
+                    on_text(ch)
+            return text, None
+
+        monkeypatch.setattr(self.p, "_stream", fake_stream)
+
+
+def test_a_capacity_notice_is_retried_and_the_next_miner_answers(monkeypatch):
+    from agent_runtime.providers import TurnRequest
+    f = _FakeHosted([APOLOGY, "A post-quantum signature resists quantum attack."], monkeypatch)
+    r = f.p.serve(TurnRequest(prompt="q"))
+    assert "resists quantum attack" in r.text
+    assert f.calls == 2, "the apology must cost one attempt, not the whole turn"
+
+
+def test_the_failed_attempt_never_reaches_the_terminal(monkeypatch):
+    """The point of the gate. Without it the user reads the apology AND the answer
+    as one reply, and retrying is worse than not retrying."""
+    from agent_runtime.providers import TurnRequest
+    shown = []
+    f = _FakeHosted([APOLOGY, "Real answer here, long enough to clear the gate on its own."],
+                    monkeypatch)
+    f.p.serve(TurnRequest(prompt="q", stream_callback=shown.append))
+    out = "".join(shown)
+    assert "couldn't complete your request" not in out
+    assert "Real answer here" in out
+
+
+def test_a_stub_marker_is_a_failed_attempt_not_an_answer(monkeypatch):
+    from agent_runtime.providers import TurnRequest
+    f = _FakeHosted(["[aicf-miner-stub] could not load model xyz", "Fine, here it is."],
+                    monkeypatch)
+    r = f.p.serve(TurnRequest(prompt="q"))
+    assert r.text == "Fine, here it is."
+
+
+def test_every_attempt_failing_raises_rather_than_returning_the_notice(monkeypatch):
+    """Never present the network's own apology as the assistant's reply."""
+    from agent_runtime.errors import ProviderUnavailable
+    from agent_runtime.providers import TurnRequest
+    f = _FakeHosted([APOLOGY] * 3, monkeypatch)
+    with pytest.raises(ProviderUnavailable):
+        f.p.serve(TurnRequest(prompt="q"))
+    assert f.calls == 3, "it must use its attempts before giving up"
+
+
+def test_the_user_is_told_between_attempts(monkeypatch):
+    from agent_runtime.providers import TurnRequest
+    seen = []
+    f = _FakeHosted([APOLOGY, APOLOGY, "Answer at last, with enough text to release."],
+                    monkeypatch)
+    f.p.serve(TurnRequest(prompt="q", on_retry=lambda a, of, why: seen.append((a, of, why))))
+    assert [s[0] for s in seen] == [1, 2]
+    assert all(s[1] == 3 for s in seen)
+
+
+def test_a_reasoning_only_turn_grows_the_token_budget_instead_of_just_retrying():
+    """Re-submitting the same too-small budget to another miner buys the same
+    truncated thought. The budget is the thing that was wrong."""
+    import types
+    from agent_runtime.provider_hosted import HostedConfig, HostedProvider
+    from agent_runtime.providers import TurnRequest
+    p = HostedProvider(HostedConfig(attempts=3, deadline=999.0))
+    p._probe = (True, "ok")
+    budgets = []
+
+    def fake_stream(path, body, on_text=None, **kw):
+        budgets.append(body["max_tokens"])
+        if len(budgets) < 3:
+            return "<think>thinking and thinking and never finishing", None
+        return "Done.", None
+
+    p._stream = types.MethodType(lambda self, path, body, on_text=None, **kw:
+                                 fake_stream(path, body, on_text), p)
+    r = p.serve(TurnRequest(prompt="q", max_output_tokens=100))
+    assert r.text == "Done."
+    assert budgets == [100, 200, 400], f"budget should double each time, got {budgets}"
+
+
+def test_a_real_answer_is_not_retried(monkeypatch):
+    from agent_runtime.providers import TurnRequest
+    f = _FakeHosted(["Straight answer, first time, no drama at all here."], monkeypatch)
+    r = f.p.serve(TurnRequest(prompt="q"))
+    assert f.calls == 1
+    assert "Straight answer" in r.text
+
+
+def test_the_deadline_stops_retrying_even_with_attempts_left(monkeypatch):
+    """A bounded cascade. Unbounded client retries are a hang that also amplifies
+    load on a network already short of workers."""
+    from agent_runtime.errors import ProviderUnavailable
+    from agent_runtime.provider_hosted import HostedConfig, HostedProvider
+    from agent_runtime.providers import TurnRequest
+    p = HostedProvider(HostedConfig(attempts=9, deadline=0.0))
+    p._probe = (True, "ok")
+    calls = []
+    monkeypatch.setattr(p, "_stream",
+                        lambda path, body, on_text=None, **kw: (calls.append(1), (APOLOGY, None, True))[1])
+    with pytest.raises(ProviderUnavailable):
+        p.serve(TurnRequest(prompt="q"))
+    assert len(calls) == 1, "a spent deadline must not buy a second attempt"
+
+
+def test_a_short_real_answer_still_gets_shown(monkeypatch):
+    """The gate holds output until it can judge; a two-word answer must not be
+    swallowed just because it never reached the gate threshold."""
+    from agent_runtime.providers import TurnRequest
+    shown = []
+    f = _FakeHosted(["42."], monkeypatch)
+    r = f.p.serve(TurnRequest(prompt="q", stream_callback=shown.append))
+    assert r.text == "42."
+    assert "".join(shown) == "42."
+
+
+def test_a_stream_cut_off_mid_answer_is_retried_not_presented(monkeypatch):
+    """Verified live by dropping the socket: serve() used to return 'the three steps
+    are: first you configure the wallet, second you start the miner, and third you'
+    as a FINISHED answer. Neither [DONE] nor finish_reason was ever checked, so the
+    CLI invented endings by omission — the most deniable kind of fabrication."""
+    from agent_runtime.provider_hosted import HostedConfig, HostedProvider
+    from agent_runtime.providers import TurnRequest
+    p = HostedProvider(HostedConfig(attempts=2, deadline=999.0))
+    p._probe = (True, "ok")
+    calls = []
+
+    def fake_stream(path, body, on_text=None, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            # Text, but the endpoint never said it finished.
+            return "The three steps are: first you configure the wallet, and", None, False
+        return "Complete answer this time, properly terminated.", None, True
+
+    monkeypatch.setattr(p, "_stream", fake_stream)
+    r = p.serve(TurnRequest(prompt="q"))
+    assert r.text.startswith("Complete answer")
+    assert len(calls) == 2
+
+
+def test_a_transport_that_reports_completion_is_believed(monkeypatch):
+    from agent_runtime.provider_hosted import HostedConfig, HostedProvider
+    from agent_runtime.providers import TurnRequest
+    p = HostedProvider(HostedConfig(attempts=3, deadline=999.0))
+    p._probe = (True, "ok")
+    monkeypatch.setattr(p, "_stream",
+                        lambda path, body, on_text=None, **kw: ("A short but finished answer.", None, True))
+    assert p.serve(TurnRequest(prompt="q")).text == "A short but finished answer."
+
+
+def test_the_wait_between_attempts_clears_the_servers_negative_cache():
+    """The bridge fails fast for BRIDGE_NEG_TTL_S=15s after a failure. A flat 3s
+    pause put attempts 2, 3 and 4 at t=3/6/9s — all INSIDE that window, all refused
+    without reaching a miner. Three attempts spent on nothing."""
+    from agent_runtime.provider_hosted import (NEG_CACHE_CLEAR_S, RATE_LIMIT_PAUSE_S,
+                                               RETRY_PAUSE_S, _retry_delay)
+    assert _retry_delay("animica-hosted: no worker serving small, retry shortly") == NEG_CACHE_CLEAR_S
+    assert NEG_CACHE_CLEAR_S > 15.0, "must outlast the server's own fail-fast window"
+    assert _retry_delay("rate limited by the free tier") == RATE_LIMIT_PAUSE_S
+    # A cold miner or a dead socket: the wait IS the work, so do not add to it.
+    assert _retry_delay("attempt 1 was cut off before the answer finished") == 0.0
+    assert _retry_delay("something else entirely") == RETRY_PAUSE_S
+
+
+def test_our_own_rate_limit_does_not_cost_a_miner_attempt(monkeypatch):
+    """animica.dev limits /v1 to 30r/m burst 12, and a 12-iteration agentic task at
+    4 attempts is 48 requests — so the CLI can 429 itself. That is our fault, not a
+    verdict on any miner."""
+    from agent_runtime.provider_hosted import HostedConfig, HostedProvider, _is_self_inflicted
+    from agent_runtime.providers import TurnRequest
+    assert _is_self_inflicted("rate limited by the free tier. see pricing")
+    assert not _is_self_inflicted("the miner had no model loaded")
+
+    p = HostedProvider(HostedConfig(attempts=2, deadline=999.0))
+    p._probe = (True, "ok")
+    monkeypatch.setattr("agent_runtime.provider_hosted.RATE_LIMIT_PAUSE_S", 0.0)
+    calls = []
+
+    def fake_stream(path, body, on_text=None, **kw):
+        calls.append(1)
+        from agent_runtime.errors import ProviderUnavailable
+        if len(calls) <= 2:
+            raise ProviderUnavailable("animica-hosted", "rate limited by the free tier")
+        return "Answered after the limiter let go.", None, True
+
+    monkeypatch.setattr(p, "_stream", fake_stream)
+    r = p.serve(TurnRequest(prompt="q"))
+    assert "Answered after" in r.text
+    assert len(calls) == 3, "two 429s were refunded, so the 2-attempt budget survived"
+
+
+def test_a_provider_failure_is_not_written_into_the_transcript():
+    """`final_text = 'agent loop aborted: provider error: …'` was rendered as the
+    assistant's reply AND saved to the session, so a network fault became a fake
+    answer and then context the next turn read back."""
+    from agent_runtime.agentic import PermissionPolicy, run_agent_loop
+
+    def always_fails(prompt):
+        raise RuntimeError("network gone")
+
+    r = run_agent_loop(user_task="do a thing", submit_turn=always_fails,
+                       policy=PermissionPolicy("plan"), permission_prompter=_deny,
+                       cwd="/tmp", max_iterations=2, max_cost=1.0)
+    assert r.stop_reason == "no_provider"
+    assert r.final_text == "", "an error must not become the assistant's words"
+    assert r.error and "network gone" in r.error

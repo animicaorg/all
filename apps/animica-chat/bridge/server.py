@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -170,14 +171,30 @@ BRIDGE_STUB_RETRIES = int(os.environ.get("BRIDGE_STUB_RETRIES", "4"))
 # and every stub retry. Each retry is a full re-submit that can burn the whole
 # stub-grace window on a claimed-but-undelivered job, so without a deadline a
 # tiny request can exceed the client's timeout with an empty body.
-BRIDGE_TOTAL_BUDGET_S = float(os.environ.get("BRIDGE_TOTAL_BUDGET_S", "90"))
+#
+# Was 90s, which is BELOW this network's measured single-answer latency (up to
+# 149s observed 2026-08-08). A budget shorter than one answer cannot buy a retry;
+# it just guarantees the apology on any slow draw. nginx and the CLI both allow
+# 660s, so 300 leaves headroom to return a real body rather than a timeout.
+BRIDGE_TOTAL_BUDGET_S = float(os.environ.get("BRIDGE_TOTAL_BUDGET_S", "300"))
 # Same, for the streaming endpoint (homepage). Kept separate so it can be tuned
 # independently; each cycle is a full re-serve so keep it modest.
 BRIDGE_STUB_STREAM_RETRIES = int(os.environ.get("BRIDGE_STUB_STREAM_RETRIES", "3"))
-# Per-cycle wall-clock budget: if a re-served provider hasn't returned within
-# this many seconds, abandon it and stop cycling (emit the fallback) so the
-# client never waits minutes. Bounds total cycle time to ~N×this.
-BRIDGE_CYCLE_ATTEMPT_S = float(os.environ.get("BRIDGE_CYCLE_ATTEMPT_S", "20"))
+# Per-cycle wall-clock budget for a RE-SERVE after the first provider stubbed.
+#
+# This was 20s, which is the single biggest reason the network looked broken.
+# Measured 2026-08-08 against the live endpoint: a healthy miner answers in
+# 29-149s (six consecutive probes: 149, 75, 37, 29, 33, 31). The FIRST serve has
+# always been allowed BRIDGE_AICF_TIMEOUT_S=600, but a re-serve was cut off at
+# 20 — so the common sequence "cold worker stubs, healthy worker answers in 40s"
+# hit the 20s cap, abandoned a miner that was about to answer, and emitted the
+# "couldn't complete your request" notice instead. A patient re-serve is the
+# whole point of cycling; 20s made it decorative.
+BRIDGE_CYCLE_ATTEMPT_S = float(os.environ.get("BRIDGE_CYCLE_ATTEMPT_S", "150"))
+# Overall budget for the cycling phase, so patience per cycle cannot multiply into
+# an unbounded hold on the SSE connection. nginx allows 660s and the CLI's own
+# backstop is 660s, so the first serve plus cycling must finish well inside that.
+BRIDGE_CYCLE_TOTAL_S = float(os.environ.get("BRIDGE_CYCLE_TOTAL_S", "380"))
 # SSE keepalive cadence. During a long pre-first-token wait (a worker claiming a
 # job + loading a model can take a while) no content bytes flow; we emit an SSE
 # comment line every few seconds so no proxy/browser cuts the stream and the
@@ -1008,20 +1025,69 @@ _MODELS_META = [
     ("animica-chat-small", "Tier 'small' on the AICF network."),
     ("animica-chat-flagship", "Tier 'flagship' on the AICF network."),
 ]
-_tier_avail_cache = {"at": 0.0, "val": set()}
+_tier_avail_cache = {"at": 0.0, "val": set(), "good": set(), "good_at": 0.0,
+                     "ok": False}
+_tier_avail_lock = threading.Lock()
+# How long a POSITIVE observation stands in for a failed or empty one. Workers
+# heartbeat on their own cadence and the freshness window is 600s, so a single
+# slow RPC must not be allowed to declare the network empty.
+_AVAIL_GRACE_S = float(os.environ.get("BRIDGE_AVAIL_GRACE_S", "300"))
 
 
 def _cached_tier_availability(ttl: float = 20.0) -> set:
+    """Chain tiers with a fresh worker, as last OBSERVED — never as last guessed.
+
+    Three properties this needs, each learned from a way the old version reported
+    an empty network while a worker was serving:
+
+    1. An empty or failed probe must not overwrite a recent non-empty one. The
+       probe has several paths that swallow their own errors and return an empty
+       set that looks like a successful measurement, and caching that as truth is
+       what made every model show `serving: false` while answers were flowing.
+    2. The cache is stamped AFTER the probe returns. Stamping before meant a probe
+       slower than the TTL could never be cached fresh, so every request launched
+       another one.
+    3. One probe at a time. Three call sites (/v1/models, /v1/tiers, the chat
+       path) used to fire concurrent probes at an already CPU-starved node.
+    """
     now = time.time()
     if _tier_avail_cache["at"] > 0 and now - _tier_avail_cache["at"] < ttl:
         return _tier_avail_cache["val"]
+    if not _tier_avail_lock.acquire(blocking=False):
+        # Another thread is probing. Its answer is moments away; serving the last
+        # value beats queueing behind it.
+        return _tier_avail_cache["val"] or _tier_avail_cache["good"]
     try:
-        v = _probe_chain_tier_availability()
-    except Exception:    # noqa: BLE001
-        v = _tier_avail_cache["val"]
-    _tier_avail_cache["at"] = now
-    _tier_avail_cache["val"] = v
-    return v
+        try:
+            v = _probe_chain_tier_availability()
+        except Exception:    # noqa: BLE001
+            v = None
+        if v:
+            _tier_avail_cache["good"] = set(v)
+            _tier_avail_cache["good_at"] = time.time()
+            _tier_avail_cache["ok"] = True
+            _tier_avail_cache["val"] = set(v)
+        elif time.time() - _tier_avail_cache["good_at"] < _AVAIL_GRACE_S:
+            # Empty/failed, but we saw workers recently. Keep believing that.
+            _tier_avail_cache["val"] = set(_tier_avail_cache["good"])
+            _tier_avail_cache["ok"] = False
+        else:
+            _tier_avail_cache["val"] = set()
+            _tier_avail_cache["ok"] = v is not None
+        _tier_avail_cache["at"] = time.time()
+        return _tier_avail_cache["val"]
+    finally:
+        _tier_avail_lock.release()
+
+
+def _availability_is_measured() -> bool:
+    """True when the last availability answer was a real measurement.
+
+    An empty set means two very different things — "we looked and found nobody"
+    and "we could not look" — and refusing a request outright is only defensible
+    for the first.
+    """
+    return bool(_tier_avail_cache["ok"])
 
 
 @app.get("/v1/models")
@@ -1126,20 +1192,86 @@ def _discover_worker_wallets(rpc_url: str) -> list[str]:
     return [w for w in wallets if w]
 
 
+# Chain tiers the bridge has PROVEN serve real answers recently: chain_tier -> unix ts of the
+# last real (non-stub, non-fallback) completion. Belt-and-braces under the registry probe —
+# a miner whose wallet is invisible to every registry (or whose registration carries empty
+# tiers) still counts as available while it demonstrably serves. Fixes the "no workers
+# available" false negative while answers were flowing (2026-08-01).
+_SERVE_EVIDENCE: dict[str, float] = {}
+
+
+def _note_real_serve(chain_tier: str) -> None:
+    if chain_tier:
+        _SERVE_EVIDENCE[str(chain_tier)] = time.time()
+
+
+def _evidence_tiers() -> set[str]:
+    now = time.time()
+    return {t for t, ts in _SERVE_EVIDENCE.items() if now - ts < _WORKER_FRESH_SEC}
+
+
+def _probe_registry_workers(rpc_url: str) -> set[str] | None:
+    """One-shot probe via aicf.listServingWorkers (2026-08-01): the chat registry
+    itself enumerates every worker + tiers + last_seen, so availability no longer
+    depends on guessing wallets from BRIDGE_KNOWN_WORKER_WALLETS + the WORK
+    registry (which made chat miners on new wallets invisible -> false "no
+    workers"). Returns None when the node doesn't know the method yet (older
+    node) so the caller falls back to the legacy per-wallet probe."""
+    import httpx
+    # 3.0s sat inside this RPC's own measured tail (p99 2.1s on a node that runs at
+    # >100% CPU beside the miner containers), so ordinary slowness read as "this
+    # node has never heard of the method" and dropped to the legacy walk. 8s with
+    # one retry costs nothing when the node is healthy — p50 is 20ms.
+    for attempt in (1, 2):
+        try:
+            with httpx.Client(timeout=8.0) as client:
+                resp = client.post(rpc_url, json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "aicf.listServingWorkers",
+                    "params": {"fresh_seconds": _WORKER_FRESH_SEC},
+                })
+                j = resp.json()
+            break
+        except Exception:    # noqa: BLE001
+            if attempt == 2:
+                # Could not measure. NOT the same as "no workers", and not
+                # evidence the node lacks the method, so raise rather than
+                # returning a value the caller would treat as either.
+                raise
+    err = j.get("error") or {}
+    if err:
+        # Only a genuine method-not-found justifies the legacy per-wallet walk.
+        # Every other node error is a failed measurement.
+        if int(err.get("code") or 0) == -32601:
+            return None
+        raise RuntimeError(f"listServingWorkers: {err}")
+    rows = (j.get("result") or {}).get("workers") or []
+    available: set[str] = set()
+    for row in rows:
+        for tier in (row.get("tiers") or []):
+            if tier and tier != "pipeline":
+                available.add(str(tier))
+    return available
+
+
 def _probe_chain_tier_availability() -> set[str]:
     """Return the set of chain tiers (free/standard/premium/elite) that
     currently have a registered, recently-seen worker.
 
-    Enumerates ALL registered workers (see _discover_worker_wallets) — not just
-    the local wallet — and unions the live tiers of every one seen within
-    _WORKER_FRESH_SEC. Best-effort; failures degrade to "no workers known"
-    which the UI surfaces by greying out tiers.
+    Primary: one aicf.listServingWorkers call (complete chat registry). Fallback
+    for older nodes: enumerate wallets via _discover_worker_wallets and
+    workerStatus each. Either way, tiers with a PROVEN recent real serve
+    (_SERVE_EVIDENCE) are unioned in. Best-effort; failures degrade to "no
+    workers known" which the UI surfaces by greying out tiers.
     """
     import httpx
     rpc_url = (
         os.environ.get("ANIMICA_RPC_URL")
         or "http://127.0.0.1:8545/rpc"
     )
+    direct = _probe_registry_workers(rpc_url)
+    if direct is not None:
+        return direct | _evidence_tiers()
     available: set[str] = set()
     now_ms = int(time.time() * 1000)
     fresh_window_ms = int(_WORKER_FRESH_SEC * 1000)
@@ -1172,7 +1304,7 @@ def _probe_chain_tier_availability() -> set[str]:
             # capability flag, not a serving tier.
             if tier and tier != "pipeline":
                 available.add(str(tier))
-    return available
+    return available | _evidence_tiers()
 
 
 @app.get("/v1/tiers")
@@ -1250,6 +1382,33 @@ _CHAIN_PREF = ["standard", "premium", "elite", "free"]
 
 # tier -> epoch of last serve failure (fail-fast during a miner-down window)
 _NEG_CACHE: dict[str, float] = {}
+
+# Errors that say something about whether a MINER is available, versus errors that
+# are about this box. The negative cache exists to fail fast during a miner-down
+# window, so only the first kind may write it — otherwise our own deadline, or a
+# wallet that cannot sign, marks the whole tier dead for every user.
+_NOT_AVAILABILITY = (
+    "payment rejected",             # our wallet could not pay for the job
+    "invalid post-quantum signature",
+    "insufficient",                 # our balance
+    "nonce",                        # our tx sequencing
+    "wallet",
+)
+
+
+def _is_availability_failure(exc: BaseException) -> bool:
+    """True only if this failure is evidence that no worker would serve."""
+    msg = str(getattr(exc, "message", None) or exc).lower()
+    return not any(t in msg for t in _NOT_AVAILABILITY)
+
+
+def _note_unavailable(tier: str, exc: BaseException) -> None:
+    if _is_availability_failure(exc):
+        _NEG_CACHE[tier] = time.time()
+    else:
+        log.warning("not caching %s as a miner outage: %s", tier,
+                    str(getattr(exc, "message", None) or exc)[:200])
+
 
 
 def _route_tier(prompt: str, history: list) -> str:
@@ -1347,11 +1506,20 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
     neg_at = _NEG_CACHE.get(tier)
     if neg_at is not None:
         if time.time() - neg_at < BRIDGE_NEG_TTL_S:
-            # After downgrade, chain_tier is absent from availability only in a
-            # genuine miner-down window (empty serving set); combined with a
-            # fresh recent failure, fail fast instead of hanging 600s. Self-
-            # clears the moment a worker returns.
-            if chain_tier not in serving:
+            # Refusing outright needs POSITIVE evidence of an outage: a recent
+            # failure AND a probe that actually ran AND found nobody AND no tier
+            # that has demonstrably served lately.
+            #
+            # The old condition was `chain_tier not in serving`, which is true for
+            # every tier whenever `serving` is empty — including when the probe
+            # merely timed out against a busy node. That turned "we could not
+            # look" into "nobody is serving" and answered a healthy network with
+            # an instant 503. When availability is unknown, let the request
+            # through: a real outage still surfaces as the budget timeout and the
+            # clean fallback notice, which is honest, instead of a blanket refusal.
+            if (chain_tier not in serving
+                    and _availability_is_measured()
+                    and not _evidence_tiers()):
                 raise HTTPException(
                     status_code=503,
                     detail=f"no worker serving {tier}, retry shortly",
@@ -1503,15 +1671,18 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                 # pending-leader resolution in the finally block.
                 timed_out = True
                 result = None
-                _NEG_CACHE[tier] = time.time()
+                # Deliberately NOT written to _NEG_CACHE: this is OUR deadline
+                # expiring, not a worker declining. Writing it here meant one slow
+                # answer made the next 15s of requests fail instantly for everyone,
+                # which on a network whose answers take 30-150s was self-sustaining.
             except (AICFError, WalletError, ProviderUnavailable, AgentRuntimeError) as exc:
-                _NEG_CACHE[tier] = time.time()
+                _note_unavailable(tier, exc)
                 if leader_future is not None and not leader_future.done():
                     leader_future.set_exception(exc)
                 log.warning("provider.serve failed: %s", exc)
                 raise HTTPException(status_code=502, detail=f"upstream_error: {exc.message}")
             except Exception as exc:    # noqa: BLE001
-                _NEG_CACHE[tier] = time.time()
+                _note_unavailable(tier, exc)
                 if leader_future is not None and not leader_future.done():
                     leader_future.set_exception(exc)
                 log.exception("provider.serve unexpected error")
@@ -1577,9 +1748,10 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                 f"chatcmpl-{uuid.uuid4().hex[:24]}", model_label, text, usage,
             )
             # rank 6: only cache real (non-empty, non-stub, non-fallback) answers.
-            if (cache_key is not None and text.strip()
-                    and not _is_stub_text(text) and not served_fallback):
-                _cache_put(cache_key, payload)
+            if text.strip() and not _is_stub_text(text) and not served_fallback:
+                _note_real_serve(chain_tier)    # proven availability signal
+                if cache_key is not None:
+                    _cache_put(cache_key, payload)
             return JSONResponse(payload, headers={
                 "X-Cache": "miss",
                 "X-Miner-Latency-Ms": str(int(dt_ms)),
@@ -1595,8 +1767,18 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
         queue: asyncio.Queue[Optional[tuple[str, bool]]] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
+        # Set as soon as the worker sends anything: proof it was serving, whatever
+        # happens afterwards. `future.cancel()` cannot stop a running executor
+        # thread, so an abandoned job keeps polling to the 600s AICF timeout and
+        # then reports a failure up to ten minutes after the user walked away —
+        # and the same handler fires when settlement fails AFTER a complete answer
+        # streamed. Neither is evidence that miners are unavailable.
+        served_any = {"yes": False}
+
         def relay(text: str, is_final: bool) -> None:
             # provider calls this on its own thread.
+            if text:
+                served_any["yes"] = True
             asyncio.run_coroutine_threadsafe(
                 queue.put((text, is_final)), loop
             )
@@ -1608,7 +1790,13 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                 provider.serve(turn)
                 _NEG_CACHE.pop(tier, None)    # rank 10: clear neg cache on success
             except Exception as exc:    # noqa: BLE001
-                _NEG_CACHE[tier] = time.time()    # rank 10: fail fast next time
+                if served_any["yes"]:
+                    _NEG_CACHE.pop(tier, None)
+                    log.warning("stream failed AFTER content was served; "
+                                "not marking %s unavailable: %s", tier,
+                                str(exc)[:200])
+                else:
+                    _note_unavailable(tier, exc)
                 log.exception("stream provider.serve crashed")
                 err_chunk = {
                     "error": {
@@ -1729,6 +1917,7 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                 if _stub_head(joined):
                     gate_swallow = True
                     return []      # emit nothing; cycle happens after the loop
+                _note_real_serve(chain_tier)    # real streamed answer => proven availability
                 return _content_bytes(joined) if joined else []
 
             while True:
@@ -1809,7 +1998,11 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
             # fall back to a first-party notice if every provider cycles.
             if gate_swallow and not finalized:
                 cycled = None
+                cycle_started = time.monotonic()
                 for _attempt in range(max(0, BRIDGE_STUB_STREAM_RETRIES)):
+                    if time.monotonic() - cycle_started >= BRIDGE_CYCLE_TOTAL_S:
+                        log.info("cycling budget spent after %d attempt(s)", _attempt)
+                        break
                     turn.stream_callback = None
                     serve_task = loop.run_in_executor(None, provider.serve, turn)
                     waited = 0.0
@@ -1820,10 +2013,15 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                         if not done:
                             yield b": keepalive\n\n"
                     if not serve_task.done():
-                        # This provider is too slow — abandon it (the executor
-                        # thread finishes in the background) and stop cycling so
-                        # the client isn't left waiting minutes.
-                        break
+                        # This one is slower than a full cycle budget. Abandon it
+                        # (its executor thread finishes in the background) and try
+                        # ANOTHER miner rather than giving up on all of them: one
+                        # slow claimer used to end cycling for the whole request,
+                        # which is how a network with a healthy worker still
+                        # returned the capacity notice.
+                        log.info("cycle %d exceeded %.0fs; trying another miner",
+                                 _attempt + 1, BRIDGE_CYCLE_ATTEMPT_S)
+                        continue
                     try:
                         res2 = serve_task.result()
                     except Exception:    # noqa: BLE001 — treat as stub, keep cycling
