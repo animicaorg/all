@@ -100,6 +100,64 @@ def is_disabled() -> bool:
     return os.environ.get("ANIMICA_DISABLE_AICF_WORKER") == "1"
 
 
+# TWO TIER VOCABULARIES, and mixing them up silently breaks all inference.
+#
+#   chain / job tiers   : free, standard, premium, elite   <- what a job carries
+#   model-catalog tiers : tiny, small, flagship, large     <- what bundles install as
+#
+# The node submits jobs tagged with the CHAIN tier, but bundles land in
+# `$ANIMICA_DATA_DIR/models/<CATALOG tier>` (that is what `animica up` and
+# `aicf-worker pull` create). So a worker handed a `standard` job used to look for
+# `models/standard`, which nothing ever creates: it claimed the job, raised
+# BundleError("no installed flagship bundle for tier='standard'"), and never returned a
+# result. The job then sat until the node's local-stub grace expired and the user got a
+# placeholder — i.e. inference NEVER worked, however many healthy workers were online.
+#
+# Kept in sync with `_CHAIN_TO_TIER` in apps/animica-chat/bridge/server.py, which is
+# where the mapping previously lived ALONE.
+_CHAIN_TO_CATALOG_TIER = {
+    "free": "tiny",
+    "standard": "small",
+    "premium": "flagship",
+    "elite": "large",
+}
+_CATALOG_TO_CHAIN_TIER = {v: k for k, v in _CHAIN_TO_CATALOG_TIER.items()}
+
+
+def bundle_dir_candidates(tier: str) -> list[str]:
+    """On-disk bundle directory names that could serve `tier`, in either vocabulary.
+
+    Accepts a chain tier ("standard") or a catalog tier ("small") and returns both, so
+    a lookup succeeds whichever name the caller happens to hold. Order puts the
+    caller's own spelling first; unknown tiers pass through unchanged rather than
+    being dropped, so a new tier name never becomes silently unservable.
+    """
+    t = str(tier or "").strip()
+    if not t:
+        return []
+    out = [t]
+    for alias in (_CHAIN_TO_CATALOG_TIER.get(t), _CATALOG_TO_CHAIN_TIER.get(t)):
+        if alias and alias not in out:
+            out.append(alias)
+    return out
+
+
+def advertised_tier_aliases(tiers: list[str]) -> list[str]:
+    """Expand a tier list to cover both vocabularies for job matching.
+
+    A worker qualified on the `small` bundle must also be claimable for `standard`
+    jobs, since the node matches on the chain name. Without this a correctly
+    installed worker advertises a vocabulary the queue never uses and is offered
+    nothing at all.
+    """
+    out: list[str] = []
+    for t in tiers:
+        for name in bundle_dir_candidates(t):
+            if name not in out:
+                out.append(name)
+    return out
+
+
 def _env_float(name: str, default: float) -> float:
     """Positive float from the environment, falling back on anything unusable."""
     try:
@@ -120,14 +178,18 @@ def _has_servable_bundle(tier: str) -> bool:
     stub bridge on every claim.
     """
     try:
-        base = Path(os.environ.get(
-            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models" / str(tier)
-        if not base.is_dir():
-            return False
-        for bundle in base.iterdir():
-            if (bundle / "manifest.json").is_file() and \
-                    (bundle / "inference.json").is_file():
-                return True
+        root = Path(os.environ.get(
+            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models"
+        # Check every spelling of the tier — a `standard` job is served by the
+        # `small` bundle on disk. See bundle_dir_candidates().
+        for name in bundle_dir_candidates(tier):
+            base = root / name
+            if not base.is_dir():
+                continue
+            for bundle in base.iterdir():
+                if (bundle / "manifest.json").is_file() and \
+                        (bundle / "inference.json").is_file():
+                    return True
         return False
     except OSError:
         return False
@@ -326,8 +388,11 @@ class AICFWorker:
         return hashlib.sha256(f"aicf-pipeline:{pair}".encode("utf-8")).digest()
 
     def register(self) -> None:
+        # Advertise BOTH vocabularies. The node matches jobs on the chain tier, so a
+        # worker qualified on the `small` bundle that advertised only "small" would be
+        # offered nothing at all.
         self.client.register_worker(
-            address=self.address, tiers=self.tiers,
+            address=self.address, tiers=advertised_tier_aliases(self.tiers),
             hardware=self.profile.to_dict(),
             direct_endpoint=self._direct_endpoint,
         )
@@ -444,9 +509,10 @@ class AICFWorker:
                 self._write_state()
                 continue
             try:
-                job = self.client.claim_next_job(address=self.address,
-                                                  tiers=[t for t in self.tiers
-                                                         if t != "pipeline"])
+                job = self.client.claim_next_job(
+                    address=self.address,
+                    tiers=advertised_tier_aliases(
+                        [t for t in self.tiers if t != "pipeline"]))
             except AgentRuntimeError as exc:
                 _eprint(f"[aicf-worker] claim failed: {exc.message}")
                 _idle_wait()
@@ -514,31 +580,38 @@ class AICFWorker:
             self._write_state()
 
     def _load_runner(self, tier: str):
-        """Locate the installed bundle for ``tier`` and return a runner."""
+        """Locate the installed bundle for ``tier`` and return a runner.
+
+        ``tier`` arrives from the JOB, so it is a chain tier ("standard"), while the
+        bundle on disk is named for the model catalog ("small"). Both spellings are
+        searched — see bundle_dir_candidates(). Getting this wrong does not degrade
+        gracefully: the worker claims the job, throws, and the requester waits out the
+        node's stub grace for a placeholder.
+        """
         from flagship_agent.inference import LocalBundleRunner
-        cache = Path(os.environ.get(
-            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / \
-            "models" / tier
-        if not cache.is_dir():
-            raise BundleError(
-                f"no installed flagship bundle for tier={tier!r}",
-                hint="run `animica miner aicf-worker pull --tier <tier>` "
-                     "to download a bundle from the network's IPFS CIDs",
-            )
-        # Pick the highest-priority bundle (latest by exported_at).
-        candidates = sorted(cache.iterdir(),
-                             key=lambda p: p.stat().st_mtime, reverse=True)
-        for bundle in candidates:
-            mf = bundle / "manifest.json"
-            if not mf.is_file():
+        root = Path(os.environ.get(
+            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models"
+        searched: list[Path] = []
+        for name in bundle_dir_candidates(tier):
+            cache = root / name
+            searched.append(cache)
+            if not cache.is_dir():
                 continue
-            spec = bundle / "inference.json"
-            if not spec.is_file():
-                continue
-            inf = json.loads(spec.read_text(encoding="utf-8"))
-            return LocalBundleRunner(bundle_dir=bundle, inference_spec=inf)
+            # Pick the highest-priority bundle (latest by exported_at).
+            for bundle in sorted(cache.iterdir(),
+                                 key=lambda p: p.stat().st_mtime, reverse=True):
+                if not (bundle / "manifest.json").is_file():
+                    continue
+                spec = bundle / "inference.json"
+                if not spec.is_file():
+                    continue
+                inf = json.loads(spec.read_text(encoding="utf-8"))
+                return LocalBundleRunner(bundle_dir=bundle, inference_spec=inf)
         raise BundleError(
-            f"no usable bundles found under {cache}",
+            f"no installed bundle for tier={tier!r}; searched "
+            + ", ".join(str(p) for p in searched),
+            hint="run `animica miner aicf-worker pull --tier <tier>` "
+                 "to download a bundle from the network's IPFS CIDs",
         )
 
     def _get_layer_range_runner(self):

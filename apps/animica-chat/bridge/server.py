@@ -104,6 +104,10 @@ BRIDGE_TEMP_DEFAULT = float(os.environ.get("BRIDGE_TEMP_DEFAULT", "0.3"))
 BRIDGE_TEMP_MAX = float(os.environ.get("BRIDGE_TEMP_MAX", "0.8"))
 BRIDGE_TOP_P_DEFAULT = float(os.environ.get("BRIDGE_TOP_P_DEFAULT", "0.9"))
 BRIDGE_DEFAULT_MAX_TOKENS = int(os.environ.get("BRIDGE_DEFAULT_MAX_TOKENS", "1536"))
+# Extra job budget granted so a reasoning model's <think> block does not eat the
+# caller's answer allowance. Set to 0 to disable and honour max_tokens literally.
+BRIDGE_THINK_HEADROOM_TOKENS = int(
+    os.environ.get("BRIDGE_THINK_HEADROOM_TOKENS", "512"))
 
 # --- rank 15/16: auto web retrieval + untrusted-content framing ---
 BRIDGE_AUTO_WEB = _env_flag("BRIDGE_AUTO_WEB", "1")
@@ -971,6 +975,107 @@ class _ToolCallStreamParser:
         return []
 
 
+# ---------------------------------------------------------------------------
+# Reasoning-block ("<think>") suppression
+# ---------------------------------------------------------------------------
+# kimi-k3's backend is a reasoning model: it emits its chain of thought inside
+# <think>…</think> before the answer. The CLI strips this; the web/API path never did,
+# so animica.dev users saw the model talking to itself instead of an answer — and on a
+# small max_tokens the reasoning consumed the ENTIRE budget, so the visible reply was
+# raw thinking cut off mid-sentence with no answer in it at all. Measured: a 300-token
+# "what is 2+2" reply spent 160 tokens reasoning and 6 on "2+2 is 4."
+#
+# Suppression is textual and must survive being fed one SSE delta at a time, so the
+# state machine below is incremental and never needs the whole response.
+
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+class ThinkFilter:
+    """Drop <think>…</think> spans from an incrementally-arriving token stream.
+
+    `feed()` returns only text that is known to be outside a reasoning block. Text is
+    held back while a partial tag could still be forming, so a tag split across two
+    deltas (`<thi` + `nk>`) is never leaked as visible output.
+    """
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_think = False
+        self.saw_think = False
+
+    def feed(self, text: str) -> str:
+        if not text:
+            return ""
+        self._buf += text
+        out = []
+        while self._buf:
+            if self._in_think:
+                idx = self._buf.find(_THINK_CLOSE)
+                if idx < 0:
+                    # Still reasoning. Retain only enough to detect a split close tag.
+                    self._buf = self._buf[-(len(_THINK_CLOSE) - 1):] \
+                        if len(self._buf) >= len(_THINK_CLOSE) else self._buf
+                    return "".join(out)
+                self._buf = self._buf[idx + len(_THINK_CLOSE):]
+                self._in_think = False
+                continue
+            idx = self._buf.find(_THINK_OPEN)
+            if idx < 0:
+                # Hold back a possible partial open tag at the tail.
+                keep = 0
+                for n in range(min(len(_THINK_OPEN) - 1, len(self._buf)), 0, -1):
+                    if _THINK_OPEN.startswith(self._buf[-n:]):
+                        keep = n
+                        break
+                if keep:
+                    out.append(self._buf[:-keep])
+                    self._buf = self._buf[-keep:]
+                else:
+                    out.append(self._buf)
+                    self._buf = ""
+                return "".join(out)
+            out.append(self._buf[:idx])
+            self._buf = self._buf[idx + len(_THINK_OPEN):]
+            self._in_think = True
+            self.saw_think = True
+        return "".join(out)
+
+    def flush(self) -> str:
+        """Any trailing text once the stream ends.
+
+        Text still inside an unterminated <think> is DISCARDED: the model ran out of
+        budget mid-reasoning and never produced an answer, and showing half a thought
+        is worse than showing nothing (the caller substitutes a message instead).
+        """
+        if self._in_think:
+            self._buf = ""
+            return ""
+        tail, self._buf = self._buf, ""
+        return tail
+
+    @property
+    def truncated_in_think(self) -> bool:
+        return self._in_think
+
+
+def _strip_think(text: str) -> tuple[str, bool]:
+    """Return (visible_text, answer_was_lost_to_reasoning) for a complete response."""
+    f = ThinkFilter()
+    out = f.feed(text or "") + f.flush()
+    stripped = out.strip()
+    # Reasoning happened and nothing survived it -> the budget was spent thinking.
+    return stripped, (f.saw_think and not stripped)
+
+
+_BUDGET_EXHAUSTED_NOTE = (
+    "The model spent its entire token budget on internal reasoning and did not reach "
+    "an answer. Retry with a larger `max_tokens` (reasoning models typically need "
+    "300+ for a short reply)."
+)
+
+
 def _chunk_payload(chunk_id: str, model: str, delta: str, finish: Optional[str] = None) -> dict:
     return {
         "id": chunk_id,
@@ -988,6 +1093,11 @@ def _chunk_payload(chunk_id: str, model: str, delta: str, finish: Optional[str] 
 
 
 def _full_payload(resp_id: str, model: str, text: str, usage: dict) -> dict:
+    # Single choke point for every non-streaming completion, so reasoning cannot leak
+    # to a caller through any route that builds a response here.
+    visible, lost = _strip_think(text)
+    if lost:
+        visible = _BUDGET_EXHAUSTED_NOTE
     return {
         "id": resp_id,
         "object": "chat.completion",
@@ -996,8 +1106,8 @@ def _full_payload(resp_id: str, model: str, text: str, usage: dict) -> dict:
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": text},
-                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": visible},
+                "finish_reason": "length" if lost else "stop",
             }
         ],
         "usage": usage,
@@ -1576,6 +1686,14 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
     )
     effective_top_p = req.top_p if req.top_p is not None else BRIDGE_TOP_P_DEFAULT
     effective_max_tokens = req.max_tokens or BRIDGE_DEFAULT_MAX_TOKENS
+    # Reasoning HEADROOM. The backend emits a <think> block before the answer and it is
+    # billed against the same budget, so a caller asking for max_tokens=24 gets 24
+    # tokens of internal monologue and NO answer — measured: 160 reasoning tokens for a
+    # one-line reply. The requested value bounds the ANSWER, so grant the reasoning its
+    # own allowance on the job rather than silently returning nothing. The visible reply
+    # is still whatever the model produces after </think>.
+    if req.max_tokens and req.max_tokens < BRIDGE_THINK_HEADROOM_TOKENS:
+        effective_max_tokens = req.max_tokens + BRIDGE_THINK_HEADROOM_TOKENS
 
     turn = TurnRequest(
         prompt=prompt,
@@ -1821,16 +1939,34 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
         parser = _ToolCallStreamParser() if req.tools else None
         # rank 14: edge stop-sequence trimming with a cross-chunk carry buffer.
         trimmer = _StopStreamTrimmer(req.stop) if req.stop else None
+        # Reasoning suppression, applied BEFORE the stop trimmer so stop sequences are
+        # matched against what the user actually sees, not against the model's internal
+        # monologue. Streaming previously forwarded <think> verbatim.
+        think = ThinkFilter()
+        # Whether the client has received any post-reasoning text. If the model spends
+        # its whole budget thinking, the stream would otherwise end having sent nothing
+        # at all — indistinguishable from a hang.
+        emitted_visible = False
         stop_hit = False
         first_token_seen = False
         latency_recorded = False
 
-        def _content_bytes(text: str) -> list[bytes]:
+        def _content_bytes(text: str, *, filter_think: bool = True) -> list[bytes]:
             """Emit a content delta, applying the stop trimmer (rank 14) if
-            set. Sets nonlocal stop_hit when a stop sequence is reached."""
-            nonlocal stop_hit
+            set. Sets nonlocal stop_hit when a stop sequence is reached.
+
+            `filter_think=False` is for FLUSHED text that already passed the reasoning
+            filter — re-feeding it would let the filter hold back a tail that merely
+            looks like a partial "<think>" prefix.
+            """
+            nonlocal stop_hit, emitted_visible
             if not text or stop_hit:
                 return []
+            if filter_think:
+                text = think.feed(text)
+                if not text:
+                    return []
+            emitted_visible = True
             if trimmer is None:
                 return [f"data: {json.dumps(_chunk_payload(chunk_id, model_label, text))}\n\n".encode("utf-8")]
             emit, hit = trimmer.feed(text)
@@ -1976,8 +2112,19 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                     if parser is not None:
                         for chunk in _emit_events(parser.flush()):
                             yield chunk
+                    # Reasoning filter first (it may be holding back a tail), then the
+                    # trimmer. Neither flush re-enters the think filter.
+                    if not stop_hit:
+                        for chunk in _content_bytes(think.flush(), filter_think=False):
+                            yield chunk
                     if trimmer is not None and not stop_hit:
-                        for chunk in _content_bytes(trimmer.flush()):
+                        for chunk in _content_bytes(trimmer.flush(), filter_think=False):
+                            yield chunk
+                    # Nothing but reasoning came back: say so rather than closing an
+                    # empty stream, which reads to the user as "it never works".
+                    if not emitted_visible and think.saw_think:
+                        for chunk in _content_bytes(
+                                _BUDGET_EXHAUSTED_NOTE, filter_think=False):
                             yield chunk
                     _record_latency()
                     finish_reason = "tool_calls" if saw_tool_call else "stop"

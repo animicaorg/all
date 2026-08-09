@@ -123,3 +123,55 @@ def test_override_advertises_without_a_bundle(tmp_path, monkeypatch):
         _servable_tiers = AICFWorker._servable_tiers
 
     assert _Stub()._servable_tiers() == ["tiny", "flagship"]
+
+
+# --- chain-tier vs catalog-tier vocabulary ----------------------------------
+# Jobs carry CHAIN tiers (free/standard/premium/elite); bundles install under
+# CATALOG tiers (tiny/small/flagship/large). A worker handed a `standard` job used to
+# look for models/standard, which nothing ever creates — so it claimed the job, threw
+# BundleError, and never returned a result.
+
+def test_a_standard_job_is_served_by_the_small_bundle(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    _install_bundle(tmp_path, "small")          # what `animica up` creates
+    assert _has_servable_bundle("small") is True
+    assert _has_servable_bundle("standard") is True, (
+        "a chain-tier job must resolve to the catalog-tier bundle on disk"
+    )
+
+
+def test_every_chain_tier_maps_to_its_catalog_bundle(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    from agent_runtime.aicf_worker import bundle_dir_candidates
+
+    for chain, catalog in (("free", "tiny"), ("standard", "small"),
+                           ("premium", "flagship"), ("elite", "large")):
+        assert catalog in bundle_dir_candidates(chain), (chain, catalog)
+        assert chain in bundle_dir_candidates(catalog), (catalog, chain)
+
+
+def test_tiers_still_do_not_bleed_into_each_other(tmp_path, monkeypatch):
+    """Mapping must not make everything servable. Installing `small` serves
+    standard/small only — a premium/flagship job must still be refused."""
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path))
+    _install_bundle(tmp_path, "small")
+    assert _has_servable_bundle("standard") is True
+    for other in ("premium", "flagship", "elite", "large", "free", "tiny"):
+        assert _has_servable_bundle(other) is False, other
+
+
+def test_unknown_tier_passes_through_rather_than_vanishing(monkeypatch):
+    from agent_runtime.aicf_worker import bundle_dir_candidates
+    assert bundle_dir_candidates("some-new-tier") == ["some-new-tier"]
+    assert bundle_dir_candidates("") == []
+
+
+def test_advertised_tiers_cover_both_vocabularies():
+    """A worker qualified on `small` must be claimable for `standard` jobs, or the
+    queue never offers it anything."""
+    from agent_runtime.aicf_worker import advertised_tier_aliases
+    out = advertised_tier_aliases(["small"])
+    assert "small" in out and "standard" in out
+    # No duplicates, order stable, pipeline passes through untouched.
+    assert len(out) == len(set(out))
+    assert advertised_tier_aliases(["pipeline"]) == ["pipeline"]
