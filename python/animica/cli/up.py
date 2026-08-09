@@ -293,11 +293,15 @@ def _ensure_inference_worker(components, console, address) -> None:
             tiers = ",".join(tiers_list)
             console.print(f"[dim]inference: serving AICF chat (incl. Kimi K3 · kimi-k3) to {endpoint} · tiers {tiers}[/dim]")
         elif stats.get("started"):
-            # Worker constructed but qualified out every tier (no installed
-            # flagship bundle to serve with). It won't advertise phantom
-            # capacity; tell the operator how to actually serve.
-            console.print("[dim]inference: worker idle (no installed model bundle) — "
-                          "run 'animica miner aicf-worker pull' to serve chat[/dim]")
+            # No bundle on disk YET. On a fresh miner this is the expected state:
+            # _ensure_llm_model started the download moments ago and a tier takes
+            # from ~30s (tiny) to many minutes (34GB flagship) to land. The worker
+            # now waits and re-qualifies instead of exiting, so it starts serving on
+            # its own — the old copy here said "worker idle … run pull", which read
+            # as a permanent failure and sent operators to a command they did not need.
+            console.print("[dim]inference: waiting for the model bundle to finish "
+                          "installing — the worker starts serving automatically when "
+                          "it lands (no restart needed)[/dim]")
         else:
             console.print(f"[dim]inference: worker idle ({stats.get('reason')}) — "
                           f"run 'animica miner setup' to serve inference[/dim]")
@@ -432,10 +436,23 @@ def _ensure_llm_model(caps, components, console) -> None:
         return
 
     def _dl():
+        # Report the outcome. `except Exception: pass` here meant a failed install
+        # was indistinguishable from a successful one: `up` printed "installing
+        # chat/coding model…", nothing ever appeared under ~/.animica/models, and
+        # every AICF job then failed with "no installed flagship bundle" and no clue
+        # why. Still non-fatal — it must never take the miner down — but never silent.
         try:
-            bootstrap_bundle_from_hf(tier, repo_id=repo_override)
-        except Exception:
-            pass  # non-fatal; the worker / `animica miner setup` will retry on demand
+            path = bootstrap_bundle_from_hf(tier, repo_id=repo_override)
+            console.print(
+                f"[dim]inference: {tier}-tier model installed ({path}) — "
+                f"the worker picks it up within ~30s, no restart needed[/dim]"
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(
+                f"[yellow]inference: chat-model install FAILED for tier {tier} "
+                f"({type(exc).__name__}: {exc}). This node will not serve AICF chat. "
+                f"Retry with 'animica miner aicf-worker pull --tier {tier}'.[/yellow]"
+            )
 
     label = repo_override or f"{tier}-tier default"
     console.print(

@@ -100,6 +100,15 @@ def is_disabled() -> bool:
     return os.environ.get("ANIMICA_DISABLE_AICF_WORKER") == "1"
 
 
+def _env_float(name: str, default: float) -> float:
+    """Positive float from the environment, falling back on anything unusable."""
+    try:
+        v = float(os.environ.get(name, "").strip())
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
 def _has_servable_bundle(tier: str) -> bool:
     """True when an installed flagship bundle exists for ``tier``.
 
@@ -209,20 +218,17 @@ class AICFWorker:
             or bool(os.environ.get(
                 "ANIMICA_AICF_PIPELINE_MODEL_ID", "").strip())
         )
+        # Remember the hardware-eligible set BEFORE bundle qualification, so the
+        # filter can be re-applied later. `animica up` kicks off the bundle download
+        # in a background thread and then constructs this worker immediately, so at
+        # this moment a perfectly healthy install is still seconds (or, for a 34GB
+        # flagship tier, many minutes) from finishing. Qualifying once here and
+        # keeping the answer meant a worker that downloaded a bundle successfully
+        # still advertised nothing until the operator restarted.
+        self._eligible_tiers = list(self.tiers)
+        self._skip_bundle_qual = _skip_qual
         if not _skip_qual:
-            real_before = [t for t in self.tiers if t != "pipeline"]
-            servable = [t for t in self.tiers
-                        if t == "pipeline" or _has_servable_bundle(t)]
-            if real_before and not any(t != "pipeline" for t in servable):
-                log.warning(
-                    "[aicf-worker] no installed flagship bundle for eligible "
-                    "tier(s) %s; not advertising AICF serving capacity. Run "
-                    "`animica miner aicf-worker pull --tier <tier>` to serve "
-                    "chat/inference, or set "
-                    "ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE=1 to override.",
-                    real_before,
-                )
-            self.tiers = servable
+            self.tiers = self._servable_tiers(warn=True)
         # Direct worker-to-worker activation transport (optional). When
         # pipeline mode is on AND ANIMICA_AICF_PIPELINE_DIRECT_PORT is
         # set, the worker spins up a small HTTP server that peers can
@@ -331,19 +337,56 @@ class AICFWorker:
     def stop(self) -> None:
         self.state.stopping = True
 
+    def _servable_tiers(self, *, warn: bool = False) -> list[str]:
+        """The hardware-eligible tiers we can actually load a bundle for, now.
+
+        Re-evaluated rather than cached: bundles appear on disk asynchronously (the
+        `animica up` prefetch thread, `animica miner setup`, an `aicf-worker pull`
+        run in another shell), and a worker that answered this question once at
+        startup would never notice.
+        """
+        if self._skip_bundle_qual:
+            return list(self._eligible_tiers)
+        real = [t for t in self._eligible_tiers if t != "pipeline"]
+        servable = [t for t in self._eligible_tiers
+                    if t == "pipeline" or _has_servable_bundle(t)]
+        if warn and real and not any(t != "pipeline" for t in servable):
+            log.warning(
+                "[aicf-worker] no installed flagship bundle for eligible "
+                "tier(s) %s yet; will keep checking and start serving as soon as "
+                "one finishes installing. Run "
+                "`animica miner aicf-worker pull --tier <tier>` to install now, or "
+                "set ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE=1 to override.",
+                real,
+            )
+        return servable
+
     def run(self, *, idle_sleep_ms: int = 1500,
             heartbeat_interval_sec: int = 30,
             max_idle_sleep_ms: int = 20000) -> None:
         """Main loop. Returns when self.state.stopping is set."""
         import random
-        if not self.tiers:
-            log.warning(
-                "[aicf-worker] no servable tiers to advertise; worker idle. "
-                "Install a bundle with `animica miner aicf-worker pull` to "
-                "participate in AICF serving."
+
+        # Wait for a bundle rather than exiting. `animica up` starts the bundle
+        # download in a background thread and constructs this worker immediately
+        # afterwards, so "no servable tier" at startup is the NORMAL state on a fresh
+        # miner for as long as the download takes. Returning here (the old behaviour)
+        # killed the worker thread seconds before its own bundle finished landing, so
+        # `animica up` reported "worker idle (no installed model bundle)" forever and
+        # the operator had to restart to get any serving at all.
+        requal_secs = _env_float("ANIMICA_AICF_REQUALIFY_SECS", 30.0)
+        while not self.tiers and not self.state.stopping:
+            log.info(
+                "[aicf-worker] waiting for a servable bundle for tier(s) %s "
+                "(re-checking every %.0fs)…", self._eligible_tiers, requal_secs,
             )
+            time.sleep(max(1.0, requal_secs))
+            self.tiers = self._servable_tiers()
+        if self.state.stopping:
             return
+        log.info("[aicf-worker] serving tiers %s", self.tiers)
         self.register()
+        last_requal = time.time()
         last_hb = time.time()
         idle_streak = 0
 
@@ -366,6 +409,24 @@ class AICFWorker:
             # claim. Pipeline jobs are time-sensitive (stage k blocks
             # stage k+1) so we don't want a pipeline-capable worker
             # sitting on a race job while a stage is waiting.
+            # A tier can finish installing while we are already serving another
+            # (`up` prefetches one tier, an operator pulls a second). Re-qualify
+            # periodically and re-register when the set actually changes, so the new
+            # capacity is advertised without a restart. Cheap: a couple of stat()s.
+            if time.time() - last_requal > requal_secs:
+                last_requal = time.time()
+                try:
+                    fresh = self._servable_tiers()
+                    if fresh and set(fresh) != set(self.tiers):
+                        log.info(
+                            "[aicf-worker] servable tiers changed %s -> %s; "
+                            "re-registering", self.tiers, fresh,
+                        )
+                        self.tiers = fresh
+                        self.register()
+                except Exception:  # noqa: BLE001 — never let this stop serving
+                    pass
+
             stage_handled = False
             if self.pipeline_enabled:
                 try:
