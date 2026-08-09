@@ -354,11 +354,19 @@ def _ensure_media_models(caps, components, console) -> None:
         return
 
     def _dl():
+        # Report the outcome. `except Exception: pass` made a failed image-model install
+        # indistinguishable from a finished one: `up` said "ensuring image model…",
+        # nothing arrived, and the node then advertised no `image` capability — which is
+        # why animica.dev could show 0 renderers while nodes were up. Still non-fatal.
         try:
             from huggingface_hub import snapshot_download
             snapshot_download(model_id, allow_patterns=["*.json", "*.txt", "*.safetensors", "*.png"])
-        except Exception:
-            pass  # non-fatal; `animica media doctor` will report status
+            console.print(f"[dim]media: image model {model_id} ready — the media miner "
+                          f"advertises 'image' within ~2min, no restart needed[/dim]")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]media: image-model install FAILED for {model_id} "
+                          f"({type(exc).__name__}: {exc}). This node will not render image "
+                          f"jobs. Retry with 'animica media install'.[/yellow]")
 
     console.print(f"[dim]media: ensuring image model {model_id} (~{gb}GB) in background…[/dim]")
     threading.Thread(target=_dl, name="animica-media-prefetch", daemon=True).start()
@@ -473,27 +481,61 @@ def _ensure_media_miner(components, console) -> None:
     import os
     import threading
 
+    import time
+
     if os.environ.get("ANIMICA_MEDIA_MINER", "1") == "0":
         return
     # `animica up` serves media by default: any node that CAN render (a GPU, or even a CPU with
     # ffmpeg for image->video) joins the media queue. Set ANIMICA_MEDIA_MINER=0 to opt out.
     try:
         from animica.media.miner import probe_capabilities, run_miner
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # Was a silent `return`, so a node that could not import the media stack simply
+        # never served and never said why.
+        console.print(f"[yellow]media: not serving — cannot load the media stack "
+                      f"({type(exc).__name__}: {exc}). Run 'animica media doctor'.[/yellow]")
         return
-    caps = probe_capabilities()
-    if not caps:
-        return  # nothing installed to render with; `animica media doctor` explains how to enable
+
     gateway = os.environ.get("ANIMICA_MEDIA_GATEWAY", "https://animica.dev")
+    wait_secs = float(os.environ.get("ANIMICA_MEDIA_WAIT_SECS", "30") or 30)
 
     def _run():
+        # WAIT for capabilities instead of giving up. _ensure_media_models downloads the
+        # diffusion model in a BACKGROUND thread, so probing here (moments after `up`
+        # starts) sees no image backend on a fresh node — the old code returned silently
+        # and that node never rendered anything for the rest of its life. The gateway
+        # showed "0 renderers online" while nodes were up and idle.
+        announced_wait = False
+        while True:
+            try:
+                caps = probe_capabilities()
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[yellow]media: capability probe failed "
+                              f"({type(exc).__name__}: {exc}); retrying[/yellow]")
+                caps = []
+            if caps:
+                break
+            if not announced_wait:
+                announced_wait = True
+                console.print(
+                    "[dim]media: nothing renderable yet (the image model is still "
+                    "installing, or ffmpeg is missing) — waiting, will join the queue "
+                    "as soon as this box can render. 'animica media doctor' explains "
+                    "what is missing.[/dim]")
+            time.sleep(max(5.0, wait_secs))
+
+        console.print(f"[dim]media: serving jobs to {gateway} — capabilities: "
+                      f"{', '.join(caps)}[/dim]")
         try:
-            run_miner(gateway, caps=caps, poll_interval=float(os.environ.get("ANIMICA_MEDIA_POLL", "4")),
+            # run_miner re-probes periodically and re-registers when capabilities grow,
+            # so a model that finishes downloading later is advertised without a restart.
+            run_miner(gateway, caps=caps,
+                      poll_interval=float(os.environ.get("ANIMICA_MEDIA_POLL", "4")),
                       log=lambda m: console.print(f"[dim]media-miner: {m}[/dim]"))
         except Exception as e:  # never take down `up`
-            console.print(f"[dim]media-miner: stopped ({e})[/dim]")
+            console.print(f"[yellow]media-miner: stopped ({e}) — this node is no longer "
+                          f"serving media jobs[/yellow]")
 
-    console.print(f"[dim]media: serving jobs to {gateway} — capabilities: {', '.join(caps)}[/dim]")
     threading.Thread(target=_run, name="animica-media-miner", daemon=True).start()
 
 
