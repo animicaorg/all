@@ -177,6 +177,16 @@ class _ActionRow extends StatelessWidget {
             onTap: () => context.push('/buy'),
           ),
         ),
+        const SizedBox(width: 12),
+        // Pair with animica.xyz (or any Animica site) by scanning the QR code
+        // it shows — the mobile counterpart of the browser extension.
+        Expanded(
+          child: _ActionButton(
+            icon: Icons.qr_code_scanner,
+            label: 'Connect',
+            onTap: () => context.push('/connect'),
+          ),
+        ),
       ],
     );
   }
@@ -224,7 +234,7 @@ class _CreateFirstAccount extends ConsumerWidget {
             Text('Welcome to Animica Wallet', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(
-              'Create a new SPHINCS-128s wallet to get started, or import one from your CLI / Chrome extension on the Settings tab.',
+              'Create a new ML-DSA-65 (FIPS 204) wallet to get started, or import one from your CLI / Chrome extension on the Settings tab.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Theme.of(context).colorScheme.outline),
             ),
@@ -232,10 +242,20 @@ class _CreateFirstAccount extends ConsumerWidget {
             FilledButton.icon(
               icon: const Icon(Icons.add),
               label: const Text('Create new wallet'),
+              // A bare `await` in a VoidCallback discards the failing Future to
+              // the root zone — logcat only. That is why this button read as
+              // completely dead rather than as an error.
               onPressed: () async {
-                await ref
-                    .read(accountsProvider.notifier)
-                    .createMlDsa65Account('Account 1');
+                try {
+                  await ref
+                      .read(accountsProvider.notifier)
+                      .createMlDsa65Account('Account 1');
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Could not create wallet: $e')),
+                  );
+                }
               },
             ),
           ],

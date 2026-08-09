@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (targetSdk 31+) backup / device-transfer rules.
+
+  Exclude flutter_secure_storage's encrypted shared-preferences from BOTH cloud
+  backup and device-to-device transfer. Those prefs hold AES/AEAD ciphertext
+  whose master key lives in the Android Keystore and never leaves the device;
+  restoring the ciphertext onto another device (without the key) produces a
+  BadPaddingException: BAD_DECRYPT on the next read(). A wallet's secrets must
+  never sync off-device anyway, so exclusion is both the bug fix and correct.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="FlutterSecureStorage.xml"/>
+        <exclude domain="sharedpref" path="FlutterSecureKeyStorage.xml"/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="FlutterSecureStorage.xml"/>
+        <exclude domain="sharedpref" path="FlutterSecureKeyStorage.xml"/>
+    </device-transfer>
+</data-extraction-rules>

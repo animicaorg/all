@@ -57,8 +57,47 @@ class MlDsa65 {
     return _initFuture;
   }
 
+  // `atob` / `btoa` are WEB globals. They do NOT exist in the embedded engines
+  // (QuickJS on Android and desktop, JSC on iOS) and nothing else supplies them:
+  // not the noble bundle, not flutter_js. Every keygen/sign/verify wrapper below
+  // marshals its bytes as base64 strings, so without this shim the FIRST statement
+  // of each throws `ReferenceError: atob is not defined` and the wallet cannot
+  // create an account at all — which is exactly what shipped in 0.2.3, silently.
+  //
+  // Injected before the bundle eval so it is present no matter what the bundle
+  // touches at load time. Pure JS, no engine features beyond String/Array.
+  static const String _base64Shim = r'''
+    if (typeof atob === 'undefined' || typeof btoa === 'undefined') {
+      var _A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      globalThis.btoa = function (s) {
+        var o = '';
+        for (var i = 0; i < s.length; i += 3) {
+          var c1 = s.charCodeAt(i), c2 = s.charCodeAt(i + 1), c3 = s.charCodeAt(i + 2);
+          o += _A[c1 >> 2] + _A[((c1 & 3) << 4) | ((c2 || 0) >> 4)];
+          o += isNaN(c2) ? '=' : _A[((c2 & 15) << 2) | ((c3 || 0) >> 6)];
+          o += isNaN(c3) ? '=' : _A[c3 & 63];
+        }
+        return o;
+      };
+      globalThis.atob = function (s) {
+        s = s.replace(/=+$/, '');
+        var o = '', b = 0, bits = 0;
+        for (var i = 0; i < s.length; i++) {
+          b = (b << 6) | _A.indexOf(s[i]);
+          bits += 6;
+          if (bits >= 8) { bits -= 8; o += String.fromCharCode((b >> bits) & 255); }
+        }
+        return o;
+      };
+    }
+  ''';
+
   static Future<void> _initialise() async {
     final rt = getJavascriptRuntime();
+    final shimRes = rt.evaluate(_base64Shim);
+    if (shimRes.isError) {
+      throw StateError('ml_dsa_65 base64 shim failed: ${shimRes.stringResult}');
+    }
     final bundle = await rootBundle.loadString(assetPath);
     final res = rt.evaluate(bundle);
     if (res.isError) {
@@ -74,6 +113,20 @@ class MlDsa65 {
     // Some QuickJS builds don't ship a crypto.getRandomValues — noble's
     // keygen takes an explicit seed so we never call into the engine's
     // RNG. (Sign uses sk-derived randomness, also seed-free.)
+
+    // Prove the base64 bridge round-trips BEFORE any key material depends on it.
+    // Every wrapper passes bytes through atob/btoa, so a broken or absent shim
+    // means silently wrong keys or a thrown ReferenceError deep inside a user
+    // action. Failing here instead surfaces it at startup with a clear message,
+    // and costs one tiny evaluate. The vector covers the 0/1/2-byte padding cases
+    // and a byte >0x7f, which is where a hand-rolled base64 usually breaks.
+    final selfTest = rt.evaluate(
+        'atob(btoa("\\u0000\\u0001\\u00ff\\u007f")).split("")'
+        '.map(function(c){return c.charCodeAt(0);}).join(",")');
+    if (selfTest.isError || selfTest.stringResult != '0,1,255,127') {
+      throw StateError('ml_dsa_65 base64 bridge is broken '
+          '(atob/btoa round-trip gave: ${selfTest.stringResult})');
+    }
     _rt = rt;
   }
 

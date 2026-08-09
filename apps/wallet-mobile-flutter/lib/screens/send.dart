@@ -76,23 +76,36 @@ class _SendScreenState extends ConsumerState<SendScreen> {
     setState(() => _busy = true);
     try {
       final rpc = ref.read(rpcProvider);
+      // The chain identity (genesis hash / network / fork id) is what the
+      // signature is bound to — see AnimicaChainContext. It is cached per RPC
+      // client, so this is a round trip once per session, not once per send.
+      // Never fall back to a guess: signing without it produces a tx the node
+      // rejects with BadSignature.
+      final ctx = await chainContextFor(rpc);
       final nonce = await rpc.getPendingNonce(from.address);
-      final chainId = await rpc.chainId();
       final body = buildTransferBody(
         from: from.address,
         to: to,
         amountNanos: amountNanos,
         nonce: nonce,
-        chainId: chainId,
+        chainId: ctx.chainId,
       );
-      final txHash = await signAndBroadcast(rpc: rpc, account: from, body: body);
+      final txHash = await signAndBroadcast(
+        rpc: rpc,
+        account: from,
+        body: body,
+        chainContext: ctx,
+      );
       // Best-effort balance refresh after a few seconds.
       Future.delayed(const Duration(seconds: 3), () {
         if (mounted) ref.refresh(balanceProvider);
       });
       if (mounted) setState(() => _txHash = txHash);
     } on RpcError catch (e) {
-      if (mounted) setState(() => _err = 'Broadcast failed: ${e.message}');
+      // Covers both the chain-identity fetch and the broadcast; the RPC
+      // messages are already written for a human ("Could not read the chain
+      // identity needed to sign …"), so don't bury them under a wrong prefix.
+      if (mounted) setState(() => _err = 'Could not send: ${e.message}');
     } catch (e) {
       if (mounted) setState(() => _err = 'Send failed: $e');
     } finally {

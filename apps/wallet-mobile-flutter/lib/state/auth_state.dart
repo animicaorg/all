@@ -45,10 +45,16 @@ class AuthNotifier extends AsyncNotifier<AuthStatus> {
 
   /// Returns true on success.
   Future<bool> unlock(String password) async {
-    final key = await ref.read(authServiceProvider).verify(password);
-    if (key == null) return false;
-    state = AsyncData(AuthStatus.unlocked(key));
-    return true;
+    try {
+      final key = await ref.read(authServiceProvider).verify(password);
+      if (key == null) return false;
+      state = AsyncData(AuthStatus.unlocked(key));
+      return true;
+    } on WalletStorageCorruptedException catch (e, st) {
+      // Undecryptable local storage — route to the recovery screen.
+      state = AsyncError(e, st);
+      return false;
+    }
   }
 
   void lock() {

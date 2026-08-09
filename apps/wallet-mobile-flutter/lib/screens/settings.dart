@@ -78,18 +78,18 @@ class SettingsScreen extends ConsumerWidget {
                   'New wallet label',
                   'Account ${(accountsAsync.value?.length ?? 0) + 1}');
               if (label == null) return;
-              if (scheme == 'ml_dsa_65') {
+              // Only ml_dsa_65 (0x1003) is spendable on-chain. The legacy
+              // dilithium3/sphincs stub schemes are forgeable and permanently
+              // strand funds, so new wallets are always ML-DSA-65.
+              try {
                 await ref
                     .read(accountsProvider.notifier)
                     .createMlDsa65Account(label);
-              } else if (scheme == 'sphincs') {
-                await ref
-                    .read(accountsProvider.notifier)
-                    .createSphincsAccount(label);
-              } else {
-                await ref
-                    .read(accountsProvider.notifier)
-                    .createDilithium3Account(label);
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Could not create wallet: $e')),
+                );
               }
             },
           ),
@@ -161,20 +161,6 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: const Text(
                   'Real post-quantum lattice signatures. Default since chain v2.'),
               onTap: () => Navigator.pop(c, 'ml_dsa_65'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.warning_amber),
-              title: const Text('SPHINCS-SHAKE-128s (deprecated)'),
-              subtitle: const Text(
-                  'Legacy stub kept only for receiving on existing addresses.'),
-              onTap: () => Navigator.pop(c, 'sphincs'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.warning_amber),
-              title: const Text('Dilithium3 stub (deprecated)'),
-              subtitle: const Text(
-                  'Legacy commitment-stub scheme; do not use for new wallets.'),
-              onTap: () => Navigator.pop(c, 'dilithium3'),
             ),
             const SizedBox(height: 8),
           ],

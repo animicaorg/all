@@ -8,7 +8,6 @@ import 'dart:math' as math;
 
 import '../constants.dart';
 import '../models/account.dart';
-import '../services/keys.dart';
 import '../services/ml_dsa_65.dart';
 import '../services/rpc.dart';
 import 'auth_state.dart';
@@ -35,47 +34,37 @@ class AccountsNotifier extends AsyncNotifier<List<Account>> {
 
   /// Create a new ML-DSA-65 (FIPS 204) account — chain v2 default.
   Future<Account> createMlDsa65Account(String label) async {
-    final rnd = math.Random.secure();
-    final seed = Uint8List.fromList(
-      List<int>.generate(MlDsa65.seedLen, (_) => rnd.nextInt(256)),
-    );
-    final kp = await MlDsa65.keygen(seed);
-    final acc = Account(
-      label: label,
-      algId: AnimicaConfig.algIdMlDsa65,
-      publicKey: kp.publicKey,
-      secretKey: kp.secretKey,
-    );
-    await ref.read(vaultProvider).add(acc);
-    state = AsyncData([...?state.value, acc]);
-    return acc;
+    // Publish loading/error into the provider. A method that merely THROWS never
+    // becomes AsyncError, so the screens' existing `error:` branches never fired
+    // and a failed creation was indistinguishable from a no-op: 0.2.3 shipped with
+    // keygen throwing on every call (missing atob/btoa in the JS engine) and the
+    // button looked simply dead. Whatever breaks next must be visible.
+    state = const AsyncLoading<List<Account>>().copyWithPrevious(state);
+    try {
+      final rnd = math.Random.secure();
+      final seed = Uint8List.fromList(
+        List<int>.generate(MlDsa65.seedLen, (_) => rnd.nextInt(256)),
+      );
+      final kp = await MlDsa65.keygen(seed);
+      final acc = Account(
+        label: label,
+        algId: AnimicaConfig.algIdMlDsa65,
+        publicKey: kp.publicKey,
+        secretKey: kp.secretKey,
+      );
+      await ref.read(vaultProvider).add(acc);
+      state = AsyncData([...?state.value, acc]);
+      return acc;
+    } catch (e, st) {
+      state = AsyncError<List<Account>>(e, st).copyWithPrevious(state);
+      rethrow; // callers show the message; the provider records it.
+    }
   }
 
-  Future<Account> createSphincsAccount(String label) async {
-    final kp = generateSphincsKeypair();
-    final acc = Account(
-      label: label,
-      algId: AnimicaConfig.algIdSphincs,
-      publicKey: kp.publicKey,
-      secretKey: kp.secretKey,
-    );
-    await ref.read(vaultProvider).add(acc);
-    state = AsyncData([...?state.value, acc]);
-    return acc;
-  }
-
-  Future<Account> createDilithium3Account(String label) async {
-    final kp = generateDilithium3Keypair();
-    final acc = Account(
-      label: label,
-      algId: AnimicaConfig.algIdDilithium3,
-      publicKey: kp.publicKey,
-      secretKey: kp.secretKey,
-    );
-    await ref.read(vaultProvider).add(acc);
-    state = AsyncData([...?state.value, acc]);
-    return acc;
-  }
+  // Legacy stub-scheme creation (sphincs_shake_128s / dilithium3) has been
+  // removed: those schemes are forgeable, rejected by the node, and permanently
+  // strand funds. New wallets are always ML-DSA-65 (createMlDsa65Account).
+  // Existing legacy wallets can still be imported and read via importFromHex.
 
   Future<Account> importFromHex({
     required String label,

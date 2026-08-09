@@ -9,19 +9,26 @@ class AnimicaConfig {
   static const int chainId =
       int.fromEnvironment('ANIMICA_CHAIN_ID', defaultValue: 1);
 
-  /// Primary + secondary public JSON-RPC endpoints. The client tries them
-  /// in order and remembers the last-good one for the session, so a single
-  /// flap doesn't punish every subsequent call. `mobile.animica.org/rpc`
-  /// is a smaller node optimized for mobile wallet traffic; `rpc.animica.org/rpc`
-  /// is the general public node and acts as the failover.
+  /// Public JSON-RPC endpoints, tried in order; the client remembers the
+  /// last-good one and short-circuits endpoints that recently failed at the
+  /// transport level (see RpcClient), so one dead host never stalls a send.
+  /// `rpc.animica.org` is the canonical public node (read-through cache with
+  /// node fallback); `animica.dev/rpc` proxies the same node directly.
+  /// `mobile.animica.org` is kept last: its DNS pointed at a decommissioned
+  /// box in 2026-07 and made it a 12-second tarpit as the old PRIMARY —
+  /// every wallet session stalled and flaky networks saw sends fail outright.
   static const List<String> rpcEndpoints = [
     String.fromEnvironment(
       'ANIMICA_RPC_URL_PRIMARY',
-      defaultValue: 'https://mobile.animica.org/rpc',
+      defaultValue: 'https://rpc.animica.org/rpc',
     ),
     String.fromEnvironment(
       'ANIMICA_RPC_URL_FALLBACK',
-      defaultValue: 'https://rpc.animica.org/rpc',
+      defaultValue: 'https://animica.dev/rpc',
+    ),
+    String.fromEnvironment(
+      'ANIMICA_RPC_URL_TERTIARY',
+      defaultValue: 'https://mobile.animica.org/rpc',
     ),
   ];
 
@@ -29,16 +36,38 @@ class AnimicaConfig {
   /// a single string. Points to the primary.
   static String get rpcUrl => rpcEndpoints.first;
 
-  /// Buy gateway URL — opened by the Buy screen.
+  /// Buy gateway URL — the legacy NOWPayments desk. Kept only as a
+  /// historical reference; it currently serves 503, so the Buy screen no
+  /// longer links to it (see lib/screens/buy.dart).
   static const String buyGatewayUrl = String.fromEnvironment(
     'ANIMICA_BUY_URL',
     defaultValue: 'https://buy.animica.org',
+  );
+
+  /// PayPal on-ramp desk base. nginx on animica.dev strips the `/api`
+  /// prefix and proxies to the buy-sol Fastify service (loopback :4510),
+  /// so the wallet talks to `/api/onramp/...`. These routes are DORMANT
+  /// until the operator arms the rail (ONRAMP_ENABLED + ONRAMP_PAYPAL_ENABLED);
+  /// the Buy screen degrades to an "almost ready" state on 404/503.
+  static const String onrampApiUrl = String.fromEnvironment(
+    'ANIMICA_ONRAMP_URL',
+    defaultValue: 'https://animica.dev/api/onramp',
   );
 
   /// Marketplace API for NFT lookups (per-wallet collection view).
   static const String marketplaceUrl = String.fromEnvironment(
     'ANIMICA_MARKETPLACE_URL',
     defaultValue: 'https://animica.xyz',
+  );
+
+  /// App Store / marketplace REST base (the `mkt/v1` root on animica.dev).
+  /// Both the store catalog/purchase routes (`/store/...`) and the wallet
+  /// challenge-login routes (`/auth/...`) hang off this. Content, icon and
+  /// APK-download URLs the API returns are ORIGIN-relative (`/api/mkt/v1/...`)
+  /// and are resolved against this base's origin by MarketplaceApi.
+  static const String storeApiUrl = String.fromEnvironment(
+    'ANIMICA_STORE_API_URL',
+    defaultValue: 'https://animica.dev/api/mkt/v1',
   );
 
   /// Block explorer link template — `{txHash}` and `{address}` are replaced.

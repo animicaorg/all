@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/auth_state.dart';
+import 'auth_error.dart';
 
 class UnlockScreen extends ConsumerStatefulWidget {
   const UnlockScreen({super.key});
@@ -58,7 +59,7 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
     return Scaffold(
       body: authAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Auth error: $e')),
+        error: (e, _) => AuthErrorContent(e),
         data: (auth) {
           final isSetup = !auth.configured;
           return SafeArea(
