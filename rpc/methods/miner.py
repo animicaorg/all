@@ -5994,13 +5994,48 @@ def miner_get_block_template(*args: Any, **kwargs: Any) -> Dict[str, Any]:
         try:
             from consensus.rewards import compute_block_reward  # type: ignore[import-not-found]
 
+            from consensus.rewards import (  # type: ignore[import-not-found]
+                FOUNDATION_TREASURY_ADDRESS,
+                service_carve_pct,
+            )
+
             rewards = compute_block_reward(
                 chain_id=int(ctx.cfg.chain_id),
                 height=int(header_template.height),
                 params=ctx.params,
             )
             if rewards:
-                coinbase["amount"] = int(rewards[0][1])
+                # What the miner ACTUALLY RECEIVES, which is not rewards[0][1].
+                #
+                # Two corrections. First, identify the miner slice by ADDRESS rather than
+                # by position: the treasury (and any AICF) output shares this list, and a
+                # future ordering change would silently turn a treasury amount into the
+                # advertised miner reward.
+                #
+                # Second, and this is the one that matters from height 75,000:
+                # compute_block_reward does NOT apply FORK_SERVICE_CARVE — that happens
+                # during block application — so the raw miner slice OVERSTATES income by
+                # the size of the carve. At 75,000 that is 225 ANM advertised against
+                # 150 ANM received, a 50% overstatement. A pool crediting shares from
+                # this figure would pay out 75 ANM/block it never received, out of its
+                # own hot wallet.
+                _sys_addrs = (ctx.params or {}).get("system_addresses", {}) or {}
+                _treasury = _sys_addrs.get("treasury")
+                _aicf = _sys_addrs.get("aicf_treasury")
+                _miner_amt = 0
+                _total = 0
+                for _addr, _amt in rewards:
+                    _amt = int(_amt)
+                    _total += _amt
+                    if _addr in (FOUNDATION_TREASURY_ADDRESS, _treasury, _aicf):
+                        continue
+                    _miner_amt += _amt
+                _pct = service_carve_pct(
+                    max(1, int(header_template.height)), chain_id=int(ctx.cfg.chain_id)
+                )
+                if _pct > 0:
+                    _miner_amt -= (_total * _pct) // 100
+                coinbase["amount"] = max(0, int(_miner_amt))
         except Exception:
             coinbase["amount"] = None
 
