@@ -148,20 +148,35 @@ def foundation_split_pct(height: int, *, chain_id: int = 1) -> int:
 # from the miner's share.
 SERVICE_CARVE_PCT_V1 = 25
 
-# Where an unclaimed slice goes: the FOUNDATION TREASURY, by explicit operator decision —
-# "if there is no inference request at all it goes to the treasury". It is also the
-# settlement authority for these anchors (see FORK_VPN_RELAY_REWARDS below), so an
-# undistributed service slice returns to the party responsible for distributing it, and
-# the address is verifiably spendable today rather than a fabricated one that would burn
-# the funds permanently.
+# A DEDICATED escrow address, distinct from the foundation treasury, holding value that is
+# OWED TO PROVIDERS. It is not the destination for every unclaimed slice — see
+# consensus/service_carve.py for the routing, which is two-way by operator decision:
 #
-# CONSEQUENCE WORTH STATING: while no provider claims anything, the treasury receives
-# 25% + 25% = 50% of every block. The service slice is only distinguishable from a
-# treasury increase by whether anchors ever pay it out, and the treasury balance alone
-# cannot tell you which happened. A dedicated escrow address (needing an offline
-# ml_dsa_65 ceremony with the key in cold custody) would make that a public scoreboard;
-# it can be swapped in later without changing the rule.
-SERVICE_ESCROW_ADDRESS = FOUNDATION_TREASURY_ADDRESS
+#   * no inference requests settled in the block -> the whole slice goes to the FOUNDATION
+#     TREASURY ("if there is no inference request at all it goes to the treasury"). Nobody
+#     is owed anything, so it is operator revenue. Combined with the treasury's own separate
+#     25%, the operator receives 50% of such a block — which is every block today.
+#   * settled but not fully claimed -> the remainder is owed to providers and holds HERE.
+#
+# WHY A SEPARATE ADDRESS AT ALL. If both cases paid the treasury, no observer — including
+# the operator — could tell from a balance whether the service slice had ever reached a
+# provider or had merely piled up unclaimed; the two are the same number in the same
+# account. Splitting them makes it continuously auditable with no extra bookkeeping: this
+# balance can only move when inference actually happened.
+#
+# THE HARD REQUIREMENT IS SPENDABILITY. This is not a burn address and must never become
+# one: from the activation height it accrues 25% of every block forever, so an address that
+# does not decode, or whose key nobody holds, destroys that share permanently and silently.
+# The literal below is therefore a real ml_dsa_65 (0x1003) account whose key exists,
+# generated 2026-08-09 and verified before being written here: the 4032-byte secret produces
+# a 3309-byte signature that verifies under the 1952-byte public key, the address derives
+# from that exact public key, and it decodes to 32 non-zero bytes distinct from the
+# treasury's. Do not edit this string by hand — a single altered character yields a
+# well-formed bech32m address that nobody can spend, which is the one failure mode here that
+# cannot be undone after the fact.
+SERVICE_ESCROW_ADDRESS = (
+    "anim1zqpkeju8kw8h708mc0z72kap8vfrhqqez7444yg9v63v8s3shsj0f2s3p6gjp"
+)
 
 
 def service_carve_pct(height: int, *, chain_id: int = 1) -> int:

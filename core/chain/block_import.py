@@ -2875,6 +2875,7 @@ class BlockImporter:
                     # full reward" was possible. Below H `_carve_pct` is 0, so the
                     # behaviour is byte-identical to 9.4.x and history replays unchanged.
                     from consensus.rewards import (
+                        FOUNDATION_TREASURY_ADDRESS,
                         SERVICE_ESCROW_ADDRESS,
                         service_carve_pct,
                     )
@@ -2919,7 +2920,15 @@ class BlockImporter:
                                 total_subsidy=_total_subsidy,
                                 pct=_carve_pct,
                                 anchor_outputs=_anchor_outputs,
+                                # Nothing claimed -> treasury (operator rule: "if there is
+                                # no inference request at all it goes to the treasury").
+                                # Partially claimed -> the dedicated escrow holds what is
+                                # owed to providers. Both are consensus constants, so every
+                                # node routes identically.
                                 escrow_address=address_to_bytes(SERVICE_ESCROW_ADDRESS),
+                                treasury_address=address_to_bytes(
+                                    FOUNDATION_TREASURY_ADDRESS
+                                ),
                             )
                         else:
                             # Pre-fork path, unchanged: pay only what anchors claim.

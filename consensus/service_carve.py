@@ -22,6 +22,19 @@ provably emission-conserving and is worth reading on its own:
 so paid + residual == carve exactly, and miner + carve == the pre-carve miner slice.
 Nothing is minted, nothing is burned, and there is no floating point anywhere.
 
+WHERE THE RESIDUAL GOES depends on whether anything was owed, because the two cases mean
+different things and the operator specified them separately:
+
+  * NO inference requests settled in the block (paid == 0) — nobody is owed anything, so
+    the slice is operator revenue and goes to the FOUNDATION TREASURY. This is the common
+    case today and the operator's stated rule.
+  * Requests settled but did not consume the slice (0 < paid < carve) — the remainder is
+    owed to providers, so it holds at the DEDICATED SERVICE ESCROW address.
+
+"Escrow" is used in its literal sense: it holds only value that is owed to someone. That
+distinction is also what makes the escrow balance readable — it rises only when providers
+were active, so it never has to be disentangled from ordinary treasury movement.
+
 THE BASE MATTERS. The carve is 25% OF THE BLOCK, so it is measured against the
 reconstructed pre-split subsidy (miner + treasury + aicf), not against the post-treasury
 miner slice — 25% of 75% would be 18.75% of the block. With the treasury already taking
@@ -63,16 +76,22 @@ def split_carve(
     pct: int,
     anchor_outputs: Optional[Sequence[Output]] = None,
     escrow_address: bytes,
+    treasury_address: Optional[bytes] = None,
 ) -> Tuple[int, List[Output], int]:
     """Return (new_miner_reward, service_outputs, carve_total).
 
     `anchor_outputs` are the already-capped, already-scaled settlement outputs for this
     block — whatever `scale_settlement_outputs` produced. They are trusted to be within
     the cap; this function only ensures they never exceed the carve, and routes whatever
-    is left to escrow.
+    is left to the correct residual account.
 
-    An empty or absent anchor set is the ordinary case today and is NOT an error: the
-    whole carve goes to escrow, and the miner still loses it. That is the point.
+    An empty or absent anchor set is the ordinary case today and is NOT an error: nothing
+    was owed, so the whole carve goes to `treasury_address`, and the miner still loses it.
+    That is the point. When some — but not all — of the slice was claimed, the remainder is
+    owed to providers and holds at `escrow_address` instead.
+
+    `treasury_address` defaults to `escrow_address` only so existing callers keep working;
+    consensus always passes it explicitly.
     """
     carve = carve_amount(total_subsidy, pct)
     if carve <= 0:
@@ -103,7 +122,14 @@ def split_carve(
 
     residual = carve - paid
     if residual > 0:
-        outputs.append((bytes(escrow_address), residual))
+        # Nothing owed -> treasury (operator revenue). Something owed but unclaimed ->
+        # escrow (held for providers). See the module docstring; this one branch is the
+        # whole difference between the two accounts.
+        if paid == 0:
+            dest = treasury_address if treasury_address is not None else escrow_address
+        else:
+            dest = escrow_address
+        outputs.append((bytes(dest), residual))
 
     total = sum(a for _, a in outputs)
     if total != carve:

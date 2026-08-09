@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from consensus.rewards import (
+    FOUNDATION_TREASURY_ADDRESS,
     SERVICE_CARVE_PCT_V1,
     SERVICE_ESCROW_ADDRESS,
     service_carve_pct,
@@ -22,6 +23,7 @@ from core.utils.address import address_to_bytes
 
 BELOW, AT = 74_999, 75_000
 ESCROW = address_to_bytes(SERVICE_ESCROW_ADDRESS)
+TREASURY_ADDR = address_to_bytes(FOUNDATION_TREASURY_ADDRESS)
 PROVIDER = b"\x44" * 32
 # The real mainnet genesis-epoch numbers. FORK_TREASURY_25 takes 25% inside
 # compute_block_reward, so the settlement region sees TOTAL=300 and MINER=225 ANM.
@@ -53,6 +55,34 @@ def test_the_escrow_address_resolves_to_a_real_32_byte_account():
     """An address that does not decode, or a zero key, BURNS the residual every block."""
     assert len(ESCROW) == 32
     assert any(ESCROW), "escrow must not be the zero account"
+
+
+def test_the_escrow_address_uses_the_only_spendable_signature_scheme():
+    """The escrow accrues 25% of every block forever, so it must be spendable.
+
+    ml_dsa_65 (0x1003) is the only scheme on this chain whose signatures are actually
+    verified; 0x1002 is a forgeable commitment stub and sphincs_shake_128s addresses at
+    this account length are the stranded class. A typo in the literal still decodes as
+    valid bech32m, so checking the scheme id is what catches a hand-edited address before
+    it silently swallows the slice.
+    """
+    from pq.py.address import decode_address
+
+    rec = decode_address(SERVICE_ESCROW_ADDRESS)
+    assert rec.alg_id == 0x1003, f"escrow must be ml_dsa_65, got {hex(rec.alg_id)}"
+
+
+def test_the_escrow_is_a_dedicated_address_not_the_treasury():
+    """The escrow exists to be independently auditable.
+
+    If the residual landed in the foundation treasury the balance could not distinguish
+    "the slice reached providers" from "the slice piled up unclaimed", which is precisely
+    the question this fork exists to answer. Keep them distinct.
+    """
+    from consensus.rewards import FOUNDATION_TREASURY_ADDRESS
+
+    assert SERVICE_ESCROW_ADDRESS != FOUNDATION_TREASURY_ADDRESS
+    assert ESCROW != address_to_bytes(FOUNDATION_TREASURY_ADDRESS)
 
 
 # --- the arithmetic ---------------------------------------------------------
@@ -165,15 +195,54 @@ def test_the_entire_slice_is_paid_out_every_block():
 
 
 def test_with_no_inference_requests_the_whole_slice_goes_to_the_treasury():
-    """Stated requirement. ESCROW is the foundation treasury address, so while nothing is
-    claimed the treasury receives 25% + 25% = 50% of every block."""
-    from consensus.rewards import FOUNDATION_TREASURY_ADDRESS
+    """Stated requirement, verbatim: "if there is no inference request at all it goes to
+    the treasury". It is still withheld from the miner in full — it does not fall back
+    into the coinbase, which is the behaviour this fork exists to remove.
 
-    assert ESCROW == address_to_bytes(FOUNDATION_TREASURY_ADDRESS)
+    Nothing is owed to any provider in this block, so the slice is operator revenue and
+    must NOT sit in escrow. Combined with the treasury's own separate 25%, the operator
+    receives 50% of such a block.
+    """
     _, outs, carve = split_carve(miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
-                                 anchor_outputs=None, escrow_address=ESCROW)
-    assert outs == [(ESCROW, carve)]
-    assert TREASURY + carve == TOTAL * 50 // 100
+                                 anchor_outputs=None, escrow_address=ESCROW,
+                                 treasury_address=TREASURY_ADDR)
+    assert outs == [(TREASURY_ADDR, carve)]
+    assert ESCROW not in dict(outs), "nothing is owed, so nothing may sit in escrow"
+    assert carve == TOTAL * 25 // 100
+    assert TREASURY + carve == TOTAL * 50 // 100, "operator take: its own 25% plus the slice"
+
+
+def test_a_partially_claimed_slice_holds_the_remainder_in_escrow():
+    """When providers DID settle but did not consume the slice, the remainder is owed to
+    providers rather than earned by the operator, so it holds at the dedicated escrow.
+
+    This is the branch that makes the escrow balance meaningful: it can only rise when
+    inference actually happened, so it never has to be disentangled from treasury flow.
+    """
+    claim = [(PROVIDER, 1_000_000_000)]  # 1 ANM of a 75 ANM slice
+    _, outs, carve = split_carve(miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
+                                 anchor_outputs=claim, escrow_address=ESCROW,
+                                 treasury_address=TREASURY_ADDR)
+    by_addr = dict(outs)
+    assert by_addr[PROVIDER] == 1_000_000_000
+    assert by_addr[ESCROW] == carve - 1_000_000_000
+    assert TREASURY_ADDR not in by_addr, "the treasury does not take what providers are owed"
+    assert sum(a for _, a in outs) == carve
+
+
+def test_the_two_residual_destinations_are_actually_different_accounts():
+    """The routing above is only meaningful if the accounts differ — the whole point of a
+    dedicated escrow. A regression to escrow == treasury would make both tests above pass
+    vacuously, so assert the distinction directly."""
+    assert ESCROW != TREASURY_ADDR
+    _, no_claim, _ = split_carve(miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
+                                 anchor_outputs=None, escrow_address=ESCROW,
+                                 treasury_address=TREASURY_ADDR)
+    _, partial, _ = split_carve(miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
+                                anchor_outputs=[(PROVIDER, 1)], escrow_address=ESCROW,
+                                treasury_address=TREASURY_ADDR)
+    assert no_claim[0][0] == TREASURY_ADDR
+    assert dict(partial)[ESCROW] > 0
 
 
 def test_the_carve_can_never_drive_the_miner_negative():
