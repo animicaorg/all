@@ -396,3 +396,74 @@ async def test_active_miner_count_ignores_socket_pileup():
         {"timestamp": now - 3600, "status": "accepted", "address": "anim1stale"}
     )
     assert metrics._active_miner_count(900.0) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_miner_between_blocks_is_still_counted():
+    """THE DEFECT: num_miners required an accepted share inside 15 minutes.
+
+    Only sessions that opted into sub-block shares get a target they hit often.
+    Every other client mines the FULL block target, so "an accepted share" means
+    "found a block" — at a small share of pool hashrate that is hours apart. Such a
+    miner mines continuously and used to disappear from the count between blocks.
+    """
+    now = time.time()
+    # Live authorized session, no share THIS session, last block found 40 min ago —
+    # i.e. mining the whole time, just unlucky inside the display window.
+    snaps = [{
+        "authorized": True,
+        "address": "anim1steadyminer",
+        "shares_accepted": 0,
+        "last_inbound": now - 5,
+    }]
+    metrics = PoolMetrics(
+        PoolConfig(db_url=""), DummyJobManager(), StaticSessionServer(snaps)
+    )
+    metrics._share_events.append(
+        {"timestamp": now - 2400, "status": "accepted", "address": "anim1steadyminer"}
+    )
+    assert metrics._active_miner_count(900.0) == 1, "a miner between blocks vanished"
+
+    p = metrics._miner_presence(900.0)
+    assert p["proven"] == 1 and p["unproven"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fabricated_addresses_still_cannot_inflate_num_miners():
+    """The 9.0.10 guard must survive the fix: mining.authorize proves nothing, so a
+    live authorized session with NO work anywhere must not raise num_miners. It is
+    reported under connected_miners instead, where its unverified status is visible.
+    """
+    now = time.time()
+    snaps = [
+        {"authorized": True, "address": f"anim1fabricated{i}",
+         "shares_accepted": 0, "last_inbound": now - 1}
+        for i in range(50)
+    ]
+    metrics = PoolMetrics(
+        PoolConfig(db_url=""), DummyJobManager(), StaticSessionServer(snaps)
+    )
+    p = metrics._miner_presence(900.0)
+    assert p["proven"] == 0, "fabricated addresses inflated the proven miner count"
+    assert p["connected"] == 50 and p["unproven"] == 50
+
+
+@pytest.mark.asyncio
+async def test_idle_sockets_are_not_live_miners():
+    """The 2026-08-06 shape: sockets that authorized then went silent. Liveness must
+    come from last_inbound; last_seen is touched by our OWN keepalives every ~45s, so
+    a session idle for an hour still has a fresh last_seen and must NOT count."""
+    now = time.time()
+    snaps = [{
+        "authorized": True,
+        "address": f"anim1idle{i}",
+        "shares_accepted": 0,
+        "last_inbound": now - 3600,   # silent for an hour
+        "last_seen": now - 1,         # our keepalive touched it a second ago
+    } for i in range(835)]
+    metrics = PoolMetrics(
+        PoolConfig(db_url=""), DummyJobManager(), StaticSessionServer(snaps)
+    )
+    p = metrics._miner_presence(900.0)
+    assert p["live_sessions"] == 0, "last_seen was trusted over last_inbound"
+    assert p["proven"] == 0 and p["connected"] == 0

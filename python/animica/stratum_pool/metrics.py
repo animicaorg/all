@@ -1185,6 +1185,67 @@ class PoolMetrics:
     def _expected_reward(self, job: object) -> int:
         return self._reward_from_raw(getattr(job, "raw", None))
 
+    def service_carve_preview(self, height: int, miner_slice: int) -> Optional[Dict[str, Any]]:
+        """What FORK_SERVICE_CARVE will pay per block, for advance notice to miners.
+
+        Every percentage and the activation height are read from consensus
+        (`consensus.rewards` / `core.network_params`), never restated here, so this
+        panel cannot drift from the rule it describes — the failure mode for a
+        "coming soon" notice is quietly advertising a split the chain does not
+        implement.
+
+        The block subsidy is reconstructed from the miner slice we are currently
+        paying and the miner's current percentage, because the subsidy itself does not
+        change at the activation height — only its division does. Returns None rather
+        than guessing if either input is unusable.
+        """
+        try:
+            from consensus.rewards import foundation_split_pct, service_carve_pct
+            from core.network_params import FORK_SERVICE_CARVE, get_activation_height
+        except Exception:  # noqa: BLE001
+            return None
+
+        h = int(height or 0)
+        slice_now = int(miner_slice or 0)
+        if h <= 0 or slice_now <= 0:
+            return None
+        activation = get_activation_height(FORK_SERVICE_CARVE, chain_id=self._config.chain_id)
+        if activation is None:
+            return None
+
+        treasury_now = int(foundation_split_pct(h, chain_id=self._config.chain_id))
+        carve_now = int(service_carve_pct(h, chain_id=self._config.chain_id))
+        miner_pct_now = 100 - treasury_now - carve_now
+        if miner_pct_now <= 0:
+            return None
+        total = (slice_now * 100) // miner_pct_now
+
+        # The split once the fork is live, from the same consensus functions.
+        at = int(activation)
+        treasury_after = int(foundation_split_pct(at, chain_id=self._config.chain_id))
+        carve_after = int(service_carve_pct(at, chain_id=self._config.chain_id))
+        miner_after_pct = 100 - treasury_after - carve_after
+
+        return {
+            "activation_height": at,
+            "active": h >= at,
+            "blocks_remaining": max(0, at - h),
+            "block_subsidy": total,
+            "inference_per_block": (total * carve_after) // 100,
+            "inference_pct": carve_after,
+            "miner_per_block": (total * miner_after_pct) // 100,
+            "miner_pct": miner_after_pct,
+            "treasury_per_block": (total * treasury_after) // 100,
+            "treasury_pct": treasury_after,
+            # What miners are paid TODAY, so the change is a comparison and not a claim.
+            "miner_per_block_now": slice_now,
+            "miner_pct_now": miner_pct_now,
+            # Unclaimed slices go to the treasury, so on a block with no inference
+            # requests the treasury receives both shares. Stated so the panel is not
+            # read as "25% is already flowing to providers".
+            "unclaimed_goes_to": "treasury",
+        }
+
     @staticmethod
     def _parse_worker_identity(raw_worker: object) -> tuple[Optional[str], Optional[str]]:
         text = str(raw_worker or "").strip()
@@ -2128,50 +2189,122 @@ class PoolMetrics:
         total = float(row[0] or 0.0) if row else 0.0
         return total / window_seconds if window_seconds > 0 else 0.0
 
-    def _active_miner_count(self, window_seconds: float = 900.0) -> int:
-        """Distinct miners genuinely present: addresses with an accepted share
-        inside the window (DB, falling back to in-memory events), plus
-        authorized sessions that have themselves produced an accepted share.
+    # How far back an address's accepted share still proves it is a real miner.
+    # A miner on the FULL block target only submits when it finds a block, so at a
+    # small share of pool hashrate its accepted shares are hours apart — far longer
+    # than the 15-minute display window. See _miner_presence().
+    MINER_PROOF_LOOKBACK_SECS = 86_400.0
 
-        Deliberately NOT the open-socket count — one client holding hundreds of
-        idle sockets is one miner. And the session half REQUIRES a real share:
-        `mining.authorize` accepts any well-formed-looking address without
-        proof, so counting merely-authorized sessions would let an abuser
-        re-inflate this number with fabricated addresses (the very defect this
-        replaced). Work, not a claimed identity, is what makes a miner."""
-        addresses: set = set()
+    # Inbound-byte silence after which a session is not a live client. Must be
+    # compared against `last_inbound`, NEVER `last_seen`: our own outbound keepalives
+    # touch last_seen every ~45s, so a last_seen check calls dead sockets alive.
+    LIVE_SESSION_IDLE_SECS = 900.0
+
+    def _accepted_share_addresses(self, window_seconds: float) -> Dict[str, float]:
+        """{address: most recent accepted-share timestamp} within the window."""
+        out: Dict[str, float] = {}
         cutoff = time.time() - window_seconds
         if self._db is not None:
             with self._db_lock:
                 rows = self._db.execute(
-                    "SELECT DISTINCT address FROM shares "
+                    "SELECT address, MAX(ts) FROM shares "
                     "WHERE status = 'accepted' AND ts >= ? "
                     "AND address IS NOT NULL AND address != '' "
-                    "AND address != 'unknown-address'",
+                    "AND address != 'unknown-address' "
+                    "GROUP BY address",
                     (cutoff,),
                 ).fetchall()
-            addresses.update(str(r[0]).strip() for r in rows if r and r[0])
+            for r in rows:
+                if r and r[0]:
+                    out[str(r[0]).strip()] = float(r[1] or 0.0)
         else:
             for ev in self._share_events:
-                if (
-                    float(ev.get("timestamp") or 0.0) >= cutoff
-                    and ev.get("status") == "accepted"
-                ):
+                ts = float(ev.get("timestamp") or 0.0)
+                if ts >= cutoff and ev.get("status") == "accepted":
                     addr = str(ev.get("address") or "").strip()
                     if addr and addr != "unknown-address":
-                        addresses.add(addr)
+                        if ts > out.get(addr, 0.0):
+                            out[addr] = ts
+        return out
+
+    def _miner_presence(self, window_seconds: float = 900.0) -> Dict[str, Any]:
+        """Who is actually mining here right now, and how well we can prove it.
+
+        The number this replaces required an accepted share inside a 15-minute
+        window. That silently erased most real miners: only sessions that opted into
+        sub-block shares (9.1.0) get a target they hit often — every other client
+        (xmrig, ASIC, cryptonote, pre-9.1.0) mines the FULL block target, so for it
+        "an accepted share" means "found a block". A miner with 1% of pool hashrate
+        finds one about every 100 blocks, so it appeared for a few minutes and then
+        vanished for an hour and a half while mining continuously the whole time.
+        Reporting that as "active miners" understates the pool to its own operator
+        and to every miner deciding whether to point hashrate here.
+
+        Widening the window alone is not enough, and counting authorized sessions is
+        not safe: `mining.authorize` accepts any well-formed address with no proof,
+        so an abuser could mint unlimited fake `anim1…` strings, and one client once
+        held 835 idle sockets. So presence and proof are tracked separately:
+
+          proven    — an accepted share in the window, OR a live authorized session
+                      that has either produced a share itself or whose address has
+                      an accepted share within MINER_PROOF_LOOKBACK_SECS. Real work
+                      is required, so this cannot be fabricated; it just no longer
+                      forgets a miner between blocks.
+          connected — every live authorized session address, proof or not. Includes
+                      genuine newcomers who have not landed a first share yet, and
+                      is therefore inflatable by design. Reported separately and
+                      never folded into the headline count.
+
+        Both dedupe by address, so one machine with many sockets stays one miner.
+        """
+        recent = self._accepted_share_addresses(window_seconds)
+        known = (
+            recent
+            if self.MINER_PROOF_LOOKBACK_SECS <= window_seconds
+            else self._accepted_share_addresses(self.MINER_PROOF_LOOKBACK_SECS)
+        )
+
+        proven: set = set(recent)
+        connected: set = set()
+        live_sessions = 0
+        now = time.time()
         try:
             for snap in self._server.session_snapshots():
                 if not snap.get("authorized"):
                     continue
-                if int(snap.get("shares_accepted") or 0) <= 0:
-                    continue
                 addr = str(snap.get("address") or "").strip()
-                if addr and addr != "unknown-address":
-                    addresses.add(addr)
+                if not addr or addr == "unknown-address":
+                    continue
+                # Liveness from INBOUND bytes only (see LIVE_SESSION_IDLE_SECS).
+                # If the snapshot carries no timestamp at all we cannot judge, so the
+                # session is treated as live: an older server that has not restarted
+                # yet, or a caller passing partial snapshots, must not have every
+                # miner silently dropped. Only a timestamp we HAVE and that is stale
+                # excludes a session.
+                last_in = snap.get("last_inbound")
+                if last_in is None:
+                    last_in = snap.get("last_seen")
+                if last_in is None:
+                    last_in = snap.get("connected_since")
+                if last_in is not None and now - float(last_in or 0.0) > self.LIVE_SESSION_IDLE_SECS:
+                    continue
+                live_sessions += 1
+                connected.add(addr)
+                if int(snap.get("shares_accepted") or 0) > 0 or addr in known:
+                    proven.add(addr)
         except Exception:
             pass
-        return len(addresses)
+
+        return {
+            "proven": len(proven),
+            "connected": len(connected | proven),
+            "unproven": len((connected - proven)),
+            "live_sessions": live_sessions,
+        }
+
+    def _active_miner_count(self, window_seconds: float = 900.0) -> int:
+        """Distinct miners with proven work who are present now. See _miner_presence."""
+        return int(self._miner_presence(window_seconds)["proven"])
 
     # --- ACCURATE raw hashrate (H/s) --------------------------------------
     # Sum the per-share `work` (expected raw SHA3 hashes = 2**256/share_target)
@@ -3511,8 +3644,14 @@ class PoolMetrics:
         current_reward = str(self._reward_from_raw(getattr(job, "raw", None)))
         accounting = self.accounting_summary()
         payout = self.payout_status()
-        active_miners = self._active_miner_count(900.0)
+        presence = self._miner_presence(900.0)
+        active_miners = presence["proven"]
+        carve_preview = self.service_carve_preview(
+            (job.height if job else 0) or 0,
+            self._reward_from_raw(getattr(job, "raw", None)),
+        )
         result = {
+            "service_carve": carve_preview,
             "pool_name": "Animica Stratum Pool",
             "network": self._config.network or f"chain-{self._config.chain_id}",
             "pool_mode": self._pool_mode,
@@ -3542,6 +3681,14 @@ class PoolMetrics:
             # "838 miners"; raw sessions now live in num_connections.
             "num_miners": active_miners,
             "num_workers": active_miners,
+            # Distinct live authorized addresses INCLUDING those with no accepted
+            # share yet, so a genuine newcomer is visible instead of reading as
+            # absent. Inflatable by fabricated addresses (mining.authorize proves
+            # nothing), which is exactly why it is reported beside num_miners rather
+            # than as it: >= num_miners always, and the gap is unverified miners.
+            "connected_miners": presence["connected"],
+            "unproven_miners": presence["unproven"],
+            "live_sessions": presence["live_sessions"],
             "num_connections": stats.get("clients", 0),
             "authorized_sessions": stats.get("authorized_sessions", 0),
             # Sessions mining a sub-block target (i.e. earning PPS credit

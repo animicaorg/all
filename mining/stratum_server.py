@@ -2289,6 +2289,10 @@ class StratumServer:
                 "share_target": s.share_target,
                 "theta_micro": s.theta_micro,
                 "last_seen": s.last_seen,
+                # Inbound bytes only. `last_seen` is touched by our OWN outbound
+                # keepalives every ~45s, so it can never distinguish a live client
+                # from a dead socket — anything judging liveness must use this.
+                "last_inbound": s.last_inbound,
                 "connected_since": s.connected_since,
                 "last_share_at": s.last_share_at,
                 "last_share_status": s.last_share_status,
