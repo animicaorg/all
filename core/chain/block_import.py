@@ -2865,16 +2865,65 @@ class BlockImporter:
                     _dist = extract_settlement_distribution(
                         _executed_txs, chain_id=chain_id
                     )
-                    if _dist:
-                        _cap = settlement_pool_cap(
-                            max(1, height), self.full_params_dict or {}
-                        )
-                        settlement_outputs = scale_settlement_outputs(
-                            _dist, _cap, int(miner_reward)
-                        )
-                        _settle_total = sum(a for _, a in settlement_outputs)
-                        if _settle_total > 0:
-                            miner_reward = int(miner_reward) - _settle_total
+                    # FORK_SERVICE_CARVE (9.5.0): the carve is UNCONDITIONAL from H, and
+                    # anchors decide only where it goes. Before H this whole branch was
+                    # self-gating on `_dist` — no anchors meant no carve and the miner
+                    # kept 100%, which is exactly how "mining without serving earns the
+                    # full reward" was possible. Below H `_carve_pct` is 0, so the
+                    # behaviour is byte-identical to 9.4.x and history replays unchanged.
+                    from consensus.rewards import (
+                        SERVICE_ESCROW_ADDRESS,
+                        service_carve_pct,
+                    )
+                    from consensus.service_carve import split_carve
+
+                    _carve_pct = service_carve_pct(max(1, height), chain_id=1)
+                    if _dist or _carve_pct > 0:
+                        if _carve_pct > 0:
+                            # The carve is a share of the WHOLE BLOCK, so reconstruct the
+                            # pre-split subsidy. miner_reward here is already
+                            # post-treasury (FORK_TREASURY_25 took its 25% inside
+                            # compute_block_reward), and 25% of that remainder would be
+                            # 18.75% of the block, not 25%.
+                            _total_subsidy = (
+                                int(miner_reward) + int(treasury_reward) + int(aicf_reward)
+                            )
+                            _carve_total_target = (_total_subsidy * _carve_pct) // 100
+                            # The whole slice is paid out every block, so the per-block
+                            # settlement cap must NOT throttle it — it exists to bound
+                            # what anchors may claim, and anything unclaimed goes to the
+                            # escrow destination rather than back to the miner.
+                            _cap = min(
+                                int(settlement_pool_cap(
+                                    max(1, height), self.full_params_dict or {}
+                                )),
+                                _carve_total_target,
+                            )
+                            _anchor_outputs = (
+                                scale_settlement_outputs(_dist, _cap, int(miner_reward))
+                                if _dist
+                                else []
+                            )
+                            from core.utils.address import address_to_bytes
+
+                            miner_reward, settlement_outputs, _carve_total = split_carve(
+                                miner_reward=int(miner_reward),
+                                total_subsidy=_total_subsidy,
+                                pct=_carve_pct,
+                                anchor_outputs=_anchor_outputs,
+                                escrow_address=address_to_bytes(SERVICE_ESCROW_ADDRESS),
+                            )
+                        else:
+                            # Pre-fork path, unchanged: pay only what anchors claim.
+                            _cap = settlement_pool_cap(
+                                max(1, height), self.full_params_dict or {}
+                            )
+                            settlement_outputs = scale_settlement_outputs(
+                                _dist, _cap, int(miner_reward)
+                            )
+                            _settle_total = sum(a for _, a in settlement_outputs)
+                            if _settle_total > 0:
+                                miner_reward = int(miner_reward) - _settle_total
                 except Exception as _settle_exc:
                     # Fail closed on ANY settlement-path error once the fork is
                     # active: proceeding without the carve while healthy peers

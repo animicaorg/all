@@ -1,3 +1,16 @@
+      msgHtml =
+        "<strong style='color:#FFC24B'>Block 70,000 has passed. Now upgrade before 75,000.</strong> "
+        + "animica <strong style='color:#fff'>9.5.0</strong> reserves "
+        + "<strong style='color:#fff'>25% of every block for inference payments</strong>, paid out in "
+        + "full each block and falling to the treasury when nothing is claimed. From 75,000 the split "
+        + "is <strong style='color:#fff'>50% miner / 25% treasury / 25% inference</strong>. Total "
+        + "emission and the halving schedule are <strong style='color:#fff'>unchanged</strong>."
+        + " <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span>"
+        + " then confirm <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">animica --version</span>"
+        + " reports <strong style='color:#fff'>9.5.0</strong>." + count
+        + " A node left on 9.4.x will <strong style='color:#fff'>not fork or error</strong> — it accepts "
+        + "the same blocks and reports <strong style='color:#fff'>WRONG BALANCES, silently</strong>. "
+        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
 /*
  * Animica network-upgrade notice bar.
  * Central, self-contained, cross-origin-includable. One
@@ -77,12 +90,12 @@
   if (window.__anmUpgradeBanner) return;                 // idempotent
   window.__anmUpgradeBanner = true;
 
-  var DEADLINE = 70000;                                   // FORK_TREASURY_25 (9.4.0) — MANDATORY
-  var VERSION = "9.4.0";
+  var DEADLINE = 75000;                                   // FORK_TREASURY_25 (9.4.0) — MANDATORY
+  var VERSION = "9.5.0";
   var NOTICE = "https://animica.dev/upgrade/";            // a consensus deadline: the guide is the action
   var GUIDE = "https://animica.dev/upgrade/";             // still the right link for node operators
   var HEIGHT_URL = "https://animica.dev/net-height";
-  var KEY = "anmUpgrade-940";                             // re-show: 9.4.0 MANDATORY consensus upgrade
+  var KEY = "anmUpgrade-950";                             // re-show: 9.4.0 MANDATORY consensus upgrade
   // Fail-safe retirement: if live height is never readable (cross-origin/CORS/network),
   // still stop showing a pre-activation notice after this date. Height stays the
   // authoritative deadline; this only ever HIDES the bar, so it can't misfire in the
@@ -153,9 +166,9 @@
     var msgHtml;
     if (postActivation) {
       msgHtml =
-        "<strong style='color:#FFC24B'>Block 70,000 has passed.</strong> "
-        + "The treasury split is now <strong style='color:#fff'>75% miner / 25% foundation</strong>. "
-        + "A node still below <strong style='color:#fff'>9.4.0</strong> computes the OLD split. It will "
+        "<strong style='color:#FFC24B'>Block 75,000 has passed.</strong> "
+        + "The split is now <strong style='color:#fff'>75% miner / 25% foundation</strong>. "
+        + "A node still below <strong style='color:#fff'>9.5.0</strong> computes the OLD split. It will "
         + "<strong style='color:#fff'>not fork, stall or show an error</strong> &mdash; coinbase amounts "
         + "are not validated against the schedule, so it accepts the same blocks and simply reports "
         + "<strong style='color:#fff'>WRONG BALANCES, silently and permanently</strong>. Exchanges and "

@@ -382,6 +382,27 @@ FORK_FINALITY_DEPTH = "finality_depth"
 # ANIMICA_FORK_QUANTUM_BEACON_HEIGHT.
 FORK_QUANTUM_BEACON = "quantum_beacon"
 
+# FORK_SERVICE_CARVE (9.5.0) — reserve a fixed slice of the miner subsidy for service
+# providers whether or not one claims it. Activation height 75,000.
+#
+# This is the only rule in the 9.5.0 set that changes WHO GETS PAID, so it is the one to
+# suspect first if balances look wrong after activation. The others at this height
+# (bounded retarget, value CALL, finality, beacon) cannot move a coin.
+#
+# It is emission-CONSERVING: the miner loses exactly the carve, and paid + residual
+# equals the carve, so nothing is minted or burned. See consensus/rewards.py
+# service_carve_pct for why it cannot instead be keyed on "did this miner serve"
+# (nothing in a block can prove that), and consensus/service_carve.py for the split.
+#
+# NOTE ON THE FAILURE MODE, which is unusual: coinbase AMOUNTS are never validated
+# against the schedule (`_compute_block_reward_amount` has zero callers), yet state
+# application credits balances from the node's OWN compute_block_reward. So an
+# un-upgraded node does not fork or stall — it accepts identical blocks and credits
+# different balances, silently and permanently. Liveness is safe; the ledger is not.
+# Every full node, pool and balance-tracker must be on >=9.5.0 before H.
+# Retunable via ANIMICA_FORK_SERVICE_CARVE_HEIGHT.
+FORK_SERVICE_CARVE = "service_carve"
+
 # FORK_VPN_RELAY_REWARDS (8.0.1, REALIZED in 9.0.0 as IOU settlement) — from H,
 # each block MAY settle service IOUs (dVPN relay/exit, AICF inference, media,
 # hosting — any operator-issued IOU ledger) with REAL per-block payouts, capped
@@ -463,6 +484,8 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # Quantum beacon binding (9.5.0). Activated but DORMANT: presence-gated, so
         # until miners choose to commit a beacon this rule does nothing at all.
         FORK_QUANTUM_BEACON: 75_000,
+        # Service carve (9.5.0). The ONLY emission change at this height.
+        FORK_SERVICE_CARVE: 75_000,
         # dVPN relay block rewards (8.0.1). Operator-chosen height 50,000 (shared with
         # the consensus ANS fork gate). SELF-GATING + INERT: emits zero relay outputs
         # until an on-chain relay-contribution root is sealed, which requires the
@@ -484,6 +507,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_VALUE_CALL: 0,
         FORK_FINALITY_DEPTH: 0,
         FORK_QUANTUM_BEACON: 0,
+        FORK_SERVICE_CARVE: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
@@ -496,6 +520,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_VALUE_CALL: 0,
         FORK_FINALITY_DEPTH: 0,
         FORK_QUANTUM_BEACON: 0,
+        FORK_SERVICE_CARVE: 0,
     },
 }
 

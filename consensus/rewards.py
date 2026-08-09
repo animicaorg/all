@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Mapping, Tuple
 from core.network_params import (
     is_fork_active,
     FORK_FOUNDATION_SPLIT,
+    FORK_SERVICE_CARVE,
     FORK_TREASURY_25,
     FORK_VPN_RELAY_REWARDS,
 )
@@ -108,6 +109,71 @@ def foundation_split_pct(height: int, *, chain_id: int = 1) -> int:
     if is_fork_active(FORK_TREASURY_25, height, chain_id=chain_id):
         return FOUNDATION_TREASURY_SPLIT_PCT_V2
     return FOUNDATION_TREASURY_SPLIT_PCT
+
+# ==================================================================================
+# FORK_SERVICE_CARVE (9.5.0) — a fixed slice of the miner subsidy is reserved for
+# service providers, whether or not any provider claims it.
+# ==================================================================================
+# THE PROBLEM THIS SOLVES, and why it is shaped the way it is. The ask was "mining
+# without serving inference should not earn the full block reward". Nothing in a block
+# can prove a miner served: there is no on-chain worker keyring, no job ids, no result
+# hashes, and `header.extra` is miner-authored — so a stub box with no ML stack could
+# sign "I served 100 jobs" and no validator could contradict it. Any rule that PAYS on a
+# self-attestation pays every miner who edits one config value, out of the honest
+# miners' subsidy. That whole class is rejected.
+#
+# What IS consensus-visible is the inverse: the block height, and whether the block
+# carries valid authority-signed settlement anchors (verified from its own tx bytes by
+# consensus/iou_settlement.py). So the chain never measures serving. It simply refuses
+# to hand the service slice to the block producer, and lets anchors decide whether that
+# slice reaches providers or falls to escrow.
+#
+# Before this fork the settlement carve was SELF-GATING: no anchors meant no carve and
+# the miner kept 100%. From H the carve is UNCONDITIONAL and anchors choose only the
+# destination. That one change — subtracting the carve rather than the amount actually
+# paid — is the entire rule.
+#
+# Emission is CONSERVED: miner loses exactly `carve`, and paid + residual == carve, so
+# nothing is minted or burned and MAX_MONEY is untouched. Integer floor, float-free.
+#
+# 25% OF THE WHOLE BLOCK SUBSIDY, and it is measured against the TOTAL, not against the
+# post-treasury remainder. Operator decision. With FORK_TREASURY_25 already taking 25%,
+# the per-block split from H is exactly:
+#
+#     miner 50%  |  foundation treasury 25%  |  inference 25%
+#
+# Getting the BASE wrong is the easy mistake here: 25% of the post-treasury miner slice
+# would be 25% of 75% = 18.75% of the block, not 25%. The carve is therefore computed
+# from (miner + treasury + aicf) — the reconstructed pre-split subsidy — and subtracted
+# from the miner's share.
+SERVICE_CARVE_PCT_V1 = 25
+
+# Where an unclaimed slice goes: the FOUNDATION TREASURY, by explicit operator decision —
+# "if there is no inference request at all it goes to the treasury". It is also the
+# settlement authority for these anchors (see FORK_VPN_RELAY_REWARDS below), so an
+# undistributed service slice returns to the party responsible for distributing it, and
+# the address is verifiably spendable today rather than a fabricated one that would burn
+# the funds permanently.
+#
+# CONSEQUENCE WORTH STATING: while no provider claims anything, the treasury receives
+# 25% + 25% = 50% of every block. The service slice is only distinguishable from a
+# treasury increase by whether anchors ever pay it out, and the treasury balance alone
+# cannot tell you which happened. A dedicated escrow address (needing an offline
+# ml_dsa_65 ceremony with the key in cold custody) would make that a public scoreboard;
+# it can be swapped in later without changing the rule.
+SERVICE_ESCROW_ADDRESS = FOUNDATION_TREASURY_ADDRESS
+
+
+def service_carve_pct(height: int, *, chain_id: int = 1) -> int:
+    """Percent of the TOTAL block subsidy reserved for service, at `height`.
+
+    Zero below the activation height, so history replays byte-identically. A pure
+    function of the height, which is what lets every node agree.
+    """
+    if is_fork_active(FORK_SERVICE_CARVE, int(height), chain_id=int(chain_id)):
+        return SERVICE_CARVE_PCT_V1
+    return 0
+
 
 # FORK_VPN_RELAY_REWARDS (8.0.1) — REALIZED in 9.0.0 as on-chain IOU settlement.
 # The per-block settlement pool is capped at 50 ANM and HALVES on the subsidy schedule
