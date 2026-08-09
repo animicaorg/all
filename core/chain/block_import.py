@@ -2827,6 +2827,9 @@ class BlockImporter:
             # tx bytes + static schedule. SettlementUnavailable fails CLOSED like
             # ANM-H08 (halt loudly, never silently pay nobody while peers pay).
             settlement_outputs: list[tuple[bytes, int]] = []
+            # Set only when FORK_SERVICE_CARVE withheld a slice, so the credit
+            # site below can prove it credited exactly what was subtracted.
+            _carve_total: int = 0
             if (
                 chain_id == 1
                 and miner_reward > 0
@@ -2889,16 +2892,21 @@ class BlockImporter:
                                 int(miner_reward) + int(treasury_reward) + int(aicf_reward)
                             )
                             _carve_total_target = (_total_subsidy * _carve_pct) // 100
-                            # The whole slice is paid out every block, so the per-block
-                            # settlement cap must NOT throttle it — it exists to bound
-                            # what anchors may claim, and anything unclaimed goes to the
-                            # escrow destination rather than back to the miner.
-                            _cap = min(
-                                int(settlement_pool_cap(
-                                    max(1, height), self.full_params_dict or {}
-                                )),
-                                _carve_total_target,
-                            )
+                            # THE CARVE IS THE BUDGET. Do NOT also apply
+                            # settlement_pool_cap here: that cap is 50 ANM scaled by
+                            # subsidy/300, i.e. total/6 (16.67%), which is SMALLER than
+                            # the 25% carve at every height — so min(cap, carve) always
+                            # picked the cap and 8.33% of every block (25 ANM today) was
+                            # withheld from the miner while being structurally
+                            # unreachable by any provider, landing in the treasury
+                            # forever. That silently broke "paid entirely each block",
+                            # and the clamp against _carve_total_target was dead code.
+                            #
+                            # The pool cap made sense when the slice was taken OUT of the
+                            # miner's reward only when anchors existed. Now that 25% is
+                            # withheld unconditionally, the carve bounds anchor claims on
+                            # its own, and split_carve clamps every output against it.
+                            _cap = _carve_total_target
                             _anchor_outputs = (
                                 scale_settlement_outputs(_dist, _cap, int(miner_reward))
                                 if _dist
@@ -3066,6 +3074,19 @@ class BlockImporter:
                     _settle_amt,
                     height,
                     _settle_balance,
+                )
+
+            # The invariant whose violation mints or burns coin: whatever
+            # FORK_SERVICE_CARVE subtracted from the miner MUST have been credited here.
+            # split_carve proves its own LIST sums to the carve, but nothing until now
+            # proved that list was actually applied — an edit that skipped, reordered or
+            # filtered an output would have burned coin with no test, log or metric
+            # noticing. Fail closed: a silent balance divergence is far worse than a halt.
+            if _carve_total and settlement_credit_total != _carve_total:
+                raise BlockImportError(
+                    f"service carve credited {settlement_credit_total} but withheld "
+                    f"{_carve_total} at height {height} — refusing to apply a block that "
+                    f"would mint or burn coin"
                 )
             if settlement_credit_total > 0:
                 if not seal_only:

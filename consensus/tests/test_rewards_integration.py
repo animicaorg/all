@@ -99,7 +99,11 @@ def test_mainnet_block_reward_halving_at_1_35m():
     from consensus.rewards import foundation_split_pct
     exp_treasury = (total * foundation_split_pct(1_350_001, chain_id=1)) // 100
     assert outs[FOUNDATION_TREASURY_ADDRESS] == exp_treasury
-    assert total - outs[FOUNDATION_TREASURY_ADDRESS] == total - exp_treasury
+    # Assert the MINER amount against the split, not `total - x == total - x`, which is
+    # a tautology that cannot fail and silently stopped checking the miner's share.
+    miner_amt = total - outs[FOUNDATION_TREASURY_ADDRESS]
+    assert miner_amt == total - exp_treasury
+    assert miner_amt == total * (100 - foundation_split_pct(1_350_001, chain_id=1)) // 100
 
 
 def test_mainnet_block_reward_second_halving_at_2_7m():
@@ -118,7 +122,11 @@ def test_mainnet_block_reward_second_halving_at_2_7m():
     from consensus.rewards import foundation_split_pct
     exp_treasury = (total * foundation_split_pct(2_700_001, chain_id=1)) // 100
     assert outs[FOUNDATION_TREASURY_ADDRESS] == exp_treasury
-    assert total - outs[FOUNDATION_TREASURY_ADDRESS] == total - exp_treasury
+    # Assert the MINER amount against the split, not `total - x == total - x`, which is
+    # a tautology that cannot fail and silently stopped checking the miner's share.
+    miner_amt = total - outs[FOUNDATION_TREASURY_ADDRESS]
+    assert miner_amt == total - exp_treasury
+    assert miner_amt == total * (100 - foundation_split_pct(1_350_001, chain_id=1)) // 100
 
 
 def test_mainnet_emission_schedule_parsing():

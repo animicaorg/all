@@ -588,7 +588,8 @@ def test_compute_block_reward_mainnet_split_halving():
     assert foundation_amt == expected_foundation, (
         f"Expected {expected_foundation} foundation "
         f"({foundation_split_pct(1350001, chain_id=1)}%), got {foundation_amt}")
-    assert miner_amt == total - expected_foundation, f"Expected 127.5 ANM miner (85%), got {miner_amt}"
+    assert miner_amt == total - expected_foundation, f"miner should be total - treasury, got {miner_amt}"
+    assert miner_amt == total * (100 - foundation_split_pct(1350001, chain_id=1)) // 100
 
 
 def test_instant_block_always_returns_zero_rewards():

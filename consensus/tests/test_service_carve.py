@@ -195,3 +195,65 @@ def test_conservation_holds_across_the_halving_schedule():
         assert sum(a for _, a in outs) == carve, total
         assert miner + treasury + carve == total, f"emission leaked at total={total}"
         assert miner >= 0 and carve >= 0
+
+
+# --------------------------------------------------------------------------- #
+# The cap interaction — the bug a pure-function test could never see           #
+# --------------------------------------------------------------------------- #
+#
+# Every test above calls split_carve directly, so none of them saw the settlement
+# pool cap that block_import applied on the way in. That cap is 50 ANM scaled by
+# subsidy/300 == total/6 == 16.67%, which is SMALLER than the 25% carve at every
+# height — so min(cap, carve) always picked the cap and 8.33% of every block was
+# withheld from the miner while being structurally unreachable by any provider.
+# "Paid entirely each block" was silently false. These tests pin the arithmetic that
+# makes it true.
+
+def _params():
+    from consensus.tests.test_foundation_split import MAINNET, _load_full_params_dict
+
+    return _load_full_params_dict(MAINNET)
+
+
+def test_the_settlement_pool_cap_is_smaller_than_the_carve_at_every_height():
+    """The fact that made the bug invisible: the cap ALWAYS wins a min() against the
+    carve, so applying both can only ever throttle the slice."""
+    from consensus.iou_settlement import settlement_pool_cap
+    from consensus.rewards import _subsidy_total_for_height, parse_emission_schedule
+
+    params = _params()
+    sched = parse_emission_schedule(params)
+    for h in (75_001, 1_350_001, 2_700_001, 4_050_001):
+        total = _subsidy_total_for_height(h, sched)
+        cap = settlement_pool_cap(h, params)
+        carve = total * 25 // 100
+        assert cap < carve, (
+            f"at height {h} the pool cap {cap} is not below the carve {carve}; if this "
+            f"ever flips, re-check whether block_import should bound anchors by the cap"
+        )
+
+
+def test_a_provider_can_claim_the_entire_slice():
+    """With the cap removed the carve is the budget, so a provider claiming the whole
+    25% receives all of it and nothing escrows. Under the old min(cap, carve) the most
+    reachable was 16.67% of the block."""
+    whole = TOTAL * 25 // 100
+    miner, outs, carve = split_carve(miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
+                                     anchor_outputs=[(PROVIDER, whole)],
+                                     escrow_address=ESCROW)
+    assert carve == whole
+    assert dict(outs).get(PROVIDER) == whole, "a provider must be able to reach 25%"
+    assert ESCROW not in dict(outs), "nothing should escrow when the slice is fully claimed"
+    assert miner == MINER_IN - carve
+
+
+def test_no_part_of_the_slice_is_structurally_unreachable():
+    """For claims from 1 nanoANM up to the whole carve, the amount reaching providers
+    tracks the claim exactly — there is no ceiling below the carve."""
+    carve = TOTAL * 25 // 100
+    for claim in (1, carve // 4, carve // 2, carve - 1, carve):
+        _, outs, c = split_carve(miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
+                                 anchor_outputs=[(PROVIDER, claim)],
+                                 escrow_address=ESCROW)
+        assert dict(outs).get(PROVIDER, 0) == claim, claim
+        assert sum(a for _, a in outs) == c == carve

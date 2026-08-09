@@ -175,7 +175,7 @@ _METHODOLOGY = (
     "total = node RPC state.getTotalSupply (sum of all account balances in the "
     "state DB at head). circulating = total minus the live on-chain balances of "
     "the non-circulating addresses listed here (Animica Foundation treasury — "
-    "the code-committed recipient of 15% of every block subsidy since height "
+    "the code-committed recipient of 25% of every block subsidy (15% before block 70,000) since height "
     "42,001 — plus the four protocol-reserved system addresses from "
     "chain.getParams). max = 900,000,000 ANM, the code-enforced hard cap "
     "(MAX_MONEY in consensus/rewards.py). Balances are fetched live from the "
@@ -256,13 +256,37 @@ def emission():
             },
             "premine_anm": 81000000,
             "block_reward_splits": [
+                # A TABLE OF RANGES, not one entry. It previously reported a single
+                # hardcoded 85/15 forever, so it was already wrong from block 70,000.
+                # Every row is a redistribution of the SAME subsidy total — never new
+                # issuance, and the halving schedule is untouched throughout.
                 {"from_height": 1, "to_height": 42000, "miner_pct": 100},
                 {
                     "from_height": sources.FOUNDATION_SPLIT_HEIGHT,
+                    "to_height": sources.TREASURY_25_HEIGHT - 1,
                     "miner_pct": 100 - sources.FOUNDATION_SPLIT_PCT,
                     "foundation_pct": sources.FOUNDATION_SPLIT_PCT,
                     "foundation_address": sources.FOUNDATION_TREASURY_ADDRESS,
-                    "note": "FORK_FOUNDATION_SPLIT: same subsidy total re-split 85/15 — redistribution, not new issuance",
+                    "note": "FORK_FOUNDATION_SPLIT (7.1.0): 85/15",
+                },
+                {
+                    "from_height": sources.TREASURY_25_HEIGHT,
+                    "to_height": sources.SERVICE_CARVE_HEIGHT - 1,
+                    "miner_pct": 100 - sources.FOUNDATION_SPLIT_PCT_V2,
+                    "foundation_pct": sources.FOUNDATION_SPLIT_PCT_V2,
+                    "foundation_address": sources.FOUNDATION_TREASURY_ADDRESS,
+                    "note": "FORK_TREASURY_25 (9.4.0): 75/25",
+                },
+                {
+                    "from_height": sources.SERVICE_CARVE_HEIGHT,
+                    "miner_pct": (100 - sources.FOUNDATION_SPLIT_PCT_V2
+                                  - sources.SERVICE_CARVE_PCT),
+                    "foundation_pct": sources.FOUNDATION_SPLIT_PCT_V2,
+                    "service_pct": sources.SERVICE_CARVE_PCT,
+                    "foundation_address": sources.FOUNDATION_TREASURY_ADDRESS,
+                    "note": ("FORK_SERVICE_CARVE (9.5.0): 50 miner / 25 treasury / 25 "
+                             "inference. The inference slice is paid out in full every "
+                             "block; whatever providers do not claim goes to the treasury"),
                 },
             ],
             "iou_settlement": {

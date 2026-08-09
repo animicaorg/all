@@ -45,7 +45,28 @@ MAX_HALVINGS = 64
 TARGET_BLOCK_TIME_S = 60
 
 FOUNDATION_SPLIT_HEIGHT = 42_001                    # FORK_FOUNDATION_SPLIT (7.1.0)
-FOUNDATION_SPLIT_PCT = 15                           # 15% of subsidy -> foundation
+TREASURY_25_HEIGHT = 70_000                         # FORK_TREASURY_25 (9.4.0)
+SERVICE_CARVE_HEIGHT = 75_000                       # FORK_SERVICE_CARVE (9.5.0)
+FOUNDATION_SPLIT_PCT = 15                           # 15% until TREASURY_25_HEIGHT
+FOUNDATION_SPLIT_PCT_V2 = 25                        # 25% from TREASURY_25_HEIGHT
+SERVICE_CARVE_PCT = 25                              # 25% for inference from SERVICE_CARVE_HEIGHT
+
+
+def foundation_pct_at(height: int) -> int:
+    """Treasury share of the subsidy at `height`. Mirrors consensus.rewards
+    .foundation_split_pct — this module deliberately does not import consensus, so the
+    two must be kept in step. It was left at a hardcoded 15 and was therefore already
+    wrong from block 70,000."""
+    if int(height) >= TREASURY_25_HEIGHT:
+        return FOUNDATION_SPLIT_PCT_V2
+    if int(height) >= FOUNDATION_SPLIT_HEIGHT:
+        return FOUNDATION_SPLIT_PCT
+    return 0
+
+
+def service_pct_at(height: int) -> int:
+    """Inference share of the subsidy at `height` (0 before FORK_SERVICE_CARVE)."""
+    return SERVICE_CARVE_PCT if int(height) >= SERVICE_CARVE_HEIGHT else 0
 IOU_SETTLEMENT_HEIGHT = 50_000                      # FORK_IOU_SETTLEMENT (8.0.1/9.0.0)
 IOU_CAP_BASE_UNITS = 50 * COIN                      # <= 50 ANM/block, halving with emission
 
@@ -251,7 +272,7 @@ def subsidy_split_base_units(height: int) -> Tuple[int, int, int]:
     FORK_FOUNDATION_SPLIT (42,001), same total — redistribution, not issuance."""
     total = subsidy_total_base_units(height)
     if height >= FOUNDATION_SPLIT_HEIGHT:
-        foundation = (total * FOUNDATION_SPLIT_PCT) // 100
+        foundation = (total * foundation_pct_at(height)) // 100
         return total, total - foundation, foundation
     return total, total, 0
 
