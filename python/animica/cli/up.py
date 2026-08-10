@@ -199,6 +199,7 @@ def up(ctx: typer.Context,
     _ensure_media_models(caps, components, console)
     _ensure_llm_model(caps, components, console)
     _ensure_media_miner(components, console)
+    _ensure_ena_server(components, console, addr)
     _ensure_inference_worker(components, console, addr)
     _ensure_animal(console)
     Supervisor(components).run()
@@ -469,6 +470,241 @@ def _ensure_llm_model(caps, components, console) -> None:
     threading.Thread(target=_dl, name="animica-aicf-model-prefetch", daemon=True).start()
 
 
+def _ena_post_json(url: str, body: dict, timeout: float = 15.0):
+    """Small JSON POST helper for the ENA coordinator (stdlib only)."""
+    import json
+    import urllib.request
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode(),
+        headers={"content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as fh:
+        return json.loads(fh.read().decode("utf-8"))
+
+
+def _report_media_gaps(caps, console) -> None:
+    """Say WHICH media kinds this box is withholding and WHY.
+
+    probe_capabilities() silently returns a smaller set when a gate fails, so a rig with
+    a GPU that reports only the ffmpeg kinds looks — to its operator and on the site —
+    simply "offline" for music and text-to-video, with nothing anywhere explaining it.
+    The usual cause is a CPU-ONLY torch wheel: `torch.cuda.is_available()` is False, so
+    every VRAM-gated kind (audio, video_t2v, upscale, interpolate, stems, …) is dropped
+    while the CPU kinds still register, which is exactly the 7-capability set seen live.
+
+    Read-only and best-effort: this only prints.
+    """
+    try:
+        from animica.media import miner as _mm
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        cuda = bool(_mm._have_cuda())
+        vram = float(_mm._vram_gb()) if cuda else 0.0
+        torch_present = True
+        try:
+            import torch  # noqa: F401
+        except Exception:  # noqa: BLE001
+            torch_present = False
+    except Exception:  # noqa: BLE001
+        return
+
+    have = set(caps or [])
+    wanted = {
+        "audio": ("music generation", getattr(_mm, "_AUDIO_MIN_VRAM_GB", 6.0)),
+        "video_t2v": ("text-to-video", getattr(_mm, "_T2V_MIN_VRAM_GB", 10.0)),
+        "video_upscale": ("video upscale", getattr(_mm, "_STUDIO_MIN_VRAM_GB", 4.0)),
+        "audio_stems": ("stem separation", getattr(_mm, "_STUDIO_MIN_VRAM_GB", 4.0)),
+    }
+    missing = [(k, label, need) for k, (label, need) in wanted.items() if k not in have]
+    if not missing:
+        return
+
+    if not torch_present:
+        console.print("[yellow]media: torch is not installed, so this node can only "
+                      "serve the ffmpeg kinds — music and text-to-video will show "
+                      "OFFLINE. Install the CUDA build of torch to serve them.[/yellow]")
+        return
+    if not cuda:
+        console.print(
+            "[yellow]media: torch reports NO CUDA on this box "
+            "(torch.cuda.is_available() is False), so "
+            + ", ".join(f"{lbl}" for _, lbl, _ in missing)
+            + " are NOT advertised and show OFFLINE on animica.dev — even if the "
+              "machine has a GPU. This is usually a CPU-only torch wheel: reinstall "
+              "torch with CUDA, then restart. Check with: python -c \"import torch; "
+              "print(torch.__version__, torch.cuda.is_available())\"[/yellow]")
+        return
+    short = [f"{lbl} (needs ~{need:g}GB VRAM)" for _, lbl, need in missing
+             if vram < float(need)]
+    if short:
+        console.print(f"[yellow]media: GPU detected with {vram:.1f}GB VRAM — not enough "
+                      f"for {', '.join(short)}; those kinds stay offline.[/yellow]")
+    other = [lbl for _, lbl, need in missing if vram >= float(need)]
+    if other:
+        console.print(f"[dim]media: {', '.join(other)} not advertised — the model "
+                      f"backend is missing; run 'animica media doctor'.[/dim]")
+
+
+def _ensure_ena_server(components, console, address) -> None:
+    """Serve the ENA pool's promoted checkpoint from this node, in the BACKGROUND.
+
+    ENA trains a real model collaboratively ("animica-knowledge", a LoRA head over
+    Qwen2.5-1.5B), and the coordinator promotes a checkpoint once a round aggregates.
+    Nothing was ever serving it: the `pool_servers` table was EMPTY, which is why the
+    model existed but could not be used, and why the 9 recorded server contributions
+    earned nothing. `animica up` now joins as a server so the trained model is actually
+    reachable — and passes this node's payout address, which is what the server-reward
+    accounting needs (every existing server contribution has address = NULL and is
+    therefore unpayable).
+
+    The pool is DISCOVERED, not hardcoded: the coordinator's /pool/models lists the
+    canonical global models and each one's promoted head, so a node serves whatever the
+    network has promoted rather than a pool id frozen into a release.
+
+    Env:
+      * ANIMICA_ENA_SERVER=0        — don't serve ENA from this node.
+      * ANIMICA_ENA_ENDPOINT=<url>  — coordinator to fetch the checkpoint from
+                                      (default https://animica.dev).
+      * ANIMICA_ENA_POOL_ID=<id>    — serve a specific pool instead of the canonical head.
+      * ANIMICA_ENA_SERVE_PORT=<n>  — local OpenAI-compatible port (default 8799).
+    """
+    import json
+    import os
+    import threading
+    import time
+    import urllib.request
+
+    if os.environ.get("ANIMICA_ENA_SERVER", "1") == "0":
+        return
+    enabled = {getattr(c, "name", "") for c in components if getattr(c, "enabled", True)}
+    if not (enabled & {"miner", "aicf-worker", "server", "provider", "useful-work"}):
+        return
+
+    endpoint = (os.environ.get("ANIMICA_ENA_ENDPOINT")
+                or "https://animica.dev").rstrip("/")
+    port = int(os.environ.get("ANIMICA_ENA_SERVE_PORT", "8799") or 8799)
+
+    def _discover_pool() -> "tuple[str | None, str | None]":
+        """(pool_id, model_id) of the canonical promoted head, or (None, None)."""
+        forced = os.environ.get("ANIMICA_ENA_POOL_ID", "").strip()
+        if forced:
+            return forced, None
+        try:
+            req = urllib.request.Request(f"{endpoint}/pool/models",
+                                         headers={"accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=20) as fh:
+                data = json.loads(fh.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001 — offline/unreachable is retried by the caller
+            return None, None
+        for m in (data.get("models") or []):
+            head = m.get("head") or {}
+            if head.get("pool_id"):
+                return str(head["pool_id"]), str(m.get("model_id") or "")
+        return None, None
+
+    def _run():
+        # WAIT for a promoted checkpoint rather than exiting — the same mistake that
+        # kept the AICF worker and the media miner idle forever. `pool serve` already
+        # retries internally once started; this loop only covers discovery.
+        announced = False
+        while True:
+            pool_id, model_id = _discover_pool()
+            if pool_id:
+                break
+            if not announced:
+                announced = True
+                console.print(
+                    f"[dim]ena: no promoted model at {endpoint} yet — waiting to serve "
+                    f"(a pool must aggregate a round first)[/dim]")
+            time.sleep(60.0)
+
+        label = model_id or pool_id
+        console.print(f"[dim]ena: serving '{label}' on 127.0.0.1:{port} — checkpoint "
+                      f"fetched from {endpoint}; rewards to this node's address[/dim]")
+        try:
+            from animica.ena import ENA  # noqa: F401  (availability check only)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]ena: not serving — cannot load the ENA stack "
+                          f"({type(exc).__name__}: {exc}). 'pip install -U animica'."
+                          f"[/yellow]")
+            return
+        import platform
+
+        worker_id = f"up-{platform.node()[:24]}"
+
+        # ANNOUNCE this server to the coordinator so the model is DISCOVERABLE. Without
+        # it pool_servers stays empty and animica.dev has nothing to route inference to
+        # — register_server() shipped with zero callers. Only useful when this node is
+        # actually reachable at the advertised address: set ANIMICA_ENA_PUBLIC_ENDPOINT
+        # (e.g. https://rig.example.com:8799) on a rig with a public address or a
+        # tunnel. A NAT'd rig cannot be dialed, so it serves locally and simply is not
+        # advertised — better than publishing an endpoint nobody can reach.
+        public = os.environ.get("ANIMICA_ENA_PUBLIC_ENDPOINT", "").strip()
+        if public:
+            try:
+                req = urllib.request.Request(
+                    f"{endpoint}/pool/server/register",
+                    data=json.dumps({"pool_id": pool_id, "worker_id": worker_id,
+                                     "endpoint": public, "address": address}).encode(),
+                    headers={"content-type": "application/json"})
+                with urllib.request.urlopen(req, timeout=20) as fh:
+                    fh.read()
+                console.print(f"[dim]ena: registered as a server at {public}[/dim]")
+            except Exception as exc:  # noqa: BLE001 — serving still works unadvertised
+                console.print(f"[yellow]ena: could not register {public} with {endpoint} "
+                              f"({type(exc).__name__}: {exc}) — serving locally only"
+                              f"[/yellow]")
+        else:
+            console.print("[dim]ena: serving locally (set ANIMICA_ENA_PUBLIC_ENDPOINT to "
+                          "advertise this node so animica.dev can route to it)[/dim]")
+
+        # Show what this node has EARNED from ENA, and keep showing it. Serving and
+        # training credit ANM per block by weight, but nothing surfaced it, so an
+        # operator had no way to tell whether any of it paid.
+        def _earnings_loop():
+            every = float(os.environ.get("ANIMICA_ENA_EARNINGS_EVERY", "900") or 900)
+            shown_zero = False
+            while True:
+                try:
+                    e = _ena_post_json(f"{endpoint}/pool/earnings", {"address": address})
+                    anm = float(e.get("credited_anm") or 0.0)
+                    pend = float(e.get("pending_weight") or 0.0)
+                    if anm > 0:
+                        roles = e.get("by_role") or {}
+                        detail = ", ".join(
+                            f"{r} {int(v)/1e9:.6f}" for r, v in sorted(roles.items()))
+                        console.print(
+                            f"[green]ena earned: {anm:.6f} ANM[/green] "
+                            f"[dim]({detail}) · unpaid weight {pend:.2f} · credited to "
+                            f"{address[:18]}… (ledger; settlement is separate)[/dim]")
+                        shown_zero = False
+                    elif not shown_zero:
+                        shown_zero = True
+                        console.print(
+                            f"[dim]ena earned: 0 ANM so far · unpaid weight {pend:.2f} "
+                            f"— credit accrues per block once this node's work is "
+                            f"included in a promoted round[/dim]")
+                except Exception:  # noqa: BLE001 — a stats line must never break serving
+                    pass
+                time.sleep(max(60.0, every))
+
+        threading.Thread(target=_earnings_loop, name="animica-ena-earnings",
+                         daemon=True).start()
+
+        while True:
+            try:
+                from animica.cli.ena import _ena
+                _ena().serve_model(pool_id, worker_id=worker_id, host="127.0.0.1",
+                                   port=port, address=address, endpoint=endpoint)
+                return   # serve_model blocks; returns only on shutdown
+            except Exception as exc:  # noqa: BLE001 — never take down `up`
+                console.print(f"[yellow]ena: serve attempt failed "
+                              f"({type(exc).__name__}: {exc}); retrying in 60s[/yellow]")
+                time.sleep(60.0)
+
+    threading.Thread(target=_run, name="animica-ena-server", daemon=True).start()
+
+
 def _ensure_media_miner(components, console) -> None:
     """Serve generative-media jobs for the network from this node, in the BACKGROUND.
 
@@ -526,6 +762,7 @@ def _ensure_media_miner(components, console) -> None:
 
         console.print(f"[dim]media: serving jobs to {gateway} — capabilities: "
                       f"{', '.join(caps)}[/dim]")
+        _report_media_gaps(caps, console)
         try:
             # run_miner re-probes periodically and re-registers when capabilities grow,
             # so a model that finishes downloading later is advertised without a restart.

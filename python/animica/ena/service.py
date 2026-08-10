@@ -278,6 +278,30 @@ def _make_handler(facade):
                         address=body.get("address"), run_id=body.get("run_id"),
                         latency_ms=body.get("latency_ms"),
                         served_round=body.get("served_round")))
+                # A node that serves the promoted checkpoint had no way to ANNOUNCE
+                # itself: pool.register_server() existed with ZERO callers and no route,
+                # so pool_servers stayed empty and nothing could discover a server to
+                # route inference to. Without this the trained model is unreachable no
+                # matter how many nodes serve it.
+                if path == "/pool/server/register":
+                    return self._send(200, facade.pool.register_server(
+                        body["pool_id"], body["worker_id"], body["endpoint"],
+                        address=body.get("address"),
+                        metadata=body.get("metadata")))
+                if path == "/pool/servers":
+                    return self._send(200, {"servers": facade.pool.list_servers(
+                        body["pool_id"], status=body.get("status", "active"))})
+                # What one address has earned. `animica up` shows this so an operator can
+                # see ENA income instead of guessing whether serving pays anything.
+                if path == "/pool/earnings":
+                    return self._send(200, facade.pool.earnings(
+                        body["address"], pool_id=body.get("pool_id")))
+                # Credit the per-block emission (10 ANM/block to trainers+servers by
+                # weight). Ledger-only: this package can verify money IN but holds no
+                # signing key, so it must never claim to have transferred.
+                if path == "/pool/accrue":
+                    return self._send(200, facade.pool.accrue(
+                        body["pool_id"], height=body.get("height")))
                 if path == "/pool/tools/propose":
                     return self._send(200, facade.tools.propose(
                         body["name"], body.get("description", ""),

@@ -777,8 +777,36 @@ def main(
         None, "--session", help="Resume a specific session id."),
     list_sessions: bool = typer.Option(
         False, "--sessions", help="List saved sessions and exit."),
+    model: Optional[str] = typer.Option(
+        None, "--model", "-m",
+        help="Model to talk to, e.g. kimi-k3 (default) or animica-knowledge "
+             "(ENA — trained by the network). `animica chat --model list` shows "
+             "what the endpoint is serving right now."),
 ) -> None:
     console = Console()
+
+    # Model selection was only reachable through the undocumented ANIMICA_API_MODEL
+    # env var, so ENA — which the endpoint serves as `animica-knowledge` — could not be
+    # chosen from the CLI at all. Set the env before HostedProvider() reads it.
+    if model:
+        if model.strip().lower() in {"list", "?", "help"}:
+            import json as _json
+            import urllib.request as _u
+            base = (os.environ.get("ANIMICA_API_BASE")
+                    or "https://animica.dev/v1").rstrip("/")
+            try:
+                with _u.urlopen(f"{base}/models", timeout=20) as fh:
+                    data = _json.loads(fh.read().decode("utf-8"))
+                for m in (data.get("data") or []):
+                    # Rich treats [...] as style markup and would EAT this label,
+                    # so it must not be bracketed.
+                    mark = ("" if m.get("serving", True)
+                            else "   (no server right now)")
+                    console.print(f"  {m.get('id')}{mark}")
+            except Exception as exc:    # noqa: BLE001
+                console.print(f"[red]could not reach {base}/models: {exc}[/red]")
+            raise typer.Exit()
+        os.environ["ANIMICA_API_MODEL"] = model.strip()
 
     if list_sessions:
         rows = _list_sessions()

@@ -1134,7 +1134,82 @@ _MODELS_META = [
     ("animica-chat", "On-chain AICF chat — routed through registered miners."),
     ("animica-chat-small", "Tier 'small' on the AICF network."),
     ("animica-chat-flagship", "Tier 'flagship' on the AICF network."),
+    ("animica-knowledge",
+     "ENA — collaboratively trained by the network (LoRA head over Qwen2.5-1.5B); "
+     "served by nodes running `animica up`."),
 ]
+
+# ---------------------------------------------------------------------------
+# ENA models: NOT an AICF tier
+# ---------------------------------------------------------------------------
+# ENA is a model the network TRAINS, not a tier it serves. It does not go through the
+# on-chain AICF job queue — a node running `animica up` serves the promoted checkpoint
+# over an OpenAI-compatible port and registers its endpoint with the ENA coordinator, so
+# this proxies straight to a registered server.
+#
+# `serving` is derived from the coordinator's ACTIVE server list, never assumed. With no
+# registered server the model is advertised as serving:false and a request gets an
+# explicit, actionable error — an advertised-but-dead model is exactly how the image
+# queue looked "broken forever" to users.
+_ENA_MODEL_IDS = {"animica-knowledge", "ena"}
+_ENA_COORDINATOR = os.environ.get(
+    "BRIDGE_ENA_COORDINATOR", "http://127.0.0.1:8791").rstrip("/")
+_ENA_POOL_CACHE = {"at": 0.0, "pool_id": None, "model_id": None}
+_ENA_SRV_CACHE = {"at": 0.0, "servers": []}
+_ENA_CACHE_TTL = float(os.environ.get("BRIDGE_ENA_CACHE_TTL", "30"))
+
+
+def _ena_post(path: str, body: dict, timeout: float = 10.0):
+    import urllib.request
+    req = urllib.request.Request(
+        f"{_ENA_COORDINATOR}{path}", data=json.dumps(body).encode(),
+        headers={"content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as fh:
+        return json.loads(fh.read().decode("utf-8"))
+
+
+def _ena_get(path: str, timeout: float = 10.0):
+    import urllib.request
+    req = urllib.request.Request(f"{_ENA_COORDINATOR}{path}",
+                                headers={"accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as fh:
+        return json.loads(fh.read().decode("utf-8"))
+
+
+def _ena_head_pool() -> tuple:
+    """(pool_id, model_id) of the canonical promoted head, cached briefly."""
+    now = time.time()
+    if now - _ENA_POOL_CACHE["at"] < _ENA_CACHE_TTL and _ENA_POOL_CACHE["pool_id"]:
+        return _ENA_POOL_CACHE["pool_id"], _ENA_POOL_CACHE["model_id"]
+    try:
+        data = _ena_get("/pool/models")
+        for m in (data.get("models") or []):
+            head = m.get("head") or {}
+            if head.get("pool_id"):
+                _ENA_POOL_CACHE.update(at=now, pool_id=str(head["pool_id"]),
+                                       model_id=str(m.get("model_id") or ""))
+                return _ENA_POOL_CACHE["pool_id"], _ENA_POOL_CACHE["model_id"]
+    except Exception as exc:  # noqa: BLE001
+        log.info("ena: coordinator unreachable for /pool/models (%s)", exc)
+    return None, None
+
+
+def _ena_servers() -> list:
+    """Endpoints of ACTIVE registered ENA servers. Empty means nothing serves it."""
+    now = time.time()
+    if now - _ENA_SRV_CACHE["at"] < _ENA_CACHE_TTL:
+        return list(_ENA_SRV_CACHE["servers"])
+    pool_id, _ = _ena_head_pool()
+    out = []
+    if pool_id:
+        try:
+            data = _ena_post("/pool/servers", {"pool_id": pool_id, "status": "active"})
+            out = [s["endpoint"] for s in (data.get("servers") or [])
+                   if s.get("endpoint")]
+        except Exception as exc:  # noqa: BLE001
+            log.info("ena: could not list servers (%s)", exc)
+    _ENA_SRV_CACHE.update(at=now, servers=out)
+    return list(out)
 _tier_avail_cache = {"at": 0.0, "val": set(), "good": set(), "good_at": 0.0,
                      "ok": False}
 _tier_avail_lock = threading.Lock()
@@ -1208,8 +1283,24 @@ async def list_models() -> JSONResponse:
         available = await asyncio.get_event_loop().run_in_executor(None, _cached_tier_availability)
     except Exception:    # noqa: BLE001
         available = set()
+    # ENA is not tier-served, so its availability comes from the coordinator's active
+    # server list rather than the AICF tier probe.
+    try:
+        ena_up = bool(await asyncio.get_event_loop().run_in_executor(None, _ena_servers))
+    except Exception:    # noqa: BLE001
+        ena_up = False
     data = []
     for mid, desc in _MODELS_META:
+        if mid in _ENA_MODEL_IDS:
+            data.append({
+                "id": mid,
+                "object": "model",
+                "owned_by": "animica",
+                "description": desc,
+                "chain_tier": "ena",
+                "serving": ena_up,
+            })
+            continue
         ct = _MODEL_CHAIN_TIER.get(mid, "standard")
         data.append({
             "id": mid,
@@ -1576,6 +1667,76 @@ def _apply_tier_routing(tier: str, serving: set) -> tuple[str, str]:
     return tier, chain_tier
 
 
+async def _ena_chat_completions(req: "OpenAIChatRequest"):
+    """Proxy an ENA request to a registered server, or say plainly that none exists.
+
+    Deliberately NOT a 503 with no explanation and NOT a silent hang: those are the two
+    failure shapes that made other queues on this network look permanently broken. A
+    missing server is a normal, recoverable state with a specific remedy, so it is
+    reported as one.
+    """
+    import urllib.error
+    import urllib.request
+
+    servers = await asyncio.get_event_loop().run_in_executor(None, _ena_servers)
+    _, model_id = await asyncio.get_event_loop().run_in_executor(None, _ena_head_pool)
+    if not servers:
+        return JSONResponse(status_code=503, content={"error": {
+            "code": "no_ena_server",
+            "type": "unavailable",
+            "message": (
+                "No node is currently serving the ENA model. ENA is trained and served "
+                "by the network: run `animica up` on a machine with a GPU (set "
+                "ANIMICA_ENA_PUBLIC_ENDPOINT so it can be reached) and it will serve "
+                "the promoted checkpoint. Your request was not queued."),
+        }, "animica": {"model": model_id or "animica-knowledge",
+                       "dispatch": "ena", "status": "no_server"}})
+
+    payload = {
+        "model": model_id or "animica-knowledge",
+        "messages": [{"role": m.role, "content": m.content or ""} for m in req.messages],
+        "stream": False,
+    }
+    if req.max_tokens:
+        payload["max_tokens"] = int(req.max_tokens)
+    if req.temperature is not None:
+        payload["temperature"] = float(req.temperature)
+    body = json.dumps(payload).encode()
+
+    last = None
+    for base in servers:            # try each registered server before giving up
+        url = base.rstrip("/") + "/v1/chat/completions"
+        try:
+            def _call():
+                rq = urllib.request.Request(
+                    url, data=body, headers={"content-type": "application/json"})
+                with urllib.request.urlopen(rq, timeout=180) as fh:
+                    return json.loads(fh.read().decode("utf-8"))
+            out = await asyncio.get_event_loop().run_in_executor(None, _call)
+            # Reasoning suppression applies here too — an ENA head over a chat base can
+            # emit <think> just like kimi-k3 does.
+            try:
+                txt = out["choices"][0]["message"]["content"]
+                visible, lostb = _strip_think(txt or "")
+                if lostb:
+                    visible = _BUDGET_EXHAUSTED_NOTE
+                out["choices"][0]["message"]["content"] = visible
+            except Exception:   # noqa: BLE001 — pass the upstream body through as-is
+                pass
+            out.setdefault("animica", {})["dispatch"] = "ena"
+            out["animica"]["server"] = base
+            return JSONResponse(out)
+        except Exception as exc:    # noqa: BLE001
+            last = f"{type(exc).__name__}: {exc}"
+            log.info("ena: server %s failed (%s)", base, last)
+    return JSONResponse(status_code=502, content={"error": {
+        "code": "ena_server_error",
+        "type": "upstream_error",
+        "message": (f"Every registered ENA server failed. Last error: {last}"),
+    }, "animica": {"dispatch": "ena", "status": "upstream_failed",
+                   "servers_tried": len(servers)}})
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(req: OpenAIChatRequest, request: Request,
                            authorization: Optional[str] = Header(None)):
@@ -1584,6 +1745,12 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
     # chat-server already had its session enforced. Treat any non-empty
     # Authorization header as fine.
     del authorization
+
+    # ENA models bypass the AICF queue entirely: proxy to a node that registered itself
+    # as serving the promoted checkpoint. Handled before provider init because none of
+    # the tier/availability machinery below applies to them.
+    if (req.model or "") in _ENA_MODEL_IDS:
+        return await _ena_chat_completions(req)
 
     try:
         provider = _get_provider()
