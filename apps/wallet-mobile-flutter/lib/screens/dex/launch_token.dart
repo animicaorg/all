@@ -76,20 +76,26 @@ class _LaunchTokenScreenState extends ConsumerState<LaunchTokenScreen> {
       maxSupply = BigInt.tryParse(maxStr);
       if (maxSupply == null || maxSupply <= BigInt.zero) {
         setState(() => _err =
-            'Max supply must be a positive whole number, or blank for uncapped.');
+            'Max supply must be a positive whole number, or blank for a fixed supply.');
         return null;
       }
       if (maxSupply < supply) {
         setState(() => _err = 'Max supply cannot be below the initial supply.');
         return null;
       }
+    } else if (_mintable) {
+      // The standard requires max_supply > 0; a mintable token needs headroom
+      // above its initial supply, so a cap is required when minting is enabled.
+      setState(() => _err =
+          'Enter a max supply above the initial supply to enable minting.');
+      return null;
     }
     return TokenLaunchParams(
       name: name,
       symbol: symbol,
       decimals: decimals,
       initialSupply: supply,
-      maxSupply: maxSupply, // null = uncapped
+      maxSupply: maxSupply, // null → fixed supply (cap == initial supply)
       mintable: _mintable,
       metadataUri: _metadataUri.text.trim(),
     );
@@ -240,7 +246,7 @@ class _LaunchTokenScreenState extends ConsumerState<LaunchTokenScreen> {
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(
               labelText: 'Max supply (optional)',
-              helperText: 'Blank = uncapped.',
+              helperText: 'Blank = fixed supply. Set a cap above the initial supply to allow minting.',
               border: OutlineInputBorder(),
             ),
           ),

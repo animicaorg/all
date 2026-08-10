@@ -55,7 +55,11 @@ class TokenLaunchParams {
   /// Human-readable initial supply (e.g. 1_000_000); scaled by 10^decimals.
   final BigInt initialSupply;
 
-  /// 0 = uncapped.
+  /// 0 = "no explicit cap". The AnimicaTokenStandard requires `max_supply > 0`
+  /// AND `>= initial_supply` (init reverts otherwise), so there is no true
+  /// uncapped mode: a blank cap means a FIXED-supply token (cap == initial
+  /// supply). To allow later minting, set an explicit cap above the initial
+  /// supply. See [maxSupplyBase].
   final BigInt maxSupply;
   final bool mintable;
 
@@ -76,8 +80,13 @@ class TokenLaunchParams {
   }) : maxSupply = maxSupply ?? BigInt.zero;
 
   BigInt get initialSupplyBase => initialSupply * BigInt.from(10).pow(decimals);
-  BigInt get maxSupplyBase =>
-      maxSupply == BigInt.zero ? BigInt.zero : maxSupply * BigInt.from(10).pow(decimals);
+
+  /// The `max_supply` init argument, in base units. A blank cap (0) becomes the
+  /// initial supply so the token deploys as fixed-supply — the standard rejects
+  /// `max_supply == 0` (`bad_max_supply`), so passing 0 would revert init.
+  BigInt get maxSupplyBase => maxSupply == BigInt.zero
+      ? initialSupplyBase
+      : maxSupply * BigInt.from(10).pow(decimals);
 }
 
 class DexService {
