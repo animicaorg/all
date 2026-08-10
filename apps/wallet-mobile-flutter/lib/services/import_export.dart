@@ -110,7 +110,7 @@ List<Account> _accountsBuffer = const [];
 
 Account _accountFromCli(Map<String, dynamic> j) {
   final algId = j['alg_id'] as int? ??
-      (j['algId'] is int ? j['algId'] as int : AnimicaConfig.algIdSphincs);
+      (j['algId'] is int ? j['algId'] as int : AnimicaConfig.algIdMlDsa65);
   final pkHex = (j['public_key_hex'] ?? j['publicKeyHex']) as String?;
   final skHex = (j['secret_key_hex'] ?? j['secretKeyHex']) as String?;
   if (pkHex == null || skHex == null) {

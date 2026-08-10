@@ -1,6 +1,7 @@
 // Settings — accounts list, password change, import/export wallets.json,
 // network info, wipe.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -78,18 +79,18 @@ class SettingsScreen extends ConsumerWidget {
                   'New wallet label',
                   'Account ${(accountsAsync.value?.length ?? 0) + 1}');
               if (label == null) return;
-              if (scheme == 'ml_dsa_65') {
+              // Only ml_dsa_65 (0x1003) is spendable on-chain. The legacy
+              // dilithium3/sphincs stub schemes are forgeable and permanently
+              // strand funds, so new wallets are always ML-DSA-65.
+              try {
                 await ref
                     .read(accountsProvider.notifier)
                     .createMlDsa65Account(label);
-              } else if (scheme == 'sphincs') {
-                await ref
-                    .read(accountsProvider.notifier)
-                    .createSphincsAccount(label);
-              } else {
-                await ref
-                    .read(accountsProvider.notifier)
-                    .createDilithium3Account(label);
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Could not create wallet: $e')),
+                );
               }
             },
           ),
@@ -98,7 +99,8 @@ class SettingsScreen extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.file_upload_outlined),
             title: const Text('Export wallets.json'),
-            subtitle: const Text('Compatible with the CLI ~/.animica/wallets.json'),
+            subtitle: const Text(
+                'Save to your device, share, or copy — CLI-compatible'),
             onTap: () => _exportWalletsJson(context, ref),
           ),
           ListTile(
@@ -109,6 +111,7 @@ class SettingsScreen extends ConsumerWidget {
           ),
 
           const _SectionHeader('Security'),
+          _BiometricToggle(),
           ListTile(
             leading: const Icon(Icons.lock_outline),
             title: const Text('Lock wallet'),
@@ -161,20 +164,6 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: const Text(
                   'Real post-quantum lattice signatures. Default since chain v2.'),
               onTap: () => Navigator.pop(c, 'ml_dsa_65'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.warning_amber),
-              title: const Text('SPHINCS-SHAKE-128s (deprecated)'),
-              subtitle: const Text(
-                  'Legacy stub kept only for receiving on existing addresses.'),
-              onTap: () => Navigator.pop(c, 'sphincs'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.warning_amber),
-              title: const Text('Dilithium3 stub (deprecated)'),
-              subtitle: const Text(
-                  'Legacy commitment-stub scheme; do not use for new wallets.'),
-              onTap: () => Navigator.pop(c, 'dilithium3'),
             ),
             const SizedBox(height: 8),
           ],
@@ -255,7 +244,85 @@ class SettingsScreen extends ConsumerWidget {
       return;
     }
     final body = exportWalletsJson(accs);
-    // Two ways to deliver: copy to clipboard + share to a file destination.
+
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (c) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.download_outlined),
+              title: const Text('Save to device'),
+              subtitle: const Text('Pick a folder, e.g. Downloads'),
+              onTap: () => Navigator.pop(c, 'save'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.share_outlined),
+              title: const Text('Share…'),
+              subtitle: const Text('Send to another app or device'),
+              onTap: () => Navigator.pop(c, 'share'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.content_copy),
+              title: const Text('Copy to clipboard'),
+              onTap: () => Navigator.pop(c, 'copy'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+
+    switch (choice) {
+      case 'save':
+        await _saveExportToDevice(context, body);
+      case 'share':
+        await _shareExport(context, body);
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: body));
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'Copied. This contains your private keys — paste it somewhere safe.')),
+        );
+    }
+  }
+
+  /// Direct download: the system "create document" dialog (SAF on Android,
+  /// Files on iOS) writes wallets.json wherever the user picks — no share
+  /// sheet round-trip. Desktop dialogs only return a path, so write there.
+  Future<void> _saveExportToDevice(BuildContext context, String body) async {
+    try {
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save wallets.json',
+        fileName: 'wallets.json',
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        bytes: Uint8List.fromList(utf8.encode(body)),
+      );
+      if (path == null) return; // user cancelled
+      if (!Platform.isAndroid && !Platform.isIOS) {
+        await File(path).writeAsString(body);
+      }
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'wallets.json saved. Anyone with this file can spend your ANM — keep it safe.')),
+      );
+    } catch (e) {
+      // No document provider / dialog unavailable — offer the share sheet
+      // instead so the export still succeeds.
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Save failed ($e) — opening Share instead.')),
+      );
+      await _shareExport(context, body);
+    }
+  }
+
+  Future<void> _shareExport(BuildContext context, String body) async {
     try {
       final dir = Directory.systemTemp;
       final f = File('${dir.path}/animica-wallets-${DateTime.now().millisecondsSinceEpoch}.json');
@@ -353,6 +420,46 @@ class SettingsScreen extends ConsumerWidget {
               child: const Text('Import')),
         ],
       ),
+    );
+  }
+}
+
+/// Enable/disable fingerprint / Face ID unlock. Enabling captures the current
+/// (unlocked) key behind a biometric prompt; the toggle hides itself on devices
+/// without biometric hardware/enrollment.
+class _BiometricToggle extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final auth = ref.watch(authProvider).value;
+    if (auth == null || !auth.biometricAvailable) return const SizedBox.shrink();
+    return SwitchListTile(
+      secondary: const Icon(Icons.fingerprint),
+      title: const Text('Biometric unlock'),
+      subtitle: Text(auth.biometricEnabled
+          ? 'Unlock with fingerprint or Face ID. Password still works.'
+          : 'Use fingerprint or Face ID instead of typing your password.'),
+      value: auth.biometricEnabled,
+      onChanged: (want) async {
+        final notifier = ref.read(authProvider.notifier);
+        if (want) {
+          if (!auth.unlocked) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Unlock the wallet first, then enable biometrics.')));
+            return;
+          }
+          final ok = await notifier.enableBiometric();
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(ok
+                  ? 'Biometric unlock enabled.'
+                  : 'Could not enable biometric unlock.')));
+        } else {
+          await notifier.disableBiometric();
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Biometric unlock disabled.')));
+        }
+      },
     );
   }
 }

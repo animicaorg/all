@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 and below (fullBackupContent). allowBackup is false so this is
+  belt-and-suspenders, but keep the secure-storage prefs excluded in case
+  backup is ever re-enabled. See data_extraction_rules.xml for the rationale.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="FlutterSecureStorage.xml"/>
+    <exclude domain="sharedpref" path="FlutterSecureKeyStorage.xml"/>
+</full-backup-content>

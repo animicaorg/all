@@ -27,6 +27,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -57,8 +58,54 @@ class MlDsa65 {
     return _initFuture;
   }
 
+  // The embedded engines (QuickJS on Android/desktop, JSC on iOS) are NOT browsers and
+  // NOT Node. Three capabilities the noble bundle and our wrappers assumed are absent,
+  // and each broke the wallet at a different point — they only surfaced one at a time:
+  //
+  //   atob/btoa — every wrapper marshals bytes as base64. Shimmed below.
+  //               (0.2.3 could not create a wallet at all.)
+  //   BigInt    — NOT SHIMMABLE HERE. The engine has no BigInt whatsoever: the
+  //               constructor is absent AND literals are a SyntaxError ("invalid number
+  //               literal"), so a polyfill written with `1n` cannot even be parsed —
+  //               that was the 0.2.5 failure. Instead the BUNDLE itself was patched to
+  //               need no BigInt: its only two uses precomputed constant tables (the
+  //               Keccak round constants and the NTT zetas), and both are now built with
+  //               exact int32/double arithmetic. See assets/js/ml_dsa_65.bundle.js.
+  //   crypto.getRandomValues — DELIBERATELY NOT SHIMMED. sign() passes `extraEntropy`
+  //               from Dart's Random.secure() instead; a JS fallback RNG could sign with
+  //               weak randomness, far worse than throwing.
+  static const String _engineShims = r'''
+    if (typeof atob === 'undefined' || typeof btoa === 'undefined') {
+      var _A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      globalThis.btoa = function (s) {
+        var o = '';
+        for (var i = 0; i < s.length; i += 3) {
+          var c1 = s.charCodeAt(i), c2 = s.charCodeAt(i + 1), c3 = s.charCodeAt(i + 2);
+          o += _A[c1 >> 2] + _A[((c1 & 3) << 4) | ((c2 || 0) >> 4)];
+          o += isNaN(c2) ? '=' : _A[((c2 & 15) << 2) | ((c3 || 0) >> 6)];
+          o += isNaN(c3) ? '=' : _A[c3 & 63];
+        }
+        return o;
+      };
+      globalThis.atob = function (s) {
+        s = s.replace(/=+$/, '');
+        var o = '', b = 0, bits = 0;
+        for (var i = 0; i < s.length; i++) {
+          b = (b << 6) | _A.indexOf(s[i]);
+          bits += 6;
+          if (bits >= 8) { bits -= 8; o += String.fromCharCode((b >> bits) & 255); }
+        }
+        return o;
+      };
+    }
+  ''';
+
   static Future<void> _initialise() async {
     final rt = getJavascriptRuntime();
+    final shimRes = rt.evaluate(_engineShims);
+    if (shimRes.isError) {
+      throw StateError('ml_dsa_65 engine shims failed: ${shimRes.stringResult}');
+    }
     final bundle = await rootBundle.loadString(assetPath);
     final res = rt.evaluate(bundle);
     if (res.isError) {
@@ -71,9 +118,32 @@ class MlDsa65 {
       throw StateError(
           'ml_dsa_65 bundle did not expose NobleMlDsa global (got: ${probe.stringResult})');
     }
-    // Some QuickJS builds don't ship a crypto.getRandomValues — noble's
-    // keygen takes an explicit seed so we never call into the engine's
-    // RNG. (Sign uses sk-derived randomness, also seed-free.)
+    // The engine ships NO crypto.getRandomValues (verified: zero occurrences in the
+    // bundled QuickJS .so). keygen is fine — it takes an explicit seed. SIGN IS NOT:
+    // ML-DSA is hedged and the bundle calls randomBytes() unless `extraEntropy` is
+    // supplied, so it would throw on every transaction. The previous comment here
+    // asserted "sign uses sk-derived randomness, also seed-free" — that was wrong and
+    // is why the gap went unnoticed. sign() now passes entropy from Random.secure().
+
+    // Prove the base64 bridge round-trips BEFORE any key material depends on it.
+    // Every wrapper passes bytes through atob/btoa, so a broken or absent shim
+    // means silently wrong keys or a thrown ReferenceError deep inside a user
+    // action. Failing here instead surfaces it at startup with a clear message,
+    // and costs one tiny evaluate. The vector covers the 0/1/2-byte padding cases
+    // and a byte >0x7f, which is where a hand-rolled base64 usually breaks.
+    final selfTest = rt.evaluate(
+        'atob(btoa("\\u0000\\u0001\\u00ff\\u007f")).split("")'
+        '.map(function(c){return c.charCodeAt(0);}).join(",")');
+    if (selfTest.isError || selfTest.stringResult != '0,1,255,127') {
+      throw StateError('ml_dsa_65 base64 bridge is broken '
+          '(atob/btoa round-trip gave: ${selfTest.stringResult})');
+    }
+
+    // The bundle's BigInt-free tables are deterministic integer arithmetic, so there is
+    // nothing engine-specific left to probe here. Correctness is pinned instead by
+    // test/ml_dsa_golden_test.dart, which asserts keygen/sign against vectors taken from
+    // the chain's own pq.py.algs.ml_dsa_65 — a table error would produce WRONG KEYS
+    // rather than a crash, so it must be caught by a known-answer test, not a shim probe.
     _rt = rt;
   }
 
@@ -133,11 +203,25 @@ class MlDsa65 {
     final rt = _rt!;
     final skB64 = base64Encode(secretKey);
     final msgB64 = base64Encode(message);
+    // ML-DSA signing is HEDGED: with no `extraEntropy` the bundle calls
+    // randomBytes() -> crypto.getRandomValues, which does NOT exist in the embedded
+    // engine (verified: zero occurrences in the shipped QuickJS .so). Signing would
+    // therefore fail with "crypto.getRandomValues must be defined" on every
+    // transaction. The comment in _initialise used to claim sign was seed-free; it is
+    // not. Supply the 32 bytes from Dart's Random.secure() — the platform CSPRNG —
+    // rather than shimming a JS RNG we could not vouch for. Passing `false` instead
+    // would select FIPS 204 deterministic signing, which is also valid but gives up
+    // hedging against fault attacks.
+    final rng = math.Random.secure();
+    final rnd =
+        Uint8List.fromList(List<int>.generate(32, (_) => rng.nextInt(256)));
+    final rndB64 = base64Encode(rnd);
     final js = '''
       (function() {
         var sk = Uint8Array.from(atob("$skB64"), c => c.charCodeAt(0));
         var msg = Uint8Array.from(atob("$msgB64"), c => c.charCodeAt(0));
-        var sig = NobleMlDsa.ml_dsa65.sign(msg, sk);
+        var rnd = Uint8Array.from(atob("$rndB64"), c => c.charCodeAt(0));
+        var sig = NobleMlDsa.ml_dsa65.sign(msg, sk, { extraEntropy: rnd });
         var s = '';
         for (var i = 0; i < sig.length; i++) s += String.fromCharCode(sig[i]);
         return btoa(s);

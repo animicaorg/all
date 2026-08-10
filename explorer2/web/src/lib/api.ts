@@ -13,6 +13,8 @@ import type {
   MempoolView,
   RichListResponse,
   RichListSummary,
+  TokenInfo,
+  TokenPricePoint,
   TxDetail
 } from '@animica/explorer2-shared'
 import { formatError } from './rpcUtils'
@@ -163,4 +165,31 @@ export const api = {
     apiGet<{ available: boolean; status?: unknown; workers?: unknown; jobs?: unknown; policy?: unknown }>('/api/quantum/info'),
   getDebugBundle: () =>
     apiGet<unknown>('/api/debug/bundle'),
+}
+
+// ── Token tracker ─────────────────────────────────────────────────────────────
+
+export async function fetchTokens(limit = 100): Promise<TokenInfo[]> {
+  const res = await apiGet<{ tokens: TokenInfo[] }>(`/api/tokens?limit=${limit}`)
+  return res.tokens ?? []
+}
+
+export async function fetchFeaturedTokens(limit = 50): Promise<TokenInfo[]> {
+  const res = await apiGet<{ tokens: TokenInfo[] }>(`/api/tokens/featured?limit=${limit}`)
+  return res.tokens ?? []
+}
+
+export async function searchTokens(query: string, limit = 50): Promise<TokenInfo[]> {
+  const res = await apiGet<{ tokens: TokenInfo[] }>(
+    `/api/tokens/search?q=${encodeURIComponent(query)}&limit=${limit}`
+  )
+  return res.tokens ?? []
+}
+
+export function fetchToken(address: string): Promise<TokenInfo> {
+  return apiGet<TokenInfo>(`/api/tokens/${encodeURIComponent(address)}`)
+}
+
+export function fetchTokenHistory(address: string, range = '7d'): Promise<TokenPricePoint[]> {
+  return apiGet<TokenPricePoint[]>(`/api/tokens/${encodeURIComponent(address)}/history?range=${range}`)
 }

@@ -1,15 +1,20 @@
-// Golden-vector tests for the canonical CBOR encoder + build_sign_bytes.
+// Golden-vector tests for the canonical CBOR ENCODER + build_sign_bytes.
 //
 // The hex values here are produced by the Python reference
 // (`pq.py.sign.build_sign_bytes` + `omni_sdk.tx.signing.canonical_body_dict`)
-// for a known transfer body. If either changes, this test breaks and
-// the wallet's broadcast envelopes will be rejected by the chain.
+// for known inline maps. They pin the ENCODER — key ordering, integer widths,
+// bstr framing — independently of what shape the tx builders emit.
+//
+// The builders themselves (and the signing preimage the chain verifies) are
+// covered by test/tx_golden_vectors_test.dart. Note the flat
+// `{to,data,from,…}` maps below are NOT what buildTransferBody produces any
+// more: they are the shape `normalize_tx_body` REWRITES, which is exactly why
+// signing them never verified. They survive here purely as encoder fixtures.
 
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:animica_wallet/services/canonical.dart';
-import 'package:animica_wallet/services/signer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 String _hex(Uint8List b) =>
@@ -77,7 +82,8 @@ void main() {
         '6c75651904d2666d61784665651a3b9aca0067636861696e496401686761734c'
         '696d6974195208';
 
-    // (1) Raw encoder over an inline body map (the true wire bytes).
+    // Raw encoder over an inline body map: a bstr of that length must be
+    // framed and ordered exactly like this.
     final inlineBody = <String, dynamic>{
       'to': 'anim1dest',
       'data': memoBytes,
@@ -89,59 +95,38 @@ void main() {
       'gasLimit': 21000,
     };
     expect(_hex(canonicalCbor(inlineBody)), expectedHex);
-
-    // (2) The production builder must thread `data` into that exact byte string.
-    final builtBody = buildTransferBody(
-      from: 'anim1source',
-      to: 'anim1dest',
-      amountNanos: BigInt.from(1234),
-      nonce: 1,
-      data: memoBytes,
-    );
-    expect(_hex(canonicalCbor(builtBody)), expectedHex);
   });
 
-  test('buildTransferBody without data is byte-identical to the empty vector',
-      () {
-    // The default (data omitted) MUST reproduce the historical empty-data
-    // golden vector exactly — no behavioral change for existing sends.
-    final body = buildTransferBody(
-      from: 'anim1source',
-      to: 'anim1dest',
-      amountNanos: BigInt.from(1234),
-      nonce: 1,
-    );
-    expect(
-      _hex(canonicalCbor(body)),
-      'a862746f69616e696d31646573746464617461406466726f6d6b616e696d31736f'
-      '75726365656e6f6e6365016576616c75651904d2666d61784665651a3b9aca0067'
-      '636861696e496401686761734c696d6974195208',
-    );
+  test('map keys sort by their ENCODED bytes, ints before text', () {
+    // The signing preimage is keyed 1..7 (ints). A `toString()` comparison
+    // happens to work for single digits and then silently mis-orders at 10,
+    // which would break every signature the day the preimage grew a key.
+    final ints = <int, dynamic>{10: 'j', 2: 'b', 1: 'a'};
+    expect(_hex(canonicalCbor(ints)), 'a30161610261620a616a');
+    // int keys (major 0) encode below text keys (major 3).
+    final mixed = <Object, dynamic>{'a': 1, 1: 2};
+    expect(_hex(canonicalCbor(mixed)), 'a20102616101');
+    // Text keys: shorter first, then bytewise.
+    final text = <String, dynamic>{'bb': 1, 'b': 2, 'a': 3};
+    expect(_hex(canonicalCbor(text)), 'a361610361620262626201');
   });
 
-  test('buildTransferBody rejects an oversized data payload (>1024 bytes)', () {
-    final tooBig = Uint8List(kMaxTransferDataBytes + 1);
-    expect(
-      () => buildTransferBody(
-        from: 'anim1source',
-        to: 'anim1dest',
-        amountNanos: BigInt.from(1),
-        nonce: 0,
-        data: tooBig,
-      ),
-      throwsArgumentError,
-    );
-    // Exactly at the limit is allowed.
-    expect(
-      () => buildTransferBody(
-        from: 'anim1source',
-        to: 'anim1dest',
-        amountNanos: BigInt.from(1),
-        nonce: 0,
-        data: Uint8List(kMaxTransferDataBytes),
-      ),
-      returnsNormally,
-    );
+  test('integers wider than 64 bits use the CBOR bignum tags', () {
+    // core/encoding/cbor.py switches to tag 2 / tag 3 above 2^64-1; the old
+    // Dart encoder silently truncated to the low 8 bytes, which would have
+    // signed a DIFFERENT amount than the one displayed.
+    final big = BigInt.parse('18446744073709551616'); // 2^64
+    expect(_hex(canonicalCbor(big)), 'c249010000000000000000');
+    expect(_hex(canonicalCbor(BigInt.parse('18446744073709551615'))),
+        '1bffffffffffffffff');
+    // -2^64 still fits the 64-bit negative form (major 1 encodes -1-n).
+    expect(_hex(canonicalCbor(-big)), '3bffffffffffffffff');
+    expect(_hex(canonicalCbor(-big - BigInt.one)), 'c349010000000000000000');
+  });
+
+  test('duplicate map keys are rejected rather than emitted', () {
+    expect(() => canonicalCbor(<Object, dynamic>{1: 'a', BigInt.one: 'b'}),
+        throwsArgumentError);
   });
 
   test('uvarint encodes small + large values correctly', () {

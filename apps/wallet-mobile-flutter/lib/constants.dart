@@ -36,16 +36,73 @@ class AnimicaConfig {
   /// a single string. Points to the primary.
   static String get rpcUrl => rpcEndpoints.first;
 
-  /// Buy gateway URL — opened by the Buy screen.
+  /// Buy gateway URL — the legacy NOWPayments desk. Kept only as a
+  /// historical reference; it currently serves 503, so the Buy screen no
+  /// longer links to it (see lib/screens/buy.dart).
   static const String buyGatewayUrl = String.fromEnvironment(
     'ANIMICA_BUY_URL',
     defaultValue: 'https://buy.animica.org',
+  );
+
+  /// PayPal on-ramp desk base. nginx on animica.dev strips the `/api`
+  /// prefix and proxies to the buy-sol Fastify service (loopback :4510),
+  /// so the wallet talks to `/api/onramp/...`. These routes are DORMANT
+  /// until the operator arms the rail (ONRAMP_ENABLED + ONRAMP_PAYPAL_ENABLED);
+  /// the Buy screen degrades to an "almost ready" state on 404/503.
+  static const String onrampApiUrl = String.fromEnvironment(
+    'ANIMICA_ONRAMP_URL',
+    defaultValue: 'https://animica.dev/api/onramp',
+  );
+
+  /// A code-committed, mainnet-deployed contract used only as a liveness probe
+  /// for on-chain contract execution (the DEX capability check calls its
+  /// `owner()` view). This is the NFT marketplace from
+  /// contracts/deployments/nft_marketplace.mainnet.json.
+  static const String probeContract = String.fromEnvironment(
+    'ANIMICA_PROBE_CONTRACT',
+    defaultValue: 'anim1qqq26fkt5pf0z8vehl6emafreyt7x48ly7lxaqx72aq73ehhme9v7js3zp3lg',
+  );
+
+  /// The DEX factory/router contract addresses, once deployed and governed.
+  /// Empty until the operator publishes them (the DEX tab shows a "not yet
+  /// deployed" state rather than guessing an address).
+  static const String dexFactoryAddress =
+      String.fromEnvironment('ANIMICA_DEX_FACTORY', defaultValue: '');
+  static const String dexRouterAddress =
+      String.fromEnvironment('ANIMICA_DEX_ROUTER', defaultValue: '');
+
+  /// Off-chain token index (metadata, images, links, promoted set, price
+  /// history for charts) — the explorer's token tracker, live at
+  /// explorer.animica.org/api. The client appends `/tokens/...` to this base.
+  /// Set to empty via --dart-define to run the DEX tab in on-chain-only mode.
+  static const String tokenIndexUrl = String.fromEnvironment(
+    'ANIMICA_TOKEN_INDEX_URL',
+    defaultValue: 'https://explorer.animica.org/api',
+  );
+
+  /// NonKYC public market-data endpoint for the ANM/USDT pair — prices
+  /// wallet balances in fiat on the Home screen. Plain GET, no auth, no
+  /// API key. NonKYC is the exchange where ANM actually trades, so its
+  /// last price is the reference quote.
+  static const String priceApiUrl = String.fromEnvironment(
+    'ANIMICA_PRICE_URL',
+    defaultValue: 'https://api.nonkyc.io/api/v2/market/getbysymbol/ANM_USDT',
   );
 
   /// Marketplace API for NFT lookups (per-wallet collection view).
   static const String marketplaceUrl = String.fromEnvironment(
     'ANIMICA_MARKETPLACE_URL',
     defaultValue: 'https://animica.xyz',
+  );
+
+  /// App Store / marketplace REST base (the `mkt/v1` root on animica.dev).
+  /// Both the store catalog/purchase routes (`/store/...`) and the wallet
+  /// challenge-login routes (`/auth/...`) hang off this. Content, icon and
+  /// APK-download URLs the API returns are ORIGIN-relative (`/api/mkt/v1/...`)
+  /// and are resolved against this base's origin by MarketplaceApi.
+  static const String storeApiUrl = String.fromEnvironment(
+    'ANIMICA_STORE_API_URL',
+    defaultValue: 'https://animica.dev/api/mkt/v1',
   );
 
   /// Block explorer link template — `{txHash}` and `{address}` are replaced.

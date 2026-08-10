@@ -129,14 +129,15 @@ class RpcClient {
     return 0;
   }
 
-  Future<int> chainId() async {
-    try {
-      final r = await call('chain.getChainId', {});
-      if (r is int) return r;
-      if (r is String) return int.tryParse(r) ?? AnimicaConfig.chainId;
-    } catch (_) {}
-    return AnimicaConfig.chainId;
-  }
+  // NOTE: there is deliberately no `chainId()` helper here any more.
+  //
+  // The old one swallowed every error and fell back to the compile-time
+  // `AnimicaConfig.chainId`, which made it impossible to tell "the node says
+  // chain 1" from "the node said nothing". Since the chain id is signed into
+  // every transaction preimage, a guess there is a wrong signature. The single
+  // source of truth is `signer.dart:chainContextFor()`, which reads the full
+  // chain identity, refuses a node on a different chain than this build, and
+  // caches the result per client.
 
   Future<BigInt> getBalance(String address) async {
     final r = await call('state.getBalance', {'address': address});

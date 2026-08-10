@@ -35,7 +35,15 @@ class Vault {
             );
 
   Future<List<Account>> load() async {
-    final raw = await _storage.read(key: _kAccountsKey);
+    final String? raw;
+    try {
+      raw = await _storage.read(key: _kAccountsKey);
+    } catch (e) {
+      if (isStorageCorruptionError(e)) {
+        throw WalletStorageCorruptedException(e);
+      }
+      rethrow;
+    }
     if (raw == null) return const [];
     if (unlockKey == null) {
       // Legacy / first-run path — try to parse as plaintext.

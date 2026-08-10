@@ -22,6 +22,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pointycastle/block/aes.dart';
 import 'package:pointycastle/block/modes/gcm.dart';
@@ -32,10 +33,45 @@ import 'package:pointycastle/macs/hmac.dart';
 import 'package:pointycastle/digests/sha256.dart';
 
 const _kAuthKey = 'animica.wallet.auth.v1';
+const _kAccountsKey = 'animica.wallet.accounts.v1';
+const _kBiometricKeyKey = 'animica.wallet.biometric_key.v1';
 const _verifierPlain = 'animica.wallet.unlock-check.v1';
 const _kdfRoundsDefault = 200000;
 const _saltLen = 16;
 const _ivLen = 12;
+
+/// Thrown when the OS secure-storage blob exists but can no longer be
+/// decrypted — i.e. `flutter_secure_storage.read()` fails with a native
+/// `BadPaddingException: BAD_DECRYPT` (or similar keystore/AEAD error).
+///
+/// This is almost always the result of Android auto-backup / device-to-device
+/// transfer restoring the EncryptedSharedPreferences blob onto a device whose
+/// Keystore no longer holds the matching master key. The encrypted data is
+/// unrecoverable, but the user's funds are safe on-chain — the UI should offer
+/// a "reset & re-import recovery phrase" recovery rather than dead-ending.
+class WalletStorageCorruptedException implements Exception {
+  final Object cause;
+  const WalletStorageCorruptedException(this.cause);
+  @override
+  String toString() => 'WalletStorageCorruptedException: $cause';
+}
+
+/// Heuristic: does this error from secure storage indicate the stored blob is
+/// undecryptable (vs. a transient failure we should surface as-is)?
+bool isStorageCorruptionError(Object e) {
+  if (e is WalletStorageCorruptedException) return true;
+  final s = e.toString().toLowerCase();
+  return s.contains('bad_decrypt') ||
+      s.contains('badpadding') ||
+      s.contains('aeadbadtag') ||
+      s.contains('bad_tag') ||
+      s.contains('mac check in gcm failed') ||
+      s.contains('failed to decrypt') ||
+      s.contains('invalid keystore format') ||
+      // A PlatformException from read() nearly always means the blob is there
+      // but cannot be decrypted; treat any read-side platform failure as such.
+      (e is PlatformException && s.contains('decrypt'));
+}
 
 class AuthService {
   final FlutterSecureStorage _storage;
@@ -48,8 +84,16 @@ class AuthService {
               ),
             );
 
-  Future<bool> isConfigured() async =>
-      (await _storage.read(key: _kAuthKey)) != null;
+  Future<bool> isConfigured() async {
+    try {
+      return (await _storage.read(key: _kAuthKey)) != null;
+    } catch (e) {
+      if (isStorageCorruptionError(e)) {
+        throw WalletStorageCorruptedException(e);
+      }
+      rethrow;
+    }
+  }
 
   /// Set or replace the unlock password. Stores a fresh salt + verifier.
   Future<Uint8List> setPassword(String password) async {
@@ -70,7 +114,15 @@ class AuthService {
   /// Verify a password; returns the derived encryption key on success,
   /// or null on failure.
   Future<Uint8List?> verify(String password) async {
-    final raw = await _storage.read(key: _kAuthKey);
+    final String? raw;
+    try {
+      raw = await _storage.read(key: _kAuthKey);
+    } catch (e) {
+      if (isStorageCorruptionError(e)) {
+        throw WalletStorageCorruptedException(e);
+      }
+      rethrow;
+    }
     if (raw == null) return null;
     final j = jsonDecode(raw) as Map<String, dynamic>;
     final salt = _bytes(j['salt'] as String);
@@ -87,9 +139,80 @@ class AuthService {
     }
   }
 
+  // ── biometric unlock key ────────────────────────────────────────────
+  //
+  // Stores the password-derived AES key so a biometric prompt can unlock the
+  // vault without re-deriving from the password. Callers must gate reads
+  // behind a successful biometric authentication (see BiometricService).
+
+  Future<bool> hasBiometricKey() async {
+    try {
+      return (await _storage.read(key: _kBiometricKeyKey)) != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> storeBiometricKey(Uint8List key) async {
+    await _storage.write(key: _kBiometricKeyKey, value: _hex(key));
+  }
+
+  /// The stored unlock key, or null if biometric unlock isn't set up / the
+  /// stored value is unreadable. Read only after a biometric prompt succeeds.
+  Future<Uint8List?> readBiometricKey() async {
+    try {
+      final raw = await _storage.read(key: _kBiometricKeyKey);
+      if (raw == null || raw.isEmpty) return null;
+      return _bytes(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> clearBiometricKey() async {
+    try {
+      await _storage.delete(key: _kBiometricKeyKey);
+    } catch (_) {}
+  }
+
+  /// Confirm a stored key still decrypts the auth verifier — guards against a
+  /// stale key after a password change.
+  Future<bool> keyMatchesVerifier(Uint8List key) async {
+    final String? raw;
+    try {
+      raw = await _storage.read(key: _kAuthKey);
+    } catch (_) {
+      return false;
+    }
+    if (raw == null) return false;
+    try {
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      final ctExpect = _bytes(j['verifierCt'] as String);
+      final iv = _bytes(j['verifierIv'] as String);
+      final pt = _aesGcmDecrypt(key, iv, ctExpect);
+      return utf8.decode(pt) == _verifierPlain;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Permanently wipe stored auth + vault. Caller decides UX (export first?).
+  ///
+  /// Best-effort: `deleteAll()` can itself throw when the underlying store is
+  /// corrupt, so fall back to deleting the individual known keys, and never
+  /// let a wipe failure propagate (the caller is recovering from corruption).
   Future<void> wipeAll() async {
-    await _storage.deleteAll();
+    try {
+      await _storage.deleteAll();
+      return;
+    } catch (_) {
+      // fall through to per-key best-effort deletion
+    }
+    for (final k in const [_kAuthKey, _kAccountsKey, _kBiometricKeyKey]) {
+      try {
+        await _storage.delete(key: k);
+      } catch (_) {}
+    }
   }
 
   // ── primitives ──────────────────────────────────────────────────────

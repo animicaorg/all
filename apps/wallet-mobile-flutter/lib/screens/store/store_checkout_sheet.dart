@@ -132,18 +132,26 @@ class _CheckoutSheetState extends ConsumerState<_CheckoutSheet> {
     final api = ref.read(marketplaceApiProvider);
     final rpc = ref.read(rpcProvider);
     try {
+      // Chain identity the signature is bound to (cached per RPC client).
+      // Without it the payment tx is rejected on-chain, so a failure here
+      // must abort the purchase rather than sign blind.
+      final ctx = await chainContextFor(rpc);
       final nonce = await rpc.getPendingNonce(account.address);
-      final chainId = await rpc.chainId();
       final body = buildTransferBody(
         from: account.address,
         to: intent.payTo,
         amountNanos: intent.amountNanm,
         nonce: nonce,
-        chainId: chainId,
+        chainId: ctx.chainId,
         data: Uint8List.fromList(memo),
       );
       _set(() => _statusLine = 'Broadcasting to the network…');
-      final txHash = await signAndBroadcast(rpc: rpc, account: account, body: body);
+      final txHash = await signAndBroadcast(
+        rpc: rpc,
+        account: account,
+        body: body,
+        chainContext: ctx,
+      );
       _set(() => _txHash = txHash);
 
       _set(() => _statusLine = 'Recording payment…');
@@ -156,7 +164,9 @@ class _CheckoutSheetState extends ConsumerState<_CheckoutSheet> {
     } on RpcError catch (e) {
       _set(() {
         _phase = _Phase.error;
-        _error = 'Broadcast failed: ${e.message}';
+        // Also covers the chain-identity fetch, whose message already reads
+        // as a sentence.
+        _error = 'Payment could not be sent: ${e.message}';
       });
     } on MarketplaceApiException catch (e) {
       _set(() {

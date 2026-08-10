@@ -1,0 +1,57 @@
+{
+  "$schema": "../../schemas/manifest.schema.json",
+  "name": "AnimicaTokenStandard",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Animica VM-PY fungible token standard with metadata URI, cap, mint controls, allowance, and freeze authority.",
+  "source": { "path": "contract.py" },
+  "abi": {
+    "events": [
+      {"name": "Transfer", "fields": [{"name": "from", "type": "bytes"}, {"name": "to", "type": "bytes"}, {"name": "value", "type": "int"}]},
+      {"name": "Approval", "fields": [{"name": "owner", "type": "bytes"}, {"name": "spender", "type": "bytes"}, {"name": "value", "type": "int"}]},
+      {"name": "Mint", "fields": [{"name": "to", "type": "bytes"}, {"name": "value", "type": "int"}]},
+      {"name": "Burn", "fields": [{"name": "from", "type": "bytes"}, {"name": "value", "type": "int"}]},
+      {"name": "MetadataUpdated", "fields": [{"name": "uri", "type": "bytes"}]},
+      {"name": "OwnershipTransferred", "fields": [{"name": "previousOwner", "type": "bytes"}, {"name": "newOwner", "type": "bytes"}]},
+      {"name": "AccountFreeze", "fields": [{"name": "account", "type": "bytes"}, {"name": "frozen", "type": "bool"}]}
+    ],
+    "functions": [
+      {"name": "init", "stateMutability": "nonpayable", "inputs": [
+        {"name": "name", "type": "bytes"},
+        {"name": "symbol", "type": "bytes"},
+        {"name": "decimals", "type": "int"},
+        {"name": "owner", "type": "bytes"},
+        {"name": "initial_supply", "type": "int"},
+        {"name": "max_supply", "type": "int"},
+        {"name": "mintable", "type": "bool"},
+        {"name": "metadata_uri", "type": "bytes"},
+        {"name": "freeze_authority", "type": "bytes"}
+      ], "outputs": []},
+      {"name": "name", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "symbol", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "decimals", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "total_supply", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "totalSupply", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "max_supply", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "owner", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "mintable", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bool"}]},
+      {"name": "metadata_uri", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "metadataUri", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "balance_of", "stateMutability": "view", "inputs": [{"name": "addr", "type": "bytes"}], "outputs": [{"type": "int"}]},
+      {"name": "balanceOf", "stateMutability": "view", "inputs": [{"name": "addr", "type": "bytes"}], "outputs": [{"type": "int"}]},
+      {"name": "allowance", "stateMutability": "view", "inputs": [{"name": "owner", "type": "bytes"}, {"name": "spender", "type": "bytes"}], "outputs": [{"type": "int"}]},
+      {"name": "transfer", "stateMutability": "nonpayable", "inputs": [{"name": "to", "type": "bytes"}, {"name": "amount", "type": "int"}], "outputs": [{"type": "bool"}]},
+      {"name": "approve", "stateMutability": "nonpayable", "inputs": [{"name": "spender", "type": "bytes"}, {"name": "amount", "type": "int"}], "outputs": [{"type": "bool"}]},
+      {"name": "transfer_from", "stateMutability": "nonpayable", "inputs": [{"name": "owner_addr", "type": "bytes"}, {"name": "to", "type": "bytes"}, {"name": "amount", "type": "int"}], "outputs": [{"type": "bool"}]},
+      {"name": "transferFrom", "stateMutability": "nonpayable", "inputs": [{"name": "owner_addr", "type": "bytes"}, {"name": "to", "type": "bytes"}, {"name": "amount", "type": "int"}], "outputs": [{"type": "bool"}]},
+      {"name": "mint", "stateMutability": "nonpayable", "inputs": [{"name": "to", "type": "bytes"}, {"name": "amount", "type": "int"}], "outputs": [{"type": "bool"}]},
+      {"name": "burn", "stateMutability": "nonpayable", "inputs": [{"name": "amount", "type": "int"}], "outputs": [{"type": "bool"}]},
+      {"name": "burn_from", "stateMutability": "nonpayable", "inputs": [{"name": "owner_addr", "type": "bytes"}, {"name": "amount", "type": "int"}], "outputs": [{"type": "bool"}]},
+      {"name": "set_metadata_uri", "stateMutability": "nonpayable", "inputs": [{"name": "uri", "type": "bytes"}], "outputs": []},
+      {"name": "set_owner", "stateMutability": "nonpayable", "inputs": [{"name": "new_owner", "type": "bytes"}], "outputs": []},
+      {"name": "freeze", "stateMutability": "nonpayable", "inputs": [{"name": "addr", "type": "bytes"}, {"name": "frozen", "type": "bool"}], "outputs": []},
+      {"name": "is_frozen", "stateMutability": "view", "inputs": [{"name": "addr", "type": "bytes"}], "outputs": [{"type": "bool"}]},
+      {"name": "freeze_authority", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]}
+    ]
+  }
+}
