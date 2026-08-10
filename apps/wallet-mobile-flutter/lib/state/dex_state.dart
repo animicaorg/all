@@ -1,7 +1,10 @@
 // Riverpod wiring for the token launcher + DEX.
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../constants.dart';
 import '../services/dex.dart';
 import '../services/price.dart';
 import '../services/token_index.dart';
@@ -21,9 +24,28 @@ final tokenIndexProvider = Provider<TokenIndex>((ref) {
 });
 
 /// Whether the connected node executes contracts (probed once, cached until
-/// invalidated). Drives the honest "DEX not live on this network yet" banner.
+/// invalidated). Note: read-only simulate_call runs the VM even before the fork,
+/// so this can read "enabled" pre-activation — use [dexExecutionLiveProvider]
+/// (height-gated) to decide whether state-changing swaps/liquidity will settle.
 final dexCapabilityProvider = FutureProvider<DexCapability>((ref) async {
   return ref.watch(dexServiceProvider).probeExecution();
+});
+
+/// The chain head height (refreshed every 30 s), used to tell whether
+/// FORK_VM_EXEC has activated.
+final chainHeadProvider = FutureProvider.autoDispose<int>((ref) async {
+  final timer = Timer(const Duration(seconds: 30), ref.invalidateSelf);
+  ref.onDispose(timer.cancel);
+  return ref.read(rpcProvider).chainHead();
+});
+
+/// Whether on-chain trading is LIVE: true once the head reaches the
+/// FORK_VM_EXEC activation height. Below it, swaps/liquidity/token-init revert
+/// (deploys + promotion still work). Null while the head is loading.
+final dexExecutionLiveProvider = Provider.autoDispose<bool?>((ref) {
+  final head = ref.watch(chainHeadProvider).value;
+  if (head == null) return null;
+  return head >= AnimicaConfig.vmExecActivationHeight;
 });
 
 /// Promoted / featured tokens for the carousel.

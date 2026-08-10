@@ -54,6 +54,14 @@ class AnimicaConfig {
     defaultValue: 'https://animica.dev/api/onramp',
   );
 
+  /// Block height at which on-chain contract execution (FORK_VM_EXEC, network
+  /// upgrade 9.6.0) activates — the point swaps/liquidity/token-init start
+  /// settling. Below it those calls revert (deploys + transfers already work).
+  /// 0 on devnet/testnet (active from genesis). Keep in sync with the node's
+  /// `core/network_params.FORK_VM_EXEC` height.
+  static const int vmExecActivationHeight =
+      int.fromEnvironment('ANIMICA_VM_EXEC_HEIGHT', defaultValue: 75000);
+
   /// A code-committed, mainnet-deployed contract used only as a liveness probe
   /// for on-chain contract execution (the DEX capability check calls its
   /// `owner()` view). This is the NFT marketplace from

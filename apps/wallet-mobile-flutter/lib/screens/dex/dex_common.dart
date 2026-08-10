@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../constants.dart';
 import '../../models/account.dart';
 import '../../services/deploy.dart' show deriveDeployedContractAddress;
 import '../../services/dex.dart';
@@ -127,9 +128,36 @@ class DexCapabilityBanner extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cap = ref.watch(dexCapabilityProvider).value;
-    if (cap != DexCapability.disabled) return const SizedBox.shrink();
+    // On-chain trading goes live when the head reaches the FORK_VM_EXEC
+    // activation height (network upgrade 9.6.0). Once live, hide the banner.
+    final live = ref.watch(dexExecutionLiveProvider);
+    if (live == true) return const SizedBox.shrink();
+
+    final head = ref.watch(chainHeadProvider).value;
+    final activation = AnimicaConfig.vmExecActivationHeight;
     final cs = Theme.of(context).colorScheme;
+
+    final String message;
+    if (head != null && head < activation) {
+      final remaining = activation - head;
+      final soon = remaining <= 1000;
+      message = transferStillWorks
+          ? 'On-chain swaps and liquidity go live at block $activation '
+              '(upgrade 9.6.0) — ~$remaining blocks to go${soon ? ', soon' : ''}. '
+              'Promoting a token is a treasury transfer and works today.'
+          : 'On-chain trading (swaps, liquidity, token init) activates at block '
+              '$activation — network upgrade 9.6.0, ~$remaining blocks away. '
+              'You can deploy and prepare everything now; deploys and token '
+              'promotion already settle.';
+    } else {
+      // Head unknown — keep the copy accurate without a countdown.
+      message = transferStillWorks
+          ? 'On-chain swaps and liquidity go live with network upgrade 9.6.0 '
+              '(block $activation). Promoting a token works today.'
+          : 'On-chain trading activates with network upgrade 9.6.0 (block '
+              '$activation). Deploys and token promotion already settle.';
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -139,16 +167,11 @@ class DexCapabilityBanner extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.info_outline, color: cs.onTertiaryContainer, size: 20),
+          Icon(Icons.rocket_launch_outlined, color: cs.onTertiaryContainer, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              transferStillWorks
-                  ? 'On-chain swaps and liquidity aren\'t live on this network yet, '
-                      'but promoting a token is a treasury transfer and works today.'
-                  : 'On-chain contract execution isn\'t enabled on this network yet, '
-                      'so swaps, liquidity and token init will not settle until it is. '
-                      'You can still deploy and prepare everything now.',
+              message,
               style: TextStyle(color: cs.onTertiaryContainer, fontSize: 12.5),
             ),
           ),
