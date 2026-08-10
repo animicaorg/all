@@ -1,0 +1,41 @@
+{
+  "$schema": "../../schemas/manifest.schema.json",
+  "name": "AnimicaDexFactory",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Animica VM-PY DEX factory and pair registry.",
+  "source": { "path": "contract.py" },
+  "abi": {
+    "events": [
+      {"name": "PairCreated", "fields": [{"name": "pair", "type": "bytes"}, {"name": "token0", "type": "bytes"}, {"name": "token1", "type": "bytes"}, {"name": "feeBps", "type": "int"}, {"name": "creator", "type": "bytes"}, {"name": "pairId", "type": "bytes"}, {"name": "metadataUri", "type": "bytes"}]},
+      {"name": "PairMetadataUpdated", "fields": [{"name": "pair", "type": "bytes"}, {"name": "metadataUri", "type": "bytes"}]},
+      {"name": "OwnershipTransferred", "fields": [{"name": "previousOwner", "type": "bytes"}, {"name": "newOwner", "type": "bytes"}]},
+      {"name": "RouterUpdated", "fields": [{"name": "previousRouter", "type": "bytes"}, {"name": "newRouter", "type": "bytes"}]},
+      {"name": "DefaultFeeUpdated", "fields": [{"name": "feeBps", "type": "int"}]},
+      {"name": "LaunchFeeUpdated", "fields": [{"name": "launchFee", "type": "int"}]},
+      {"name": "FeeRecipientUpdated", "fields": [{"name": "recipient", "type": "bytes"}]}
+    ],
+    "functions": [
+      {"name": "init", "stateMutability": "nonpayable", "inputs": [{"name": "owner", "type": "bytes"}, {"name": "router", "type": "bytes"}, {"name": "default_fee_bps", "type": "int"}, {"name": "launch_fee_anm", "type": "int"}, {"name": "fee_recipient", "type": "bytes"}], "outputs": []},
+      {"name": "owner", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "router", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "default_fee_bps", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "launch_fee_anm", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "fee_recipient", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "pair_count", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "get_pair", "stateMutability": "view", "inputs": [{"name": "token_a", "type": "bytes"}, {"name": "token_b", "type": "bytes"}], "outputs": [{"type": "bytes"}]},
+      {"name": "pair_at", "stateMutability": "view", "inputs": [{"name": "index", "type": "int"}], "outputs": [{"type": "bytes"}]},
+      {"name": "pair_metadata", "stateMutability": "view", "inputs": [{"name": "pair", "type": "bytes"}], "outputs": [{"type": "bytes"}]},
+      {"name": "pair_fee_bps", "stateMutability": "view", "inputs": [{"name": "pair", "type": "bytes"}], "outputs": [{"type": "int"}]},
+      {"name": "pair_creator", "stateMutability": "view", "inputs": [{"name": "pair", "type": "bytes"}], "outputs": [{"type": "bytes"}]},
+      {"name": "pair_id", "stateMutability": "view", "inputs": [{"name": "pair", "type": "bytes"}], "outputs": [{"type": "bytes"}]},
+      {"name": "set_owner", "stateMutability": "nonpayable", "inputs": [{"name": "new_owner", "type": "bytes"}], "outputs": []},
+      {"name": "set_router", "stateMutability": "nonpayable", "inputs": [{"name": "new_router", "type": "bytes"}], "outputs": []},
+      {"name": "set_default_fee_bps", "stateMutability": "nonpayable", "inputs": [{"name": "new_fee_bps", "type": "int"}], "outputs": []},
+      {"name": "set_launch_fee_anm", "stateMutability": "nonpayable", "inputs": [{"name": "new_fee", "type": "int"}], "outputs": []},
+      {"name": "set_fee_recipient", "stateMutability": "nonpayable", "inputs": [{"name": "new_recipient", "type": "bytes"}], "outputs": []},
+      {"name": "set_pair_metadata", "stateMutability": "nonpayable", "inputs": [{"name": "pair", "type": "bytes"}, {"name": "metadata_uri", "type": "bytes"}], "outputs": []},
+      {"name": "register_pair", "stateMutability": "nonpayable", "inputs": [{"name": "token_a", "type": "bytes"}, {"name": "token_b", "type": "bytes"}, {"name": "pair", "type": "bytes"}, {"name": "creator", "type": "bytes"}, {"name": "fee_bps", "type": "int"}, {"name": "metadata_uri", "type": "bytes"}], "outputs": [{"type": "bytes"}]}
+    ]
+  }
+}

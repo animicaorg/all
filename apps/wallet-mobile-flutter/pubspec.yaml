@@ -1,7 +1,7 @@
 name: animica_wallet
-description: Animica mobile wallet — view ANM balance, ANM-20 tokens and NFTs, buy ANM via buy.animica.org, and browse dapps with an injected provider.
+description: Animica mobile wallet — view ANM balance, ANM-20 tokens and NFTs, buy ANM via buy.animica.org, launch tokens and swap on the built-in DEX, and browse dapps with an injected provider.
 publish_to: "none"
-version: 0.2.6+12
+version: 0.3.0+13
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -24,6 +24,9 @@ dependencies:
   # Storage
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.2.3
+
+  # Biometric (fingerprint / Face ID) unlock
+  local_auth: ^2.3.0
 
   # In-app dapp browser. flutter_inappwebview gives us JS injection so
   # we can expose `window.animica` to dapps just like the Chrome
@@ -73,3 +76,10 @@ flutter:
   assets:
     - assets/
     - assets/js/
+    # Standard contracts deployed by the built-in token launcher / DEX. Shipped
+    # as raw source (contract.py) + manifest.json; the deploy carries the source
+    # bytes verbatim (execution.runtime.contracts resolves them at call time).
+    - assets/contracts/animica_token/
+    - assets/contracts/animica_dex_pair/
+    - assets/contracts/animica_dex_router/
+    - assets/contracts/animica_dex_factory/

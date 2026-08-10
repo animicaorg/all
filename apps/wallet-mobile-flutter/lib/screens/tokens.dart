@@ -2,7 +2,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../services/price.dart';
 import '../services/rpc.dart';
 import '../services/tokens.dart';
 import '../state/wallet_state.dart';
@@ -43,6 +45,11 @@ class TokensScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Tokens'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.swap_horiz),
+            tooltip: 'Tokens & DEX',
+            onPressed: () => context.push('/dex'),
+          ),
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: 'Add token',
@@ -140,30 +147,40 @@ class TokensScreen extends ConsumerWidget {
   }
 }
 
-class _NativeTile extends StatelessWidget {
+class _NativeTile extends ConsumerWidget {
   final AsyncValue<BigInt> balance;
   const _NativeTile({required this.balance});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    final market = ref.watch(anmMarketProvider).value;
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: Theme.of(context).colorScheme.primary,
+          backgroundColor: cs.primary,
           child: Text('A',
-              style: TextStyle(
-                  color: Theme.of(context).colorScheme.onPrimary,
-                  fontWeight: FontWeight.w700)),
+              style: TextStyle(color: cs.onPrimary, fontWeight: FontWeight.w700)),
         ),
         title: const Text('Animica',
             style: TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: const Text('Native ANM'),
+        subtitle: Text(market == null
+            ? 'Native ANM'
+            : 'Native ANM · 1 ANM = ${formatUsd(market.usdPerAnm, sigFigs: 3)}'),
         trailing: balance.when(
           loading: () => const Text('—'),
           error: (_, __) => const Text('?'),
-          data: (n) =>
+          data: (n) => Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
               Text(formatAnm(n), style: const TextStyle(fontWeight: FontWeight.w700)),
+              if (market != null)
+                Text(formatUsd(usdValueOfNanos(n, market.usdPerAnm)),
+                    style: TextStyle(color: cs.outline, fontSize: 12)),
+            ],
+          ),
         ),
       ),
     );

@@ -4,6 +4,15 @@ import type { DecodedEvent, DecodedFunctionCall, DecodedValue } from '@animica/e
 interface AbiParam {
   name: string
   type: string
+  /**
+   * The literal type string as written in the manifest (lowercased,
+   * whitespace-stripped) — WITHOUT int→int256/uint→uint256 normalization.
+   * The chain's selector/topic domain hashes the literal strings
+   * (`transfer(bytes,int)`, not `transfer(bytes,int256)`; see
+   * sdk/python/omni_sdk/types/abi.py canonical_type), so we must keep it
+   * around to compute matching selectors.
+   */
+  rawType?: string
   indexed?: boolean
 }
 
@@ -222,8 +231,25 @@ function canonicalFnSignature(fn: AbiFunction): string {
   return `${fn.name}(${inputs})`
 }
 
+/** Signature over the literal manifest type strings (the chain's hash domain). */
+function literalFnSignature(fn: AbiFunction): string {
+  const inputs = fn.inputs.map((param) => param.rawType ?? param.type).join(',')
+  return `${fn.name}(${inputs})`
+}
+
 function functionSelectorHex(fn: AbiFunction): string {
   return asHex(sha3(`animica:abi:v1|${canonicalFnSignature(fn)}`).subarray(0, 8))
+}
+
+/**
+ * All selector candidates for a function. The chain hashes the LITERAL
+ * manifest type strings ("int", not "int256"), so try that first; keep the
+ * normalized form too for encoders that normalize before hashing.
+ */
+function functionSelectorCandidates(fn: AbiFunction): string[] {
+  const literal = asHex(sha3(`animica:abi:v1|${literalFnSignature(fn)}`).subarray(0, 8))
+  const normalized = functionSelectorHex(fn)
+  return literal === normalized ? [literal] : [literal, normalized]
 }
 
 function eventSignature(ev: AbiEvent): string {
@@ -231,8 +257,19 @@ function eventSignature(ev: AbiEvent): string {
   return `${ev.name}(${args})`
 }
 
+function literalEventSignature(ev: AbiEvent): string {
+  const args = ev.inputs.map((input) => input.rawType ?? input.type).join(',')
+  return `${ev.name}(${args})`
+}
+
 function eventTopicHex(ev: AbiEvent): string {
   return asHex(sha3(eventSignature(ev)))
+}
+
+function eventTopicCandidates(ev: AbiEvent): string[] {
+  const literal = asHex(sha3(literalEventSignature(ev)))
+  const normalized = eventTopicHex(ev)
+  return literal === normalized ? [literal] : [literal, normalized]
 }
 
 function decodeIndexedTopic(topicHex: string, typeName: string): unknown {
@@ -256,10 +293,12 @@ function decodeIndexedTopic(topicHex: string, typeName: string): unknown {
 
 function toParam(entry: any, index: number): AbiParam | null {
   if (!entry || typeof entry !== 'object') return null
+  const rawType = String(entry.type ?? 'bytes').replace(/\s+/g, '').toLowerCase()
   const type = canonicalType(String(entry.type ?? 'bytes'))
   return {
     name: String(entry.name ?? `${index}`),
     type,
+    rawType,
     indexed: Boolean(entry.indexed)
   }
 }
@@ -318,7 +357,7 @@ export function decodeCallWithAbi(inputHex: string, abiLike: unknown): DecodedFu
     return { selector, rawData: inputHex }
   }
 
-  const fn = abi.functions.find((candidate) => functionSelectorHex(candidate) === selector)
+  const fn = abi.functions.find((candidate) => functionSelectorCandidates(candidate).includes(selector))
   if (!fn) {
     return { selector, rawData: inputHex }
   }
@@ -371,7 +410,7 @@ export function decodeEventsWithAbi(logsLike: unknown, abiLike: unknown): Decode
     const topic0 = topicHexes[0]
     if (!topic0) continue
 
-    const eventDef = abi.events.find((candidate) => !candidate.anonymous && eventTopicHex(candidate) === topic0)
+    const eventDef = abi.events.find((candidate) => !candidate.anonymous && eventTopicCandidates(candidate).includes(topic0))
     if (!eventDef) continue
 
     const args: DecodedValue[] = []

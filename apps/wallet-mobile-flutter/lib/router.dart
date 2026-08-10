@@ -6,6 +6,11 @@ import 'package:go_router/go_router.dart';
 import 'screens/browser.dart';
 import 'screens/buy.dart';
 import 'screens/connect_site.dart';
+import 'screens/dex/dex_home.dart';
+import 'screens/dex/launch_token.dart';
+import 'screens/dex/liquidity.dart';
+import 'screens/dex/promote.dart';
+import 'screens/dex/swap.dart';
 import 'screens/home.dart';
 import 'screens/nfts.dart';
 import 'screens/receive.dart';
@@ -53,6 +58,22 @@ final router = GoRouter(
       builder: (c, s) => ConnectSiteScreen(initialUri: s.uri.queryParameters['uri']),
     ),
     GoRoute(path: '/buy', builder: (c, s) => const BuyScreen()),
+    // Token launcher + DEX.
+    GoRoute(path: '/dex', builder: (c, s) => const DexHomeScreen()),
+    GoRoute(path: '/dex/launch', builder: (c, s) => const LaunchTokenScreen()),
+    GoRoute(
+      path: '/dex/swap',
+      builder: (c, s) => SwapScreen(initialToken: s.uri.queryParameters['token']),
+    ),
+    GoRoute(path: '/dex/liquidity', builder: (c, s) => const LiquidityScreen()),
+    GoRoute(
+      path: '/dex/promote/:addr',
+      builder: (c, s) => PromoteScreen(contract: s.pathParameters['addr']!),
+    ),
+    GoRoute(
+      path: '/dex/token/:addr',
+      builder: (c, s) => TokenDetailScreen(address: s.pathParameters['addr']!),
+    ),
     GoRoute(
       path: '/store/library',
       builder: (c, s) => const StoreLibraryScreen(),

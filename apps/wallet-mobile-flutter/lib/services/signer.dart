@@ -205,16 +205,20 @@ Map<String, dynamic> buildDeployBody({
 }
 
 /// Build a contract-call body (kind=2). `calldata` is the pre-encoded
-/// bytes returned by your encoder of choice (server-side encode-call,
-/// or a known constant like the founders mint selector).
+/// `animica:abi:v1` bytes (see [encodeCall] in services/abi_codec.dart).
 ///
-/// VALUE POLICY — a call CANNOT carry ANM. The canonical call payload is
-/// `TxCall{to, data}` (core/types/tx.py); there is no amount slot, and the
-/// only other way to express "value + data" on-chain is `t=0` transfer-with-
-/// data, which moves the funds but never enters the contract. Both silent
-/// outcomes are wrong in opposite directions (dropped funds vs. an unexecuted
-/// call that still spends), so a non-zero `value` is REJECTED here and the
-/// caller surfaces the error. `value: 0` / `null` is the only accepted form.
+/// VALUE POLICY — a CALL may carry ANM only from FORK_VALUE_CALL
+/// (`core/types/tx.py::TxCall.amount`, activation height 75_000 on mainnet).
+/// The amount is credited to the callee before execution and refunded on
+/// revert, funding a payable entry point (e.g. the DEX router's launch fee).
+///
+/// The canonical form OMITS `amount` when it is zero — `TxCall.to_obj()` does
+/// the same, and emitting it unconditionally would change the signing preimage
+/// and txid of every value-less call ever signed. So `value` null/zero →
+/// payload `{to, data}` exactly as before; a positive value →
+/// `{to, data, amount}`. Callers must not attach value below the fork height;
+/// the node rejects it (`consensus/value_call.check_call_value`), and the DEX
+/// service defaults to zero-value token↔token calls for that reason.
 ///
 /// `calldata` must be non-empty: `TxCall.data` is validated non-empty by the
 /// node, and an empty-data call is really a transfer — route it through
@@ -235,14 +239,17 @@ Map<String, dynamic> buildCallBody({
       'TxCall.data). Use buildTransferBody for a plain value transfer.',
     );
   }
+  if (value != null && value.isNegative) {
+    throw ArgumentError('call value must not be negative: $value');
+  }
+  final callV = <String, dynamic>{
+    'to': decodeAddress(to).digest,
+    'data': calldata,
+  };
   if (value != null && value != BigInt.zero) {
-    throw ArgumentError(
-      'contract calls cannot carry a value: the canonical call payload is '
-      '{to, data} with no amount field. Sending it as a transfer instead '
-      'would move the ANM without ever invoking the contract. Send the ANM '
-      'in a separate transfer, or use a payable entry point that is funded '
-      'up front.',
-    );
+    // Emit `amount` ONLY when non-zero so the preimage stays byte-identical to
+    // the node's TxCall.to_obj() for the (overwhelmingly common) zero case.
+    callV['amount'] = value;
   }
   return _canonicalBody(
     from: from,
@@ -252,10 +259,7 @@ Map<String, dynamic> buildCallBody({
     nonce: nonce,
     payload: <String, dynamic>{
       't': 2,
-      'v': <String, dynamic>{
-        'to': decodeAddress(to).digest,
-        'data': calldata,
-      },
+      'v': callV,
     },
   );
 }

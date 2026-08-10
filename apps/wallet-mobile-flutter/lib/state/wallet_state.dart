@@ -1,5 +1,6 @@
 // Riverpod providers wiring the vault + RPC client into the UI.
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +10,7 @@ import 'dart:math' as math;
 import '../constants.dart';
 import '../models/account.dart';
 import '../services/ml_dsa_65.dart';
+import '../services/price.dart';
 import '../services/rpc.dart';
 import 'auth_state.dart';
 
@@ -123,4 +125,20 @@ final balanceProvider = FutureProvider.autoDispose<BigInt>((ref) async {
   final acc = ref.watch(activeAccountProvider);
   if (acc == null) return BigInt.zero;
   return ref.read(rpcProvider).getBalance(acc.address);
+});
+
+final priceServiceProvider = Provider<PriceService>((ref) {
+  final s = PriceService();
+  ref.onDispose(s.close);
+  return s;
+});
+
+/// Live ANM/USDT quote from NonKYC. Re-fetches every 60 s while a screen
+/// is watching it; screens read `.value` and simply omit the fiat line
+/// while it's loading or after an error, so a dead price API never blocks
+/// the balance display.
+final anmMarketProvider = FutureProvider.autoDispose<AnmMarket>((ref) async {
+  final timer = Timer(const Duration(seconds: 60), ref.invalidateSelf);
+  ref.onDispose(timer.cancel);
+  return ref.watch(priceServiceProvider).fetchAnmUsd();
 });

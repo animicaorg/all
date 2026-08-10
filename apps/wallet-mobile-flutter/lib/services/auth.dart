@@ -34,6 +34,7 @@ import 'package:pointycastle/digests/sha256.dart';
 
 const _kAuthKey = 'animica.wallet.auth.v1';
 const _kAccountsKey = 'animica.wallet.accounts.v1';
+const _kBiometricKeyKey = 'animica.wallet.biometric_key.v1';
 const _verifierPlain = 'animica.wallet.unlock-check.v1';
 const _kdfRoundsDefault = 200000;
 const _saltLen = 16;
@@ -138,6 +139,63 @@ class AuthService {
     }
   }
 
+  // ── biometric unlock key ────────────────────────────────────────────
+  //
+  // Stores the password-derived AES key so a biometric prompt can unlock the
+  // vault without re-deriving from the password. Callers must gate reads
+  // behind a successful biometric authentication (see BiometricService).
+
+  Future<bool> hasBiometricKey() async {
+    try {
+      return (await _storage.read(key: _kBiometricKeyKey)) != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> storeBiometricKey(Uint8List key) async {
+    await _storage.write(key: _kBiometricKeyKey, value: _hex(key));
+  }
+
+  /// The stored unlock key, or null if biometric unlock isn't set up / the
+  /// stored value is unreadable. Read only after a biometric prompt succeeds.
+  Future<Uint8List?> readBiometricKey() async {
+    try {
+      final raw = await _storage.read(key: _kBiometricKeyKey);
+      if (raw == null || raw.isEmpty) return null;
+      return _bytes(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> clearBiometricKey() async {
+    try {
+      await _storage.delete(key: _kBiometricKeyKey);
+    } catch (_) {}
+  }
+
+  /// Confirm a stored key still decrypts the auth verifier — guards against a
+  /// stale key after a password change.
+  Future<bool> keyMatchesVerifier(Uint8List key) async {
+    final String? raw;
+    try {
+      raw = await _storage.read(key: _kAuthKey);
+    } catch (_) {
+      return false;
+    }
+    if (raw == null) return false;
+    try {
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      final ctExpect = _bytes(j['verifierCt'] as String);
+      final iv = _bytes(j['verifierIv'] as String);
+      final pt = _aesGcmDecrypt(key, iv, ctExpect);
+      return utf8.decode(pt) == _verifierPlain;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Permanently wipe stored auth + vault. Caller decides UX (export first?).
   ///
   /// Best-effort: `deleteAll()` can itself throw when the underlying store is
@@ -150,7 +208,7 @@ class AuthService {
     } catch (_) {
       // fall through to per-key best-effort deletion
     }
-    for (final k in const [_kAuthKey, _kAccountsKey]) {
+    for (final k in const [_kAuthKey, _kAccountsKey, _kBiometricKeyKey]) {
       try {
         await _storage.delete(key: k);
       } catch (_) {}

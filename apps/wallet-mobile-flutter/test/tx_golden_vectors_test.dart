@@ -351,28 +351,43 @@ void main() {
     });
   });
 
-  group('value never disappears', () {
-    test('a call carrying ANM is rejected, not silently downgraded', () {
+  group('payable call amount', () {
+    // FORK_VALUE_CALL: a CALL may carry ANM. The canonical form OMITS `amount`
+    // when zero so a value-less call's preimage/txid stays byte-identical to
+    // every pre-fork call; a positive value adds `amount`.
+    Map<String, dynamic> callV(Map<String, dynamic> body) =>
+        (body['payload'] as Map)['v'] as Map<String, dynamic>;
+
+    test('a positive value is carried as payload.v.amount', () {
+      final body = buildCallBody(
+        from: kFrom,
+        to: kTo,
+        calldata: _bytes(kCalldataHex),
+        nonce: kNonce,
+        value: BigInt.from(5),
+      );
+      expect(callV(body)['amount'], BigInt.from(5));
+    });
+
+    test('zero / null value OMITS amount (byte-identical to a valueless call)', () {
+      final zero = buildCallBody(
+        from: kFrom, to: kTo, calldata: _bytes(kCalldataHex), nonce: kNonce, value: BigInt.zero);
+      final none = buildCallBody(
+        from: kFrom, to: kTo, calldata: _bytes(kCalldataHex), nonce: kNonce);
+      expect(callV(zero).containsKey('amount'), isFalse);
+      expect(callV(none).containsKey('amount'), isFalse);
+    });
+
+    test('a negative value is rejected', () {
       expect(
         () => buildCallBody(
           from: kFrom,
           to: kTo,
           calldata: _bytes(kCalldataHex),
           nonce: kNonce,
-          value: BigInt.from(5),
+          value: BigInt.from(-1),
         ),
         throwsArgumentError,
-      );
-      // Explicit zero is fine.
-      expect(
-        () => buildCallBody(
-          from: kFrom,
-          to: kTo,
-          calldata: _bytes(kCalldataHex),
-          nonce: kNonce,
-          value: BigInt.zero,
-        ),
-        returnsNormally,
       );
     });
 

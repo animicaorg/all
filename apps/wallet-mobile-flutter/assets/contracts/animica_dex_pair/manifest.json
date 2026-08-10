@@ -1,0 +1,38 @@
+{
+  "$schema": "../../schemas/manifest.schema.json",
+  "name": "AnimicaDexPair",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Animica VM-PY constant-product AMM pair with LP accounting and exact-in/exact-out swaps.",
+  "source": { "path": "contract.py" },
+  "abi": {
+    "events": [
+      {"name": "LiquidityAdded", "fields": [{"name": "provider", "type": "bytes"}, {"name": "amount0", "type": "int"}, {"name": "amount1", "type": "int"}, {"name": "lpMinted", "type": "int"}]},
+      {"name": "LiquidityRemoved", "fields": [{"name": "provider", "type": "bytes"}, {"name": "amount0", "type": "int"}, {"name": "amount1", "type": "int"}, {"name": "lpBurned", "type": "int"}]},
+      {"name": "Swap", "fields": [{"name": "sender", "type": "bytes"}, {"name": "to", "type": "bytes"}, {"name": "tokenIn", "type": "bytes"}, {"name": "amountIn", "type": "int"}, {"name": "amountOut", "type": "int"}]},
+      {"name": "Sync", "fields": [{"name": "reserve0", "type": "int"}, {"name": "reserve1", "type": "int"}]},
+      {"name": "FeeUpdated", "fields": [{"name": "feeBps", "type": "int"}]},
+      {"name": "OwnershipTransferred", "fields": [{"name": "previousOwner", "type": "bytes"}, {"name": "newOwner", "type": "bytes"}]}
+    ],
+    "functions": [
+      {"name": "init", "stateMutability": "nonpayable", "inputs": [{"name": "token0", "type": "bytes"}, {"name": "token1", "type": "bytes"}, {"name": "fee_bps", "type": "int"}, {"name": "owner", "type": "bytes"}], "outputs": []},
+      {"name": "token0", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "token1", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "pair_tokens", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}, {"type": "bytes"}]},
+      {"name": "fee_bps", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "owner", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "reserves", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}, {"type": "int"}]},
+      {"name": "lp_total_supply", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "lp_balance_of", "stateMutability": "view", "inputs": [{"name": "addr", "type": "bytes"}], "outputs": [{"type": "int"}]},
+      {"name": "quote_out", "stateMutability": "view", "inputs": [{"name": "token_in", "type": "bytes"}, {"name": "amount_in", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "quote_in", "stateMutability": "view", "inputs": [{"name": "token_out", "type": "bytes"}, {"name": "amount_out", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "add_liquidity", "stateMutability": "payable", "inputs": [{"name": "amount0_desired", "type": "int"}, {"name": "amount1_desired", "type": "int"}, {"name": "min_lp", "type": "int"}, {"name": "provider", "type": "bytes"}, {"name": "payer", "type": "bytes"}, {"name": "deadline", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "remove_liquidity", "stateMutability": "nonpayable", "inputs": [{"name": "lp_amount", "type": "int"}, {"name": "min_amount0", "type": "int"}, {"name": "min_amount1", "type": "int"}, {"name": "to", "type": "bytes"}, {"name": "lp_owner", "type": "bytes"}, {"name": "deadline", "type": "int"}], "outputs": [{"type": "int"}, {"type": "int"}]},
+      {"name": "swap_exact_in", "stateMutability": "payable", "inputs": [{"name": "token_in", "type": "bytes"}, {"name": "amount_in", "type": "int"}, {"name": "min_amount_out", "type": "int"}, {"name": "to", "type": "bytes"}, {"name": "payer", "type": "bytes"}, {"name": "deadline", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "swap_exact_out", "stateMutability": "payable", "inputs": [{"name": "token_out", "type": "bytes"}, {"name": "amount_out", "type": "int"}, {"name": "max_amount_in", "type": "int"}, {"name": "to", "type": "bytes"}, {"name": "payer", "type": "bytes"}, {"name": "deadline", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "set_fee_bps", "stateMutability": "nonpayable", "inputs": [{"name": "new_fee_bps", "type": "int"}], "outputs": []},
+      {"name": "set_owner", "stateMutability": "nonpayable", "inputs": [{"name": "new_owner", "type": "bytes"}], "outputs": []},
+      {"name": "sync", "stateMutability": "nonpayable", "inputs": [{"name": "reserve0", "type": "int"}, {"name": "reserve1", "type": "int"}], "outputs": []}
+    ]
+  }
+}

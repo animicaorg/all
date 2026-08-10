@@ -7,6 +7,8 @@ import AddressPage from './pages/AddressPage'
 import MempoolPage from './pages/MempoolPage'
 import DiagnosticsPage from './pages/DiagnosticsPage'
 import ContractsPage from './pages/ContractsPage'
+import TokensPage from './pages/TokensPage'
+import TokenDetailPage from './pages/TokenDetailPage'
 import { RichListPage } from './pages/RichListPage'
 import AICFPage from './pages/AICFPage'
 import MiningPage from './pages/MiningPage'
@@ -32,6 +34,7 @@ export default function App() {
               <span className="sm:hidden">Explorer</span>
             </Link>
             <div className="flex items-center gap-2 sm:gap-3">
+              <span dangerouslySetInnerHTML={{ __html: '<anm-price-ticker></anm-price-ticker>' }} />
               <nav className="flex flex-wrap gap-2 text-sm text-gray-600 dark:text-slate-300 sm:gap-3">
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/blocks">
                   Blocks
@@ -44,6 +47,9 @@ export default function App() {
                 </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/contracts">
                   Contracts
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/tokens">
+                  Tokens
                 </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/aicf">
                   AICF
@@ -86,6 +92,8 @@ export default function App() {
           <Route path="/richlist" element={<RichListPage />} />
           <Route path="/mempool" element={<MempoolPage />} />
           <Route path="/contracts" element={<ContractsPage />} />
+          <Route path="/tokens" element={<TokensPage />} />
+          <Route path="/token/:address" element={<TokenDetailPage />} />
           <Route path="/aicf" element={<AICFPage />} />
           <Route path="/mining" element={<MiningPage />} />
           <Route path="/da" element={<DAPage />} />
@@ -110,6 +118,11 @@ export default function App() {
       <footer className="mt-12 border-t border-day-200 bg-white dark:border-night-800 dark:bg-night-900">
         <div className="mx-auto max-w-7xl px-4 py-6 text-center text-sm text-gray-600 dark:text-slate-400 sm:px-6 lg:px-8">
           <p>Animica Explorer — powered by the Animica blockchain</p>
+          <p className="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            <a href="https://nonkyc.io/market/ANM_USDT" target="_blank" rel="noreferrer" className="hover:text-animica-600 dark:hover:text-animica-400">Buy / Trade ANM</a>
+            <a href="https://nonkyc.io/pool/ANM_USDT" target="_blank" rel="noreferrer" className="hover:text-animica-600 dark:hover:text-animica-400">Liquidity Pool</a>
+            <a href="https://animica.org" target="_blank" rel="noreferrer" className="hover:text-animica-600 dark:hover:text-animica-400">animica.org</a>
+          </p>
         </div>
       </footer>
     </div>

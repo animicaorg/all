@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/price.dart';
 import '../services/rpc.dart';
 import '../state/wallet_state.dart';
 
@@ -30,7 +31,10 @@ class HomeScreen extends ConsumerWidget {
             return const Center(child: Text('No active account selected.'));
           }
           return RefreshIndicator(
-            onRefresh: () async => ref.refresh(balanceProvider.future),
+            onRefresh: () async {
+              ref.invalidate(anmMarketProvider);
+              await ref.refresh(balanceProvider.future);
+            },
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
@@ -56,13 +60,16 @@ class HomeScreen extends ConsumerWidget {
   }
 }
 
-class _BalanceCard extends StatelessWidget {
+class _BalanceCard extends ConsumerWidget {
   final AsyncValue<BigInt> balance;
   const _BalanceCard({required this.balance});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final cs = Theme.of(context).colorScheme;
+    // Null while the quote is loading or when NonKYC is unreachable — the
+    // card then shows the ANM amount alone, exactly as before.
+    final market = ref.watch(anmMarketProvider).value;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -85,21 +92,73 @@ class _BalanceCard extends StatelessWidget {
           balance.when(
             loading: () => Text('— ANM', style: TextStyle(color: cs.onPrimary, fontSize: 28)),
             error: (_, __) => Text('?', style: TextStyle(color: cs.onPrimary, fontSize: 28)),
-            data: (n) => RichText(
-              text: TextSpan(
-                style: TextStyle(color: cs.onPrimary, fontSize: 28, fontWeight: FontWeight.w600),
-                children: [
-                  TextSpan(text: formatAnm(n)),
-                  const TextSpan(
-                    text: ' ANM',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.normal),
+            data: (n) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                RichText(
+                  text: TextSpan(
+                    style: TextStyle(color: cs.onPrimary, fontSize: 28, fontWeight: FontWeight.w600),
+                    children: [
+                      TextSpan(text: formatAnm(n)),
+                      const TextSpan(
+                        text: ' ANM',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.normal),
+                      ),
+                    ],
+                  ),
+                ),
+                if (market != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '≈ ${formatUsd(usdValueOfNanos(n, market.usdPerAnm))}',
+                    style: TextStyle(
+                        color: cs.onPrimary.withOpacity(0.92),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500),
                   ),
                 ],
-              ),
+              ],
+            ),
+          ),
+          if (market != null) ...[
+            const SizedBox(height: 12),
+            _PriceRow(market: market),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PriceRow extends StatelessWidget {
+  final AnmMarket market;
+  const _PriceRow({required this.market});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final change = market.changePct24h;
+    final up = (change ?? 0) >= 0;
+    final base = TextStyle(color: cs.onPrimary.withOpacity(0.85), fontSize: 12);
+    return Row(
+      children: [
+        Text('1 ANM = ${formatUsd(market.usdPerAnm, sigFigs: 3)}', style: base),
+        if (change != null) ...[
+          const SizedBox(width: 8),
+          Text(
+            '${up ? '▲' : '▼'} ${change.abs().toStringAsFixed(1)}% 24h',
+            style: TextStyle(
+              // Readable tints on the primary gradient rather than raw
+              // green/red, which vanish on some seed colors.
+              color: up ? const Color(0xFFA5F3C4) : const Color(0xFFFFB4AB),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
-      ),
+        const Spacer(),
+        Text('NonKYC', style: base.copyWith(color: cs.onPrimary.withOpacity(0.55))),
+      ],
     );
   }
 }
