@@ -20,6 +20,7 @@ from typing import Any, Optional
 
 from .config import ENAConfig, init_config, load_config
 from .errors import ENAError
+from .pool import _env_true
 from .models import ENA_CONFIG_VERSION
 
 __all__ = ["ENA", "ENAConfig", "ENAError", "load_config", "init_config",
@@ -365,8 +366,20 @@ class ENA:
             return {"shard_id": shard_id, "status": "train_failed",
                     "error": run.get("error")}
 
-        # Best-effort: upload the trained weights so the coordinator can merge a
-        # real adapter. Training still earns (receipt) if the upload fails.
+        # The trained weights MUST reach the coordinator, or this shard contributes
+        # nothing to the merge.
+        #
+        # This used to be "best-effort: training still earns (receipt) if the upload
+        # fails" — it caught the exception, warned to a log nobody reads, and submitted
+        # with checkpoint_path=None. The coordinator accepted that, paid weight for it
+        # (weight is gpu_hours = wall clock, so a shard that merely sat open earned
+        # more), and wrote a merge-plan whose every checkpoint was null. That is exactly
+        # how this pool advanced 35 rounds while its promoted head stayed frozen at 48
+        # for six weeks, accruing 259 contributions no one could ever be paid for.
+        #
+        # So a failed upload is now a FAILED SUBMIT. Losing one shard's work is
+        # recoverable — the round is reclaimed and retried. Silently poisoning the round
+        # while being paid for it is not.
         coord_ckpt: Optional[str] = None
         metrics = dict(run.get("metrics") or {})
         out = run.get("output_dir")
@@ -375,8 +388,18 @@ class ENA:
                 up = rc.upload_checkpoint(pool_id, shard_id, tar_adapter_b64(out))
                 coord_ckpt = up.get("checkpoint_path")
             except Exception as exc:  # noqa: BLE001
-                log.warning("[trainer] checkpoint upload failed (%s); "
-                            "submitting receipt only", exc)
+                raise ENAError(
+                    f"checkpoint upload failed for {shard_id}: {exc}",
+                    hint="the coordinator cannot merge a shard whose weights never "
+                         "arrived, and submitting anyway earns weight for work that "
+                         "cannot be used. Fix connectivity to the coordinator and let "
+                         "the shard be reclaimed and retried. Set "
+                         "ANIMICA_ENA_ALLOW_WEIGHTLESS_SUBMIT=1 only for tests.",
+                ) from exc
+            if not coord_ckpt and not _env_true("ANIMICA_ENA_ALLOW_WEIGHTLESS_SUBMIT"):
+                raise ENAError(
+                    f"coordinator accepted the upload for {shard_id} but returned no "
+                    f"checkpoint_path; refusing to submit a shard that cannot be merged")
             # GPU trainer-side eval: score the checkpoint on the shared eval
             # split so the gate + topic discovery get a real number with zero
             # coordinator-side model load.

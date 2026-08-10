@@ -62,12 +62,13 @@ def test_payout_skips_rejected_round(funded_ena, tmp_path):
     e.store.upsert_pool(pool)
     _add_trainer_contrib(e, pid, 1, "anim1trainerA", 1.0)
 
-    out = e.pool.payout(pid, round=1)
-    assert out["reason"] == "round_rejected_unservable"
+    # Under block emission there is no per-round pot to skip: eligibility is
+    # "at or below the promoted head". This pool has promoted nothing, so a round-1
+    # trainer contribution is NOT payable and nothing is disbursed.
+    e.pool.accrue(pid, height=2000)
+    out = e.pool.accrue(pid, height=2001)
+    assert out["reason"] == "no_promoted_checkpoint"
     assert out["entries"] == []
-    # nothing disbursed, budget untouched, contribution still unpaid.
-    assert e.pool.get(pid)["budget_nano"] == 10_000_000_000
-    assert e.pool.get(pid).get("paid_out_nano", 0) == 0
     assert [c for c in e.store.list_contributions(pid, round=1) if not c.get("paid")]
     assert e.pool.payouts(pid) == []
 
@@ -85,14 +86,20 @@ def test_payout_records_per_recipient_ledger(funded_ena, tmp_path):
     _add_trainer_contrib(e, pid, 2, "anim1trainerA", 3.0)
     _add_trainer_contrib(e, pid, 2, "anim1trainerB", 1.0)
 
-    out = e.pool.payout(pid, round=2)
-    assert out.get("reason") != "round_rejected_unservable"
-    assert out["paid_nano"] > 0
-    # trainers' 60% bucket = 6 ANM split 3:1.
+    # Emission credits a per-recipient ledger row. Promote a head so round-2 work is
+    # eligible, then one block emits exactly 10 ANM split 3:1 by weight (servers absent,
+    # so trainers take the whole block).
+    pool = e.pool.get(pid)
+    pool["served_checkpoint"] = {"round": 2, "checkpoint_hash": "h" * 64,
+                                 "model_id": "m", "merged": True}
+    e.store.upsert_pool(pool)
+    e.pool.accrue(pid, height=3000)
+    out = e.pool.accrue(pid, height=3001)
+    assert out["paid_nano"] == 10_000_000_000
     by_addr = {ent["address"]: ent["nano"] for ent in out["entries"]
                if ent["role"] == "trainer"}
-    assert by_addr["anim1trainerA"] == 4_500_000_000
-    assert by_addr["anim1trainerB"] == 1_500_000_000
+    assert by_addr["anim1trainerA"] == 7_500_000_000
+    assert by_addr["anim1trainerB"] == 2_500_000_000
 
     # Per-recipient ledger persisted + reconciles with the aggregate.
     ledger = e.pool.payouts(pid, round=2)

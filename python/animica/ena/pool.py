@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+import logging
 import math
 import os
 import threading
@@ -56,6 +57,14 @@ SHARD_CLAIMED = "claimed"
 SHARD_SUBMITTED = "submitted"
 SHARD_VERIFIED = "verified"
 SHARD_REJECTED = "rejected"
+
+log = logging.getLogger(__name__)
+
+
+def _env_true(name: str) -> bool:
+    """True for 1/true/yes/on. Used for explicit, documented escape hatches only."""
+    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
 
 ROLES = ("funders", "trainers", "servers")
 _ROLE_SINGULAR = {"funders": "funder", "trainers": "trainer", "servers": "server"}
@@ -140,8 +149,20 @@ def _split_proportional(total: int, weighted: list[tuple[str, float]]) -> dict[s
     return floor
 
 
-def _checkpoint_digest(checkpoint_path: Optional[str], shard: dict[str, Any]) -> str:
-    """SHA3 of the checkpoint weights if present, else a deterministic anchor."""
+def _checkpoint_digest(checkpoint_path: Optional[str],
+                       shard: dict[str, Any]) -> tuple[str, bool]:
+    """(digest, hashed_real_weights).
+
+    Returns a SHA3 over the actual weight files when they exist, otherwise a
+    deterministic ANCHOR over the shard identity. The second element says which
+    happened, and callers must not conflate them.
+
+    Conflating them is what broke this pool. The anchor hash looks exactly like a real
+    one, so a shard submitted with NO weights still got a plausible `checkpoint_hash`,
+    was marked `submitted`, and earned payout weight. Rounds 49-83 all did that: 259
+    contributions, real weights, nothing mergeable, and the promoted head frozen at
+    round 48 for six weeks with no error anywhere.
+    """
     if checkpoint_path:
         p = Path(checkpoint_path)
         files: list[Path] = []
@@ -156,17 +177,20 @@ def _checkpoint_digest(checkpoint_path: Optional[str], shard: dict[str, Any]) ->
             files = [p]
         if files:
             h = hashlib.sha3_256()
+            hashed_any = False
             for f in files:
                 try:
                     with f.open("rb") as fh:
                         for block in iter(lambda: fh.read(1 << 20), b""):
                             h.update(block)
+                    hashed_any = True
                 except OSError:
                     continue
-            return h.hexdigest()
+            if hashed_any:
+                return h.hexdigest(), True
     return sha3_hex(canonical_json({
         "shard_id": shard["shard_id"], "path": checkpoint_path or "",
-        "sha256": shard["sha256"]}))
+        "sha256": shard["sha256"]})), False
 
 
 def _try_merge_adapters(submitted: list[dict[str, Any]], out: Path,
@@ -246,14 +270,32 @@ def merge_checkpoints(submitted: list[dict[str, Any]], out_dir: str | Path,
     real = _try_merge_adapters(submitted, out, weights)
     if real:
         return real
+    # No real merge was possible. Record WHY, in the artifact itself: every one of the
+    # 34 stalled rounds wrote a plan whose `checkpoints` values were all null, and
+    # nothing said that meant "this round produced no model". `merged: False` already
+    # stops promotion — the missing half was making the cause visible.
+    ckpts = {s["shard_id"]: s.get("checkpoint_path") for s in submitted}
+    missing = sorted(sid for sid, p in ckpts.items() if not p)
     plan_doc = {
         "schema": "ena.pool.merge.v1",
         "weights": weights,
-        "checkpoints": {s["shard_id"]: s.get("checkpoint_path") for s in submitted},
+        "checkpoints": ckpts,
+        "merged": False,
+        "reason": ("no_checkpoint_weights" if missing and len(missing) == len(ckpts)
+                   else "partial_checkpoints" if missing
+                   else "merge_backend_unavailable"),
+        "shards_without_checkpoint": missing,
     }
     plan_path = out / "merge-plan.json"
     plan_path.write_text(canonical_json(plan_doc), encoding="utf-8")
-    return {"path": str(plan_path), "hash": hash_obj(plan_doc), "merged": False}
+    if missing:
+        log.warning(
+            "ena pool merge produced NO model: %d of %d shards have no checkpoint "
+            "(%s). The round cannot be promoted and this work is not payable.",
+            len(missing), len(ckpts), ", ".join(missing[:4]))
+    return {"path": str(plan_path), "hash": hash_obj(plan_doc), "merged": False,
+            "reason": plan_doc["reason"],
+            "shards_without_checkpoint": missing}
 
 
 # ---------------------------------------------------------------------------
@@ -673,7 +715,19 @@ class PoolService:
         if shard["status"] in (SHARD_SUBMITTED, SHARD_VERIFIED):
             raise PoolError(f"shard already submitted: {shard_id}")
         metrics = dict(metrics or {})
-        ckpt_hash = _checkpoint_digest(checkpoint_path, shard)
+        ckpt_hash, has_weights = _checkpoint_digest(checkpoint_path, shard)
+        # FAIL LOUDLY on a submission with no weights instead of paying for it. A shard
+        # with no loadable checkpoint contributes nothing to the merge, so accepting it
+        # both awards unearned weight and stalls the pool: rounds 49-83 advanced for six
+        # weeks producing merge-plans whose every checkpoint entry was null, and the
+        # promoted head never moved past 48. The trainer must upload its checkpoint
+        # (/pool/checkpoint/upload) before submitting.
+        if not has_weights and not _env_true("ANIMICA_ENA_ALLOW_WEIGHTLESS_SUBMIT"):
+            raise PoolError(
+                f"shard {shard_id} has no loadable checkpoint "
+                f"(checkpoint_path={checkpoint_path!r}): upload the adapter weights "
+                f"before submitting, or the round cannot be merged and the work cannot "
+                f"be paid. Set ANIMICA_ENA_ALLOW_WEIGHTLESS_SUBMIT=1 only for tests.")
         run = {
             "run_id": run_id or f"{shard_id}-run",
             "created_at": shard.get("created_at", now_ts()), "updated_at": now_ts(),
@@ -692,6 +746,9 @@ class PoolService:
             status=SHARD_SUBMITTED, worker_id=worker_id or shard.get("worker_id"),
             miner_address=miner_address, run_id=run["run_id"],
             checkpoint_path=checkpoint_path, checkpoint_hash=ckpt_hash,
+            # Persisted so an operator can tell a real checkpoint from an anchor hash
+            # without re-reading the filesystem — the distinction that was invisible.
+            checkpoint_has_weights=bool(has_weights),
             metrics=metrics, training_receipt=receipt, updated_at=now_ts())
         self.store.upsert_shard(shard)
 
@@ -1422,12 +1479,24 @@ class PoolService:
             elapsed = min(elapsed, ENA_MAX_BLOCKS_PER_TICK)
 
             pot = ENA_BLOCK_REWARD_NANO * elapsed
-            eligible = [c for c in self.store.list_contributions(pool_id)
-                        if not c.get("paid")
-                        and c.get("role") in ("trainer", "server")
-                        and c.get("address")
-                        and int(c.get("round", -1)) <= int(head_round)
-                        and float(c.get("weight", 0)) > 0]
+            # The round gate applies to TRAINERS only. A trainer is paid for work that
+            # became part of a promoted checkpoint, so rounds after the head — which
+            # earned weight while producing nothing mergeable — are excluded. A SERVER
+            # is paid for serving the head, and record_served() credits the CURRENT
+            # round (the head is by definition earlier), so gating servers the same way
+            # would mean they could never be paid at all.
+            eligible = []
+            for c in self.store.list_contributions(pool_id):
+                if c.get("paid") or not c.get("address"):
+                    continue
+                role = c.get("role")
+                if role not in ("trainer", "server"):
+                    continue
+                if float(c.get("weight", 0)) <= 0:
+                    continue
+                if role == "trainer" and int(c.get("round", -1)) > int(head_round):
+                    continue
+                eligible.append(c)
             if not eligible:
                 # Still advance: the entitlement is per block as it passes, so idle
                 # blocks are not banked into a later lump sum.
@@ -1461,22 +1530,34 @@ class PoolService:
                     continue
                 by_addr: dict[str, float] = {}
                 ids: dict[str, list[str]] = {}
+                rounds: dict[str, int] = {}
                 for c in members:
                     a = str(c["address"])
                     by_addr[a] = by_addr.get(a, 0.0) + float(c.get("weight", 0))
                     ids.setdefault(a, []).append(c["contribution_id"])
+                    # Ledger rows are attributed to the round the WORK is from, not the
+                    # pool's current round — otherwise payouts(pool, round=N) finds
+                    # nothing and the ledger misattributes every credit.
+                    rounds[a] = max(rounds.get(a, -1), int(c.get("round", 0)))
                 for addr, nano in _split_proportional(rp, list(by_addr.items())).items():
                     if nano <= 0:
                         continue          # dust: leave unpaid rather than credit zero
                     entries.append({"role": singular, "address": addr, "nano": int(nano),
                                     "anm": pay.nano_to_anm(int(nano)),
-                                    "weight": by_addr[addr]})
+                                    "weight": by_addr[addr],
+                                    "round": rounds.get(addr, 0)})
                     paid_ids.extend(ids[addr])
                     total += int(nano)
 
             ts = now_ts()
             if entries:
-                self.store.record_payouts(pool_id, int(pool.get("round", 0)), entries, ts)
+                # One record_payouts() call per source round so the ledger is queryable
+                # by round and the totals still reconcile exactly.
+                by_round: dict[int, list[dict[str, Any]]] = {}
+                for ent in entries:
+                    by_round.setdefault(int(ent.get("round", 0)), []).append(ent)
+                for rnd_key, rows in sorted(by_round.items()):
+                    self.store.record_payouts(pool_id, rnd_key, rows, ts)
                 self.store.mark_contributions_paid(paid_ids)
             pool["last_paid_height"] = int(last) + elapsed
             pool["emitted_nano"] = int(pool.get("emitted_nano", 0)) + total

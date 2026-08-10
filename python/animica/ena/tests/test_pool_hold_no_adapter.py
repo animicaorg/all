@@ -9,6 +9,8 @@ at the last real round — the "stuck on round N for days" production failure
 
 from __future__ import annotations
 
+import pytest
+
 import json
 
 from animica.ena import ENA
@@ -21,6 +23,7 @@ def _dataset(path, n=20):
     return str(path)
 
 
+@pytest.mark.no_auto_adapter
 def test_no_adapter_round_holds_instead_of_advancing(tmp_path, monkeypatch):
     monkeypatch.setenv("ANIMICA_ENA_HOME", str(tmp_path / "ena-home"))  # isolated store
     ena = ENA(cfg=load_config())
