@@ -253,6 +253,182 @@ FORK_FOUNDATION_SPLIT = "foundation_split"
 # adversarial review. Retunable via ANIMICA_FORK_STATE_COMMITMENT_HEIGHT.
 FORK_STATE_COMMITMENT = "state_commitment"
 
+# FORK_TREASURY_25 (9.4.0) — the foundation-treasury share of the per-block subsidy
+# goes from 15% to 25%. Operator decision, activation height 70,000.
+#
+# This changes only the DIVISION of the subsidy, never its total: miner + treasury
+# still equals the pre-split subsidy every block, the halving schedule is untouched
+# and MAX_MONEY is unaffected — exactly like FORK_FOUNDATION_SPLIT before it. The
+# percentage is a code-committed constant read through a height-gated helper (see
+# consensus/rewards.foundation_split_pct) so emission is byte-identical on every
+# node; it is never taken from params, env or wallclock at validation time.
+#
+# WHY IT IS SAFE TO GATE THIS WAY: every input is the block height, so two honest
+# nodes on the same chain always compute the same split. Forward-only and
+# grandfathered — blocks below H keep 85/15 forever and history is never
+# re-credited.
+#
+# WHAT AN OPERATOR MUST DO: run >= 9.4.0 (or set ANIMICA_FORK_TREASURY_25_HEIGHT)
+# BEFORE height 70,000. A node still on 9.3.x computes a 15% treasury output at
+# H and will reject the network's 25% coinbase — it diverges on the first
+# post-activation block. That is the entire upgrade obligation, and it is why the
+# activation height needs enough runway for miners and exchanges to take the
+# release. Retunable via ANIMICA_FORK_TREASURY_25_HEIGHT if adoption slips.
+FORK_TREASURY_25 = "treasury_25"
+
+# FORK_BOUNDED_RETARGET (9.5.0) — close a ONE-WAY TRAPDOOR in the difficulty
+# retarget. Activation height 75,000.
+#
+# THE BUG, in the deployed code: `update_theta`'s emergency valve fires when a block
+# interval exceeds max_block_time_s (mainnet 3600s) and returns
+# `theta_micro = theta_min_micro` DIRECTLY — bypassing step_clamp_micro entirely. On
+# live mainnet params that is theta 26,821,504 -> 12,000,000 µnats in a single block.
+# theta is log-work, so per-block work falls by e^(26.82-12.00) ≈ 2.7 MILLION times at
+# once.
+#
+# Then it cannot climb back. At the floor, blocks are produced as fast as the pool
+# will emit them, but min_block_spacing_ms (60,000) pins dt at exactly the 60s target,
+# so r_k = ln(dt/T) = ln(1) = 0. The error signal is identically zero, tau never rises,
+# and theta stays on the floor FOREVER. One slow block permanently destroys the chain's
+# work level — and with a single block producer (100% of recent blocks come from one
+# coinbase) one stalled pool is all it takes.
+#
+# THE FIX, from H:
+#   1. The emergency reduction is CLAMPED. It may fall by at most
+#      EMERGENCY_STEP_MULTIPLE * step_clamp_micro per block instead of teleporting to
+#      the floor, so a stall still recovers in a handful of blocks but cannot erase the
+#      work level in one.
+#   2. A FLOOR ESCAPE. When theta sits at/near theta_min and blocks are arriving no
+#      slower than target, theta ratchets UP by the step clamp. "dt == target while
+#      pinned at the floor" is evidence that the floor is too low, not evidence of
+#      equilibrium — which is exactly the reading that made the trapdoor permanent.
+#
+# Both are gated on the height, forward-only and grandfathered: below H the function is
+# byte-identical to today, so replaying history cannot change any theta. The rule is a
+# pure function of (state, dt, height), so two honest nodes always agree.
+# Retunable via ANIMICA_FORK_BOUNDED_RETARGET_HEIGHT.
+FORK_BOUNDED_RETARGET = "bounded_retarget"
+
+# FORK_VALUE_CALL (9.5.0) — a CALL may carry ANM. Activation height 75,000.
+#
+# TxKind.CALL had no amount field at all, which is why Animica Pay cannot perform an
+# atomic 98/2 merchant split (it settles accounting-exact instead) and why a valueless
+# CALL can grief a payment: every contract that wants to be paid has to fake it.
+#
+# BELOW H a CALL carrying a non-zero amount is INVALID. That is today's behaviour by
+# construction — the field could not be expressed — so history is untouched and no
+# existing transaction changes meaning. FROM H the amount is debited from the caller and
+# credited to the callee before execution, and returned by revert semantics.
+#
+# The encoding is backward-compatible BY OMISSION: TxCall.to_obj() emits "amount" only
+# when non-zero, and to_obj() is the canonical form the signing preimage and txid are
+# computed over. Emitting it unconditionally would have changed the bytes of every CALL
+# ever signed.
+#
+# This is a CAPABILITY ADDITION, not a redistribution: nobody's revenue changes, so
+# adoption pressure is low and the risk is contained to the execution path rather than
+# emission. Retunable via ANIMICA_FORK_VALUE_CALL_HEIGHT.
+FORK_VALUE_CALL = "value_call"
+
+# FORK_FINALITY_DEPTH (9.5.0) — make the reorg bound UNIFORM. Activation height 75,000.
+#
+# A depth bound already exists and is already enforced: DEFAULT_MAX_REORG_DEPTH = 96,
+# checked in consensus.fork_choice.WeightForkChoice.add_block, which simply declines to
+# make a tip canonical when the reorg would be deeper. What does NOT exist is agreement
+# about the number — ANIMICA_MAX_REORG_DEPTH is an unbounded operator override, so today
+# one node can be set to 0 (refuses EVERY reorg, and therefore strands itself on the
+# next natural one-block fork — exactly the self-wedge that pinned checkpoints keep
+# having to clean up) while another is set to 10^9 (accepts an arbitrarily deep reorg).
+#
+# From H the effective bound is CLAMPED into [MIN_REORG_DEPTH, FINALITY_DEPTH]:
+#   * the ceiling gives the finality property — a block FINALITY_DEPTH deep is
+#     irreversible on every node regardless of local configuration;
+#   * the floor makes the self-wedge misconfiguration impossible.
+#
+# WHAT THIS DOES NOT DO, stated plainly because it is the reason it was requested: it
+# would NOT have prevented the 28,167 / 38,728 / 44,854 wedges. Every one of those was
+# a natural ONE-BLOCK fork (see the comments on PINNED_CHECKPOINTS_BY_NETWORK above), so
+# a depth-96 guard never fired and a depth-100 guard never would. Those were caused by
+# the headers pipeline discarding the winning sibling, not by a deep reorg. Finality is
+# worth having on its own terms; it is not a fix for that outage class.
+#
+# It also never REJECTS a block — the guard only declines to make a tip canonical — so
+# it cannot turn a node that is merely behind into a permanently split one. Retunable
+# via ANIMICA_FORK_FINALITY_DEPTH_HEIGHT.
+FORK_FINALITY_DEPTH = "finality_depth"
+
+# FORK_QUANTUM_BEACON (9.5.0) — the canonical chain MAY commit to attested
+# quantum-sourced randomness. Activation height 75,000, and DORMANT BY DESIGN.
+#
+# PRESENCE-GATED, NEVER REQUIRED. A block that carries no beacon commitment is valid at
+# every height, forever. Only a block that DOES commit one must commit a correct one.
+# That is deliberate and it is the whole safety argument: a liveness dependency on
+# beacon availability would mean a QRNG outage halts the chain, so there is no such
+# dependency to fail open — there is simply nothing to be unavailable. The rule can sit
+# activated and inert indefinitely, and is expected to.
+#
+# Same self-gating shape as FORK_STATE_COMMITMENT (a zero/uncommitted root is accepted,
+# so a not-yet-upgraded miner never false-rejects), for the same reason.
+#
+# WHAT IS CHECKED when a commitment is present: the beacon value is recomputed as
+# H(BEACON_DOMAIN || round || prev || aggregate_commitment) — the same construction as
+# randomness.qrng.public.build_quantum_beacon — and the committed `prev` must equal the
+# beacon value committed by the nearest ancestor that carried one. Recomputation makes it
+# unforgeable from block bytes alone; the prev-chain is what makes the CANONICAL CHAIN,
+# rather than an individual block, commit to the randomness.
+#
+# Below H a commitment is IGNORED entirely, so history is untouched and a block that
+# happened to carry a malformed one stays valid forever. Retunable via
+# ANIMICA_FORK_QUANTUM_BEACON_HEIGHT.
+FORK_QUANTUM_BEACON = "quantum_beacon"
+
+# FORK_SERVICE_CARVE (9.5.0) — reserve a fixed slice of the miner subsidy for service
+# providers whether or not one claims it. Activation height 75,000.
+#
+# This is the only rule in the 9.5.0 set that changes WHO GETS PAID, so it is the one to
+# suspect first if balances look wrong after activation. The others at this height
+# (bounded retarget, value CALL, finality, beacon) cannot move a coin.
+#
+# It is emission-CONSERVING: the miner loses exactly the carve, and paid + residual
+# equals the carve, so nothing is minted or burned. See consensus/rewards.py
+# service_carve_pct for why it cannot instead be keyed on "did this miner serve"
+# (nothing in a block can prove that), and consensus/service_carve.py for the split.
+#
+# NOTE ON THE FAILURE MODE, which is unusual: coinbase AMOUNTS are never validated
+# against the schedule (`_compute_block_reward_amount` has zero callers), yet state
+# application credits balances from the node's OWN compute_block_reward. So an
+# un-upgraded node does not fork or stall — it accepts identical blocks and credits
+# different balances, silently and permanently. Liveness is safe; the ledger is not.
+# Every full node, pool and balance-tracker must be on >=9.5.0 before H.
+# Retunable via ANIMICA_FORK_SERVICE_CARVE_HEIGHT.
+FORK_SERVICE_CARVE = "service_carve"
+
+# FORK_VM_EXEC (9.6.0) — on-chain execution of vm_py contract CALLs turns on.
+#
+# Before H, a CALL to a deployed contract deterministically REVERTs (charging only
+# intrinsic gas) — which is exactly today's behaviour, because the metered VM was
+# never wired: every historical CALL reverted. That makes activation history-safe
+# by construction: no past block changes meaning, because below H the outcome is
+# byte-identical to what it has always been (REVERT).
+#
+# FROM H, a CALL is executed by the deterministic, gas-metered tree interpreter
+# (vm_py.runtime.tree_engine) against a compiled-and-cached IR of the contract's
+# source, with storage and treasury bound to chain state. The interpreter is a
+# closed sandbox — no import/exec/eval/attribute escape — so arbitrary deployed
+# code can at worst revert, burn gas (→ OOG), or touch its OWN namespaced storage;
+# it can neither run host code nor read another contract's state. Contract DEPLOY
+# is unchanged (it only stores code and has always succeeded).
+#
+# This is the enabler for the on-chain token launcher + DEX (the standard
+# animica_token / animica_dex_* contracts). It is a STATE-MUTATING change: from H,
+# calls that used to revert now succeed and move balances/storage, so every full
+# node, pool and balance-tracking explorer/exchange MUST run >= 9.6.0 (or set
+# ANIMICA_FORK_VM_EXEC_HEIGHT) before H, or it will compute a divergent state root.
+# Read-only RPC simulate_call is NOT gated (it is a query, never consensus), so
+# wallets can quote/preview before activation. Retunable via
+# ANIMICA_FORK_VM_EXEC_HEIGHT.
+FORK_VM_EXEC = "vm_exec"
+
 # FORK_VPN_RELAY_REWARDS (8.0.1, REALIZED in 9.0.0 as IOU settlement) — from H,
 # each block MAY settle service IOUs (dVPN relay/exit, AICF inference, media,
 # hosting — any operator-issued IOU ledger) with REAL per-block payouts, capped
@@ -318,6 +494,30 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_STATE_COMMITMENT_HEIGHT. Self-gating on non-zero root means a
         # premature activation cannot split honest zero-root miners.
         FORK_STATE_COMMITMENT: 44_444,
+        # Treasury share 15% -> 25% (9.4.0). Operator-chosen height 70,000.
+        # A node below 9.4.0 computes the old 15% and rejects the network's
+        # coinbase from this block on, so the release has to be in operators'
+        # hands before it. Retune with ANIMICA_FORK_TREASURY_25_HEIGHT.
+        FORK_TREASURY_25: 70_000,
+        # Bounded retarget + floor escape (9.5.0). Operator-chosen height 75,000.
+        # Grandfathered below H, so no historical theta is recomputed. Retune with
+        # ANIMICA_FORK_BOUNDED_RETARGET_HEIGHT.
+        FORK_BOUNDED_RETARGET: 75_000,
+        # Value-carrying CALL (9.5.0). Operator-chosen height 75,000.
+        FORK_VALUE_CALL: 75_000,
+        # Uniform reorg bound / finality (9.5.0). Operator-chosen height 75,000.
+        FORK_FINALITY_DEPTH: 75_000,
+        # Quantum beacon binding (9.5.0). Activated but DORMANT: presence-gated, so
+        # until miners choose to commit a beacon this rule does nothing at all.
+        FORK_QUANTUM_BEACON: 75_000,
+        # Service carve (9.5.0). The ONLY emission change at this height.
+        FORK_SERVICE_CARVE: 75_000,
+        # On-chain vm_py contract CALL execution (9.6.0). Operator-chosen height
+        # 75,000. History-safe: below H every CALL reverted (the VM was never
+        # wired), so no past block changes meaning. STATE-MUTATING from H — every
+        # full node / pool / balance-tracker MUST run >= 9.6.0 (or set
+        # ANIMICA_FORK_VM_EXEC_HEIGHT) before H. Retunable via that env override.
+        FORK_VM_EXEC: 75_000,
         # dVPN relay block rewards (8.0.1). Operator-chosen height 50,000 (shared with
         # the consensus ANS fork gate). SELF-GATING + INERT: emits zero relay outputs
         # until an on-chain relay-contribution root is sealed, which requires the
@@ -334,6 +534,13 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_ADDRESS_FREEZE: 0,
         FORK_FOUNDATION_SPLIT: 0,
         FORK_STATE_COMMITMENT: 0,
+        FORK_TREASURY_25: 0,
+        FORK_BOUNDED_RETARGET: 0,
+        FORK_VALUE_CALL: 0,
+        FORK_FINALITY_DEPTH: 0,
+        FORK_QUANTUM_BEACON: 0,
+        FORK_SERVICE_CARVE: 0,
+        FORK_VM_EXEC: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
@@ -341,6 +548,13 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_ADDRESS_FREEZE: 0,
         FORK_FOUNDATION_SPLIT: 0,
         FORK_STATE_COMMITMENT: 0,
+        FORK_TREASURY_25: 0,
+        FORK_BOUNDED_RETARGET: 0,
+        FORK_VALUE_CALL: 0,
+        FORK_FINALITY_DEPTH: 0,
+        FORK_QUANTUM_BEACON: 0,
+        FORK_SERVICE_CARVE: 0,
+        FORK_VM_EXEC: 0,
     },
 }
 

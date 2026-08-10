@@ -168,7 +168,9 @@ def test_apply_deploy_apply_call_and_simulate_get_counter_flow() -> None:
         },
     }
     block_env = SimpleNamespace(
-        height=1,
+        # >= FORK_VM_EXEC activation (75_000 on mainnet chain 1) so the apply_call
+        # leg executes instead of reverting under the fork gate.
+        height=75_000,
         chain_id=1,
         coinbase=b"\x00" * 32,
         treasury=b"\x00" * 32,
