@@ -58,62 +58,23 @@ class MlDsa65 {
     return _initFuture;
   }
 
-  // The embedded engines (QuickJS on Android/desktop, JSC on iOS) are NOT browsers
-  // and NOT Node. Three separate globals the noble bundle and our wrappers assume
-  // are missing, and each one failed the wallet at a different point:
+  // The embedded engines (QuickJS on Android/desktop, JSC on iOS) are NOT browsers and
+  // NOT Node. Three capabilities the noble bundle and our wrappers assumed are absent,
+  // and each broke the wallet at a different point — they only surfaced one at a time:
   //
-  //   BigInt  — the bundle needs it AT EVAL TIME (`ReferenceError: 'BigInt' is not
-  //             defined`, shipped in 0.2.4). The engine parses BigInt LITERALS (1n)
-  //             but does not expose the constructor, so it is polyfilled from
-  //             literals by bit decomposition — exact for every safe integer.
-  //   atob/btoa — every wrapper marshals bytes as base64 (0.2.3 could not create a
-  //             wallet at all).
-  //   crypto.getRandomValues — DELIBERATELY NOT SHIMMED. See sign() below: we pass
-  //             `extraEntropy` from Dart's Random.secure() instead. A JS fallback
-  //             here would risk signing with weak randomness, which is far worse
-  //             than throwing.
-  //
-  // BigInt is defined FIRST because the bundle eval itself depends on it.
+  //   atob/btoa — every wrapper marshals bytes as base64. Shimmed below.
+  //               (0.2.3 could not create a wallet at all.)
+  //   BigInt    — NOT SHIMMABLE HERE. The engine has no BigInt whatsoever: the
+  //               constructor is absent AND literals are a SyntaxError ("invalid number
+  //               literal"), so a polyfill written with `1n` cannot even be parsed —
+  //               that was the 0.2.5 failure. Instead the BUNDLE itself was patched to
+  //               need no BigInt: its only two uses precomputed constant tables (the
+  //               Keccak round constants and the NTT zetas), and both are now built with
+  //               exact int32/double arithmetic. See assets/js/ml_dsa_65.bundle.js.
+  //   crypto.getRandomValues — DELIBERATELY NOT SHIMMED. sign() passes `extraEntropy`
+  //               from Dart's Random.secure() instead; a JS fallback RNG could sign with
+  //               weak randomness, far worse than throwing.
   static const String _engineShims = r'''
-    if (typeof BigInt === 'undefined') {
-      globalThis.BigInt = function (v) {
-        if (typeof v === 'bigint') return v;
-        if (typeof v === 'boolean') return v ? 1n : 0n;
-        if (typeof v === 'string') {
-          var s = v.trim();
-          if (s === '') return 0n;
-          var sneg = false;
-          if (s.charAt(0) === '-') { sneg = true; s = s.slice(1); }
-          else if (s.charAt(0) === '+') { s = s.slice(1); }
-          var radix = 10n, digits = s;
-          if (/^0[xX]/.test(s)) { radix = 16n; digits = s.slice(2); }
-          else if (/^0[oO]/.test(s)) { radix = 8n; digits = s.slice(2); }
-          else if (/^0[bB]/.test(s)) { radix = 2n; digits = s.slice(2); }
-          var acc = 0n;
-          for (var i = 0; i < digits.length; i++) {
-            var d = parseInt(digits.charAt(i), Number(radix));
-            if (isNaN(d)) throw new SyntaxError('Cannot convert ' + v + ' to a BigInt');
-            acc = acc * radix + globalThis.BigInt(d);
-          }
-          return sneg ? -acc : acc;
-        }
-        if (typeof v !== 'number') throw new TypeError('Cannot convert to BigInt');
-        if (!isFinite(v) || Math.floor(v) !== v)
-          throw new RangeError('The number ' + v + ' cannot be converted to a BigInt');
-        var neg = v < 0;
-        if (neg) v = -v;
-        var r = 0n, b = 1n;
-        while (v > 0) {
-          var bit = v % 2;
-          if (bit) r += b;
-          b += b;
-          v = (v - bit) / 2;
-        }
-        return neg ? -r : r;
-      };
-    }
-'''
-      r'''
     if (typeof atob === 'undefined' || typeof btoa === 'undefined') {
       var _A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
       globalThis.btoa = function (s) {
@@ -178,23 +139,11 @@ class MlDsa65 {
           '(atob/btoa round-trip gave: ${selfTest.stringResult})');
     }
 
-    // Same for BigInt. The polyfill converts by bit decomposition, and a wrong
-    // conversion of Q or the root of unity would not crash — it would produce
-    // WRONG KEYS. Assert exactness against literals the engine parsed itself, on
-    // the actual constants the bundle converts, before any key material exists.
-    final bigTest = rt.evaluate(
-        '[BigInt(8380417) === 8380417n,'                 // Q
-        ' BigInt(4294967295) === 4294967295n,'           // 2**32-1
-        ' BigInt(1753) === 1753n,'                       // root of unity
-        ' BigInt(0) === 0n, BigInt(1) === 1n,'
-        ' BigInt(-7) === -7n,'
-        ' BigInt(9007199254740991) === 9007199254740991n,'
-        ' BigInt("8380417") === 8380417n].join(",")');
-    if (bigTest.isError ||
-        bigTest.stringResult != 'true,true,true,true,true,true,true,true') {
-      throw StateError('ml_dsa_65 BigInt bridge is broken — keys would be WRONG, '
-          'not merely absent (got: ${bigTest.stringResult})');
-    }
+    // The bundle's BigInt-free tables are deterministic integer arithmetic, so there is
+    // nothing engine-specific left to probe here. Correctness is pinned instead by
+    // test/ml_dsa_golden_test.dart, which asserts keygen/sign against vectors taken from
+    // the chain's own pq.py.algs.ml_dsa_65 — a table error would produce WRONG KEYS
+    // rather than a crash, so it must be caught by a known-answer test, not a shim probe.
     _rt = rt;
   }
 
