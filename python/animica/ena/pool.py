@@ -1570,6 +1570,167 @@ class PoolService:
                     "role_split": dict(EMISSION_ROLE_SPLIT), "entries": entries,
                     "settlement": "ledger_only"}
 
+    def settle(self, pool_id: str, *, height: Optional[int] = None) -> dict[str, Any]:
+        """Pay credited earnings ON CHAIN, at most 10 ANM per block.
+
+        accrue() credits a ledger; this is the step that actually moves ANM. Kept
+        separate on purpose: crediting is safe to run unattended, spending is not, so
+        this does nothing at all unless ANIMICA_ENA_SETTLE=1 and a funded payer is
+        named in ANIMICA_ENA_SETTLE_FROM. There is no default payer — guessing which
+        account to spend from is not a decision code should make.
+
+        Safety properties, each of which a payout path needs:
+          * RATE LIMIT. Its own height watermark, capped at ENA_BLOCK_REWARD_NANO per
+            elapsed block, so settlement can never outrun the emission it is paying
+            out — the same 10 ANM/block ceiling, enforced independently.
+          * EXACTLY ONCE. A settlement row is inserted BEFORE the broadcast and the
+            payout_id is UNIQUE, so two settlers racing cannot both pay, and a crash
+            mid-flight leaves the credit marked rather than paying it twice. The
+            failure mode is under-payment, which is recoverable.
+          * NO SELF-PAY. A credit whose recipient IS the payer is marked settled with
+            no transaction: on this network the ENA treasury is itself a credited
+            trainer holding 83% of the credit, and paying yourself burns a fee to move
+            nothing.
+          * NEVER PARTIAL. A credit is skipped if it does not fit the remaining
+            allowance, rather than paying a fraction of it and losing the remainder.
+        """
+        if not _env_true("ANIMICA_ENA_SETTLE"):
+            return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
+                    "reason": "settlement_disabled",
+                    "hint": "set ANIMICA_ENA_SETTLE=1 and ANIMICA_ENA_SETTLE_FROM"}
+        payer = (os.environ.get("ANIMICA_ENA_SETTLE_FROM") or "").strip()
+        if not payer:
+            return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
+                    "reason": "no_payer_configured",
+                    "hint": "ANIMICA_ENA_SETTLE_FROM must name a funded address whose "
+                            "key is in the wallet store"}
+
+        with self._lock:
+            pool = self.get(pool_id)
+            if height is None:
+                height = self._chain_height()
+            if height is None:
+                return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
+                        "reason": "chain_height_unavailable"}
+            height = int(height)
+
+            last = pool.get("last_settled_height")
+            if last is None:
+                pool["last_settled_height"] = height
+                pool["updated_at"] = now_ts()
+                self.store.upsert_pool(pool)
+                return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
+                        "height": height, "reason": "watermark_initialised"}
+            elapsed = height - int(last)
+            if elapsed <= 0:
+                return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
+                        "height": height, "reason": "no_new_blocks"}
+            elapsed = min(elapsed, ENA_MAX_BLOCKS_PER_TICK)
+            allowance = ENA_BLOCK_REWARD_NANO * elapsed
+
+            pending = self.store.unsettled_payouts(pool_id)
+            if not pending:
+                pool["last_settled_height"] = int(last) + elapsed
+                pool["updated_at"] = now_ts()
+                self.store.upsert_pool(pool)
+                return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
+                        "height": height, "blocks": elapsed,
+                        "reason": "nothing_unsettled"}
+
+            settled: list[dict[str, Any]] = []
+            skipped: list[dict[str, Any]] = []
+            spent = 0
+            for row in pending:
+                nano = int(row["nano"])
+                addr = str(row["address"])
+                if spent + nano > allowance:
+                    # Never split a credit; it waits for the next tick.
+                    skipped.append({"payout_id": row["payout_id"], "nano": nano,
+                                    "reason": "over_block_allowance"})
+                    continue
+                if not self.store.claim_settlement(
+                        int(row["payout_id"]), pool_id, addr, nano, payer, now_ts()):
+                    continue                       # another settler holds it
+                if addr == payer:
+                    self.store.finish_settlement(
+                        int(row["payout_id"]), txid=None, status="sent",
+                        reason="self_pay_noop", updated_at=now_ts())
+                    settled.append({"payout_id": row["payout_id"], "address": addr,
+                                    "nano": nano, "txid": None, "note": "self-pay, no tx"})
+                    spent += nano
+                    continue
+                res = self._broadcast_payment(payer, addr, nano, height)
+                if res.get("txid"):
+                    self.store.finish_settlement(
+                        int(row["payout_id"]), txid=res["txid"], status="sent",
+                        reason=None, updated_at=now_ts())
+                    settled.append({"payout_id": row["payout_id"], "address": addr,
+                                    "nano": nano, "anm": pay.nano_to_anm(nano),
+                                    "txid": res["txid"]})
+                    spent += nano
+                else:
+                    # Leave the row as failed WITH a reason: it is not retried
+                    # automatically, because a repeated broadcast of a partially
+                    # accepted transfer is the one thing worse than a late payment.
+                    self.store.finish_settlement(
+                        int(row["payout_id"]), txid=None, status="failed",
+                        reason=str(res.get("error"))[:300], updated_at=now_ts())
+                    skipped.append({"payout_id": row["payout_id"], "nano": nano,
+                                    "reason": res.get("error")})
+
+            pool["last_settled_height"] = int(last) + elapsed
+            pool["settled_nano"] = int(pool.get("settled_nano", 0)) + spent
+            pool["updated_at"] = now_ts()
+            self.store.upsert_pool(pool)
+            return {"pool_id": pool_id, "height": height, "blocks": elapsed,
+                    "allowance_nano": allowance, "paid_nano": spent,
+                    "paid_anm": pay.nano_to_anm(spent), "from": payer,
+                    "settled": settled, "skipped": skipped,
+                    "totals": self.store.settlement_totals(pool_id)}
+
+    def _broadcast_payment(self, payer: str, recipient: str, nano: int,
+                           height: int) -> dict[str, Any]:
+        """Sign a transfer from `payer` and broadcast it. {'txid': ...} or {'error': ...}.
+
+        Reuses animica.wallet.payment.sign_payment_tx — the same canonical signer as
+        `animica tx send` — so there is no second signing implementation to drift.
+        """
+        try:
+            from animica.wallet.payment import sign_payment_tx
+        except Exception as exc:            # noqa: BLE001
+            return {"error": f"wallet signer unavailable: {exc}"}
+        wallet_path = os.environ.get("ANIMICA_WALLET_PATH") or str(
+            Path("~/.animica/wallets.json").expanduser())
+        rpc_url = os.environ.get("ANIMICA_RPC_URL", "http://127.0.0.1:8545/rpc")
+        try:
+            rpc = pay.AnimicaRPC(rpc_url)
+            nonce = int(rpc.call("state.getNonce", {"address": payer}) or 0)
+        except Exception as exc:            # noqa: BLE001
+            return {"error": f"nonce lookup failed: {exc}"}
+        try:
+            raw = sign_payment_tx(
+                wallet_path=wallet_path, recipient=recipient,
+                amount=nano / 1_000_000_000, nonce=nonce,
+                chain_id=int(self.cfg.chain_id), from_address=payer,
+                current_height=height,
+                passphrase=os.environ.get("ANIMICA_WALLET_PASSPHRASE") or None)
+        except Exception as exc:            # noqa: BLE001
+            return {"error": f"signing failed: {exc}"}
+        try:
+            out = rpc.call("tx.sendRawTransaction", {"rawTx": raw})
+        except Exception as exc:            # noqa: BLE001
+            return {"error": f"broadcast failed: {exc}"}
+        if isinstance(out, str) and out:
+            return {"txid": out}
+        if isinstance(out, dict):
+            txid = out.get("tx_hash") or out.get("hash")
+            accepted = bool(out.get("accepted_to_mempool")
+                            or out.get("persisted_to_chain") or txid)
+            if accepted and txid:
+                return {"txid": txid}
+            return {"error": f"rejected: {out.get('reason') or out}"}
+        return {"error": f"unexpected broadcast result: {out!r}"}
+
     def _chain_height(self) -> Optional[int]:
         """Current canonical height, or None when the node is unreachable."""
         try:

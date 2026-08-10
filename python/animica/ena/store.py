@@ -195,6 +195,23 @@ CREATE TABLE IF NOT EXISTS pool_payouts (
     created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pool_payouts_pool ON pool_payouts(pool_id);
+-- On-chain settlement of credited payouts. A row exists as soon as settlement STARTS,
+-- before the transaction is broadcast, so a crash mid-flight can only under-pay (the
+-- credit stays marked) and never double-pay. status: pending -> sent | failed.
+CREATE TABLE IF NOT EXISTS pool_settlements (
+    settlement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payout_id   INTEGER NOT NULL UNIQUE,
+    pool_id     TEXT NOT NULL,
+    address     TEXT NOT NULL,
+    nano        INTEGER NOT NULL,
+    from_addr   TEXT NOT NULL,
+    txid        TEXT,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    reason      TEXT,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pool_settlements_pool ON pool_settlements(pool_id);
 """
 
 
@@ -761,6 +778,55 @@ class Store:
                     (pool_id, int(round), str(e.get("role", "")), e.get("address"),
                      int(e.get("nano", 0)), float(e.get("weight", 0)), int(created_at)))
             self._conn.commit()
+
+    def unsettled_payouts(self, pool_id: str) -> list[dict[str, Any]]:
+        """Credited payouts with no settlement row yet, oldest first."""
+        rows = self._query(
+            "SELECT p.payout_id, p.pool_id, p.round, p.role, p.address, p.nano "
+            "FROM pool_payouts p "
+            "LEFT JOIN pool_settlements s ON s.payout_id = p.payout_id "
+            "WHERE p.pool_id = ? AND s.payout_id IS NULL AND p.address IS NOT NULL "
+            "AND p.nano > 0 ORDER BY p.payout_id ASC",
+            (pool_id,))
+        return [dict(r) for r in rows]
+
+    def claim_settlement(self, payout_id: int, pool_id: str, address: str,
+                         nano: int, from_addr: str, created_at: int) -> bool:
+        """Reserve a payout for settlement. False if another run already has it.
+
+        Inserted BEFORE broadcasting: the UNIQUE payout_id makes double-settlement
+        impossible even with two settlers racing, and a crash after this point leaves
+        the credit marked rather than paying it twice.
+        """
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO pool_settlements (payout_id, pool_id, address, nano, "
+                    "from_addr, status, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,'pending',?,?)",
+                    (int(payout_id), pool_id, address, int(nano), from_addr,
+                     int(created_at), int(created_at)))
+                self._conn.commit()
+                return True
+            except Exception:      # sqlite3.IntegrityError -> already claimed
+                return False
+
+    def finish_settlement(self, payout_id: int, *, txid: Optional[str],
+                          status: str, reason: Optional[str],
+                          updated_at: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE pool_settlements SET txid=?, status=?, reason=?, updated_at=? "
+                "WHERE payout_id=?",
+                (txid, status, reason, int(updated_at), int(payout_id)))
+            self._conn.commit()
+
+    def settlement_totals(self, pool_id: str) -> dict[str, Any]:
+        rows = self._query(
+            "SELECT status, COUNT(*) AS n, COALESCE(SUM(nano),0) AS nano "
+            "FROM pool_settlements WHERE pool_id=? GROUP BY status", (pool_id,))
+        return {str(r["status"]): {"count": int(r["n"]), "nano": int(r["nano"])}
+                for r in rows}
 
     def list_payouts(self, pool_id: str,
                      round: Optional[int] = None) -> list[dict[str, Any]]:

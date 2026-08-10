@@ -47,6 +47,9 @@ _SENSITIVE_ROUTES = frozenset({
     # 9.5.5 without being listed here, which left it callable by anything that could
     # reach the coordinator.
     "/pool/accrue",
+    # /pool/settle BROADCASTS TRANSFERS from the configured payer. Strictly more
+    # sensitive than accrue, which only writes a ledger.
+    "/pool/settle",
 })
 _ENA_API_TOKEN_ENV = "ANIMICA_ENA_API_TOKEN"
 
@@ -310,6 +313,11 @@ def _make_handler(facade):
                 if path == "/pool/accrue":
                     return self._send(200, facade.pool.accrue(
                         body["pool_id"], height=body.get("height")))
+                # Pay credited earnings ON CHAIN. Does nothing unless
+                # ANIMICA_ENA_SETTLE=1 and ANIMICA_ENA_SETTLE_FROM name a funded payer.
+                if path == "/pool/settle":
+                    return self._send(200, facade.pool.settle(
+                        body["pool_id"], height=body.get("height")))
                 if path == "/pool/tools/propose":
                     return self._send(200, facade.tools.propose(
                         body["name"], body.get("description", ""),
@@ -398,6 +406,20 @@ def _start_emission(facade) -> None:
                             "for %d block(s) in %s",
                             int(res["paid_nano"]) / 1e9, len(res.get("entries") or []),
                             int(res.get("blocks") or 0), pid)
+                    # Then pay out what is due. settle() is a no-op unless the operator
+                    # set ANIMICA_ENA_SETTLE=1 and named a payer, so crediting keeps
+                    # working on nodes that never opt into spending.
+                    try:
+                        st = pool.settle(pid)
+                    except Exception as exc:      # noqa: BLE001
+                        log.warning("ena settlement failed for %s: %s", pid, exc)
+                        st = None
+                    if st and int(st.get("paid_nano") or 0) > 0:
+                        log.info(
+                            "ena settlement: PAID %.6f ANM on chain in %d transfer(s) "
+                            "from %s (pool %s)",
+                            int(st["paid_nano"]) / 1e9, len(st.get("settled") or []),
+                            str(st.get("from"))[:20], pid)
             except Exception as exc:              # noqa: BLE001 — never kill the ticker
                 log.warning("ena emission tick failed: %s", exc)
 
