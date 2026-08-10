@@ -1707,11 +1707,25 @@ class PoolService:
             nonce = int(rpc.call("state.getNonce", {"address": payer}) or 0)
         except Exception as exc:            # noqa: BLE001
             return {"error": f"nonce lookup failed: {exc}"}
+        # The CHAIN IDENTITY is part of the signing preimage. Omitting it makes
+        # _build_chain_context fall back to genesis_hash=b"" and fork_id=0 while the node
+        # verifies against the real genesis and forkId, so the signature can never
+        # verify — the node rejects it with "Invalid post-quantum signature". This is not
+        # optional metadata; fetch it.
+        identity = None
+        try:
+            identity = rpc.call("chain.getChainIdentity", {}) or None
+        except Exception:                   # noqa: BLE001
+            identity = None
+        if not isinstance(identity, dict) or not identity.get("genesisHash"):
+            return {"error": "chain identity unavailable; refusing to sign a transfer "
+                            "whose preimage would not match the node"}
         try:
             raw = sign_payment_tx(
                 wallet_path=wallet_path, recipient=recipient,
                 amount=nano / 1_000_000_000, nonce=nonce,
                 chain_id=int(self.cfg.chain_id), from_address=payer,
+                chain_identity=identity,
                 current_height=height,
                 passphrase=os.environ.get("ANIMICA_WALLET_PASSPHRASE") or None)
         except Exception as exc:            # noqa: BLE001

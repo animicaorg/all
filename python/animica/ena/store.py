@@ -785,8 +785,12 @@ class Store:
             "SELECT p.payout_id, p.pool_id, p.round, p.role, p.address, p.nano "
             "FROM pool_payouts p "
             "LEFT JOIN pool_settlements s ON s.payout_id = p.payout_id "
-            "WHERE p.pool_id = ? AND s.payout_id IS NULL AND p.address IS NOT NULL "
-            "AND p.nano > 0 ORDER BY p.payout_id ASC",
+            # A FAILED broadcast never moved money, so it is retryable. 'pending' and
+            # 'sent' are NOT: pending means in-flight with an unknown outcome, and
+            # retrying either could pay twice.
+            "WHERE p.pool_id = ? AND p.address IS NOT NULL AND p.nano > 0 "
+            "AND (s.payout_id IS NULL OR s.status = 'failed') "
+            "ORDER BY p.payout_id ASC",
             (pool_id,))
         return [dict(r) for r in rows]
 
@@ -808,8 +812,16 @@ class Store:
                      int(created_at), int(created_at)))
                 self._conn.commit()
                 return True
-            except Exception:      # sqlite3.IntegrityError -> already claimed
-                return False
+            except Exception:      # sqlite3.IntegrityError -> a row already exists
+                # Re-claim ONLY a previously failed attempt. The UPDATE is conditional on
+                # status='failed', so a 'pending' (in-flight) or 'sent' row is never
+                # reclaimed and cannot be paid twice.
+                cur = self._conn.execute(
+                    "UPDATE pool_settlements SET status='pending', txid=NULL, "
+                    "reason=NULL, updated_at=? WHERE payout_id=? AND status='failed'",
+                    (int(created_at), int(payout_id)))
+                self._conn.commit()
+                return cur.rowcount > 0
 
     def finish_settlement(self, payout_id: int, *, txid: Optional[str],
                           status: str, reason: Optional[str],
