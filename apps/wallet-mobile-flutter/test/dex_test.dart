@@ -117,11 +117,14 @@ void main() {
       expect(p.maxSupplyBase, BigInt.from(2000000) * BigInt.from(10).pow(6));
     });
 
-    test('uncapped max supply stays zero', () {
+    test('blank max supply → fixed supply (cap == initial), never zero', () {
+      // The AnimicaTokenStandard rejects max_supply == 0, so a blank cap must
+      // deploy as a fixed-supply token, not 0.
       final p = TokenLaunchParams(
         name: 'T', symbol: 'T', decimals: 9, initialSupply: BigInt.from(5),
       );
-      expect(p.maxSupplyBase, BigInt.zero);
+      expect(p.maxSupplyBase, p.initialSupplyBase);
+      expect(p.maxSupplyBase > BigInt.zero, isTrue);
     });
   });
 }
