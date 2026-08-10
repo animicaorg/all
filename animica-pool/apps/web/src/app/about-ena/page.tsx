@@ -29,11 +29,13 @@ pip install --upgrade animica{"\n"}animica up</pre>
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {[
-          ["Train together (pools)", "Many contributors fund and train ONE model in rounds. The dataset is sharded across trainers; verified work is rewarded proportionally."],
-          ["Serve while training", "The promoted checkpoint is served over an OpenAI-compatible API while the next round trains. Servers earn per token, in ANM."],
+          ["Train together (pools)", "Many contributors train ONE model in rounds. The dataset is sharded across trainers, and a shard must upload real weights \u2014 a receipt alone earns nothing, because a shard with no weights cannot be merged."],
+          ["Serve while training", "The promoted checkpoint is served over an OpenAI-compatible API while the next round trains. Servers share the same per-block emission as trainers."],
           ["One global model", "Every pool — run by anyone — converges on a single canonical model: a shared on-chain head all servers serve and all clients use."],
           ["Useful-work mining", "CPU miners also do scrape / clean / embed / eval jobs; each job is receipted and paid. Mining funds the model."],
           ["Coding agent", "Use the pool model as a sandboxed coding agent (`animica ena code`) over any OpenAI-compatible endpoint."],
+          ["10 ANM per block", "Training and serving rewards are emission, not a pot someone has to top up: a flat 10 ANM per block, split 75/25 between trainers and servers in proportion to contribution weight."],
+          ["Only work that shipped", "Trainers are paid for work that reached a promoted checkpoint. A round that reported metrics but produced nothing mergeable is not paid \u2014 the promoted head is the network\u2019s own record of what was usable."],
           ["ANM-only rewards", "PoW, useful-work, training, serving, and Bittensor all pay out in ANM to your address. No external payout to manage."],
         ].map(([h, b]) => (
           <div key={h} className="rounded-xl border border-white/10 bg-white/5 p-5">
@@ -47,7 +49,7 @@ pip install --upgrade animica{"\n"}animica up</pre>
         <h2 className="text-xl font-semibold">How it fits together</h2>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-white/70">
           <li>Run <code className="text-neon-green">animica up</code> — it auto-creates a wallet and mines + does AI by capability.</li>
-          <li>Fund a <Link href="/training-pools" className="underline">training pool</Link> to accelerate the global model.</li>
+          <li>Optionally fund a <Link href="/training-pools" className="underline">training pool</Link> to steer what gets trained \u2014 funding no longer determines rewards, which come from block emission.</li>
           <li>GPU miners train shards and serve the promoted checkpoint; qualified GPUs also serve Bittensor.</li>
           <li>Build with the model via the OpenAI-compatible endpoint or the ENA coding agent.</li>
         </ol>

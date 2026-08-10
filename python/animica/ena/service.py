@@ -28,8 +28,11 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+log = logging.getLogger(__name__)
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -39,6 +42,11 @@ from urllib.parse import parse_qs, urlparse
 _SENSITIVE_ROUTES = frozenset({
     "/pool/create", "/pool/fund/confirm", "/demand/confirm",
     "/pool/aggregate", "/pool/payout", "/feedback",
+    # /pool/accrue CREDITS ANM (10 per block, by weight) and advances the height
+    # watermark, so it is economic and must be operator-authorized. It was added in
+    # 9.5.5 without being listed here, which left it callable by anything that could
+    # reach the coordinator.
+    "/pool/accrue",
 })
 _ENA_API_TOKEN_ENV = "ANIMICA_ENA_API_TOKEN"
 
@@ -344,6 +352,58 @@ def _make_handler(facade):
     return Handler
 
 
+def _start_emission(facade) -> None:
+    """Background ticker that credits the per-block emission.
+
+    Without this, accrue() is a route nobody calls — which is precisely how the old
+    funder-budget payout went unrun for 84 rounds while 394 contributions earned nothing,
+    and why miner logs read "earned 0.0 ANM" no matter how much work they did. The
+    entitlement is per block, so crediting has to be automatic.
+
+    Safe to run unattended: accrue() is ledger-only (no key, no broadcast), pays exactly
+    10 ANM per elapsed block, clamps the elapsed count, and initialises its watermark to
+    the current height on first run so it can never emit retroactively.
+
+    Disable with ENA_EMISSION=0; interval via ENA_EMISSION_SECS (default 60, i.e. about
+    one chain block).
+    """
+    import os
+    import threading
+    import time
+
+    if os.environ.get("ENA_EMISSION", "1") == "0":
+        return
+    interval = max(30, int(os.environ.get("ENA_EMISSION_SECS", "60")))
+    pool = getattr(facade, "pool", None)
+    accrue = getattr(pool, "accrue", None)
+    if not callable(accrue):
+        return
+
+    def _loop() -> None:
+        while True:
+            time.sleep(interval)
+            try:
+                for p in pool.list_pools():
+                    pid = p.get("pool_id")
+                    if not pid:
+                        continue
+                    try:
+                        res = accrue(pid)
+                    except Exception as exc:      # noqa: BLE001
+                        log.warning("ena emission failed for %s: %s", pid, exc)
+                        continue
+                    if int(res.get("paid_nano") or 0) > 0:
+                        log.info(
+                            "ena emission: credited %.6f ANM across %d recipient(s) "
+                            "for %d block(s) in %s",
+                            int(res["paid_nano"]) / 1e9, len(res.get("entries") or []),
+                            int(res.get("blocks") or 0), pid)
+            except Exception as exc:              # noqa: BLE001 — never kill the ticker
+                log.warning("ena emission tick failed: %s", exc)
+
+    threading.Thread(target=_loop, name="ena-emission", daemon=True).start()
+
+
 def _start_pool_sweeper(facade) -> None:
     """Background ticker that unsticks stalled training rounds.
 
@@ -378,10 +438,26 @@ def _start_pool_sweeper(facade) -> None:
     print(f"[ena] pool sweeper started (every {interval}s)")
 
 
+class _Coordinator(ThreadingHTTPServer):
+    """ThreadingHTTPServer with a listen backlog that survives a real fleet.
+
+    `http.server` defaults request_queue_size to 5. Every connection beyond five
+    waiting to be accepted overflows the kernel accept queue, and the client sees
+    "connection reset by peer" — which is exactly what workers reported while claiming
+    (this box showed 18,514 ListenOverflows). Workers poll on their own cadence and a
+    claim burst is normal, so the queue must absorb it.
+    """
+    request_queue_size = int(os.environ.get("ANIMICA_ENA_LISTEN_BACKLOG", "512") or 512)
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 def serve(facade, host: str = "127.0.0.1", port: int = 8787) -> None:
-    httpd = ThreadingHTTPServer((host, port), _make_handler(facade))
-    print(f"[ena] serving on http://{host}:{port}")
+    httpd = _Coordinator((host, port), _make_handler(facade))
+    print(f"[ena] serving on http://{host}:{port} "
+          f"(listen backlog {_Coordinator.request_queue_size})")
     _start_pool_sweeper(facade)
+    _start_emission(facade)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover
