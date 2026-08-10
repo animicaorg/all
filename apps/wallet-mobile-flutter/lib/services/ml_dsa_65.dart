@@ -27,6 +27,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -57,16 +58,62 @@ class MlDsa65 {
     return _initFuture;
   }
 
-  // `atob` / `btoa` are WEB globals. They do NOT exist in the embedded engines
-  // (QuickJS on Android and desktop, JSC on iOS) and nothing else supplies them:
-  // not the noble bundle, not flutter_js. Every keygen/sign/verify wrapper below
-  // marshals its bytes as base64 strings, so without this shim the FIRST statement
-  // of each throws `ReferenceError: atob is not defined` and the wallet cannot
-  // create an account at all — which is exactly what shipped in 0.2.3, silently.
+  // The embedded engines (QuickJS on Android/desktop, JSC on iOS) are NOT browsers
+  // and NOT Node. Three separate globals the noble bundle and our wrappers assume
+  // are missing, and each one failed the wallet at a different point:
   //
-  // Injected before the bundle eval so it is present no matter what the bundle
-  // touches at load time. Pure JS, no engine features beyond String/Array.
-  static const String _base64Shim = r'''
+  //   BigInt  — the bundle needs it AT EVAL TIME (`ReferenceError: 'BigInt' is not
+  //             defined`, shipped in 0.2.4). The engine parses BigInt LITERALS (1n)
+  //             but does not expose the constructor, so it is polyfilled from
+  //             literals by bit decomposition — exact for every safe integer.
+  //   atob/btoa — every wrapper marshals bytes as base64 (0.2.3 could not create a
+  //             wallet at all).
+  //   crypto.getRandomValues — DELIBERATELY NOT SHIMMED. See sign() below: we pass
+  //             `extraEntropy` from Dart's Random.secure() instead. A JS fallback
+  //             here would risk signing with weak randomness, which is far worse
+  //             than throwing.
+  //
+  // BigInt is defined FIRST because the bundle eval itself depends on it.
+  static const String _engineShims = r'''
+    if (typeof BigInt === 'undefined') {
+      globalThis.BigInt = function (v) {
+        if (typeof v === 'bigint') return v;
+        if (typeof v === 'boolean') return v ? 1n : 0n;
+        if (typeof v === 'string') {
+          var s = v.trim();
+          if (s === '') return 0n;
+          var sneg = false;
+          if (s.charAt(0) === '-') { sneg = true; s = s.slice(1); }
+          else if (s.charAt(0) === '+') { s = s.slice(1); }
+          var radix = 10n, digits = s;
+          if (/^0[xX]/.test(s)) { radix = 16n; digits = s.slice(2); }
+          else if (/^0[oO]/.test(s)) { radix = 8n; digits = s.slice(2); }
+          else if (/^0[bB]/.test(s)) { radix = 2n; digits = s.slice(2); }
+          var acc = 0n;
+          for (var i = 0; i < digits.length; i++) {
+            var d = parseInt(digits.charAt(i), Number(radix));
+            if (isNaN(d)) throw new SyntaxError('Cannot convert ' + v + ' to a BigInt');
+            acc = acc * radix + globalThis.BigInt(d);
+          }
+          return sneg ? -acc : acc;
+        }
+        if (typeof v !== 'number') throw new TypeError('Cannot convert to BigInt');
+        if (!isFinite(v) || Math.floor(v) !== v)
+          throw new RangeError('The number ' + v + ' cannot be converted to a BigInt');
+        var neg = v < 0;
+        if (neg) v = -v;
+        var r = 0n, b = 1n;
+        while (v > 0) {
+          var bit = v % 2;
+          if (bit) r += b;
+          b += b;
+          v = (v - bit) / 2;
+        }
+        return neg ? -r : r;
+      };
+    }
+'''
+      r'''
     if (typeof atob === 'undefined' || typeof btoa === 'undefined') {
       var _A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
       globalThis.btoa = function (s) {
@@ -94,9 +141,9 @@ class MlDsa65 {
 
   static Future<void> _initialise() async {
     final rt = getJavascriptRuntime();
-    final shimRes = rt.evaluate(_base64Shim);
+    final shimRes = rt.evaluate(_engineShims);
     if (shimRes.isError) {
-      throw StateError('ml_dsa_65 base64 shim failed: ${shimRes.stringResult}');
+      throw StateError('ml_dsa_65 engine shims failed: ${shimRes.stringResult}');
     }
     final bundle = await rootBundle.loadString(assetPath);
     final res = rt.evaluate(bundle);
@@ -110,9 +157,12 @@ class MlDsa65 {
       throw StateError(
           'ml_dsa_65 bundle did not expose NobleMlDsa global (got: ${probe.stringResult})');
     }
-    // Some QuickJS builds don't ship a crypto.getRandomValues — noble's
-    // keygen takes an explicit seed so we never call into the engine's
-    // RNG. (Sign uses sk-derived randomness, also seed-free.)
+    // The engine ships NO crypto.getRandomValues (verified: zero occurrences in the
+    // bundled QuickJS .so). keygen is fine — it takes an explicit seed. SIGN IS NOT:
+    // ML-DSA is hedged and the bundle calls randomBytes() unless `extraEntropy` is
+    // supplied, so it would throw on every transaction. The previous comment here
+    // asserted "sign uses sk-derived randomness, also seed-free" — that was wrong and
+    // is why the gap went unnoticed. sign() now passes entropy from Random.secure().
 
     // Prove the base64 bridge round-trips BEFORE any key material depends on it.
     // Every wrapper passes bytes through atob/btoa, so a broken or absent shim
@@ -126,6 +176,24 @@ class MlDsa65 {
     if (selfTest.isError || selfTest.stringResult != '0,1,255,127') {
       throw StateError('ml_dsa_65 base64 bridge is broken '
           '(atob/btoa round-trip gave: ${selfTest.stringResult})');
+    }
+
+    // Same for BigInt. The polyfill converts by bit decomposition, and a wrong
+    // conversion of Q or the root of unity would not crash — it would produce
+    // WRONG KEYS. Assert exactness against literals the engine parsed itself, on
+    // the actual constants the bundle converts, before any key material exists.
+    final bigTest = rt.evaluate(
+        '[BigInt(8380417) === 8380417n,'                 // Q
+        ' BigInt(4294967295) === 4294967295n,'           // 2**32-1
+        ' BigInt(1753) === 1753n,'                       // root of unity
+        ' BigInt(0) === 0n, BigInt(1) === 1n,'
+        ' BigInt(-7) === -7n,'
+        ' BigInt(9007199254740991) === 9007199254740991n,'
+        ' BigInt("8380417") === 8380417n].join(",")');
+    if (bigTest.isError ||
+        bigTest.stringResult != 'true,true,true,true,true,true,true,true') {
+      throw StateError('ml_dsa_65 BigInt bridge is broken — keys would be WRONG, '
+          'not merely absent (got: ${bigTest.stringResult})');
     }
     _rt = rt;
   }
@@ -186,11 +254,25 @@ class MlDsa65 {
     final rt = _rt!;
     final skB64 = base64Encode(secretKey);
     final msgB64 = base64Encode(message);
+    // ML-DSA signing is HEDGED: with no `extraEntropy` the bundle calls
+    // randomBytes() -> crypto.getRandomValues, which does NOT exist in the embedded
+    // engine (verified: zero occurrences in the shipped QuickJS .so). Signing would
+    // therefore fail with "crypto.getRandomValues must be defined" on every
+    // transaction. The comment in _initialise used to claim sign was seed-free; it is
+    // not. Supply the 32 bytes from Dart's Random.secure() — the platform CSPRNG —
+    // rather than shimming a JS RNG we could not vouch for. Passing `false` instead
+    // would select FIPS 204 deterministic signing, which is also valid but gives up
+    // hedging against fault attacks.
+    final rng = math.Random.secure();
+    final rnd =
+        Uint8List.fromList(List<int>.generate(32, (_) => rng.nextInt(256)));
+    final rndB64 = base64Encode(rnd);
     final js = '''
       (function() {
         var sk = Uint8Array.from(atob("$skB64"), c => c.charCodeAt(0));
         var msg = Uint8Array.from(atob("$msgB64"), c => c.charCodeAt(0));
-        var sig = NobleMlDsa.ml_dsa65.sign(msg, sk);
+        var rnd = Uint8Array.from(atob("$rndB64"), c => c.charCodeAt(0));
+        var sig = NobleMlDsa.ml_dsa65.sign(msg, sk, { extraEntropy: rnd });
         var s = '';
         for (var i = 0; i < sig.length; i++) s += String.fromCharCode(sig[i]);
         return btoa(s);
