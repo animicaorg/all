@@ -95,6 +95,28 @@ MAX_SAFE_THETA_MICRO: MicroNat = 10 ** 15
 # while allowing dynamic adjustment below the threshold.
 THETA_HARD_CAP_MICRO: MicroNat = 3_000_000_000
 
+# FORK_BOUNDED_RETARGET (9.5.0): from the fork height a stall eases difficulty by this
+# many step-clamps in ONE block instead of teleporting straight to the floor (the legacy
+# emergency valve, which then wedged the chain there permanently). Chosen so one stall
+# costs a small, bounded amount of work — e^(8·step/1e6) ≈ 3.7x on live mainnet params —
+# while a genuinely prolonged stall still walks down to the floor one step at a time.
+EMERGENCY_STEP_MULTIPLE: int = 8
+
+
+def _bounded_retarget_active(height: Optional[int], chain_id: int) -> bool:
+    """True when FORK_BOUNDED_RETARGET governs this retarget step.
+
+    `height` is None for simulators/tooling; they must keep the legacy path so they never
+    silently reproduce consensus-forked difficulty (see test_height_none_keeps_the_legacy_path).
+    The import is local: difficulty is a low-level module and must not take a load-time
+    dependency on core.network_params.
+    """
+    if height is None:
+        return False
+    from core.network_params import FORK_BOUNDED_RETARGET, is_fork_active
+
+    return bool(is_fork_active(FORK_BOUNDED_RETARGET, int(height), chain_id=int(chain_id)))
+
 
 def micro_to_nats(theta_micro: MicroNat) -> float:
     return float(theta_micro) / _MICRO
@@ -212,6 +234,8 @@ def update_theta(
     dt_seconds: float,
     *,
     blocks_skipped: int = 1,
+    height: Optional[int] = None,
+    chain_id: int = 1,
 ) -> RetargetState:
     """
     Update Θ using an EMA of ln(dt/T) and proportional gain β.
@@ -245,16 +269,34 @@ def update_theta(
         return state
 
     p = state.params
-    
+    bounded = _bounded_retarget_active(height, chain_id)
+    target_s = max(1e-9, float(p.target_block_time_s))
+
     # Emergency difficulty reduction if block time exceeds maximum
     # This allows the chain to recover quickly from extended periods without blocks
     if p.max_block_time_s is not None and dt_seconds > p.max_block_time_s:
+        if bounded:
+            # FORK_BOUNDED_RETARGET: a stall eases difficulty by ONE bounded step rather
+            # than teleporting to the floor, and resets the EMA to zero so the ease is not
+            # quietly worked back off by the ordinary controller over the following blocks.
+            # A prolonged stall therefore walks down one step per block; it can reach the
+            # floor but never overshoots it.
+            step = int(abs(p.step_clamp_micro)) * EMERGENCY_STEP_MULTIPLE
+            theta_next = max(int(p.theta_min_micro), int(state.theta_micro) - step)
+            return RetargetState(
+                theta_micro=int(theta_next),
+                tau_nats=micro_to_nats(theta_next),
+                ema_log_dt_over_T=0.0,
+                alpha=state.alpha,
+                params=state.params,
+            )
         log.warning(
             f"Block time {dt_seconds:.0f}s exceeds maximum {p.max_block_time_s:.0f}s. "
             f"Emergency difficulty reduction activated: theta = {p.theta_min_micro/1e6:.3f} nats"
         )
-        # Set theta to minimum, reset EMA to reflect very slow blocks
-        # Use a large positive r_hat to indicate blocks are much slower than target
+        # Legacy trapdoor (grandfathered below the fork): set theta to minimum, reset EMA
+        # to reflect very slow blocks. Use a large positive r_hat to indicate blocks are
+        # much slower than target.
         emergency_r_hat = _safe_log(dt_seconds / max(1e-9, p.target_block_time_s))
         return RetargetState(
             theta_micro=int(p.theta_min_micro),
@@ -263,8 +305,27 @@ def update_theta(
             alpha=state.alpha,
             params=state.params,
         )
-    
-    target_s = max(1e-9, float(p.target_block_time_s))
+
+    # FORK_BOUNDED_RETARGET floor escape: when theta is pinned at the floor and blocks are
+    # NOT slow (dt <= target), ratchet up by one bounded step. Legacy stays stuck forever
+    # here because on-target blocks make r_k == ln(1) == 0, so a genuine rise in hashrate
+    # could never lift difficulty back off the floor. A slow block (dt > target) at the
+    # floor means the chain is still struggling, so the escape deliberately does not fire.
+    if bounded and int(state.theta_micro) <= int(p.theta_min_micro) and dt_seconds <= target_s:
+        effective_max = (
+            int(p.theta_max_micro)
+            if p.theta_max_micro is not None
+            else THETA_HARD_CAP_MICRO
+        )
+        theta_next = min(effective_max, int(p.theta_min_micro) + int(abs(p.step_clamp_micro)))
+        theta_next = min(MAX_SAFE_THETA_MICRO, int(theta_next))
+        return RetargetState(
+            theta_micro=int(theta_next),
+            tau_nats=micro_to_nats(theta_next),
+            ema_log_dt_over_T=0.0,
+            alpha=state.alpha,
+            params=state.params,
+        )
 
     # Sample of ln(dt/T)
     r_k = _safe_log(dt_seconds / target_s)

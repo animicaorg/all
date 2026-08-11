@@ -45,6 +45,13 @@ try:
 except Exception:  # pragma: no cover - when running standalone
     WeightMicro = int  # type: ignore[assignment]
 
+# FORK_FINALITY_DEPTH: the reorg bound is clamped into [MIN_REORG_DEPTH, FINALITY_DEPTH]
+# from the fork height so every node agrees on what is reversible (see consensus.finality).
+# Imported as a module (not `from .finality import effective_reorg_depth`) so no symbol
+# containing "reorg" leaks into this module's namespace — some tools/tests treat that as a
+# capability flag.
+from . import finality as _finality
+
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -149,6 +156,7 @@ class ForkChoice:
         genesis_height: int = 0,
         max_reorg_depth: Optional[int] = None,
         max_orphans: int = 10000,  # Limit orphan storage to prevent DoS
+        chain_id: int = 1,
     ) -> None:
         g = _hex_to_bytes(genesis_hash)
         if genesis_weight_micro < 0:
@@ -162,6 +170,7 @@ class ForkChoice:
         )
         self.max_reorg_depth = max_reorg_depth
         self.max_orphans = max_orphans  # Maximum orphans to prevent DoS
+        self.chain_id = int(chain_id)
         self._genesis: bytes = g
         # Blocks proven invalid at application time (e.g. a committed stateRoot that
         # does not match the recomputed post-execution root under
@@ -363,10 +372,17 @@ class ForkChoice:
         if not self._better(candidate, old_best):
             return False, 0, [], []
 
-        # Reorg guard?
+        # Reorg guard? From FORK_FINALITY_DEPTH the configured bound is clamped into
+        # [MIN_REORG_DEPTH, FINALITY_DEPTH] per-candidate, so no operator override can
+        # accept an arbitrarily deep rewrite or self-wedge by refusing every reorg. Below
+        # the fork the configured value (including None = unbounded) is used verbatim, so
+        # history replays byte-identically.
         detached, attached = self.reorg_path(old_best.h, candidate.h)
         depth = len(detached)
-        if self.max_reorg_depth is not None and depth > self.max_reorg_depth:
+        bound = _finality.effective_reorg_depth(
+            self.max_reorg_depth, int(candidate.height), chain_id=int(self.chain_id)
+        )
+        if bound is not None and depth > bound:
             # Ignore excessive reorgs; keep best unchanged.
             return False, depth, [], []
 

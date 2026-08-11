@@ -29,7 +29,9 @@ from typing import Any, Dict, List, Mapping, Tuple
 # Imported at module top on purpose: if this core module ever failed to import, a
 # node must fail LOUDLY at startup rather than silently skip the split at runtime
 # (which would under-credit the foundation — the exact silent-divergence hazard).
-from core.network_params import is_fork_active, FORK_FOUNDATION_SPLIT, FORK_VPN_RELAY_REWARDS
+from core.network_params import (is_fork_active, FORK_FOUNDATION_SPLIT,
+                                 FORK_VPN_RELAY_REWARDS, FORK_TREASURY_25,
+                                 FORK_SERVICE_CARVE)
 
 log = logging.getLogger("consensus.rewards")
 
@@ -82,6 +84,37 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
 # subsidy funds the Animica Foundation treasury from block 42,001 onward.
 FOUNDATION_TREASURY_ADDRESS = "anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga"
 FOUNDATION_TREASURY_SPLIT_PCT = 15
+# FORK_TREASURY_25 (9.7.0): the foundation-treasury share of the per-block
+# subsidy rises to 25% at/after the activation height. Below it the 15% split
+# holds, so history is unchanged.
+TREASURY_SPLIT_PCT_V2 = 25
+
+
+def _treasury_split_pct(height: int, chain_id: int) -> int:
+    """Foundation-treasury share of the subsidy at `height`: 25% once
+    FORK_TREASURY_25 is active on mainnet, else the original 15%."""
+    if chain_id == 1 and is_fork_active(FORK_TREASURY_25, height, chain_id=1):
+        return TREASURY_SPLIT_PCT_V2
+    return FOUNDATION_TREASURY_SPLIT_PCT
+
+
+# FORK_SERVICE_CARVE (9.7.0): from the activation height a fixed 25% of every
+# block's subsidy is reserved for inference/service claims, WITHHELD FROM THE
+# MINER whether or not anything claims it. Claimed anchors are paid up to the
+# carve; whatever is unclaimed rolls to the foundation treasury (the operator's
+# rule — no separate escrow account). Combined with FORK_TREASURY_25 at the same
+# height, the split becomes 50% miner / 25% treasury / 25% inference, i.e. up to
+# 50% treasury on a block where nothing is claimed. The carve arithmetic lives in
+# consensus/service_carve.py; this is the height-gated percentage.
+SERVICE_CARVE_PCT_V1 = 25
+
+
+def service_carve_pct(height: int, *, chain_id: int = 1) -> int:
+    """Service-carve percentage of the block subsidy at `height`: 25% once
+    FORK_SERVICE_CARVE is active on the network, else 0."""
+    if is_fork_active(FORK_SERVICE_CARVE, height, chain_id=chain_id):
+        return SERVICE_CARVE_PCT_V1
+    return 0
 
 # FORK_VPN_RELAY_REWARDS (8.0.1) — REALIZED in 9.0.0 as on-chain IOU settlement.
 # The per-block settlement pool is capped at 50 ANM and HALVES on the subsidy schedule
@@ -252,7 +285,9 @@ def compute_block_reward(
                 # dust created/destroyed) and is float-free (deterministic).
                 total_subsidy = miner_amount + aicf_amount + treasury_amount
                 aicf_amount = 0
-                treasury_amount = (total_subsidy * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+                # FORK_TREASURY_25 (9.7.0): 25% at/after H, else the original 15%.
+                treasury_amount = (total_subsidy
+                                   * _treasury_split_pct(height_for_halving, chain_id)) // 100
                 miner_amount = total_subsidy - treasury_amount
                 aicf_params = {}
             else:
@@ -311,7 +346,8 @@ def compute_block_reward(
                     and is_fork_active(FORK_FOUNDATION_SPLIT, height_for_halving, chain_id=1)
                 ):
                     aicf_amount_capped = 0
-                    treasury_amount_capped = (capped_total * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+                    treasury_amount_capped = (capped_total
+                                              * _treasury_split_pct(height_for_halving, chain_id)) // 100
                     miner_amount_capped = capped_total - treasury_amount_capped
                 (
                     final_miner,
