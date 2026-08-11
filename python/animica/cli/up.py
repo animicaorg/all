@@ -119,7 +119,8 @@ def up(ctx: typer.Context,
     if ctx.invoked_subcommand is not None:
         return
     from animica.unified import (Supervisor, UnifiedConfig, _resolve_best_pool,
-                                 build_plan, detect_capabilities, plan_summary,
+                                 _resolve_serve_pool, build_plan,
+                                 detect_capabilities, plan_summary,
                                  resolve_address)
     # zero-config: resolve (or auto-create) the payout wallet. For --plan we never
     # create anything; we just show what a real run would use.
@@ -142,8 +143,19 @@ def up(ctx: typer.Context,
         if pool_id:
             console.print(f"[green]auto-selected training pool[/green] → "
                           f"{pool_id} [dim](highest-paying)[/dim]")
+    # Serving is independent of joining an OPEN training round: a GPU rig serves
+    # the promoted ENA checkpoint (animica-knowledge) regardless. Resolve a serve
+    # pool even when no training pool was selected, so `animica up` brings ENA
+    # online on its own rather than leaving the model with nothing to answer it.
+    serve_pool_id = pool_id
+    if caps.gpu and not serve_pool_id:
+        serve_pool_id = _resolve_serve_pool(pool_host)
+        if serve_pool_id:
+            console.print(f"[green]serving ENA model[/green] → {serve_pool_id} "
+                          f"[dim](promoted checkpoint)[/dim]")
     cfg = UnifiedConfig(address=addr, pool_host=pool_host, pool_port=pool_port,
-                        pool_id=pool_id, worker_id=worker_id or "",
+                        pool_id=pool_id, serve_pool_id=serve_pool_id,
+                        worker_id=worker_id or "",
                         run_node=with_node, threads=threads, serve_port=serve_port,
                         bittensor_token=bittensor_token)
     components = build_plan(caps, cfg)

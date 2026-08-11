@@ -310,6 +310,9 @@ class UnifiedConfig:
     pool_port: int = 3333
     worker_id: str = ""
     pool_id: Optional[str] = None      # training pool / global model to train+serve
+    serve_pool_id: Optional[str] = None  # pool to SERVE (may differ from the train pool;
+                                         # set even when no OPEN training pool exists so a
+                                         # GPU rig still serves the promoted ENA checkpoint)
     serve_port: int = 8799
     run_node: bool = False
     threads: int = 0                   # 0 → miner default
@@ -562,6 +565,62 @@ def _resolve_best_pool(pool_host: str, *, timeout: float = 6.0) -> Optional[str]
     return candidates[0][1]
 
 
+# The canonical global model a GPU rig serves out of the box. Preferred by
+# _resolve_serve_pool so `animica up` brings the promoted ENA checkpoint online.
+DEFAULT_SERVE_MODEL_ID = "animica-knowledge"
+
+
+def _resolve_serve_pool(pool_host: str, *, timeout: float = 6.0) -> Optional[str]:
+    """Best-effort: pick a pool to SERVE — the promoted ENA checkpoint — from the
+    coordinator. Unlike :func:`_resolve_best_pool`, this is NOT restricted to
+    pools still open for training: a model that has been trained and promoted is
+    servable even if its pool has since closed. So a GPU rig running ``animica
+    up`` serves ENA whether or not there is an open training round to join.
+
+    Preference order: the canonical ``animica-knowledge`` model, then the pool
+    with a promoted checkpoint, then the highest-budget pool. Returns a pool_id
+    or None (never raises).
+    """
+    import json
+    import urllib.request
+
+    base = _coordinator_endpoint(pool_host)
+    if not base:
+        return None
+    try:
+        req = urllib.request.Request(base + "/pool/list",
+                                     headers={"User-Agent": "animica-up"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+    pools = payload.get("pools") if isinstance(payload, dict) else None
+    if not isinstance(pools, list):
+        return None
+
+    scored: list[tuple[int, int, int, str]] = []
+    for p in pools:
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("pool_id")
+        if not pid:
+            continue
+        try:
+            budget = int(p.get("budget_nano") or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        is_canon = 1 if str(p.get("model_id") or "") == DEFAULT_SERVE_MODEL_ID else 0
+        has_promoted = 1 if (p.get("promoted") or p.get("promoted_round")
+                             or p.get("head")) else 0
+        scored.append((is_canon, has_promoted, budget, str(pid)))
+    if not scored:
+        return None
+    # Canonical model first, then a promoted head, then budget; deterministic
+    # tie-break by pool_id.
+    scored.sort(key=lambda t: (-t[0], -t[1], -t[2], t[3]))
+    return scored[0][3]
+
+
 def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
     """Deterministic component plan for these capabilities + config.
 
@@ -650,17 +709,26 @@ def build_plan(caps: Capabilities, cfg: UnifiedConfig) -> list[Component]:
                  "(could not auto-select one)" if gpu else "no GPU")),
         env=dict(base_env)))
 
-    # GPU: serve the promoted checkpoint (OpenAI-compatible), ANM-credited
+    # GPU: serve the promoted ENA checkpoint (OpenAI-compatible), ANM-credited.
+    # Serving is DECOUPLED from training: any GPU rig serves the promoted model
+    # (animica-knowledge) whether or not it joined an open training round, so
+    # `animica up` brings ENA online on its own. serve_pool_id falls back to the
+    # train pool, so a box that trains also serves that pool. `ena pool serve` is
+    # serve-while-train — if nothing is promoted yet it waits rather than erroring,
+    # so this never respawn-floods.
+    serve_pool = cfg.serve_pool_id or cfg.pool_id
     plan.append(Component(
         "server",
-        a + ["ena", "pool", "serve", (cfg.pool_id or "<pool>"),
+        a + ["ena", "pool", "serve", (serve_pool or "<pool>"),
              "--worker-id", wid, "--address", cfg.address,
              "--port", str(cfg.serve_port)]
           + (["--endpoint", coord] if coord else []),
-        enabled=gpu and bool(cfg.pool_id),
-        reason=("serves the promoted checkpoint" if gpu and cfg.pool_id else
-                ("GPU present but no training pool available "
-                 "(could not auto-select one)" if gpu else "no GPU")),
+        enabled=gpu,
+        available=bool(serve_pool),
+        reason=("serves the promoted ENA checkpoint (animica-knowledge)"
+                if gpu and serve_pool else
+                ("GPU present — could not resolve the ENA model pool "
+                 "(coordinator unreachable)" if gpu else "no GPU")),
         env=dict(base_env)))
 
     # Qualified GPU: Bittensor serving via the shipped `animica bittensor` flow,
