@@ -196,7 +196,9 @@ def _caller_abi() -> list[dict[str, Any]]:
 
 def _envs(sender: bytes):
     block_env = SimpleNamespace(
-        height=1,
+        # >= FORK_VM_EXEC activation (75_000 on mainnet chain 1) so contract CALLs
+        # execute; below it a CALL correctly reverts (grandfathered history).
+        height=75_000,
         timestamp=1_700_000_000,
         chain_id=1,
         coinbase=b"\x00" * 32,

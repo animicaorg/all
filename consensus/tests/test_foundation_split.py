@@ -232,16 +232,18 @@ def test_mainnet_p2p_params_hash_pin_unchanged():
 # pinned to the exact block, both split sites are exercised, and emission is checked
 # to be conserved on each side.
 
-def test_the_share_changes_at_exactly_height_70000():
+def test_the_share_changes_at_exactly_height_75000():
+    # FORK_TREASURY_25 was moved 70,000 -> 75,000 so the whole reward-split change
+    # activates in one coordinated step (and past-70,000 blocks stay 15%).
     from consensus.rewards import (
         FOUNDATION_TREASURY_SPLIT_PCT,
         FOUNDATION_TREASURY_SPLIT_PCT_V2,
         foundation_split_pct,
     )
-    assert foundation_split_pct(69_998, chain_id=1) == FOUNDATION_TREASURY_SPLIT_PCT == 15
-    assert foundation_split_pct(69_999, chain_id=1) == 15, "the block before must be 15%"
-    assert foundation_split_pct(70_000, chain_id=1) == FOUNDATION_TREASURY_SPLIT_PCT_V2 == 25
-    assert foundation_split_pct(70_001, chain_id=1) == 25
+    assert foundation_split_pct(74_998, chain_id=1) == FOUNDATION_TREASURY_SPLIT_PCT == 15
+    assert foundation_split_pct(74_999, chain_id=1) == 15, "the block before must be 15%"
+    assert foundation_split_pct(75_000, chain_id=1) == FOUNDATION_TREASURY_SPLIT_PCT_V2 == 25
+    assert foundation_split_pct(75_001, chain_id=1) == 25
 
 
 def test_the_old_share_is_never_re_credited_below_the_fork():
@@ -261,7 +263,7 @@ def test_the_new_split_still_conserves_emission(mparams):
         parse_emission_schedule,
     )
     schedule = parse_emission_schedule(mparams)
-    for h in (69_999, 70_000, 120_000):
+    for h in (74_999, 75_000, 120_000):
         total = _subsidy_total_for_height(h, schedule)
         pct = foundation_split_pct(h, chain_id=1)
         treasury = (total * pct) // 100
@@ -269,7 +271,7 @@ def test_the_new_split_still_conserves_emission(mparams):
         assert miner + treasury == total, f"emission not conserved at {h}"
         assert treasury * 100 // total == pct or treasury == (total * pct) // 100
         # And the direction is right: the treasury gets strictly more after the fork.
-        if h >= 70_000:
+        if h >= 75_000:
             assert treasury > (total * 15) // 100
 
 

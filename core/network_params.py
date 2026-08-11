@@ -403,6 +403,32 @@ FORK_QUANTUM_BEACON = "quantum_beacon"
 # Retunable via ANIMICA_FORK_SERVICE_CARVE_HEIGHT.
 FORK_SERVICE_CARVE = "service_carve"
 
+# FORK_VM_EXEC (9.6.0) — on-chain execution of vm_py contract CALLs turns on.
+#
+# Before H, a CALL to a deployed contract deterministically REVERTs (charging only
+# intrinsic gas) — which is exactly today's behaviour, because the metered VM was
+# never wired: every historical CALL reverted. That makes activation history-safe
+# by construction: no past block changes meaning, because below H the outcome is
+# byte-identical to what it has always been (REVERT).
+#
+# FROM H, a CALL is executed by the deterministic, gas-metered tree interpreter
+# (vm_py.runtime.tree_engine) against a compiled-and-cached IR of the contract's
+# source, with storage and treasury bound to chain state. The interpreter is a
+# closed sandbox — no import/exec/eval/attribute escape — so arbitrary deployed
+# code can at worst revert, burn gas (→ OOG), or touch its OWN namespaced storage;
+# it can neither run host code nor read another contract's state. Contract DEPLOY
+# is unchanged (it only stores code and has always succeeded).
+#
+# This is the enabler for the on-chain token launcher + DEX (the standard
+# animica_token / animica_dex_* contracts). It is a STATE-MUTATING change: from H,
+# calls that used to revert now succeed and move balances/storage, so every full
+# node, pool and balance-tracking explorer/exchange MUST run >= 9.6.0 (or set
+# ANIMICA_FORK_VM_EXEC_HEIGHT) before H, or it will compute a divergent state root.
+# Read-only RPC simulate_call is NOT gated (it is a query, never consensus), so
+# wallets can quote/preview before activation. Retunable via
+# ANIMICA_FORK_VM_EXEC_HEIGHT.
+FORK_VM_EXEC = "vm_exec"
+
 # FORK_VPN_RELAY_REWARDS (8.0.1, REALIZED in 9.0.0 as IOU settlement) — from H,
 # each block MAY settle service IOUs (dVPN relay/exit, AICF inference, media,
 # hosting — any operator-issued IOU ledger) with REAL per-block payouts, capped
@@ -468,11 +494,13 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_STATE_COMMITMENT_HEIGHT. Self-gating on non-zero root means a
         # premature activation cannot split honest zero-root miners.
         FORK_STATE_COMMITMENT: 44_444,
-        # Treasury share 15% -> 25% (9.4.0). Operator-chosen height 70,000.
-        # A node below 9.4.0 computes the old 15% and rejects the network's
-        # coinbase from this block on, so the release has to be in operators'
-        # hands before it. Retune with ANIMICA_FORK_TREASURY_25_HEIGHT.
-        FORK_TREASURY_25: 70_000,
+        # Treasury share 15% -> 25%. MOVED 70,000 -> 75,000 so the whole reward-split
+        # change (treasury raise + FORK_SERVICE_CARVE) activates in ONE coordinated step
+        # with the other 9.5.x/9.6.0 forks, and — since the live chain is already past
+        # 70,000, where nothing activated — moving it forward avoids a retroactive
+        # 15%-vs-25% inconsistency on already-produced blocks. Retune with
+        # ANIMICA_FORK_TREASURY_25_HEIGHT.
+        FORK_TREASURY_25: 75_000,
         # Bounded retarget + floor escape (9.5.0). Operator-chosen height 75,000.
         # Grandfathered below H, so no historical theta is recomputed. Retune with
         # ANIMICA_FORK_BOUNDED_RETARGET_HEIGHT.
@@ -486,6 +514,12 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_QUANTUM_BEACON: 75_000,
         # Service carve (9.5.0). The ONLY emission change at this height.
         FORK_SERVICE_CARVE: 75_000,
+        # On-chain vm_py contract CALL execution (9.6.0). Operator-chosen height
+        # 75,000. History-safe: below H every CALL reverted (the VM was never
+        # wired), so no past block changes meaning. STATE-MUTATING from H — every
+        # full node / pool / balance-tracker MUST run >= 9.6.0 (or set
+        # ANIMICA_FORK_VM_EXEC_HEIGHT) before H. Retunable via that env override.
+        FORK_VM_EXEC: 75_000,
         # dVPN relay block rewards (8.0.1). Operator-chosen height 50,000 (shared with
         # the consensus ANS fork gate). SELF-GATING + INERT: emits zero relay outputs
         # until an on-chain relay-contribution root is sealed, which requires the
@@ -508,6 +542,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_FINALITY_DEPTH: 0,
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,
+        FORK_VM_EXEC: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
@@ -521,6 +556,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_FINALITY_DEPTH: 0,
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,
+        FORK_VM_EXEC: 0,
     },
 }
 
