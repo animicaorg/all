@@ -253,6 +253,13 @@ else
     VERSION="${VERSION}-${COMMIT}"
 fi
 PACKAGE_VERSION="${VERSION#v}"
+# Debian Version fields must start with a digit. Repo tags can be non-numeric
+# (e.g. "anmnet-v0.1.1"); extract the first numeric X[.Y[.Z]] and fall back to
+# the wallet's own version so packaging never fails on an unrelated tag.
+if ! printf '%s' "$PACKAGE_VERSION" | grep -qE '^[0-9]'; then
+    PACKAGE_VERSION="$(printf '%s' "$PACKAGE_VERSION" | grep -oE '[0-9]+(\.[0-9]+){0,3}' | head -1)"
+    [ -n "$PACKAGE_VERSION" ] || PACKAGE_VERSION="0.2.0"
+fi
 
 echo "Version: $VERSION"
 echo ""
@@ -293,10 +300,14 @@ mkdir -p "$BUILD_DIR" "$DIST_DIR"
 
 log_section "Configuring Build"
 cd "$BUILD_DIR"
+# Honor a WALLET_BUNDLE_PYTHON_RUNTIME env override. Since animica's base
+# install pulls torch/CUDA/media (~6 GB), bundling the runtime makes the .deb
+# multi-GB and can break dpkg-deb; set WALLET_BUNDLE_PYTHON_RUNTIME=OFF for a
+# slim hosted-RPC build (matches the Windows/macOS cross builds).
 cmake "$WALLET_ROOT" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_INSTALL_PREFIX=/usr \
-    -DWALLET_BUNDLE_PYTHON_RUNTIME=ON \
+    -DWALLET_BUNDLE_PYTHON_RUNTIME="${WALLET_BUNDLE_PYTHON_RUNTIME:-ON}" \
     -DBUILD_TESTING=OFF
 
 log_section "Building Wallet"
