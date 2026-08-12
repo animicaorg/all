@@ -540,9 +540,17 @@ class _DepositSheet extends StatelessWidget {
   const _DepositSheet({required this.status});
 
   String? get _bridgeAddress {
+    // The node surfaces the deposit address at the TOP LEVEL of l2_status as
+    // `bridgeAddress` (human anim1… form), with `bridgeAddressHex` alongside.
+    // Prefer those; fall back to legacy keys inside the bridge summary.
+    for (final k in const ['bridgeAddress', 'bridgeAddressHex']) {
+      final v = status[k];
+      if (v is String && v.isNotEmpty) return v;
+    }
     final b = status['bridge'];
     if (b is Map) {
       for (final k in const [
+        'bridgeAddress',
         'depositAddress',
         'deposit_address',
         'address',

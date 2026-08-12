@@ -58,6 +58,14 @@ class L2Node:
     # ── status ──
     def status(self) -> dict:
         s = self.sequencer
+        anim1 = _bridge_anim1(self.config.bridge_address)
+        # Also fold the deposit address into the bridge summary under the keys
+        # older wallet builds look for, so existing installs surface it without
+        # an app update.
+        bridge = dict(s.bridge.summary())
+        if anim1:
+            bridge["depositAddress"] = anim1
+            bridge["bridgeAddress"] = anim1
         return {
             "enabled": self.config.enabled,
             "mode": self.config.mode,
@@ -72,10 +80,10 @@ class L2Node:
             # are impossible without it, so wallets/explorer surface this.
             # `bridgeAddress` is the human bech32m anim1… form for display;
             # `bridgeAddressHex` is the raw 32-byte digest the indexer compares.
-            "bridgeAddress": _bridge_anim1(self.config.bridge_address),
+            "bridgeAddress": anim1,
             "bridgeAddressHex": _bridge_hex(self.config.bridge_address),
             "depositsEnabled": bool(self.config.bridge_address),
-            "bridge": s.bridge.summary(),
+            "bridge": bridge,
         }
 
 
