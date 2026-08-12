@@ -21,7 +21,7 @@ from rpc.methods import method
 
 from l2 import da, tx as l2tx
 from l2.config import L2Config
-from l2.constants import TxStatus
+from l2.constants import TxStatus, TxType
 from l2.metrics import L2_METRICS
 from l2.node import get_l2_node
 
@@ -173,6 +173,126 @@ def l2_send_raw_batch(txs: Any = None, **_: Any) -> dict:
 def l2_estimate_fee(raw: Any = None, **_: Any) -> dict:
     t = l2tx.decode(_hexb(raw))
     return _node().sequencer.cfg.fees.estimate(t)
+
+
+# ── wallet-friendly build/submit (no client-side codec needed) ────────────────
+# Wallets in three languages (TS/Dart/C++) would otherwise each have to
+# re-implement the exact L2 binary codec — a mismatch there produces invalid
+# txs. Instead the node builds the canonical body and returns the signing hash;
+# the wallet signs that hash with its EXISTING ML-DSA-65 key and submits pubkey
+# + signature. A cautious wallet re-derives/echoes the fields before signing
+# (they are returned for display), so this is convenience, not added trust.
+
+_L2_TX_KIND_BUILDERS = {
+    "transfer": TxType.TRANSFER,
+    "pay": TxType.PAY,
+    "withdraw": TxType.WITHDRAW,
+}
+
+
+@method(
+    "l2_prepareTransfer",
+    desc="Build the canonical body + signing hash for a TRANSFER/PAY/WITHDRAW. "
+    "Wallet signs signingHash with its ML-DSA-65 key, then calls l2_submitSigned.",
+)
+def l2_prepare_transfer(
+    kind: Any = "transfer",
+    sender: Any = None,
+    recipient: Any = None,
+    amount: Any = None,
+    memo: Any = "",
+    nonce: Any = None,
+    fee: Any = None,
+    expiry: Any = 0,
+    **_: Any,
+) -> dict:
+    k = str(kind or "transfer").lower()
+    if k not in _L2_TX_KIND_BUILDERS:
+        raise InvalidParams(f"unsupported prepare kind {k}")
+    if sender is None or recipient is None or amount is None:
+        raise InvalidParams("sender, recipient, amount required")
+    s = _addr(sender)
+    r = _addr(recipient)
+    try:
+        amt = int(amount)
+    except (TypeError, ValueError):
+        raise InvalidParams("amount must be an integer (nanos)")
+    node = _node()
+    seq = node.sequencer
+    n = int(nonce) if nonce is not None else seq.pending_nonce(s)
+    tx_type = _L2_TX_KIND_BUILDERS[k]
+    if tx_type == TxType.WITHDRAW:
+        payload = l2tx.WithdrawPayload(r, amt)
+    else:
+        memo_b = _hexb(memo) if isinstance(memo, str) and memo.startswith("0x") else (
+            memo.encode() if isinstance(memo, str) else b""
+        )
+        payload = l2tx.TransferPayload(r, amt, memo_b)
+    draft = l2tx.L2Tx(
+        version=1,
+        l2_chain_id=node.config.l2_chain_id,
+        tx_type=tx_type,
+        sender=s,
+        nonce=n,
+        fee=0,
+        expiry=int(expiry or 0),
+        payload=payload,
+    )
+    # The fee is encoded in the signed body, so its varint length feeds back
+    # into the DA-byte fee term — a fixed point. Iterate to convergence (the fee
+    # varint grows ~1 byte per 128x, so this stabilizes in 1-2 rounds).
+    draft.fee = 0
+    for _ in range(6):
+        required_fee = seq.cfg.fees.fee_for(draft)
+        if draft.fee >= required_fee:
+            break
+        draft.fee = required_fee
+    if fee is not None:
+        draft.fee = max(int(fee), required_fee)
+    body = draft.body_bytes()
+    return {
+        "kind": k,
+        "sender": "0x" + s.hex(),
+        "recipient": "0x" + r.hex(),
+        "amount": str(amt),
+        "nonce": n,
+        "fee": str(draft.fee),
+        "requiredFee": str(required_fee),
+        "l2ChainId": node.config.l2_chain_id,
+        "bodyHex": "0x" + body.hex(),
+        "signingHash": "0x" + l2tx.signing_hash_for(body, node.config.l2_chain_id).hex(),
+        "sigScheme": int(draft.sig_scheme),
+    }
+
+
+@method(
+    "l2_submitSigned",
+    desc="Assemble a signed envelope from a prepared body + wallet pubkey/signature "
+    "and submit it. Returns the txid.",
+)
+def l2_submit_signed(
+    body: Any = None, pubkey: Any = None, signature: Any = None, **_: Any
+) -> str:
+    if body is None or pubkey is None or signature is None:
+        raise InvalidParams("body, pubkey, signature required")
+    from l2 import codec
+    from l2.constants import SigScheme
+
+    body_b = _hexb(body)
+    pk = _hexb(pubkey)
+    sig = _hexb(signature)
+    out = bytearray(body_b)
+    try:
+        codec.write_uvarint(out, int(SigScheme.ML_DSA_65))
+        codec.write_pubkey(out, pk)
+        codec.write_sig(out, sig)
+    except Exception as e:
+        raise InvalidParams(f"bad envelope fields: {e}")
+    try:
+        txid = _node().sequencer.submit_raw(bytes(out))
+    except Exception as e:
+        raise InvalidParams(f"admission failed: {e}")
+    return "0x" + txid.hex()
 
 
 @method("l2_getStateRoot", desc="Current L2 state root")
