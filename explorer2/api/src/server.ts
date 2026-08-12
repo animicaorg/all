@@ -617,25 +617,39 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
       return
     }
     try {
-      const raw = await rpc.call('aicf.workerList', {}).catch(async (err) => {
-        if (isRpcMethodNotFound(err)) return null
-        throw err
-      })
+      const tryMethod = async (m: string, p: unknown) =>
+        rpc.call(m, p as any).catch(async (err) => {
+          if (isRpcMethodNotFound(err)) return null
+          throw err
+        })
+      // Legacy name first, then the method the node actually serves today
+      // (aicf.work.listWorkers) — probing only the legacy name made the panel
+      // report AICF unavailable while the work layer was live.
+      let raw = await tryMethod('aicf.workerList', {})
+      if (!raw) raw = await tryMethod('aicf.work.listWorkers', {})
       if (!raw) {
-        // Older nodes don't expose workerList yet — return empty rather than 500.
         jsonSafe(res, { available: false, reason: 'method_unavailable', workers: [], by_tier: {} })
         return
       }
       const workers = Array.isArray((raw as any).workers) ? (raw as any).workers : []
+      // These workers have no "tiers" field; group by device_type (cpu/gpu),
+      // which is the meaningful capacity tier, and also count capabilities.
       const byTier: Record<string, number> = {}
+      const byCapability: Record<string, number> = {}
+      let active = 0
       for (const w of workers) {
-        for (const t of (w?.tiers ?? [])) {
-          byTier[String(t)] = (byTier[String(t)] ?? 0) + 1
-        }
+        const tier = String(w?.device_type ?? w?.tier ?? 'unknown')
+        byTier[tier] = (byTier[tier] ?? 0) + 1
+        if (['idle', 'busy', 'online', 'active'].includes(String(w?.status ?? '').toLowerCase())) active++
+        for (const c of (w?.capabilities ?? [])) byCapability[String(c)] = (byCapability[String(c)] ?? 0) + 1
       }
-      jsonSafe(res, { available: true, workers, by_tier: byTier, total: workers.length })
+      jsonSafe(res, {
+        available: workers.length > 0,
+        workers, by_tier: byTier, by_capability: byCapability,
+        total: workers.length, active,
+      })
     } catch (err) {
-      logger.warn({ err }, 'aicf.workerList unavailable')
+      logger.warn({ err }, 'aicf worker list unavailable')
       res.json({ available: false, workers: [], by_tier: {},
                 reason: err instanceof Error ? err.message : String(err) })
     }
@@ -653,22 +667,49 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
       ? parseInt(req.query.window, 10) || 60
       : 60
     try {
-      const raw = await rpc.call('aicf.jobStats', { window_minutes: windowMinutes })
-        .catch(async (err) => {
+      const tryMethod = async (m: string, p: unknown) =>
+        rpc.call(m, p as any).catch(async (err) => {
           if (isRpcMethodNotFound(err)) return null
           throw err
         })
-      if (!raw) {
+      const raw = await tryMethod('aicf.jobStats', { window_minutes: windowMinutes })
+      if (raw) {
+        jsonSafe(res, { available: true, window_minutes: windowMinutes, ...(raw as object) })
+        return
+      }
+      // No dedicated stats method on this node — derive live totals from the
+      // work layer: per-worker completed/failed counts + current open jobs.
+      const [workersRaw, jobsRaw] = await Promise.all([
+        tryMethod('aicf.work.listWorkers', {}),
+        tryMethod('aicf.work.listJobs', {}),
+      ])
+      if (!workersRaw && !jobsRaw) {
         jsonSafe(res, {
           available: false, reason: 'method_unavailable',
           window_minutes: windowMinutes,
           jobs_completed: 0, jobs_failed: 0,
-          latency_p50_ms: null, latency_p95_ms: null,
-          by_tier: {},
+          latency_p50_ms: null, latency_p95_ms: null, by_tier: {},
         })
         return
       }
-      jsonSafe(res, { available: true, window_minutes: windowMinutes, ...(raw as object) })
+      const workers = Array.isArray((workersRaw as any)?.workers) ? (workersRaw as any).workers : []
+      const jobs = Array.isArray((jobsRaw as any)?.jobs) ? (jobsRaw as any).jobs : []
+      let completed = 0, failed = 0
+      const byTier: Record<string, number> = {}
+      for (const w of workers) {
+        completed += Number(w?.completed_jobs ?? 0)
+        failed += Number(w?.failed_jobs ?? 0)
+        const tier = String(w?.device_type ?? 'unknown')
+        byTier[tier] = (byTier[tier] ?? 0) + 1
+      }
+      const openJobs = jobs.filter((j: any) => String(j?.status ?? '').toLowerCase() === 'open').length
+      jsonSafe(res, {
+        available: true, window_minutes: windowMinutes,
+        source: 'work-layer-derived',
+        jobs_completed: completed, jobs_failed: failed,
+        jobs_open: openJobs, workers: workers.length,
+        latency_p50_ms: null, latency_p95_ms: null, by_tier: byTier,
+      })
     } catch (err) {
       logger.warn({ err }, 'aicf.jobStats unavailable')
       res.json({ available: false, window_minutes: windowMinutes,
