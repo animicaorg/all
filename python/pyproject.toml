@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "9.7.0"
+version = "10.0.0"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -292,6 +292,7 @@ path = "hatch_build.py"
 "_build_vendor/coretx" = "coretx"
 "_build_vendor/da" = "da"
 "_build_vendor/execution" = "execution"
+"_build_vendor/l2" = "l2"
 "_build_vendor/mempool" = "mempool"
 "_build_vendor/mempool2" = "mempool2"
 "_build_vendor/mining" = "mining"

@@ -41,6 +41,7 @@ _VENDOR_MAP: list[tuple[str, str]] = [
     ("../coretx", "coretx"),
     ("../da", "da"),
     ("../execution", "execution"),
+    ("../l2", "l2"),
     ("../mempool", "mempool"),
     ("../mempool2", "mempool2"),
     ("../mining", "mining"),
