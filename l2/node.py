@@ -70,10 +70,52 @@ class L2Node:
             # L1 account users send ANM to in order to deposit into L2. Empty
             # until an operator configures ANIMICA_L2_BRIDGE_ADDRESS — deposits
             # are impossible without it, so wallets/explorer surface this.
-            "bridgeAddress": self.config.bridge_address or None,
+            # `bridgeAddress` is the human bech32m anim1… form for display;
+            # `bridgeAddressHex` is the raw 32-byte digest the indexer compares.
+            "bridgeAddress": _bridge_anim1(self.config.bridge_address),
+            "bridgeAddressHex": _bridge_hex(self.config.bridge_address),
             "depositsEnabled": bool(self.config.bridge_address),
             "bridge": s.bridge.summary(),
         }
+
+
+def _bridge_hex(addr: str) -> Optional[str]:
+    """Normalize a configured bridge address to a 0x-hex 32-byte digest.
+    Accepts either a 0x-hex digest or a bech32m anim1… address."""
+    if not addr:
+        return None
+    a = addr.strip()
+    if a.lower().startswith("0x"):
+        return a.lower()
+    if a.startswith("anim1"):
+        try:
+            from pq.py.address import decode_address
+
+            rec = decode_address(a)
+            return "0x" + bytes(rec.digest)[:32].hex()
+        except Exception:
+            return None
+    return a
+
+
+def _bridge_anim1(addr: str, alg_id: int = 0x1003) -> Optional[str]:
+    """Human bech32m form of the bridge address for display in wallets. If a
+    0x-hex digest is configured, encode it as anim1… (ml_dsa_65 alg by default,
+    matching the L2 account scheme). Passes through an already-anim1 value."""
+    if not addr:
+        return None
+    a = addr.strip()
+    if a.startswith("anim1"):
+        return a
+    hx = _bridge_hex(a)
+    if not hx:
+        return None
+    try:
+        from pq.py.address import AddressRecord
+
+        return AddressRecord(hrp="anim", alg_id=alg_id, digest=bytes.fromhex(hx[2:])).to_string()
+    except Exception:
+        return hx  # fall back to hex rather than hide the address
 
 
 _lock = threading.Lock()
