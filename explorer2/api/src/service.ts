@@ -385,7 +385,22 @@ export class ExplorerService {
       nextHeight -= 1
       scannedBlocks += 1
       const block = await this.safeRpc(() => this.rpc.getBlockByNumber(height, true, true)).catch(() => null)
-      if (!block) continue
+      if (!block) {
+        // A failed fetch must become the RESUME POINT, not count as scanned:
+        // wallets advance a per-address watermark from scannedBlocks, so a
+        // silently skipped block would make its txs permanently invisible.
+        nextHeight = height
+        scannedBlocks -= 1
+        break
+      }
+
+      // Block timestamp (seconds) for the txs below — wallets sort their
+      // merged sent+received history by time, so every entry needs one.
+      const blockHeader = (block as any)?.header ?? block
+      const blockTimeRaw = Number(
+        blockHeader?.time ?? blockHeader?.timestamp ?? (block as any)?.timestamp ?? 0
+      )
+      const blockTime = Number.isFinite(blockTimeRaw) && blockTimeRaw > 0 ? blockTimeRaw : null
 
       const blockTxs = extractBlockTransactions(block)
       const receipts = extractBlockReceipts(block)
@@ -405,9 +420,33 @@ export class ExplorerService {
           summary.to === normalizedAddress ||
           classification.createdContractAddress === normalizedAddress
         if (!touchesAddress) continue
-        summary.status = detail.status
+        // These txs came out of a block, so 'pending' (normalizeTxDetail's
+        // verdict when the raw tx carries no blockNumber field) is wrong —
+        // anything found here is at least included.
+        summary.status = detail.status === 'pending' ? 'confirmed' : detail.status
         summary.value = summary.value ?? detail.value
         summary.classification = classification
+        const gasRaw = (tx as any)?.gas
+        ;(summary as any).blockNumber = height
+        ;(summary as any).timestamp = blockTime
+        ;(summary as any).gasPrice =
+          (tx as any)?.gasPrice ??
+          (tx as any)?.gas_price ??
+          (gasRaw && typeof gasRaw === 'object' ? gasRaw.price : undefined) ??
+          // v2 canonical bodies carry the per-gas price as maxFee/tip.
+          (tx as any)?.maxFee ??
+          (tx as any)?.max_fee ??
+          (tx as any)?.tip ??
+          null
+        ;(summary as any).gasLimit =
+          (tx as any)?.gasLimit ??
+          (tx as any)?.gas_limit ??
+          (gasRaw && typeof gasRaw === 'object'
+            ? gasRaw.limit
+            : typeof gasRaw === 'number'
+              ? gasRaw
+              : undefined) ??
+          null
         txs.push(summary)
       }
     }
@@ -420,9 +459,16 @@ export class ExplorerService {
       accountType,
       confirmedBalance,
       pendingBalance,
-      txs: txs.slice(0, limit),
+      // No slice: the loop already stops adding blocks once `limit` is hit,
+      // and cutting a scanned block's overflow txs here would lose them —
+      // the cursor resumes BELOW that block, so nothing would ever re-serve
+      // them (wallets would then watermark right past the gap).
+      txs,
       contract: accountType === 'contract' ? profile ?? null : null,
-      nextCursor: hasMore ? nextCursorForHeight(nextHeight) : null,
+      // `nextHeight` is already the first UNSCANNED height (the loop
+      // decrements before scanning); nextCursorForHeight would subtract 1
+      // again and permanently skip one block per page boundary.
+      nextCursor: hasMore ? String(nextHeight) : null,
       scannedBlocks,
       partial: hasMore
     }

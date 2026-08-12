@@ -33,10 +33,14 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     // before reading so a freshly broadcast tx shows up even when no status
     // changed, then again if the node moved something forward.
     ref.invalidate(txHistoryProvider(addr));
-    final changed =
-        await TxHistoryStore.refreshPending(ref.read(rpcProvider), addr);
+    final rpc = ref.read(rpcProvider);
+    // Incoming transfers (and sends from other devices) come from the
+    // explorer's address index; local pending statuses from the node.
+    final ingested = await TxHistoryStore.ingestIncoming(addr);
     if (!mounted) return;
-    if (changed) ref.invalidate(txHistoryProvider(addr));
+    final changed = await TxHistoryStore.refreshPending(rpc, addr);
+    if (!mounted) return;
+    if (ingested || changed) ref.invalidate(txHistoryProvider(addr));
   }
 
   @override
@@ -60,9 +64,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  'No transactions yet.\n\nTransactions sent from this '
-                  'device will appear here. Incoming transfers are not '
-                  'tracked — check the explorer for the full on-chain view.',
+                  'No transactions yet.\n\nSends from this device appear '
+                  'instantly; incoming transfers are picked up from recent '
+                  'chain history each time this screen refreshes.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                       color: Theme.of(context).colorScheme.outline),
@@ -115,6 +119,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }
 
   String _dayLabel(int ms) {
+    // Ingested txs whose block carried no usable time sort to the bottom;
+    // labeling them '1 Jan 1970' would read as a bug.
+    if (ms <= 0) return 'Older';
     final d = DateTime.fromMillisecondsSinceEpoch(ms);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -132,20 +139,28 @@ class _TxRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final time = DateFormat('HH:mm')
-        .format(DateTime.fromMillisecondsSinceEpoch(rec.timestampMs));
-    final icon = switch (rec.kind) {
-      'deploy' => Icons.upload_file,
-      'call' => Icons.settings_ethernet,
-      _ => Icons.call_made,
-    };
+    final received = rec.direction == TxDirection.received;
+    final time = rec.timestampMs > 0
+        ? DateFormat('HH:mm')
+            .format(DateTime.fromMillisecondsSinceEpoch(rec.timestampMs))
+        : '—';
+    final icon = received
+        ? Icons.call_received
+        : switch (rec.kind) {
+            'deploy' => Icons.upload_file,
+            'call' => Icons.settings_ethernet,
+            _ => Icons.call_made,
+          };
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final inColor = dark ? Colors.green.shade300 : Colors.green.shade700;
     return ListTile(
       leading: CircleAvatar(
         backgroundColor: cs.surfaceContainerHighest,
-        child: Icon(icon, size: 20, color: cs.onSurfaceVariant),
+        child: Icon(icon, size: 20, color: received ? inColor : cs.onSurfaceVariant),
       ),
       title: Text(
-        _shorten(rec.to),
+        // Sent rows show the counterparty we paid; received rows the payer.
+        _shorten(received ? rec.from : rec.to),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 14),
@@ -161,9 +176,12 @@ class _TxRow extends StatelessWidget {
         // Full 9-decimal precision: the default 4 truncates a
         // 0.000021 ANM fee-sized send into a misleading '−0 ANM'.
         rec.amountNanos > BigInt.zero
-            ? '−${formatAnm(rec.amountNanos, maxDecimals: 9)} ANM'
+            ? '${received ? '+' : '−'}${formatAnm(rec.amountNanos, maxDecimals: 9)} ANM'
             : rec.kind,
-        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+        style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+            color: received ? inColor : null),
       ),
       onTap: () => context.push('/history/tx/${rec.hash}'),
     );

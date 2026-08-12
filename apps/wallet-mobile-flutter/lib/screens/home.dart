@@ -50,8 +50,8 @@ class HomeScreen extends ConsumerWidget {
                   child: ListTile(
                     leading: const Icon(Icons.history),
                     title: const Text('Transaction history'),
-                    subtitle: const Text(
-                        'All transactions sent from this device'),
+                    subtitle:
+                        const Text('Sent and received transactions'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => context.push('/history'),
                   ),

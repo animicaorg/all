@@ -15,8 +15,10 @@
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../constants.dart';
 import 'rpc.dart';
 
 /// Terminal + transient states the UI understands. `pending` is the only
@@ -30,9 +32,16 @@ class TxStatus {
   static const terminal = {confirmed, rejected, dropped};
 }
 
+class TxDirection {
+  static const sent = 'sent';
+  static const received = 'received';
+}
+
 class TxRecord {
   final String hash;
-  final String from; // bech32m anim1… of the signing account
+  final String account; // bech32m of the wallet account this record belongs to
+  final String direction; // TxDirection.sent | TxDirection.received
+  final String from; // bech32m of the tx sender
   final String to; // bech32m / contract label — whatever the flow knew
   final String kind; // transfer | deploy | call
   final BigInt amountNanos;
@@ -52,12 +61,14 @@ class TxRecord {
     required this.amountNanos,
     required this.feeNanos,
     required this.timestampMs,
+    String? account,
+    this.direction = TxDirection.sent,
     this.status = TxStatus.pending,
     this.blockHeight,
     this.confirmations,
     this.note,
     this.misses = 0,
-  });
+  }) : account = account ?? from;
 
   TxRecord copyWith({
     String? status,
@@ -68,6 +79,8 @@ class TxRecord {
   }) =>
       TxRecord(
         hash: hash,
+        account: account,
+        direction: direction,
         from: from,
         to: to,
         kind: kind,
@@ -83,6 +96,8 @@ class TxRecord {
 
   Map<String, dynamic> toJson() => {
         'hash': hash,
+        'account': account,
+        'direction': direction,
         'from': from,
         'to': to,
         'kind': kind,
@@ -98,6 +113,10 @@ class TxRecord {
 
   static TxRecord fromJson(Map<String, dynamic> j) => TxRecord(
         hash: j['hash'] as String,
+        // Pre-0.5.0 records carried neither field: they were all written by
+        // this device's own broadcasts, so account==from and direction=sent.
+        account: j['account'] as String? ?? j['from'] as String?,
+        direction: j['direction'] as String? ?? TxDirection.sent,
         from: j['from'] as String? ?? '',
         to: j['to'] as String? ?? '',
         kind: j['kind'] as String? ?? 'transfer',
@@ -182,6 +201,13 @@ TxRecord? applyNodeStatus(TxRecord rec, Map<String, dynamic>? st,
         note: reason?.toString() ?? rec.note);
   }
   if (status == 'not_found') {
+    // A record with recorded inclusion must NEVER be demoted by a node
+    // that merely can't find the hash (lagging failover endpoint, pruned
+    // index): "dropped — funds did not move" on money that moved invites
+    // a duplicate payment. Only an explicit rejected answer moves it.
+    if (rec.status == TxStatus.confirmed || rec.blockHeight != null) {
+      return null;
+    }
     // One not_found can be a lagging failover endpoint or a freshly
     // restarted node, not a drop — the multi-endpoint RPC client makes a
     // single stale answer a real input. Declaring "dropped" (the UI says
@@ -203,6 +229,17 @@ TxRecord? applyNodeStatus(TxRecord rec, Map<String, dynamic>? st,
 class TxHistoryStore {
   static const int _cap = 200;
   static String _key(String address) => 'tx_history_v1_$address';
+
+  /// Serializes every read-modify-write of the record lists. Concurrent
+  /// mutators are real here — the send tracker, the history screen's
+  /// refresh, and the explorer ingest all await between read and write —
+  /// and an interleaving would silently drop whichever record lost.
+  static Future<void> _mutex = Future.value();
+  static Future<T> _serialized<T>(Future<T> Function() op) {
+    final result = _mutex.then((_) => op());
+    _mutex = result.then((_) {}, onError: (_) {});
+    return result;
+  }
 
   static Future<List<TxRecord>> list(String address) async {
     final sp = await SharedPreferences.getInstance();
@@ -226,12 +263,31 @@ class TxHistoryStore {
         _key(address), jsonEncode([for (final r in capped) r.toJson()]));
   }
 
-  static Future<void> add(TxRecord rec) async {
-    final recs = await list(rec.from);
-    // Re-broadcasts of the same signed tx return the same hash — keep one.
-    if (recs.any((r) => r.hash == rec.hash)) return;
-    await _write(rec.from, [rec, ...recs]);
-  }
+  /// Returns true when anything changed. Re-broadcasts of the same signed
+  /// tx return the same hash and are kept once — but a chain-confirmed
+  /// duplicate HEALS a local record stuck pending/dropped (the explorer saw
+  /// it mined; the local status is stale), without touching richer local
+  /// fields like the display recipient or broadcast timestamp.
+  static Future<bool> add(TxRecord rec) => _serialized(() async {
+        final recs = await list(rec.account);
+        final i = recs.indexWhere((r) => r.hash == rec.hash);
+        if (i >= 0) {
+          final existing = recs[i];
+          if (rec.status == TxStatus.confirmed &&
+              existing.status != TxStatus.confirmed) {
+            recs[i] = existing.copyWith(
+              status: TxStatus.confirmed,
+              blockHeight: rec.blockHeight ?? existing.blockHeight,
+              misses: 0,
+            );
+            await _write(rec.account, recs);
+            return true;
+          }
+          return false;
+        }
+        await _write(rec.account, [rec, ...recs]);
+        return true;
+      });
 
   static Future<TxRecord?> find(String address, String hash) async {
     for (final r in await list(address)) {
@@ -240,13 +296,13 @@ class TxHistoryStore {
     return null;
   }
 
-  static Future<void> patch(TxRecord updated) async {
-    final recs = await list(updated.from);
-    final i = recs.indexWhere((r) => r.hash == updated.hash);
-    if (i < 0) return;
-    recs[i] = updated;
-    await _write(updated.from, recs);
-  }
+  static Future<void> patch(TxRecord updated) => _serialized(() async {
+        final recs = await list(updated.account);
+        final i = recs.indexWhere((r) => r.hash == updated.hash);
+        if (i < 0) return;
+        recs[i] = updated;
+        await _write(updated.account, recs);
+      });
 
   /// Refresh every non-terminal record against the node. Returns true when
   /// anything changed (callers then invalidate the provider). Best-effort:
@@ -276,6 +332,146 @@ class TxHistoryStore {
     }
     return changed;
   }
+
+  static const int _ingestMaxPages = 6;
+  static String _scanKey(String address) => 'tx_history_scan_v1_$address';
+  static String _pendingTopKey(String address) =>
+      'tx_history_scan_pending_top_v1_$address';
+  static String _pendingFloorKey(String address) =>
+      'tx_history_scan_pending_floor_v1_$address';
+
+  /// Pull on-chain transactions touching [address] from the explorer's
+  /// address index — incoming transfers AND sends made from other devices —
+  /// so the history is the account's, not just this phone's.
+  ///
+  /// The explorer scans blocks newest-first with cursor pagination
+  /// (`nextCursor` = the first height it has NOT scanned). A per-address
+  /// high-water mark keeps refreshes incremental — but it only advances
+  /// once a scan PROVABLY connects to prior coverage (reached the old
+  /// watermark or genesis). A scan interrupted by the page cap or an
+  /// explorer error instead persists a resume cursor, and the next refresh
+  /// continues paging DOWN from there until the gap closes — so no block
+  /// range is ever silently skipped, no matter how long the wallet was
+  /// closed. Returns true when anything new was stored.
+  static Future<bool> ingestIncoming(
+    String address, {
+    String? apiBase,
+    http.Client? client,
+  }) async {
+    final base = apiBase ?? AnimicaConfig.explorerApiUrl;
+    if (base.isEmpty) return false;
+    final sp = await SharedPreferences.getInstance();
+    final watermark = sp.getInt(_scanKey(address)) ?? 0;
+    // Resume state from an interrupted scan: the head that scan started
+    // from, and the floor it had reached when it stopped.
+    int? scanTop = sp.getInt(_pendingTopKey(address));
+    int? lastFloor = sp.getInt(_pendingFloorKey(address));
+    String? cursor = lastFloor?.toString();
+    final httpc = client ?? http.Client();
+    var changed = false;
+    var coveredGap = false;
+    try {
+      for (var page = 0; page < _ingestMaxPages; page++) {
+        final uri = Uri.parse(
+            '$base/address/$address?limit=50${cursor != null ? '&cursor=$cursor' : ''}');
+        final resp = await httpc.get(uri).timeout(const Duration(seconds: 25));
+        if (resp.statusCode != 200) break;
+        final j = jsonDecode(resp.body) as Map<String, dynamic>;
+        final txs = (j['txs'] as List?) ?? const [];
+        final nextCursor = j['nextCursor']?.toString();
+        final scanned = (j['scannedBlocks'] as num?)?.toInt() ?? 0;
+        final floor = nextCursor != null ? int.tryParse(nextCursor) : null;
+        // First page of a fresh scan establishes the candidate watermark:
+        // floor + scanned == the height the scan started at (the head), or
+        // scanned - 1 when the whole chain fit in one page.
+        scanTop ??= floor != null ? floor + scanned : scanned - 1;
+
+        for (final t in txs) {
+          if (t is Map) {
+            final added = await _ingestOne(address, t, watermark);
+            changed = changed || added;
+          }
+        }
+
+        if (nextCursor == null || floor == null) {
+          coveredGap = true; // reached genesis — full coverage
+          lastFloor = null;
+          break;
+        }
+        lastFloor = floor;
+        if (floor <= watermark) {
+          coveredGap = true; // connected to previously scanned history
+          break;
+        }
+        cursor = nextCursor;
+      }
+      if (coveredGap) {
+        if (scanTop != null && scanTop > watermark) {
+          await sp.setInt(_scanKey(address), scanTop);
+        }
+        await sp.remove(_pendingTopKey(address));
+        await sp.remove(_pendingFloorKey(address));
+      } else if (scanTop != null && lastFloor != null) {
+        // Interrupted (page cap or explorer error mid-scan): do NOT touch
+        // the watermark — remember where we got to so the next refresh
+        // resumes downward instead of restarting at head and stranding
+        // every block in between forever.
+        await sp.setInt(_pendingTopKey(address), scanTop);
+        await sp.setInt(_pendingFloorKey(address), lastFloor);
+      }
+    } catch (_) {
+      // Explorer unreachable before anything was learned: change nothing.
+    } finally {
+      if (client == null) httpc.close();
+    }
+    return changed;
+  }
+
+  static Future<bool> _ingestOne(
+      String address, Map<dynamic, dynamic> t, int watermark) async {
+    final hash = t['hash']?.toString();
+    final from = t['from']?.toString() ?? '';
+    final to = t['to']?.toString() ?? '';
+    if (hash == null || hash.isEmpty) return false;
+    if (from != address && to != address) return false;
+    final height = (t['blockNumber'] as num?)?.toInt();
+    if (height != null && height <= watermark) return false;
+    final ts = (t['timestamp'] as num?)?.toInt();
+    final gasPrice = _bigIntFromAny(t['gasPrice']);
+    final gasLimit = _bigIntFromAny(t['gasLimit']);
+    final kindRaw = t['classification'] is Map
+        ? (t['classification'] as Map)['type']?.toString()
+        : null;
+    return TxHistoryStore.add(TxRecord(
+      hash: hash,
+      account: address,
+      direction:
+          from == address ? TxDirection.sent : TxDirection.received,
+      from: from,
+      to: to,
+      kind: kindRaw == 'native_transfer' || kindRaw == null
+          ? 'transfer'
+          : 'call',
+      amountNanos: _bigIntFromAny(t['value']) ?? BigInt.zero,
+      feeNanos: (gasPrice ?? BigInt.zero) * (gasLimit ?? BigInt.zero),
+      // Block time when the explorer has it; epoch-0 records would sort to
+      // the bottom, which is the honest place for a tx of unknown age.
+      timestampMs: ts != null && ts > 0 ? ts * 1000 : 0,
+      status: TxStatus.confirmed,
+      blockHeight: height,
+    ));
+  }
+}
+
+/// Decimal or 0x-hex, number or string — the explorer/node emit all four.
+BigInt? _bigIntFromAny(dynamic v) {
+  if (v == null) return null;
+  if (v is int) return BigInt.from(v);
+  final s = v.toString();
+  if (s.startsWith('0x') || s.startsWith('0X')) {
+    return BigInt.tryParse(s.substring(2), radix: 16);
+  }
+  return BigInt.tryParse(s);
 }
 
 /// History for one address, newest first. Screens `ref.invalidate` this

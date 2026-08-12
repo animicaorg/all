@@ -88,6 +88,15 @@ class AnimicaConfig {
     defaultValue: 'https://explorer.animica.org/api',
   );
 
+  /// Explorer REST API — the wallet's source for on-chain address history
+  /// (incoming transfers + sends from other devices). Distinct from
+  /// [tokenIndexUrl] so running the DEX tab on-chain-only doesn't also
+  /// silence transaction history.
+  static const String explorerApiUrl = String.fromEnvironment(
+    'ANIMICA_EXPLORER_API_URL',
+    defaultValue: 'https://explorer.animica.org/api',
+  );
+
   /// NonKYC public market-data endpoint for the ANM/USDT pair — prices
   /// wallet balances in fiat on the Home screen. Plain GET, no auth, no
   /// API key. NonKYC is the exchange where ANM actually trades, so its

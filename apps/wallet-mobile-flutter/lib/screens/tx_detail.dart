@@ -130,6 +130,8 @@ class _TxDetailScreenState extends ConsumerState<TxDetailScreen> {
 
   Widget _detail(BuildContext context, TxRecord rec) {
     final theme = Theme.of(context);
+    final received = rec.direction == TxDirection.received;
+    final dark = theme.brightness == Brightness.dark;
     final ts = rec.timestampMs > 0
         ? DateFormat('d MMM yyyy, HH:mm:ss')
             .format(DateTime.fromMillisecondsSinceEpoch(rec.timestampMs))
@@ -141,10 +143,13 @@ class _TxDetailScreenState extends ConsumerState<TxDetailScreen> {
           children: [
             Text(
               rec.amountNanos > BigInt.zero
-                  ? '−${formatAnm(rec.amountNanos, maxDecimals: 9)} ANM'
+                  ? '${received ? '+' : '−'}${formatAnm(rec.amountNanos, maxDecimals: 9)} ANM'
                   : rec.kind,
-              style: theme.textTheme.headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w700),
+              style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: received
+                      ? (dark ? Colors.green.shade300 : Colors.green.shade700)
+                      : null),
             ),
             const Spacer(),
             TxStatusChip(status: rec.status),
@@ -180,7 +185,7 @@ class _TxDetailScreenState extends ConsumerState<TxDetailScreen> {
               '${formatAnm(rec.amountNanos, maxDecimals: 9)} ANM'),
         _row(
             context,
-            'Network fee',
+            received ? 'Network fee (paid by sender)' : 'Network fee',
             rec.feeNanos > BigInt.zero
                 ? '${formatAnm(rec.feeNanos, maxDecimals: 9)} ANM'
                 : '—'),
