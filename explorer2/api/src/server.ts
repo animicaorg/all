@@ -631,18 +631,42 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
         jsonSafe(res, { available: false, reason: 'method_unavailable', workers: [], by_tier: {} })
         return
       }
-      const workers = Array.isArray((raw as any).workers) ? (raw as any).workers : []
+      const rawWorkers = Array.isArray((raw as any).workers) ? (raw as any).workers : []
       // These workers have no "tiers" field; group by device_type (cpu/gpu),
       // which is the meaningful capacity tier, and also count capabilities.
       const byTier: Record<string, number> = {}
       const byCapability: Record<string, number> = {}
       let active = 0
-      for (const w of workers) {
+      for (const w of rawWorkers) {
         const tier = String(w?.device_type ?? w?.tier ?? 'unknown')
         byTier[tier] = (byTier[tier] ?? 0) + 1
         if (['idle', 'busy', 'online', 'active'].includes(String(w?.status ?? '').toLowerCase())) active++
         for (const c of (w?.capabilities ?? [])) byCapability[String(c)] = (byCapability[String(c)] ?? 0) + 1
       }
+      // Normalize to the shape the explorer UI declares (address / tiers /
+      // hardware / jobs_completed). The node's live workers use different field
+      // names (wallet_address / capabilities / device_type / completed_jobs);
+      // returning the raw shape made the UI read w.address = undefined and
+      // crash the whole AICF page. Keep the raw fields too for completeness.
+      const workers = rawWorkers.map((w: any) => ({
+        address: w?.wallet_address ?? w?.address ?? '',
+        display_name: w?.display_name ?? null,
+        tiers: Array.isArray(w?.tiers)
+          ? w.tiers
+          : (Array.isArray(w?.capabilities) ? w.capabilities : []),
+        device_type: w?.device_type ?? null,
+        status: w?.status ?? null,
+        hardware: {
+          accelerator_preferred: w?.device_type ?? w?.hardware?.accelerator_preferred,
+          ram_gb: w?.hardware?.ram_gb,
+          summary: w?.hardware_summary ?? null,
+        },
+        jobs_completed: w?.completed_jobs ?? w?.jobs_completed ?? 0,
+        jobs_failed: w?.failed_jobs ?? 0,
+        reputation_score: w?.reputation_score ?? null,
+        total_earned_anm: w?.total_earned_anm ?? null,
+        last_seen: w?.last_seen_at ?? w?.last_seen,
+      }))
       jsonSafe(res, {
         available: workers.length > 0,
         workers, by_tier: byTier, by_capability: byCapability,
