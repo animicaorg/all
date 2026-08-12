@@ -189,19 +189,58 @@ function(animica_build_node OUT_VAR)
         message(WARNING "omni-sdk not found at ${SDK_PATH}")
     endif()
     
-    # Install animica package (CLI + node + wallet QR helper)
+    # Install animica package (CLI + node + wallet QR helper).
+    #
+    # animica's BASE install pulls the full AI/media stack (torch + CUDA +
+    # transformers + diffusers + datasets ≈ 6 GB). A desktop wallet needs none
+    # of that — only the CLI, the QR/bridge helpers, PQ signing and the RPC
+    # client. Bundling the AI stack made the .deb ~5.9 GB and broke dpkg-deb.
+    # So by default (WALLET_NODE_SLIM=ON) we install animica WITHOUT its deps
+    # and add back only the light runtime the wallet actually uses. Set
+    # -DWALLET_NODE_SLIM=OFF for the full fat install (local ENA/mining/media).
     set(ANIMICA_PATH "${ANIMICA_REPO_ROOT}/python")
+    if(NOT DEFINED WALLET_NODE_SLIM)
+        set(WALLET_NODE_SLIM ON)
+    endif()
     if(EXISTS "${ANIMICA_PATH}/pyproject.toml")
-        message(STATUS "Installing animica package from ${ANIMICA_PATH}")
-        execute_process(
-            COMMAND ${NODE_PIP} install "${ANIMICA_PATH}[wallet_qt]"
-            RESULT_VARIABLE ANIMICA_RESULT
-            OUTPUT_QUIET
-            ERROR_VARIABLE ANIMICA_ERROR
-        )
-        
+        if(WALLET_NODE_SLIM)
+            message(STATUS "Installing animica package (SLIM, no AI/media) from ${ANIMICA_PATH}")
+            # The light runtime deps (everything in the base list BEFORE torch),
+            # plus the wallet_qt extra (segno/pypng). No torch/transformers/
+            # diffusers/datasets/accelerate/bitsandbytes/animica-fastpow.
+            execute_process(
+                COMMAND ${NODE_PIP} install
+                    "typer>=0.12.3" "rich>=13.7.0" "httpx>=0.27.0" "pydantic>=2.7.0"
+                    "sqlalchemy>=2.0.44,<3.0.0" "pyyaml>=6.0.1" "cbor2>=5.6.0"
+                    "cryptography>=42.0.0" "requests>=2.31.0"
+                    "eth-account>=0.13.7,<1.0.0" "web3>=7.14.0,<8.0.0"
+                    "huggingface_hub>=0.24.0" "starlette>=0.40,<0.47"
+                    "segno>=1.6.1,<2.0.0" "pypng>=0.20220715.0"
+                RESULT_VARIABLE ANIMICA_DEP_RESULT
+                OUTPUT_QUIET
+                ERROR_VARIABLE ANIMICA_DEP_ERROR
+            )
+            if(NOT ANIMICA_DEP_RESULT EQUAL 0)
+                message(FATAL_ERROR "Failed to install slim runtime deps:\n${ANIMICA_DEP_ERROR}\n")
+            endif()
+            execute_process(
+                COMMAND ${NODE_PIP} install --no-deps "${ANIMICA_PATH}"
+                RESULT_VARIABLE ANIMICA_RESULT
+                OUTPUT_QUIET
+                ERROR_VARIABLE ANIMICA_ERROR
+            )
+        else()
+            message(STATUS "Installing animica package (FULL) from ${ANIMICA_PATH}")
+            execute_process(
+                COMMAND ${NODE_PIP} install "${ANIMICA_PATH}[wallet_qt]"
+                RESULT_VARIABLE ANIMICA_RESULT
+                OUTPUT_QUIET
+                ERROR_VARIABLE ANIMICA_ERROR
+            )
+        endif()
+
         if(NOT ANIMICA_RESULT EQUAL 0)
-            message(FATAL_ERROR 
+            message(FATAL_ERROR
                 "Failed to install animica package:\n"
                 "Path: ${ANIMICA_PATH}\n"
                 "Error: ${ANIMICA_ERROR}\n"
