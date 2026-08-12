@@ -391,6 +391,115 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  // ── Animica 10.0.0 L2 ─────────────────────────────────────────────────────
+  // The l2_* methods live on the SAME node RPC endpoint the explorer already
+  // uses, so we proxy them through the existing RpcClient. Every handler
+  // degrades gracefully when L2 is not enabled on the node (returns a plain
+  // { enabled: false }) so the explorer's L2 section can show "not active"
+  // rather than erroring.
+
+  const l2Call = async <T = any>(method: string, params?: unknown[]): Promise<T | null> => {
+    if (!rpc) return null
+    try {
+      return await rpc.call<T>(method, params ?? [])
+    } catch {
+      return null
+    }
+  }
+
+  // Aggregated overview for the explorer's L2 landing section (spec §34).
+  app.get('/api/l2/overview', async (_req, res) => {
+    const status = await l2Call('l2_status')
+    if (!status) {
+      jsonSafe(res, { enabled: false })
+      return
+    }
+    const [tps, stateRoot, seqStatus, metrics] = await Promise.all([
+      l2Call('l2_getTPS'),
+      l2Call('l2_getStateRoot'),
+      l2Call('l2_getSequencerStatus'),
+      l2Call('l2_getMetrics'),
+    ])
+    const headBatch = (status as any).headBatch
+    const latestBatch = headBatch >= 0 ? await l2Call('l2_getBatch', [headBatch]) : null
+    const proofStatus = headBatch >= 0 ? await l2Call('l2_getProofStatus', [headBatch]) : null
+    const bridge = (status as any).bridge || {}
+    const m: any = metrics || {}
+    const rawBytes = Number(m.batch_bytes || 0)
+    const compBytes = Number(m.batch_compressed_bytes || 0)
+    jsonSafe(res, {
+      enabled: true,
+      settlementMode: (status as any).settlementMode,
+      headBatch,
+      latestStateRoot: (stateRoot as any)?.stateRoot ?? null,
+      latestBatch,
+      proofStatus,
+      tps,
+      sigBackend: (seqStatus as any)?.sigBackend ?? null,
+      pending: (seqStatus as any)?.pending ?? 0,
+      anmLocked: String(bridge.lockedOnL1 ?? '0'),
+      l2Supply: String(m.anm_l2_supply ?? '0'),
+      totalL2Transactions: Number(m.executed_total ?? 0),
+      softConfirmedTotal: Number(m.soft_confirmed_total ?? 0),
+      settledTotal: Number(m.settled_total ?? 0),
+      batchTransactions: Number(m.batch_transactions ?? 0),
+      compressionRatio: compBytes > 0 ? rawBytes / compBytes : null,
+      pendingProofs: Number(m.proof_queue_depth ?? 0),
+      deposits: bridge.deposits ?? 0,
+      withdrawals: bridge.withdrawals ?? 0,
+    })
+  })
+
+  app.get('/api/l2/status', async (_req, res) => {
+    jsonSafe(res, (await l2Call('l2_status')) ?? { enabled: false })
+  })
+
+  app.get('/api/l2/tps', async (_req, res) => {
+    jsonSafe(res, (await l2Call('l2_getTPS')) ?? { enabled: false })
+  })
+
+  app.get('/api/l2/batch/:number', async (req, res) => {
+    const n = Number(req.params.number)
+    if (!Number.isFinite(n) || n < 0) {
+      res.status(400).json({ error: 'bad_batch_number' })
+      return
+    }
+    const header = await l2Call('l2_getBatch', [n])
+    if (!header) {
+      res.status(404).json({ error: 'batch_not_found' })
+      return
+    }
+    const proof = await l2Call('l2_getProofStatus', [n])
+    jsonSafe(res, { ...header, proof })
+  })
+
+  // L2 transaction page data (spec §34): sender/recipient/amount/fee/nonce/type/
+  // batch/soft-confirm time/proof status/L1 settlement tx.
+  app.get('/api/l2/tx/:hash', async (req, res) => {
+    const tx = await l2Call('l2_getTransaction', [req.params.hash])
+    if (!tx || (tx as any).status === 'UNKNOWN') {
+      res.status(404).json({ error: 'l2_tx_not_found' })
+      return
+    }
+    const receipt = await l2Call('l2_getReceipt', [req.params.hash])
+    const batchNo = (tx as any).batch
+    const proof = batchNo >= 0 ? await l2Call('l2_getProofStatus', [batchNo]) : null
+    jsonSafe(res, { ...(tx as any), receipt, proof })
+  })
+
+  app.get('/api/l2/account/:address', async (req, res) => {
+    const bal = await l2Call('l2_getBalance', [req.params.address])
+    if (!bal) {
+      res.status(404).json({ error: 'l2_account_not_found_or_disabled' })
+      return
+    }
+    jsonSafe(res, bal)
+  })
+
+  app.get('/api/l2/stateRoot', async (_req, res) => {
+    jsonSafe(res, (await l2Call('l2_getStateRoot')) ?? { enabled: false })
+  })
+
   // ── RPC Inspector ───────────────────────────────────────────────────────────
 
   app.get('/api/rpc/discover', async (_req, res) => {

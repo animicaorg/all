@@ -70,6 +70,29 @@ public:
     QJsonObject rawContractRead(const QJsonObject& request) const;
     QJsonObject previewContractCall(const QJsonObject& request) const;
 
+    // ==================== ANM Instant (L2) ====================
+    //
+    // L2 reads go straight over JSON-RPC (shared endpoint, l2_* methods). The
+    // send path delegates to the Python bridge, which owns the ML-DSA-65 signer
+    // (the SAME key/scheme used for L1) and performs prepare -> sign -> submit.
+
+    /** @brief L2 node/sequencer status summary (empty object on error). */
+    QJsonObject l2Status() const;
+    /** @brief L2 (instant) balance record for an address (empty object on error). */
+    QJsonObject l2Balance(const QString& address) const;
+    /** @brief Lifecycle status of an L2 tx by id (empty object on error). */
+    QJsonObject l2TransactionStatus(const QString& txid) const;
+    /**
+     * @brief Send an ANM Instant (L2) transfer: prepare -> sign(signingHash)
+     *        -> submit, all inside the wallet backend using the account's
+     *        existing ML-DSA-65 key. Returns the bridge result (txid + echoed
+     *        recipient/amount/fee for verification), or an empty object on error.
+     * @param fromAddress Sender account address (anim1... or 0x-hex).
+     * @param toAddress Recipient address (anim1... or 0x-hex).
+     * @param amount Human ANM amount as a decimal string (1 ANM = 1e9 nanos).
+     */
+    QJsonObject sendInstant(const QString& fromAddress, const QString& toAddress, const QString& amount);
+
     void setRpcEndpoint(const QString& rpcUrl);
     void setExplorerUrl(const QString& explorerUrl);
     QString walletFilePath() const { return m_walletFilePath; }

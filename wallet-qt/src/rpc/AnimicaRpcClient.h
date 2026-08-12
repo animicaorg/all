@@ -173,6 +173,69 @@ public:
      */
     RpcReply* getChainParams();
 
+    // ==================== ANM Instant (L2) ====================
+    //
+    // Animica 10.0.0 exposes the ANM-native L2 ("ANM Instant") over the SAME
+    // JSON-RPC endpoint as L1; the methods are simply prefixed "l2_". These are
+    // thin passthroughs mirroring the L1 method style above. L2 params are
+    // passed as JSON objects (named), which the node dispatcher maps to the
+    // handler kwargs.
+
+    /**
+     * @brief Get the L2 chain id.
+     * @return Network reply (expect: {"result": <integer>})
+     */
+    RpcReply* l2ChainId();
+
+    /**
+     * @brief Get the L2 node/sequencer status summary.
+     * @return Network reply (expect: {"result": {enabled,mode,l2ChainId,
+     *         settlementMode,headBatch,stateRoot,pending,sigBackend,bridge{...}}})
+     */
+    RpcReply* l2Status();
+
+    /**
+     * @brief Get an address' ANM Instant (L2) balance.
+     * @param address 0x-hex 32-byte account key OR anim1... bech32m address.
+     * @return Network reply (expect: {"result": {address,balance,nonce,
+     *         pendingNonce,unit}}; balance is a decimal string in nanos)
+     */
+    RpcReply* l2GetBalance(const QString& address);
+
+    /**
+     * @brief Build the canonical body + signing hash for an L2 transfer.
+     * @param intent Object with {kind,sender,recipient,amount[,memo,nonce,fee,expiry]}.
+     *        kind in "transfer"|"pay"|"withdraw"; amount is integer nanos.
+     * @return Network reply (expect: {"result": {kind,sender,recipient,amount,
+     *         nonce,fee,requiredFee,l2ChainId,bodyHex,signingHash,sigScheme}})
+     */
+    RpcReply* l2PrepareTransfer(const QJsonObject& intent);
+
+    /**
+     * @brief Assemble a signed envelope from a prepared body + wallet
+     *        pubkey/signature and submit it.
+     * @param bodyHex 0x-hex canonical body returned by l2PrepareTransfer.
+     * @param pubkeyHex 0x-hex ML-DSA-65 public key (1952 bytes).
+     * @param signatureHex 0x-hex ML-DSA-65 signature over signingHash (3309 bytes).
+     * @return Network reply (expect: {"result": "0x"+txid})
+     */
+    RpcReply* l2SubmitSigned(const QString& bodyHex, const QString& pubkeyHex, const QString& signatureHex);
+
+    /**
+     * @brief Get the lifecycle status of an L2 tx by id.
+     * @param txid 0x-hex L2 transaction id.
+     * @return Network reply (expect: {"result": {txid,status,batch,receipt,
+     *         reason,receivedMs}}). status one of RECEIVED/VALIDATED/
+     *         SOFT_CONFIRMED/BATCHED/PROVEN/L1_SUBMITTED/L1_FINALIZED/FAILED/REVERTED.
+     */
+    RpcReply* l2GetTransaction(const QString& txid);
+
+    /**
+     * @brief Get the L2 throughput snapshot.
+     * @return Network reply (expect: {"result": {ingress/executed/soft/settled}})
+     */
+    RpcReply* l2GetTPS();
+
     /**
      * @brief Execute custom RPC call.
      * @param method RPC method name
@@ -217,6 +280,52 @@ public:
      * @return JSON object with status data or empty object on error
      */
     QJsonObject getTransactionStatusByHash(const QString& txHash);
+
+    // ==================== ANM Instant (L2) — synchronous wrappers ====================
+
+    /**
+     * @brief Get the L2 chain id synchronously.
+     * @return L2 chain id, or -1 on error.
+     */
+    qint64 l2ChainIdSync();
+
+    /**
+     * @brief Get the L2 status summary synchronously.
+     * @return JSON object (see l2Status()) or empty object on error.
+     */
+    QJsonObject l2StatusJson();
+
+    /**
+     * @brief Get an address' L2 balance record synchronously.
+     * @param address 0x-hex or anim1... address.
+     * @return JSON object (see l2GetBalance()) or empty object on error.
+     */
+    QJsonObject l2GetBalanceJson(const QString& address);
+
+    /**
+     * @brief Build the L2 transfer body + signing hash synchronously.
+     * @param intent {kind,sender,recipient,amount[,memo,nonce,fee,expiry]}.
+     * @return JSON object (see l2PrepareTransfer()) or empty object on error.
+     */
+    QJsonObject l2PrepareTransferJson(const QJsonObject& intent);
+
+    /**
+     * @brief Submit a signed L2 envelope synchronously.
+     * @return "0x"+txid on success, or empty string on error.
+     */
+    QString l2SubmitSignedSync(const QString& bodyHex, const QString& pubkeyHex, const QString& signatureHex);
+
+    /**
+     * @brief Get the lifecycle status of an L2 tx synchronously.
+     * @return JSON object (see l2GetTransaction()) or empty object on error.
+     */
+    QJsonObject l2GetTransactionJson(const QString& txid);
+
+    /**
+     * @brief Get the L2 throughput snapshot synchronously.
+     * @return JSON object (see l2GetTPS()) or empty object on error.
+     */
+    QJsonObject l2GetTPSJson();
 
 signals:
     /**

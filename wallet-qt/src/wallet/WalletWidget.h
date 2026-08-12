@@ -18,6 +18,7 @@ class AccountsWidget;
 class AddressBookWidget;
 class SendWidget;
 class ReceiveWidget;
+class L2Widget;
 class TransactionHistoryWidget;
 class ContractInteractionWidget;
 class SettingsWidget;
@@ -117,6 +118,7 @@ private:
     AddressBookWidget* m_addressBookWidget;
     SendWidget* m_sendWidget;
     ReceiveWidget* m_receiveWidget;
+    L2Widget* m_l2Widget;
     TransactionHistoryWidget* m_historyWidget;
     ContractInteractionWidget* m_contractWidget;
     SettingsWidget* m_settingsWidget;

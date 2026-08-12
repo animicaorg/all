@@ -48,6 +48,19 @@ class HomeScreen extends ConsumerWidget {
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
                   child: ListTile(
+                    leading: const Icon(Icons.bolt),
+                    title: const Text('ANM Instant'),
+                    subtitle: const Text(
+                        'Near-instant transfers on the L2 rollup'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push('/l2'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  child: ListTile(
                     leading: const Icon(Icons.history),
                     title: const Text('Transaction history'),
                     subtitle:

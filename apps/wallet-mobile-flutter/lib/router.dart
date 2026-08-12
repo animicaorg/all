@@ -14,6 +14,7 @@ import 'screens/dex/swap.dart';
 import 'screens/games.dart';
 import 'screens/history.dart';
 import 'screens/home.dart';
+import 'screens/l2.dart';
 import 'screens/nfts.dart';
 import 'screens/receive.dart';
 import 'screens/send.dart';
@@ -64,6 +65,7 @@ final router = GoRouter(
           BrowserScreen(initialUrl: s.uri.queryParameters['url']),
     ),
     GoRoute(path: '/send', builder: (c, s) => const SendScreen()),
+    GoRoute(path: '/l2', builder: (c, s) => const L2Screen()),
     GoRoute(path: '/receive', builder: (c, s) => const ReceiveScreen()),
     GoRoute(path: '/history', builder: (c, s) => const HistoryScreen()),
     GoRoute(

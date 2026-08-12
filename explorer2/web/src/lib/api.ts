@@ -165,6 +165,106 @@ export const api = {
     apiGet<{ available: boolean; status?: unknown; workers?: unknown; jobs?: unknown; policy?: unknown }>('/api/quantum/info'),
   getDebugBundle: () =>
     apiGet<unknown>('/api/debug/bundle'),
+
+  // ── ANM Instant (L2) ────────────────────────────────────────────────────────
+  // The node exposes L2 over the same RPC endpoint (l2_* methods); the explorer
+  // API surfaces them under /api/l2/* and returns { enabled: false } when the
+  // connected node has L2 turned off (see api/src/server.ts).
+  getL2Overview: () => apiGet<L2Overview>('/api/l2/overview'),
+  getL2Status: () => apiGet<Record<string, unknown> & { enabled?: boolean }>('/api/l2/status'),
+  getL2Tps: () => apiGet<L2Tps & { enabled?: boolean }>('/api/l2/tps'),
+  getL2Batch: (n: number | string) => apiGet<L2BatchDetail>(`/api/l2/batch/${encodeURIComponent(String(n))}`),
+  getL2Tx: (hash: string) => apiGet<L2TxDetail>(`/api/l2/tx/${encodeURIComponent(hash)}`),
+  getL2Account: (address: string) =>
+    apiGet<{ address: string; balance: string; nonce: number; pendingNonce: number; unit: string }>(
+      `/api/l2/account/${encodeURIComponent(address)}`
+    ),
+  getL2StateRoot: () => apiGet<{ stateRoot?: string; enabled?: boolean }>('/api/l2/stateRoot'),
+}
+
+// ── L2 response shapes (mirror api/src/server.ts + rpc/methods/l2.py) ──────────
+
+export interface L2Tps {
+  ingressTotal?: number
+  executedTotal?: number
+  softConfirmedTotal?: number
+  settledTotal?: number
+  batchesTotal?: number
+  sigVerificationsTotal?: number
+  ingressTps?: number
+  executedTps?: number
+  softConfirmedTps?: number
+  settledTps?: number
+}
+
+export interface L2ProofStatus {
+  batch?: number
+  hasProof?: boolean
+  backend?: string | null
+  publicInputsDigest?: string | null
+}
+
+export interface L2BatchHeader {
+  number?: number
+  l2ChainId?: number
+  prevStateRoot?: string
+  newStateRoot?: string
+  transactionsRoot?: string
+  receiptsRoot?: string
+  escrowRoot?: string
+  dataRoot?: string
+  txCount?: number
+  timestampMs?: number
+  feesCollected?: string
+  deposited?: string
+  withdrawn?: string
+  batchId?: string
+}
+
+export type L2BatchDetail = L2BatchHeader & { proof?: L2ProofStatus | null }
+
+export interface L2TxDetail {
+  txid?: string
+  status?: string
+  batch?: number
+  receipt?: { txid?: string; batch?: number; status?: string; lifecycle?: string } | null
+  reason?: string | null
+  receivedMs?: number
+  proof?: L2ProofStatus | null
+  // Optional enriched fields (present when the sequencer record carries them).
+  sender?: string
+  recipient?: string
+  from?: string
+  to?: string
+  amount?: string
+  fee?: string
+  nonce?: number
+  kind?: string
+  type?: string
+  l1SettlementTx?: string
+  l1Tx?: string
+}
+
+export interface L2Overview {
+  enabled: boolean
+  settlementMode?: string
+  headBatch?: number
+  latestStateRoot?: string | null
+  latestBatch?: L2BatchHeader | null
+  proofStatus?: L2ProofStatus | null
+  tps?: L2Tps
+  sigBackend?: string | null
+  pending?: number
+  anmLocked?: string
+  l2Supply?: string
+  totalL2Transactions?: number
+  softConfirmedTotal?: number
+  settledTotal?: number
+  batchTransactions?: number
+  compressionRatio?: number | null
+  pendingProofs?: number
+  deposits?: number
+  withdrawals?: number
 }
 
 // ── Token tracker ─────────────────────────────────────────────────────────────
