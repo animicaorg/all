@@ -59,7 +59,7 @@ def canonical(kind: str) -> dict:
         "v": 1,
         "chainId": CHAIN_ID,
         "from": _pad_addr(FROM),
-        "gas": {"price": 1_000_000_000, "limit": 21000},
+        "gas": {"price": 1, "limit": 21000},
         "accessList": [],
         "nonce": NONCE,
     }
@@ -68,10 +68,10 @@ def canonical(kind: str) -> dict:
     elif kind == "transfer_memo":
         base["payload"] = {"t": 0, "v": {"to": _pad_addr(TO), "amount": AMOUNT, "data": MEMO}}
     elif kind == "call":
-        base["gas"] = {"price": 1_000_000_000, "limit": 200_000}
+        base["gas"] = {"price": 1, "limit": 200_000}
         base["payload"] = {"t": 2, "v": {"to": _pad_addr(TO), "data": CALLDATA}}
     elif kind == "deploy":
-        base["gas"] = {"price": 1_000_000_000, "limit": 2_000_000}
+        base["gas"] = {"price": 1, "limit": 2_000_000}
         base["payload"] = {"t": 1, "v": {"code": CODE, "manifest": MANIFEST}}
     else:
         raise AssertionError(kind)
@@ -122,7 +122,7 @@ flat = {
     "from": FROM,
     "nonce": NONCE,
     "value": AMOUNT,
-    "maxFee": 1_000_000_000,
+    "maxFee": 1,
     "chainId": CHAIN_ID,
     "gasLimit": 21000,
 }

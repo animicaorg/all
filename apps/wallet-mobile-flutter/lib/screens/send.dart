@@ -1,6 +1,8 @@
 // Send ANM. Builds a kind=0 transfer body, signs locally, broadcasts via
 // the multi-endpoint RPC client.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,6 +28,13 @@ class _SendScreenState extends ConsumerState<SendScreen> {
   String? _err;
   bool _busy = false;
   String? _txHash;
+  String? _txStatus;
+  bool _txTerminal = false;
+  int _trackGen = 0;
+
+  /// Worst-case network fee for a plain transfer, in nanos.
+  static final BigInt _feeNanos =
+      BigInt.from(kDefaultGasPrice) * BigInt.from(kDefaultTransferGasLimit);
 
   @override
   void dispose() {
@@ -47,6 +56,9 @@ class _SendScreenState extends ConsumerState<SendScreen> {
     setState(() {
       _err = null;
       _txHash = null;
+      _txStatus = null;
+      _txTerminal = false;
+      _trackGen++;
     });
     final from = ref.read(activeAccountProvider);
     if (from == null) {
@@ -82,6 +94,17 @@ class _SendScreenState extends ConsumerState<SendScreen> {
       // Never fall back to a guess: signing without it produces a tx the node
       // rejects with BadSignature.
       final ctx = await chainContextFor(rpc);
+      // Refuse to build a tx the network can accept but never mine: the
+      // chain debits amount + gasLimit×gasPrice, and a tx that can't cover
+      // both is silently starved out of every block, then evicted with no
+      // trace — the "stuck in mempool, then vanished" failure users hit.
+      final balance = await rpc.getBalance(from.address);
+      if (amountNanos + _feeNanos > balance) {
+        setState(() => _err =
+            'Amount plus the network fee (${formatAnm(_feeNanos, maxDecimals: 9)} ANM) '
+            'exceeds your balance of ${formatAnm(balance, maxDecimals: 9)} ANM.');
+        return;
+      }
       final nonce = await rpc.getPendingNonce(from.address);
       final body = buildTransferBody(
         from: from.address,
@@ -100,7 +123,15 @@ class _SendScreenState extends ConsumerState<SendScreen> {
       Future.delayed(const Duration(seconds: 3), () {
         if (mounted) ref.refresh(balanceProvider);
       });
-      if (mounted) setState(() => _txHash = txHash);
+      if (mounted) {
+        setState(() {
+          _txHash = txHash;
+          _txStatus = 'Submitted — waiting for confirmation…';
+        });
+        // Track the tx to a terminal state instead of showing "Submitted"
+        // forever: mined txs confirm, dropped ones say so out loud.
+        unawaited(_trackTx(rpc, txHash, _trackGen));
+      }
     } on RpcError catch (e) {
       // Covers both the chain-identity fetch and the broadcast; the RPC
       // messages are already written for a human ("Could not read the chain
@@ -110,6 +141,67 @@ class _SendScreenState extends ConsumerState<SendScreen> {
       if (mounted) setState(() => _err = 'Send failed: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Poll tx.getStatus until the tx confirms, is rejected, or drops out of
+  /// the network. Blocks land ~every 80 s, so poll gently for ~4 minutes.
+  /// tx.getReceipt is useless here — the node returns status:null even for
+  /// mined txs — tx.getStatus is the reliable surface.
+  Future<void> _trackTx(RpcClient rpc, String txHash, int gen) async {
+    var notFoundStreak = 0;
+    for (var i = 0; i < 40; i++) {
+      await Future.delayed(const Duration(seconds: 6));
+      if (!mounted || _trackGen != gen) return;
+      final st = await rpc.txStatus(txHash);
+      if (!mounted || _trackGen != gen) return;
+      final status = (st?['status'] ?? '').toString();
+      final state = (st?['state'] ?? '').toString();
+      if (status == 'finalized' ||
+          status == 'confirmed' ||
+          st?['included_height'] != null) {
+        final h = st?['included_height'] ?? st?['blockNumber'];
+        setState(() {
+          _txStatus = '✓ Confirmed${h != null ? ' in block $h' : ''}';
+          _txTerminal = true;
+        });
+        ref.refresh(balanceProvider);
+        return;
+      }
+      if (status == 'rejected' || state == 'rejected') {
+        final reason =
+            st?['reason'] ?? st?['rejection_details'] ?? 'unknown reason';
+        setState(() {
+          _txStatus = '✗ Rejected by the network ($reason). '
+              'Funds have NOT left your account.';
+          _txTerminal = true;
+        });
+        return;
+      }
+      if (status == 'not_found') {
+        // One not_found can be propagation lag; a streak means the pool
+        // silently evicted it. Say so instead of pretending it is pending.
+        notFoundStreak++;
+        if (notFoundStreak >= 3) {
+          setState(() {
+            _txStatus = '⚠ The network dropped this transaction without '
+                'mining it. Funds have NOT left your account — check your '
+                'balance before retrying.';
+            _txTerminal = true;
+          });
+          ref.refresh(balanceProvider);
+          return;
+        }
+      } else {
+        notFoundStreak = 0;
+      }
+    }
+    if (mounted && _trackGen == gen && !_txTerminal) {
+      setState(() {
+        _txStatus = 'Still unconfirmed after 4 minutes. Check the explorer '
+            'before retrying — sending again would duplicate the payment.';
+        _txTerminal = true;
+      });
     }
   }
 
@@ -156,6 +248,12 @@ class _SendScreenState extends ConsumerState<SendScreen> {
                 suffixText: 'ANM',
               ),
             ),
+            const SizedBox(height: 8),
+            Text(
+              'Network fee: ${formatAnm(_feeNanos, maxDecimals: 9)} ANM',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
             if (_err != null) ...[
               const SizedBox(height: 12),
               Container(
@@ -179,7 +277,7 @@ class _SendScreenState extends ConsumerState<SendScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('✓ Submitted',
+                    Text(_txStatus ?? '✓ Submitted',
                         style: TextStyle(
                             color: theme.colorScheme.onPrimaryContainer,
                             fontWeight: FontWeight.w700)),
@@ -217,10 +315,14 @@ class _SendScreenState extends ConsumerState<SendScreen> {
             ],
             const SizedBox(height: 20),
             FilledButton(
-              onPressed: _busy ? null : _send,
+              // Also disabled while a submitted tx is still unconfirmed:
+              // re-sending "because nothing happened" is exactly how users
+              // ended up with duplicate mined transfers.
+              onPressed:
+                  (_busy || (_txHash != null && !_txTerminal)) ? null : _send,
               style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14)),
-              child: _busy
+              child: _busy || (_txHash != null && !_txTerminal)
                   ? const SizedBox(
                       height: 18,
                       width: 18,

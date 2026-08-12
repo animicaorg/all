@@ -80,13 +80,19 @@ class _SignMessageRequest {
 }
 
 class BrowserScreen extends ConsumerStatefulWidget {
-  const BrowserScreen({super.key});
+  const BrowserScreen({super.key, this.initialUrl});
+
+  /// Optional deep-link start page (e.g. the Games tab launching
+  /// Thronebound). Falls back to the default homepage when null.
+  final String? initialUrl;
+
   @override
   ConsumerState<BrowserScreen> createState() => _BrowserScreenState();
 }
 
 class _BrowserScreenState extends ConsumerState<BrowserScreen> {
-  final _ctrl = TextEditingController(text: 'https://animica.xyz');
+  late final _ctrl = TextEditingController(
+      text: widget.initialUrl ?? 'https://animica.xyz');
   InAppWebViewController? _wv;
 
   /// Origin of the page that is actually LOADED, tracked from `onLoadStart`.
