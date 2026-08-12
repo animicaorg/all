@@ -1036,6 +1036,112 @@ def _failure(exc: Exception) -> Dict[str, Any]:
     }
 
 
+def l2_send_instant(
+    wallet_file: str,
+    rpc_url: str | None,
+    from_address: str,
+    to_address: str,
+    amount: str | int | float,
+    *,
+    memo: str | None = None,
+    nonce: int | None = None,
+    fee: int | None = None,
+) -> Dict[str, Any]:
+    """Send an ANM Instant (L2) transfer using the account's EXISTING
+    ML-DSA-65 key — the same key/scheme used for L1 (alg 0x1003). Mirrors the
+    L1 send flow but over the ``l2_*`` JSON-RPC methods that share the node
+    endpoint:
+
+        1. ``l2_prepareTransfer`` -> {signingHash, bodyHex, fee, nonce, ...}
+        2. sign the 64-byte ``signingHash`` DIRECTLY with ml_dsa_65 (no re-hash)
+        3. ``l2_submitSigned`` -> txid
+
+    This is byte-for-byte the same signing the node SDK/CLI perform
+    (``signature = ml_dsa_65.sign(sk, signing_hash)``). L1 ANM is never moved:
+    the L2 balance is a distinct balance of the same asset. To fund L2, send an
+    ordinary L1 transfer to the bridge deposit address shown in ``l2_status``.
+    """
+    address_check = validate_wallet_address(to_address)
+    if not address_check["valid"]:
+        raise ValueError(address_check["message"] or "invalid recipient address")
+
+    store = _ensure_store(wallet_file)
+    sender_entry = _wallet_entry_by_address(store, from_address)
+    used_alg_id = int(sender_entry.get("alg_id") or 0x1003)
+    if used_alg_id != 0x1003:
+        raise RuntimeError(
+            "ANM Instant (L2) requires an ml_dsa_65 (0x1003) account; "
+            f"this account uses alg_id 0x{used_alg_id:x}."
+        )
+    pk = tx_cli._hex_to_bytes(str(sender_entry.get("public_key_hex") or ""))
+    sk = tx_cli._hex_to_bytes(str(sender_entry.get("secret_key_hex") or ""))
+    if not pk or not sk:
+        raise RuntimeError("sender account is missing key material (is the wallet unlocked?)")
+
+    value_nanos = _parse_amount_to_base_units(amount)
+    rpc = _resolve_rpc_endpoint(rpc_url)
+
+    # 1) prepare: the node builds the canonical body + 64-byte signing hash and
+    #    echoes recipient/amount/fee/nonce back for verification.
+    prepare_params: Dict[str, Any] = {
+        "kind": "transfer",
+        "sender": from_address,
+        "recipient": to_address,
+        "amount": int(value_nanos),
+    }
+    if memo:
+        prepare_params["memo"] = memo
+    if nonce is not None:
+        prepare_params["nonce"] = int(nonce)
+    if fee is not None:
+        prepare_params["fee"] = int(fee)
+    try:
+        prepared = tx_cli._rpc(rpc, "l2_prepareTransfer", prepare_params)
+    except tx_cli.RpcError as exc:
+        raise RuntimeError(f"l2_prepareTransfer failed: {exc.message}") from exc
+    if not isinstance(prepared, dict):
+        raise RuntimeError(f"unexpected l2_prepareTransfer result: {prepared!r}")
+
+    body_hex = str(prepared.get("bodyHex") or "")
+    signing_hash_hex = str(prepared.get("signingHash") or "")
+    if not body_hex or not signing_hash_hex:
+        raise RuntimeError("l2_prepareTransfer did not return bodyHex/signingHash")
+    signing_hash = tx_cli._hex_to_bytes(signing_hash_hex)
+
+    # 2) sign the signing hash DIRECTLY (do NOT re-hash) with the SAME ML-DSA-65
+    #    signer/key used for L1. Byte-identical to l2_sdk / cli/l2.
+    from pq.py.algs import ml_dsa_65  # heavy PQ backend: import lazily
+    signature = ml_dsa_65.sign(sk, signing_hash)
+    # Defensive local verify before shipping to the sequencer.
+    if not ml_dsa_65.verify(pk, signing_hash, signature):
+        raise RuntimeError("local L2 signature verification failed")
+
+    # 3) submit the assembled envelope; the sequencer returns the txid.
+    submit_params = {
+        "body": body_hex if body_hex.startswith("0x") else "0x" + body_hex,
+        "pubkey": "0x" + pk.hex(),
+        "signature": "0x" + signature.hex(),
+    }
+    try:
+        txid = tx_cli._rpc(rpc, "l2_submitSigned", submit_params)
+    except tx_cli.RpcError as exc:
+        raise RuntimeError(f"l2_submitSigned failed: {exc.message}") from exc
+    if not isinstance(txid, str):
+        raise RuntimeError(f"unexpected l2_submitSigned result: {txid!r}")
+
+    return {
+        "txid": _normalize_hash(txid),
+        "from_address": from_address,
+        "to_address": to_address,
+        "amount_nanos": str(value_nanos),
+        "nonce": prepared.get("nonce"),
+        "fee": prepared.get("fee"),
+        "requiredFee": prepared.get("requiredFee"),
+        "l2ChainId": prepared.get("l2ChainId"),
+        "signingHash": signing_hash_hex,
+    }
+
+
 def _dispatch(payload: Dict[str, Any]) -> Dict[str, Any]:
     op = payload.get("op")
     args = payload.get("args") or {}
@@ -1079,6 +1185,19 @@ def _dispatch(payload: Dict[str, Any]) -> Dict[str, Any]:
                 valid_until=args.get("valid_until"),
                 ttl_blocks=args.get("ttl_blocks"),
                 data_hex=args.get("data_hex"),
+            )
+        )
+    if op == "l2_send_instant":
+        return _success(
+            l2_send_instant(
+                args["wallet_file"],
+                args.get("rpc_url"),
+                args["from_address"],
+                args["to_address"],
+                args["amount"],
+                memo=args.get("memo"),
+                nonce=args.get("nonce"),
+                fee=args.get("fee"),
             )
         )
     if op == "transaction_status":
