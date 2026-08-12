@@ -169,6 +169,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.marketplace",
         "rpc.methods.bitcoin_compat",  # Bitcoin Core 30.x JSON-RPC compatibility facade
         "rpc.methods.evm_compat",  # Ethereum/EVM (eth_*/net_*/web3_*) JSON-RPC facade
+        "rpc.methods.l2",  # Animica 10.0.0 L2 (l2_* methods) — additive; imports lazily
         # "rpc.methods.payments",  # disabled: depends on consensus.PolicyProvider which may be absent
     ]
 

@@ -1360,3 +1360,16 @@ When filing an issue, include:
 - See [`SECURITY.md`](SECURITY.md) for our security policy
 
 For security-sensitive topics (keys, proofs, VKs, installer signing), request a security review before merging.
+
+## ⚡ Animica 10.0.0 L2
+
+Animica 10.0.0 adds an ANM-native Layer 2 payment rollup in the top-level [`l2/`](l2/) package: post-quantum (ML-DSA-65) transactions, deterministic parallel execution, authenticated state (SMT), reconstructable DA blobs, a pluggable proof system (validity-by-re-execution today, a ZK backend slot for later), and an L1 bridge with a strict conservation invariant plus forced exits. Enable it with `ANIMICA_L2_ENABLE=1`; the `l2_*` JSON-RPC methods and the `animica l2` CLI ride the existing node.
+
+Documentation lives in [`docs/l2/`](docs/l2/):
+
+- [Architecture](docs/l2/ARCHITECTURE.md) — components, pipeline, L1↔L2 relationship
+- [Security assumptions](docs/l2/SECURITY_ASSUMPTIONS.md) — the honest trust model (designated sequencer; what bounds it)
+- [Transaction lifecycle](docs/l2/TRANSACTION_LIFECYCLE.md) — the nine states; soft vs proven vs L1-finalized
+- [Running a node](docs/l2/RUNNING.md) — all `ANIMICA_L2_*` config, modes, ports, CLI
+- [Data availability](docs/l2/DATA_AVAILABILITY.md) · [Fees](docs/l2/FEES.md) · [Forced exits](docs/l2/FORCED_EXITS.md)
+- [Performance](docs/l2/PERFORMANCE.md) — benchmark methodology and report template (`animica l2 bench`)

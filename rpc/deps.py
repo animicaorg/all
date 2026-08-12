@@ -1677,6 +1677,46 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
                 # PTL is optional; continue without it
                 pass
 
+        # Initialize L2 service if enabled (10.0.0 ANM-native L2)
+        try:
+            from l2.config import L2Config
+
+            l2_cfg = L2Config.from_env()
+        except Exception as e:
+            l2_cfg = None
+            logging.getLogger("animica.rpc.deps").warning(
+                f"Failed to load L2 config: {e}", exc_info=True
+            )
+        if l2_cfg is not None and l2_cfg.enabled:
+            try:
+                from l2.node import get_l2_node
+                from l2.service import L2Service
+
+                l2_node = get_l2_node(l2_cfg)
+                l2_service = L2Service(l2_node)
+
+                # Register L2 service in global deps registry
+                register("l2_service", l2_service)
+
+                await l2_service.start()
+
+                logging.getLogger("animica.rpc.deps").info(
+                    "L2 service initialized",
+                    extra={
+                        "l2_chain_id": l2_cfg.l2_chain_id,
+                        "mode": l2_cfg.mode,
+                        "settlement_mode": l2_cfg.settlement_mode.value,
+                        "settlement_enabled": l2_cfg.settlement_enabled,
+                        "data_dir": l2_cfg.data_dir,
+                    },
+                )
+            except Exception as e:
+                logging.getLogger("animica.rpc.deps").warning(
+                    f"Failed to initialize L2 service: {e}", exc_info=True
+                )
+                # L2 is optional; it must never break L1 boot
+                pass
+
         return _CTX
 
 
@@ -1685,6 +1725,17 @@ async def shutdown() -> None:
     with _CTX_LOCK:
         global _CTX
         if _CTX is not None:
+            # Stop L2 service if initialized
+            l2_service = get("l2_service")
+            if l2_service is not None:
+                try:
+                    await l2_service.stop()
+                    logging.getLogger("animica.rpc.deps").info("L2 service stopped")
+                except Exception as e:
+                    logging.getLogger("animica.rpc.deps").warning(
+                        f"Failed to stop L2 service: {e}", exc_info=True
+                    )
+
             # Stop PTL service if initialized
             ptl_service = get("ptl_service")
             if ptl_service is not None:
