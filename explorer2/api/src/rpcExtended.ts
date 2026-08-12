@@ -398,19 +398,33 @@ export interface AICFInfo {
   credits?: unknown
   jobs?: unknown
   plans?: unknown
+  workers?: unknown
+  workJobs?: unknown
 }
 
 export async function getAICFInfo(rpc: RpcClient, address?: string): Promise<AICFInfo> {
-  const [status, credits, jobs, plans] = await Promise.all([
+  const [status, credits, jobs, plans, workers, workJobs] = await Promise.all([
     tryCall<unknown>(rpc, 'aicf.getStatus', []),
     address ? tryCall<unknown>(rpc, 'aicf.getCredits', [address]) : Promise.resolve(null),
     tryCall<unknown>(rpc, 'aicf.listJobs', [{ limit: 20 }]),
     tryCall<unknown>(rpc, 'aicf.listPlans', []),
+    // The LIVE serving layer. The network runs AICF via the work layer + the
+    // animica.dev gateway even when this node's credit-ledger state module is
+    // not loaded (aicf.getStatus/summary report "unavailable" then). These are
+    // the methods the node actually serves — probing only the ledger made the
+    // explorer wrongly report "AICF not available on this node".
+    tryCall<{ workers?: unknown[] }>(rpc, 'aicf.work.listWorkers', {}),
+    tryCall<{ jobs?: unknown[] }>(rpc, 'aicf.work.listJobs', { limit: 20 }),
   ])
 
-  const available = status !== null || jobs !== null || plans !== null
+  const workersActive = !!workers && Array.isArray((workers as { workers?: unknown[] }).workers)
+  const workJobsActive = !!workJobs && Array.isArray((workJobs as { jobs?: unknown[] }).jobs)
 
-  return { available, status, credits, jobs, plans }
+  // Available if EITHER the ledger layer OR the live work layer responds.
+  const available =
+    status !== null || jobs !== null || plans !== null || workersActive || workJobsActive
+
+  return { available, status, credits, jobs: jobs ?? workJobs, plans, workers, workJobs }
 }
 
 // ── Mining ────────────────────────────────────────────────────────────────────
