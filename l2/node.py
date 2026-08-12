@@ -67,6 +67,11 @@ class L2Node:
             "stateRoot": "0x" + s.state_root().hex(),
             "pending": len(s._pending),  # noqa: SLF001 (status view)
             "sigBackend": s.verifier.backend_name,
+            # L1 account users send ANM to in order to deposit into L2. Empty
+            # until an operator configures ANIMICA_L2_BRIDGE_ADDRESS — deposits
+            # are impossible without it, so wallets/explorer surface this.
+            "bridgeAddress": self.config.bridge_address or None,
+            "depositsEnabled": bool(self.config.bridge_address),
             "bridge": s.bridge.summary(),
         }
 
