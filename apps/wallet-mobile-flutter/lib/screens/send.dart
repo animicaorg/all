@@ -14,6 +14,7 @@ import '../constants.dart';
 import '../services/address.dart';
 import '../services/rpc.dart';
 import '../services/signer.dart';
+import '../services/tx_history.dart';
 import '../state/wallet_state.dart';
 
 class SendScreen extends ConsumerStatefulWidget {
@@ -118,6 +119,7 @@ class _SendScreenState extends ConsumerState<SendScreen> {
         account: from,
         body: body,
         chainContext: ctx,
+        displayTo: to,
       );
       // Best-effort balance refresh after a few seconds.
       Future.delayed(const Duration(seconds: 3), () {
@@ -127,10 +129,16 @@ class _SendScreenState extends ConsumerState<SendScreen> {
         setState(() {
           _txHash = txHash;
           _txStatus = 'Submitted — waiting for confirmation…';
+          // Clear the form the moment the tx is on its way: stale values
+          // left in the fields are how a second tap sends the same payment
+          // twice (mined duplicates cost real money — see block 70338).
+          _to.clear();
+          _amount.clear();
         });
+        ref.invalidate(txHistoryProvider(from.address));
         // Track the tx to a terminal state instead of showing "Submitted"
         // forever: mined txs confirm, dropped ones say so out loud.
-        unawaited(_trackTx(rpc, txHash, _trackGen));
+        unawaited(_trackTx(rpc, txHash, from.address, _trackGen));
       }
     } on RpcError catch (e) {
       // Covers both the chain-identity fetch and the broadcast; the RPC
@@ -144,11 +152,23 @@ class _SendScreenState extends ConsumerState<SendScreen> {
     }
   }
 
+  /// Push whatever the tracker just learned into the local history store so
+  /// the History tab agrees with the send screen without its own re-poll.
+  /// `sender` is captured at broadcast time — the ACTIVE account can change
+  /// while the tracker runs, and the record belongs to whoever signed.
+  Future<void> _syncHistory(RpcClient rpc, String sender) async {
+    try {
+      final changed = await TxHistoryStore.refreshPending(rpc, sender);
+      if (changed && mounted) ref.invalidate(txHistoryProvider(sender));
+    } catch (_) {}
+  }
+
   /// Poll tx.getStatus until the tx confirms, is rejected, or drops out of
   /// the network. Blocks land ~every 80 s, so poll gently for ~4 minutes.
   /// tx.getReceipt is useless here — the node returns status:null even for
   /// mined txs — tx.getStatus is the reliable surface.
-  Future<void> _trackTx(RpcClient rpc, String txHash, int gen) async {
+  Future<void> _trackTx(
+      RpcClient rpc, String txHash, String sender, int gen) async {
     var notFoundStreak = 0;
     for (var i = 0; i < 40; i++) {
       await Future.delayed(const Duration(seconds: 6));
@@ -166,6 +186,7 @@ class _SendScreenState extends ConsumerState<SendScreen> {
           _txTerminal = true;
         });
         ref.refresh(balanceProvider);
+        unawaited(_syncHistory(rpc, sender));
         return;
       }
       if (status == 'rejected' || state == 'rejected') {
@@ -176,6 +197,7 @@ class _SendScreenState extends ConsumerState<SendScreen> {
               'Funds have NOT left your account.';
           _txTerminal = true;
         });
+        unawaited(_syncHistory(rpc, sender));
         return;
       }
       if (status == 'not_found') {
@@ -190,6 +212,7 @@ class _SendScreenState extends ConsumerState<SendScreen> {
             _txTerminal = true;
           });
           ref.refresh(balanceProvider);
+          unawaited(_syncHistory(rpc, sender));
           return;
         }
       } else {
@@ -292,6 +315,12 @@ class _SendScreenState extends ConsumerState<SendScreen> {
                           label: const Text('Copy'),
                           onPressed: () => Clipboard.setData(
                               ClipboardData(text: _txHash!)),
+                        ),
+                        TextButton.icon(
+                          icon: const Icon(Icons.receipt_long, size: 16),
+                          label: const Text('Details'),
+                          onPressed: () =>
+                              context.push('/history/tx/$_txHash'),
                         ),
                         TextButton.icon(
                           icon: const Icon(Icons.open_in_new, size: 16),

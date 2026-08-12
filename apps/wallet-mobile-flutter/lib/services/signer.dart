@@ -40,6 +40,7 @@ import 'address.dart';
 import 'canonical.dart';
 import 'ml_dsa_65.dart';
 import 'rpc.dart';
+import 'tx_history.dart';
 
 class SignedTx {
   final Uint8List rawTx;
@@ -571,8 +572,25 @@ Future<String> signAndBroadcast({
   required Account account,
   required Map<String, dynamic> body,
   required AnimicaChainContext chainContext,
+  // Human-readable recipient for the local history. The body only carries
+  // 32-byte digests, which cannot be re-encoded to anim1… without the alg
+  // id, so flows that know the display address pass it here.
+  String? displayTo,
 }) async {
   final signed =
       await signTx(account: account, body: body, chainContext: chainContext);
-  return rpc.sendRawTransaction(signed.rawTx);
+  final txHash = await rpc.sendRawTransaction(signed.rawTx);
+  // Every send path funnels through here, so this is the one place local
+  // history can be complete. Bookkeeping must never break a broadcast
+  // that already succeeded — swallow storage errors.
+  try {
+    await TxHistoryStore.add(TxRecord.fromBody(
+      hash: txHash,
+      from: account.address,
+      body: body,
+      displayTo: displayTo,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+    ));
+  } catch (_) {}
+  return txHash;
 }

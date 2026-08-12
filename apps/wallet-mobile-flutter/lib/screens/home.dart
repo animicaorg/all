@@ -43,6 +43,19 @@ class HomeScreen extends ConsumerWidget {
                 _AddressCard(address: active.address, label: active.label),
                 const SizedBox(height: 16),
                 _ActionRow(),
+                const SizedBox(height: 12),
+                Card(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  child: ListTile(
+                    leading: const Icon(Icons.history),
+                    title: const Text('Transaction history'),
+                    subtitle: const Text(
+                        'All transactions sent from this device'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push('/history'),
+                  ),
+                ),
                 const SizedBox(height: 24),
                 Text(
                   'Scheme',

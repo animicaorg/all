@@ -12,6 +12,7 @@ import 'screens/dex/liquidity.dart';
 import 'screens/dex/promote.dart';
 import 'screens/dex/swap.dart';
 import 'screens/games.dart';
+import 'screens/history.dart';
 import 'screens/home.dart';
 import 'screens/nfts.dart';
 import 'screens/receive.dart';
@@ -23,6 +24,7 @@ import 'screens/store/store_library.dart';
 import 'screens/store/subscriptions_screen.dart';
 import 'screens/store/topup_screen.dart';
 import 'screens/tokens.dart';
+import 'screens/tx_detail.dart';
 
 final router = GoRouter(
   initialLocation: '/',
@@ -63,6 +65,11 @@ final router = GoRouter(
     ),
     GoRoute(path: '/send', builder: (c, s) => const SendScreen()),
     GoRoute(path: '/receive', builder: (c, s) => const ReceiveScreen()),
+    GoRoute(path: '/history', builder: (c, s) => const HistoryScreen()),
+    GoRoute(
+      path: '/history/tx/:hash',
+      builder: (c, s) => TxDetailScreen(hash: s.pathParameters['hash']!),
+    ),
     // `uri` is set when we arrive from an `animica://wc?...` deep link; when
     // opened from the wallet UI it is absent and the screen shows the scanner.
     GoRoute(
