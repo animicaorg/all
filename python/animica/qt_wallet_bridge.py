@@ -114,9 +114,11 @@ def _normalize_alg_name_for_ui(name: str) -> str:
 def supported_algorithms() -> Dict[str, Any]:
     supported: List[Dict[str, Any]] = []
     if list_signature_algs is None:
+        # Fallback when the registry can't be loaded: only offer ml_dsa_65
+        # (0x1003, real FIPS 204). The legacy dilithium3/sphincs stubs are
+        # forgeable and strand funds, so they are never a creation option.
         supported = [
-            {"name": "dilithium3", "display_name": "Dilithium3", "alg_id": 0x1001},
-            {"name": "sphincs_shake_128s", "display_name": "SPHINCS+ Shake 128s", "alg_id": 0x1002},
+            {"name": "ml_dsa_65", "display_name": "ML-DSA-65 (FIPS 204)", "alg_id": 0x1003},
         ]
     else:
         for alg in list_signature_algs():
@@ -600,7 +602,7 @@ def _submit_signed_tx(
     )
     pk = tx_cli._hex_to_bytes(str(sender_entry.get("public_key_hex") or ""))
     sk = tx_cli._hex_to_bytes(str(sender_entry.get("secret_key_hex") or ""))
-    used_alg_id = int(sender_entry.get("alg_id") or 0x1001)
+    used_alg_id = int(sender_entry.get("alg_id") or 0x1003)
     pq = tx_cli.pq_sign_tx(body, sk, pk, used_alg_id, chain_ctx)
     verify = tx_cli.pq_verify_tx(body, pq, pk, chain_ctx, from_addr=from_address)
     if not verify.ok:

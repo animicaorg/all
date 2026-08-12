@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>animica 9.0.0 — current release · upgrade guide</title>
+<meta name="description" content="Animica 9.0.0: GPU Studios (video / audio / Blender render farm) + on-chain IOU settlement from the block reward, activating at block 50,000. Who needs to upgrade and how.">
+<link rel="icon" href="/favicon.svg">
+<style>
+  :root{--bg:#f6f3ec;--card:#fffdf8;--ink:#20222a;--mut:#6d7079;--clay:#c8613f;--blue:#2E63FF;--gold:#a07617;--ok:#2e7d4f}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 'Inter',system-ui,sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:48px 20px 80px}
+  h1{font-family:Georgia,'Times New Roman',serif;font-size:34px;line-height:1.2;margin:6px 0 10px}
+  h2{font-family:Georgia,serif;font-size:23px;margin:38px 0 8px}
+  .kicker{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--clay)}
+  .card{background:var(--card);border:1px solid #e7e2d5;border-radius:14px;padding:18px 20px;margin:14px 0}
+  code,pre{font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13.5px;background:#f0ece1;border-radius:8px}
+  code{padding:2px 6px}
+  pre{padding:14px 16px;overflow-x:auto;border:1px solid #e7e2d5}
+  a{color:var(--blue)}
+  .pill{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid #e0d9c8;background:#faf7ef;color:var(--gold);margin-right:6px}
+  ul{padding-left:22px}
+  .mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">Animica upgrade guide</div>
+  <h1>animica 9.0.0 — current release</h1>
+  <p><span class="pill">activates at block 50,000</span><span class="pill">pip install -U animica</span></p>
+
+  <p>9.0.0 does two big things: it opens the <strong>GPU Studios</strong> on
+  <a href="https://animica.dev">animica.dev</a> (<a href="/video/">Video</a> ·
+  <a href="/audio/">Audio</a> · <a href="/render/">Render Farm</a> — real GPU work,
+  processed by independent miners), and it turns service IOUs into
+  <strong>real on-chain pay</strong>: from block <strong>50,000</strong>, the network can
+  settle what it owes GPU miners, dVPN relays and hosting providers directly from the
+  block reward — capped at 50 ANM per block (one-sixth of the 300 ANM subsidy, always
+  under 20% of the block), carved from the miner output, never minted on top.</p>
+
+  <h2>Do I need to do anything?</h2>
+  <div class="card">
+    <p><strong>Full node, pool, or balance-tracking exchange</strong> — <span style="color:var(--clay)"><strong>yes, upgrade before block 50,000</strong></span>:</p>
+<pre>pip install -U animica        # ≥ 9.0.0
+# then restart your node / pool services</pre>
+    <p>From 50,000, blocks may contain <em>settlement anchors</em> (treasury-signed
+    transactions that pay accrued service IOUs out of that block's reward). A node still
+    on 8.x treats the anchor as a plain transfer and computes different balances —
+    <strong>it silently diverges the moment the first anchor posts</strong>. 9.0.0 nodes
+    apply it deterministically.</p>
+  </div>
+  <div class="card">
+    <p><strong>GPU miner / media miner</strong> — upgrade to earn from the new studios, and set your payout address:</p>
+<pre>pip install -U animica
+ANIMICA_MEDIA_REWARD_ADDRESS=anim1&lt;your address&gt; animica up</pre>
+    <p>Your box then serves video upscaling/interpolation/subtitles/background removal/
+    shorts, audio stems/mastering, and Blender Cycles render chunks — sized to what your
+    GPU can actually run. IOUs you accrue become claimable on-chain payouts once
+    settlement activates. <span class="mut">No address set = IOUs keep accruing; add the
+    address any time.</span></p>
+  </div>
+  <div class="card">
+    <p><strong>Wallet or hosted-service user</strong> — nothing to do. Balances, keys and
+    addresses are untouched.</p>
+  </div>
+
+  <h2>What exactly activates at 50,000?</h2>
+  <p>The IOU-settlement fork (shipped gated in 8.0.1, realized in 9.0.0). A settlement
+  anchor is an ordinary signed transfer from the foundation treasury whose data field
+  carries an <code>ANMSETL1</code> payout list. In any block at/after 50,000 that contains
+  valid anchors, the listed providers are credited <em>in that block</em>, with the total
+  carved out of the miner subsidy — capped at 50 ANM per block and halving on the same
+  schedule as the subsidy, so settlement is never more than a sixth of a block and decays
+  with emission. Blocks without anchors are byte-identical to 8.x behaviour, and only the
+  treasury can post an anchor. Inspect the live state any time:</p>
+  <pre>animica settle status</pre>
+
+  <h2>What's new in the studios</h2>
+  <ul>
+    <li><strong><a href="/video/">Video Studio</a></strong> — Real-ESRGAN upscaling to 4K, RIFE 60 fps interpolation, Whisper auto-subtitles (SRT + burned), background removal, automatic vertical shorts.</li>
+    <li><strong><a href="/audio/">Audio Studio</a></strong> — HDemucs stem separation and vocal isolation, denoise + loudness enhance, reference-matched mastering to LUFS targets.</li>
+    <li><strong><a href="/render/">Render Farm</a></strong> — upload a packed .blend; frames render as parallel Cycles chunks across GPU miners (Blender 4.2.9, auto-fetched, scripts disabled), assembled to MP4 or a frames zip.</li>
+  </ul>
+  <p>Everything runs through the public job queue: free, no API key, jobs wait honestly
+  for a miner and go through eventually. Files travel as private uploads, are handed only
+  to the processing miner, and are wiped on delivery or TTL.</p>
+
+  <p class="mut" style="margin-top:40px">Questions: <a href="https://animica.dev">animica.dev</a> ·
+  source <a href="https://github.com/animicaorg/all">github.com/animicaorg/all</a> ·
+  package <a href="https://pypi.org/project/animica/">pypi.org/project/animica</a></p>
+</div>
+</body>
+</html>

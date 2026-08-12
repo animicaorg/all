@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import PlanUpsell, { planLimitOf, type PlanLimitDetails } from '@/components/PlanUpsell';
 
 // A real, end-to-end deploy flow for a native .anm site. It talks to the owner-authenticated API:
 //   POST /api/mkt/v1/names            { name, years }         -> register (needs `names` scope)
@@ -34,7 +35,9 @@ const STARTER = `<!doctype html>
 
 type Result =
   | { ok: true; fqdn: string; cid: string; size: number; gateway: string }
-  | { ok: false; error: string };
+  // plan_limit (402) is a plan gate, NOT insufficient funds — it renders the upgrade CTA
+  // instead of the generic error card (which would read like a deposit prompt).
+  | { ok: false; error: string; planLimit?: { message: string; details: PlanLimitDetails } };
 
 export default function DeployStudio() {
   const [name, setName] = useState('');
@@ -61,8 +64,21 @@ export default function DeployStudio() {
       body: JSON.stringify(body),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data?.error?.message || `${r.status} ${r.statusText}`);
+    if (!r.ok) {
+      // Keep the envelope's code/details on the thrown error so plan_limit (402) can render
+      // an upgrade CTA instead of being mistaken for an insufficient-funds deposit prompt.
+      const e: any = new Error(data?.error?.message || `${r.status} ${r.statusText}`);
+      e.status = r.status;
+      e.code = data?.error?.code;
+      e.details = data?.error?.details;
+      throw e;
+    }
     return data;
+  }
+
+  function fail(e: any) {
+    const pl = planLimitOf(e);
+    setResult(pl ? { ok: false, error: pl.message, planLimit: pl } : { ok: false, error: e.message });
   }
 
   async function register() {
@@ -72,7 +88,7 @@ export default function DeployStudio() {
       await call('/api/mkt/v1/names', { name: clean, years: 1 });
       setResult({ ok: false, error: `Registered ${clean}.anm — now click Publish.` });
     } catch (e: any) {
-      setResult({ ok: false, error: e.message });
+      fail(e);
     } finally { setBusy(''); }
   }
 
@@ -83,7 +99,7 @@ export default function DeployStudio() {
       const d = await call(`/api/mkt/v1/names/${encodeURIComponent(clean)}/publish`, { html });
       setResult({ ok: true, fqdn: d.fqdn, cid: d.cid, size: d.size, gateway: d.gateway || `/anm/${clean}` });
     } catch (e: any) {
-      setResult({ ok: false, error: e.message });
+      fail(e);
     } finally { setBusy(''); }
   }
 
@@ -139,6 +155,8 @@ export default function DeployStudio() {
               <a className="btn primary" href={result.gateway} target="_blank" rel="noopener">Open {result.fqdn} →</a>
             </p>
           </div>
+        ) : result.planLimit ? (
+          <PlanUpsell message={result.planLimit.message} details={result.planLimit.details} style={{ marginTop: 0 }} />
         ) : (
           <div className="card" style={{ borderColor: '#3a2a3f' }}>
             <p style={{ margin: 0, fontSize: 13.5 }}>{result.error}</p>

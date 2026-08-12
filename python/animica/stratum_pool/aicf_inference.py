@@ -70,6 +70,15 @@ _FALLBACK_TIER_MODEL: dict[str, str] = {
 }
 _DEFAULT_MODEL = _FALLBACK_TIER_MODEL["standard"]
 
+# "Kimi K3" is the network's flagship brand for its top-end coding & chat
+# model. This env var lets operators point the brand at genuine Kimi weights
+# (default moonshotai/Kimi-K2-Instruct); on hardware that can't load a model
+# that large, the standard-tier coder model still serves the Kimi K3 brand so
+# /v1/models keeps reporting it as served.
+KIMI_K3_MODEL = os.environ.get(
+    "ANIMICA_AICF_KIMI_MODEL", "moonshotai/Kimi-K2-Instruct"
+).strip() or "moonshotai/Kimi-K2-Instruct"
+
 # Tier → (min_billion_params, max_billion_params) used to bucket detected
 # models. Top of range is exclusive so a 7B model lands in "premium",
 # not "elite". A model whose size we can't parse goes to "standard".
@@ -121,6 +130,9 @@ _NON_GENERATIVE_PREFIXES = (
     "nomic-ai/nomic-embed",
     "thenlper/gte-",
     "jinaai/jina-embeddings",
+    "ali-vilab/",           # text-to-video diffusion (media worker), NOT an LLM
+    "black-forest-labs/",   # FLUX image diffusion
+    "stabilityai/stable-",  # stable-diffusion / stable-audio (keep StableLM allowed)
 )
 _NON_GENERATIVE_FRAGMENTS = (
     "minilm",       # sentence embeddings
@@ -131,6 +143,25 @@ _NON_GENERATIVE_FRAGMENTS = (
     "whisper",      # ASR
     "wav2vec",
     "clip-vit",     # vision encoder
+    # --- media-generation models: shared HF cache means the image/video/audio worker
+    #     downloads these, and they must never be auto-picked as the chat LLM. ---
+    "text-to-video",
+    "text-to-image",
+    "text2video",
+    "text2image",
+    "diffusion",    # stable-diffusion, latent-diffusion, …
+    "sd-turbo",
+    "sdxl",
+    "flux.1",
+    "flux-",
+    "zeroscope",
+    "animatediff",
+    "controlnet",
+    "musicgen",
+    "audioldm",
+    "stable-audio",
+    "bark",         # TTS
+    "vits",         # TTS
 )
 
 
@@ -246,6 +277,13 @@ def discover_models() -> list[ModelChoice]:
     pinned = os.environ.get("ANIMICA_AICF_MODEL", "").strip()
     if pinned:
         _add(pinned, "env_override")
+    # "Kimi K3" flagship: only offered when the operator explicitly opts in via
+    # ANIMICA_AICF_KIMI_MODEL — we never force every miner to try downloading a
+    # ~1T model. Set → discoverable as an operator override (bypasses the
+    # non-chat filter, same as any env pin).
+    kimi = os.environ.get("ANIMICA_AICF_KIMI_MODEL", "").strip()
+    if kimi:
+        _add(kimi, "env_override")
     # Local bundles + HF cache (no network needed).
     for path in _scan_local_bundles():
         _add(path, "local_bundle")
@@ -256,6 +294,18 @@ def discover_models() -> list[ModelChoice]:
     for model in _FALLBACK_TIER_MODEL.values():
         _add(model, "fallback")
     return out
+
+
+def resolve_kimi_model() -> str:
+    """HF repo id backing the "Kimi K3" flagship brand.
+
+    Re-reads ``ANIMICA_AICF_KIMI_MODEL`` on every call so operators can
+    repoint the brand at real Kimi weights without editing code (falls back
+    to the module default when unset).
+    """
+    return os.environ.get(
+        "ANIMICA_AICF_KIMI_MODEL", "moonshotai/Kimi-K2-Instruct"
+    ).strip() or "moonshotai/Kimi-K2-Instruct"
 
 
 def resolve_tier_model(tier: str) -> str:
@@ -688,12 +738,25 @@ class InferenceEngine:
             if not self._loaded or self._effective_model != requested_model:
                 err = self._try_load(requested_model)
                 if err is not None:
-                    return InferenceResult(
-                        text=_stub_response(prompt, used_model=requested_model, reason=err),
-                        latency_ms=int((time.perf_counter() - t0) * 1000),
-                        used_model=requested_model,
-                        used_backend="stub",
-                    )
+                    # The resolved model wouldn't load as a chat LLM — e.g. a media/diffusion
+                    # model wrongly auto-picked from the shared HF cache, or a bad env pin. Try a
+                    # known-good chat model before falling back to the echo stub, so a
+                    # misconfigured worker still answers instead of parroting the prompt.
+                    fallback = _DEFAULT_MODEL
+                    if requested_model != fallback:
+                        log.warning(
+                            "aicf: model %s failed to load (%s); falling back to %s",
+                            requested_model, err, fallback,
+                        )
+                        if self._try_load(fallback) is None:
+                            requested_model, err = fallback, None
+                    if err is not None:
+                        return InferenceResult(
+                            text=_stub_response(prompt, used_model=requested_model, reason=err),
+                            latency_ms=int((time.perf_counter() - t0) * 1000),
+                            used_model=requested_model,
+                            used_backend="stub",
+                        )
             try:
                 import torch  # type: ignore
                 # Effective per-job token cap. An explicit ANIMICA_AICF_MAX_TOKENS

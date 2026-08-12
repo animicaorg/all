@@ -52,6 +52,51 @@ def _have_cuda() -> bool:
         return False
 
 
+def _have_audio_backend() -> bool:
+    """True when the MusicGen audio backend can load (audio_gen.py needs transformers+torch).
+    A box must never advertise `audio` it can't actually render — VRAM alone is not enough."""
+    try:
+        import importlib.util
+        return (importlib.util.find_spec("transformers") is not None
+                and importlib.util.find_spec("torch") is not None)
+    except Exception:
+        return False
+
+
+def _have_module(name: str) -> bool:
+    try:
+        import importlib.util
+        return importlib.util.find_spec(name) is not None
+    except Exception:
+        return False
+
+
+def _can_import(name: str) -> bool:
+    """A REAL import probe. find_spec is not enough for the torch-family packages: a
+    torchaudio/torchvision wheel built against a different torch raises at import time
+    ('operator torchvision::nms does not exist'), and advertising a capability that
+    then always fails at claim time burns every job attempt."""
+    try:
+        import importlib
+        importlib.import_module(name)
+        return True
+    except Exception:
+        return False
+
+
+def _blender_available() -> bool:
+    """Blender is resolvable now, or auto-fetchable on this platform (probe never downloads)."""
+    try:
+        from .render_farm import resolve_blender
+        if resolve_blender(auto_fetch=False):
+            return True
+    except Exception:
+        return False
+    if os.environ.get("ANIMICA_BLENDER_AUTOFETCH", "1") == "0":
+        return False
+    return platform.system() == "Linux" and platform.machine() in ("x86_64", "AMD64")
+
+
 def _vram_gb() -> float:
     """Total VRAM of the primary CUDA device in GiB (0.0 if no CUDA)."""
     try:
@@ -78,6 +123,12 @@ def _env_flag(name: str):
 # whole decision per-kind with ANIMICA_MEDIA_VIDEO_ENABLED / _AUDIO_ENABLED.
 _T2V_MIN_VRAM_GB = 10.0   # ali-vilab/text-to-video-ms-1.7b fp16 ≈ 8 GiB
 _AUDIO_MIN_VRAM_GB = 6.0  # facebook/musicgen-small ≈ 3 GiB
+# Stable Video Diffusion img2vid with model-CPU-offload + VAE slicing fits ~10-12
+# GiB. Below this floor, i2v uses the CPU-friendly Ken Burns render instead of a
+# generative model it can't hold. Override with ANIMICA_MEDIA_I2V_MODEL_ENABLED.
+_I2V_MIN_VRAM_GB = 12.0
+# 9.0.0 studio kinds (SR/RIFE/DeepLab/HDemucs) fit comfortably in small VRAM.
+_STUDIO_MIN_VRAM_GB = 4.0
 
 # Approx VRAM (GiB) each tier's model needs. The JOB requester picks the tier, so
 # a box that merely clears the auto-enable floor could still be handed an
@@ -141,8 +192,60 @@ def probe_capabilities() -> List[str]:
     audio_on = _env_flag("ANIMICA_MEDIA_AUDIO_ENABLED")
     if audio_on is None:
         audio_on = cuda and vram >= _AUDIO_MIN_VRAM_GB
+    # Qualify the model, not just the VRAM: only advertise `audio` when the MusicGen backend
+    # is actually present, so an auto-enabled (or env-forced) box never claims an audio job
+    # it will fail. Proper model for the proper kind.
+    if audio_on and not _have_audio_backend():
+        audio_on = False
     if audio_on:
         caps.append("audio")
+
+    # ── 9.0.0 GPU Studios (docs/gpu-studios-9.0.0.md) ────────────────────────
+    # Video transforms: GPU-shaped (per-frame model inference) — auto-enable on a
+    # CUDA box with modest VRAM; tri-state env forces on/off (CPU forced-on works,
+    # just slowly). Each kind still qualifies its own model deps.
+    vstudio = _env_flag("ANIMICA_MEDIA_VIDEOSTUDIO_ENABLED")
+    if vstudio is None:
+        vstudio = cuda and vram >= _STUDIO_MIN_VRAM_GB
+    if vstudio and ffmpeg and _have_module("torch"):
+        caps.append("video_upscale")
+        caps.append("video_interpolate")  # RIFE when weights load; ffmpeg fallback inside
+        if _can_import("torchvision"):
+            caps.append("video_bgremove")
+    if vstudio and ffmpeg and _have_module("transformers"):
+        caps.append("video_subtitles")
+    if ffmpeg:
+        caps.append("video_shorts")  # scene detection + cuts are ffmpeg-only (subs optional)
+
+    astudio = _env_flag("ANIMICA_MEDIA_AUDIOSTUDIO_ENABLED")
+    if astudio is None:
+        astudio = cuda and vram >= _STUDIO_MIN_VRAM_GB
+    if astudio and ffmpeg and _can_import("torchaudio"):
+        caps.append("audio_stems")
+        caps.append("audio_isolate")
+    if ffmpeg and _have_module("noisereduce") and _have_module("pyloudnorm"):
+        # Pure-DSP kinds run fine on CPU — every pip-install box can serve them.
+        caps.append("audio_enhance")
+        caps.append("audio_master")
+
+    # Render farm: Cycles on CPU is painfully slow — default to CUDA boxes; opt CPU
+    # boxes in with ANIMICA_RENDER_CPU=1. Assembly is ffmpeg-only. Advertise
+    # render_chunk ONLY when Blender is genuinely runnable NOW: at startup we resolve
+    # it for real (PATH/env/cache, and if auto-fetch is enabled we actually download +
+    # verify it here, once), so a box that merely *looks* eligible by platform but
+    # can't fetch Blender never claims a render and burns every attempt of a user's job.
+    render_on = _env_flag("ANIMICA_RENDER_ENABLED")
+    if render_on is None:
+        render_on = cuda or os.environ.get("ANIMICA_RENDER_CPU") == "1"
+    if render_on:
+        try:
+            from .render_farm import resolve_blender
+            if resolve_blender(auto_fetch=os.environ.get("ANIMICA_BLENDER_AUTOFETCH", "1") != "0"):
+                caps.append("render_chunk")
+        except Exception:
+            pass  # cannot ready Blender → don't advertise render_chunk
+    if ffmpeg:
+        caps.append("render_assemble")
 
     # de-dup, keep order
     seen, out = set(), []
@@ -170,7 +273,132 @@ def _pack(data: bytes, mime: str, meta: dict, magic: str) -> dict:
     return {"b64": base64.b64encode(data).decode("ascii"), "mime": mime, "sha3": sha3_hex(data), "meta": meta}
 
 
-def render_job(job: dict) -> dict:
+_STUDIO_KINDS = {
+    "video_upscale", "video_interpolate", "video_subtitles", "video_bgremove", "video_shorts",
+    "audio_stems", "audio_isolate", "audio_enhance", "audio_master",
+    "render_chunk", "render_assemble",
+}
+
+
+def _render_studio_job(job: dict, gw) -> dict:
+    """One 9.0.0 GPU-Studio job: download the input file(s), transform, hand back a DISK
+    artifact ({"path", "mime", "sha3", "meta", "_tmp"}). The caller streams the path via
+    the result-file endpoint and then drops the "_tmp" TemporaryDirectory. Fail-closed."""
+    import tempfile
+
+    if gw is None:
+        raise MediaError("studio kinds need the gateway client (register first)")
+    kind = job.get("kind")
+    jid = job.get("id")
+    params = job.get("params") or {}
+    urls = job.get("input_urls") or []
+
+    tmp = tempfile.TemporaryDirectory(prefix="anmstudio_")
+    # Keep-alive: long stages (whisper on a 30-min track, HDemucs on CPU, a heavy Cycles
+    # frame) can be silent far longer than the claim lease. A daemon thread re-posts the
+    # last progress every 2 min so the gateway never requeues a job that is still alive.
+    import threading
+    _last = {"pct": 2.0, "note": "working"}
+    _stop = threading.Event()
+
+    def _keepalive():
+        while not _stop.wait(120.0):
+            try:
+                gw.post_progress(jid, _last["pct"], _last["note"])
+            except Exception:
+                pass
+
+    _ka = threading.Thread(target=_keepalive, daemon=True)
+    _ka.start()
+    try:
+        td = tmp.name
+        gw.post_progress(jid, 2, "downloading input")
+        inputs: List[str] = []
+        for i, u in enumerate(urls):
+            # A stable extension helps blender/ffmpeg pick the right demuxer.
+            ext = ".blend" if kind == "render_chunk" else (".zip" if kind == "render_assemble" else ".bin")
+            p = os.path.join(td, f"input_{i}{ext}")
+            gw.download_input(u, p)
+            inputs.append(p)
+        out_dir = os.path.join(td, "out")
+        os.makedirs(out_dir, exist_ok=True)
+        _inner = gw.progress_fn(jid, start=5.0, span=90.0)
+
+        def progress(pct: float, note: str = "") -> None:
+            _last["pct"] = 5.0 + 90.0 * max(0.0, min(100.0, pct)) / 100.0
+            if note:
+                _last["note"] = note
+            _inner(pct, note)
+
+        if kind in ("video_upscale", "video_interpolate", "video_subtitles", "video_bgremove", "video_shorts"):
+            if not inputs:
+                raise MediaError(f"{kind} needs one input video")
+            from . import video_studio
+            src = inputs[0]
+            if kind == "video_upscale":
+                out = video_studio.upscale_video(src, out_dir, scale=int(params.get("scale", 2)),
+                                                 model=str(params.get("model", "fast")), progress=progress)
+            elif kind == "video_interpolate":
+                out = video_studio.interpolate_video(src, out_dir, factor=int(params.get("factor", 2)), progress=progress)
+            elif kind == "video_subtitles":
+                out = video_studio.subtitle_video(src, out_dir, language=str(params.get("language", "auto")),
+                                                  burn_in=bool(params.get("burn_in", True)), progress=progress)
+            elif kind == "video_bgremove":
+                out = video_studio.remove_background(src, out_dir, mode=str(params.get("mode", "green")), progress=progress)
+            else:
+                out = video_studio.make_shorts(src, out_dir, count=int(params.get("count", 3)),
+                                               duration=int(params.get("duration", 30)),
+                                               aspect=str(params.get("aspect", "9:16")),
+                                               subtitles=bool(params.get("subtitles", True)), progress=progress)
+        elif kind in ("audio_stems", "audio_isolate", "audio_enhance", "audio_master"):
+            if not inputs:
+                raise MediaError(f"{kind} needs one input audio file")
+            from . import audio_studio
+            src = inputs[0]
+            fmt = str(params.get("format", "mp3"))
+            if kind == "audio_stems":
+                out = audio_studio.separate_stems(src, out_dir, fmt=fmt, two_stem=False, progress=progress)
+            elif kind == "audio_isolate":
+                out = audio_studio.separate_stems(src, out_dir, fmt=fmt, two_stem=True, progress=progress)
+            elif kind == "audio_enhance":
+                out = audio_studio.enhance_audio(src, out_dir, denoise=bool(params.get("denoise", True)),
+                                                 loudness=float(params.get("loudness", -16.0)), fmt=fmt, progress=progress)
+            else:
+                ref = inputs[1] if len(inputs) > 1 else None
+                out = audio_studio.master_audio(src, out_dir, preset=str(params.get("preset", "streaming")),
+                                                reference_path=ref, fmt=fmt, progress=progress)
+        elif kind == "render_chunk":
+            if not inputs:
+                raise MediaError("render_chunk needs the .blend input")
+            from . import render_farm
+            out = render_farm.render_chunk(
+                inputs[0], out_dir,
+                frame_start=int(params.get("frame_start", 1)),
+                frame_end=int(params.get("frame_end", 1)),
+                frame_step=int(params.get("frame_step", 1)),
+                resolution_percent=int(params.get("resolution_percent", 100)),
+                samples=int(params["samples"]) if params.get("samples") is not None else None,
+                progress=progress,
+            )
+        elif kind == "render_assemble":
+            if not inputs:
+                raise MediaError("render_assemble needs the chunk zips")
+            from . import render_farm
+            out = render_farm.assemble_video(inputs, out_dir, fps=int(params.get("fps", 24)),
+                                             mode=str(params.get("mode", "mp4")), progress=progress)
+        else:
+            raise MediaError(f"unknown studio kind {kind!r}")
+
+        _stop.set()
+        gw.post_progress(jid, 97, "uploading result")
+        return {**out, "_tmp": tmp}
+    except Exception:
+        _stop.set()
+        tmp.cleanup()
+        raise
+
+
+def render_job(job: dict, gw=None) -> dict:
     """Render one claimed job to bytes. Fail-closed: returns real media or raises."""
     kind = job.get("kind")
     prompt = job.get("prompt") or ""
@@ -205,16 +433,50 @@ def render_job(job: dict) -> dict:
         frames = [_decode(s) for s in images if s]
         if not frames:
             raise MediaError("image->video requires at least one uploaded image")
-        from .scene_video import assemble_scene_video
         fps = int(params.get("fps", 24))
         seconds = float(params.get("seconds", 4))
+        # Prefer a REAL generative image->video model (Stable Video Diffusion): it
+        # actually TRANSFORMS the image's content — drifting clouds, rippling water,
+        # subtle subject motion — not just a camera move. Use it when the GPU can
+        # run it and the operator hasn't opted out; otherwise fall back to the Ken
+        # Burns pan/zoom (which runs anywhere, even CPU) so i2v ALWAYS returns real
+        # video. On a single uploaded image we animate it directly; SVD conditions
+        # on one frame, so multi-image uploads animate the first and Ken-Burns the
+        # rest would over-complicate — we animate the first when generative.
+        _disable = os.environ.get("ANIMICA_MEDIA_DISABLE", "")
+        want_gen = (_have_cuda()
+                    and _vram_gb() >= _I2V_MIN_VRAM_GB
+                    and os.environ.get("ANIMICA_MEDIA_I2V_MODEL_ENABLED", "1") != "0"
+                    and _disable not in ("1", "all", "i2v", "video"))
+        if want_gen:
+            try:
+                import io as _io
+                from PIL import Image
+                from . import video_gen
+                img = Image.open(_io.BytesIO(frames[0])).convert("RGB")
+                svfps = max(6, min(fps, 12))       # SVD clips read best at 6-12 fps
+                out = video_gen.generate_image_to_video(
+                    img, tier=_clamp_tier("video_i2v", tier),
+                    num_frames=int(params.get("num_frames", 25)), fps=svfps,
+                    seed=params.get("seed"),
+                )
+                return _pack(out["bytes"], out.get("mime", "video/mp4"),
+                             {"model": out.get("model"), "device": _device(),
+                              "mode": "generative-i2v"}, "mp4")
+            except Exception:      # noqa: BLE001 — OOM/model/load → graceful Ken Burns
+                pass               # fall through to the pan/zoom render below
+        from .scene_video import assemble_scene_video
         per = max(1.0, seconds / max(1, len(frames)))
         out = assemble_scene_video(
             frames, fps=fps, seconds_per_scene=per,
             transition=params.get("transition", "fade"), ken_burns=True,
         )
         return _pack(out["bytes"], out["mime"],
-                     {"model": "anm-i2v-kenburns", "device": _device(), "scenes": out["scenes"], "duration_s": out["duration_s"]}, "mp4")
+                     {"model": "anm-i2v-kenburns", "device": _device(),
+                      "mode": "kenburns", "scenes": out["scenes"], "duration_s": out["duration_s"]}, "mp4")
+
+    if kind in _STUDIO_KINDS:
+        return _render_studio_job(job, gw)
 
     if kind == "video_multiscene":
         from . import image_gen
@@ -277,6 +539,48 @@ def _save_token(token: str, gateway: str) -> None:
         pass
 
 
+def _post_result_retry(base: str, token: Optional[str], payload: dict, log, tries: int = 5) -> Optional[int]:
+    """POST an inline result, riding out transient failures (5xx, timeout, 429).
+
+    Terminal statuses return immediately: 200 accepted; 403/404/409 mean the
+    gateway will never take THIS post (job re-adopted, gone, or already done) —
+    since 9.0.1 the gateway adopts a late successful result for an unclaimed job,
+    so a 403 here is a real rejection, not a lease race. 413 means the artifact
+    is bigger than the edge allows; retrying the same bytes cannot help."""
+    delay = 5.0
+    code = None
+    for _ in range(max(1, tries)):
+        try:
+            code, _r = _req(f"{base}/miner/result", payload, bearer=token, timeout=180)
+        except Exception as e:
+            code = None
+            log(f"  … result post failed ({e}) — retrying in {delay:.0f}s")
+        if code == 200 or code in (403, 404, 409, 413):
+            return code
+        time.sleep(delay)
+        delay = min(delay * 2, 60.0)
+    return code
+
+
+def _post_result_file_retry(gw, jid: str, out: dict, log, tries: int = 4) -> None:
+    """Stream a studio artifact, retrying transient upload failures (the file is
+    still on disk, so re-posting is free). Non-transient rejections re-raise."""
+    delay = 5.0
+    for attempt in range(max(1, tries)):
+        try:
+            gw.post_result_file(jid, out["path"], mime=out["mime"], sha3=out["sha3"], meta=out.get("meta"))
+            return
+        except MediaError as e:
+            msg = str(e)
+            # "rejected (4xx)" = the gateway examined and refused it — terminal.
+            transient = not any(f"({c})" in msg for c in (400, 401, 403, 404, 409, 413))
+            if not transient or attempt == max(1, tries) - 1:
+                raise
+            log(f"  … artifact upload failed ({msg[:120]}) — retrying in {delay:.0f}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)
+
+
 # ── run loop ─────────────────────────────────────────────────────────────────
 def run_miner(gateway: str, *, token: Optional[str] = None, label: Optional[str] = None,
               caps: Optional[List[str]] = None, poll_interval: float = 3.0,
@@ -295,25 +599,60 @@ def run_miner(gateway: str, *, token: Optional[str] = None, label: Optional[str]
     dev = _device()
     label = label or f"{platform.node()[:32]}·{dev}"
 
-    code, reg = _req(f"{base}/miner/register",
-                     {"token": token, "label": label, "capabilities": caps, "device": dev,
-                      "maxPixels": int(os.environ.get("ANIMICA_MEDIA_MAX_PIXELS", 1024 * 1024))},
-                     bearer=None)
-    if code != 200 or not reg:
-        raise MediaError(f"registration failed ({code}): {reg}")
+    # Registration rides out gateway restarts/deploys: a hard exit here killed the
+    # whole fleet's poll loops during a 5-hour gateway outage — a 5xx/network error
+    # retries with backoff forever, only a 4xx (client-side problem) is terminal.
+    delay = 5.0
+    while True:
+        try:
+            code, reg = _req(f"{base}/miner/register",
+                             {"token": token, "label": label, "capabilities": caps, "device": dev,
+                              "address": os.environ.get("ANIMICA_MEDIA_REWARD_ADDRESS"),
+                              "maxPixels": int(os.environ.get("ANIMICA_MEDIA_MAX_PIXELS", 1024 * 1024))},
+                             bearer=None)
+        except Exception as e:
+            code, reg = None, {"error": str(e)[:200]}
+        if code == 200 and reg:
+            break
+        if code is not None and 400 <= code < 500 and code != 429:
+            raise MediaError(f"registration failed ({code}): {reg}")
+        log(f"registration unavailable ({code if code is not None else reg.get('error')}) — "
+            f"retrying in {delay:.0f}s (gateway restart/deploy?)")
+        time.sleep(delay)
+        delay = min(delay * 2, 60.0)
     if reg.get("token"):
         token = reg["token"]; _save_token(token, gateway)
     log(f"registered with {gateway} · caps={','.join(caps)} · device={dev} · miner={reg.get('miner_id')}")
-    log(f"jobs_done={reg.get('jobs_done')} reward_nanm={reg.get('reward_nanm')} (IOU) — waiting for jobs…")
+    log(f"jobs_done={reg.get('jobs_done')} reward_nanm={reg.get('reward_nanm')} "
+        f"settled_nanm={reg.get('settled_nanm', '0')} — IOUs settle on-chain from the block reward "
+        f"(set ANIMICA_MEDIA_REWARD_ADDRESS to your anim1… address to get paid) — waiting for jobs…")
+
+    from .net import GatewayClient
+    gw = GatewayClient(gateway, token)
 
     idle = 0
     while True:
-        code, res = _req(f"{base}/miner/claim", {"device": dev, "load": 0.0}, bearer=token, timeout=40)
+        # Transient network failures (DNS blip, gateway restart, timeout) must never kill
+        # the loop — `animica up` runs this in a daemon thread that would silently die.
+        try:
+            code, res = _req(f"{base}/miner/claim", {"device": dev, "load": 0.0}, bearer=token, timeout=40)
+        except Exception as e:
+            log(f"  claim failed ({e}) — retrying in {max(poll_interval, 5)}s")
+            time.sleep(max(poll_interval, 5)); continue
         if code == 401:
-            # token no longer known (gateway reset) — re-register
-            code, reg = _req(f"{base}/miner/register", {"label": label, "capabilities": caps, "device": dev}, bearer=None)
+            # token no longer known (gateway reset) — re-register with the FULL profile
+            # (address/maxPixels included, or IOUs accrue address-less after a reset).
+            try:
+                code, reg = _req(f"{base}/miner/register",
+                                 {"label": label, "capabilities": caps, "device": dev,
+                                  "address": os.environ.get("ANIMICA_MEDIA_REWARD_ADDRESS"),
+                                  "maxPixels": int(os.environ.get("ANIMICA_MEDIA_MAX_PIXELS", 1024 * 1024))},
+                                 bearer=None)
+            except Exception:
+                reg = None
             if reg and reg.get("token"):
                 token = reg["token"]; _save_token(token, gateway)
+                gw = GatewayClient(gateway, token)
             time.sleep(poll_interval); continue
         job = (res or {}).get("job") if res else None
         if not job:
@@ -326,15 +665,62 @@ def run_miner(gateway: str, *, token: Optional[str] = None, label: Optional[str]
         log(f"claimed {jid} · {job.get('kind')} · '{(job.get('prompt') or '')[:48]}'"
             + (f" · {len(job.get('images') or [])} image(s)" if job.get('images') else ""))
         t0 = time.time()
+        # Classic kinds render silently for far longer than the claim lease (a t2v
+        # can run hours) — heartbeat every 2 min so the gateway keeps extending the
+        # lease instead of requeuing a job that is still alive. Studio kinds already
+        # run their own keepalive inside _render_studio_job.
+        _ka_stop = None
+        if job.get("kind") not in _STUDIO_KINDS:
+            import threading
+            _ka_stop = threading.Event()
+
+            def _ka(jid=jid, ev=_ka_stop):
+                pct = 5.0
+                while not ev.wait(120.0):
+                    pct = min(95.0, pct + 3.0)
+                    try:
+                        gw.post_progress(jid, pct, "rendering")
+                    except Exception:
+                        pass
+
+            threading.Thread(target=_ka, daemon=True).start()
         try:
-            out = render_job(job)
-            code, r = _req(f"{base}/miner/result",
-                           {"job_id": jid, "ok": True, "b64": out["b64"], "mime": out["mime"],
-                            "sha3": out["sha3"], "meta": out["meta"]},
-                           bearer=token, timeout=180)
-            log(f"  ✓ {jid} rendered in {time.time()-t0:.1f}s → {out['mime']} sha3={out['sha3'][:16]}… (post {code})")
+            out = render_job(job, gw)
+            if _ka_stop is not None:
+                _ka_stop.set()
+            if out.get("path"):
+                # 9.0.0 studio artifact — stream the file (no base64, no 48MB ceiling).
+                tmp = out.pop("_tmp", None)
+                try:
+                    size = os.path.getsize(out["path"])
+                    _post_result_file_retry(gw, jid, out, log)
+                    code = 200
+                finally:
+                    if tmp is not None:
+                        tmp.cleanup()
+                log(f"  ✓ {jid} rendered in {time.time()-t0:.1f}s → {out['mime']} ({size} bytes, streamed) sha3={out['sha3'][:16]}…")
+            else:
+                code = _post_result_retry(
+                    base, token,
+                    {"job_id": jid, "ok": True, "b64": out["b64"], "mime": out["mime"],
+                     "sha3": out["sha3"], "meta": out["meta"]}, log)
+                if code == 200:
+                    log(f"  ✓ {jid} rendered in {time.time()-t0:.1f}s → {out['mime']} sha3={out['sha3'][:16]}…")
+                else:
+                    # The render is done but the gateway would not take it — say so
+                    # LOUDLY (a silent '(post 413)' once cost days of finished work).
+                    log(f"  ! {jid} rendered in {time.time()-t0:.1f}s but the gateway "
+                        f"REJECTED the result (HTTP {code}) — artifact discarded")
         except Exception as e:  # fail closed — tell the gateway so it can requeue/fail
-            _req(f"{base}/miner/result", {"job_id": jid, "ok": False, "error": str(e)[:300]}, bearer=token, timeout=30)
+            if _ka_stop is not None:
+                _ka_stop.set()
+            try:
+                _req(f"{base}/miner/result", {"job_id": jid, "ok": False, "error": str(e)[:300]}, bearer=token, timeout=30)
+            except Exception:
+                pass
             log(f"  ✗ {jid} failed: {e}")
+        finally:
+            if _ka_stop is not None:
+                _ka_stop.set()
         if once:
             log("rendered one job — exiting (--once)"); return

@@ -136,53 +136,41 @@ var NobleMlDsa = (() => {
   }
 
   // ../../root/animica/node_modules/.pnpm/@noble+hashes@2.2.0/node_modules/@noble/hashes/_u64.js
-  var U32_MASK64 = /* @__PURE__ */ BigInt(2 ** 32 - 1);
-  var _32n = /* @__PURE__ */ BigInt(32);
-  function fromBig(n, le = false) {
-    if (le)
-      return { h: Number(n & U32_MASK64), l: Number(n >> _32n & U32_MASK64) };
-    return { h: Number(n >> _32n & U32_MASK64) | 0, l: Number(n & U32_MASK64) | 0 };
-  }
-  function split(lst, le = false) {
-    const len = lst.length;
-    let Ah = new Uint32Array(len);
-    let Al = new Uint32Array(len);
-    for (let i = 0; i < len; i++) {
-      const { h, l } = fromBig(lst[i], le);
-      [Ah[i], Al[i]] = [h, l];
-    }
-    return [Ah, Al];
-  }
+  // ANIMICA PATCH: fromBig()/split() and their BigInt masks removed. They existed only
+  // to split the BigInt SHA3 round constants into 32-bit halves; those halves are now
+  // built directly below. The embedded QuickJS has no BigInt at all (constructor absent
+  // AND literals are a SyntaxError), so any BigInt reference here fails at module load.
   var rotlSH = (h, l, s) => h << s | l >>> 32 - s;
   var rotlSL = (h, l, s) => l << s | h >>> 32 - s;
   var rotlBH = (h, l, s) => l << s - 32 | h >>> 64 - s;
   var rotlBL = (h, l, s) => h << s - 32 | l >>> 64 - s;
 
   // ../../root/animica/node_modules/.pnpm/@noble+hashes@2.2.0/node_modules/@noble/hashes/sha3.js
-  var _0n = BigInt(0);
-  var _1n = BigInt(1);
-  var _2n = BigInt(2);
-  var _7n = BigInt(7);
-  var _256n = BigInt(256);
-  var _0x71n = BigInt(113);
   var SHA3_PI = [];
   var SHA3_ROTL = [];
-  var _SHA3_IOTA = [];
-  for (let round = 0, R = _1n, x = 1, y = 0; round < 24; round++) {
+  // ANIMICA PATCH: BigInt-free Keccak round constants. R stays in 0..255 (reduced mod
+  // 256 every step) and the only bit positions t can set are (1<<j)-1 for j in 0..6 =
+  // {0,1,3,7,15,31,63}, so the 64-bit constant is accumulated as two 32-bit halves with
+  // int32 ops. IMPORTANT: fromBig(n, le=true) returned {h: low32, l: high32} — the
+  // little-endian path SWAPS the names — so SHA3_IOTA_H receives the LOW words and
+  // SHA3_IOTA_L the HIGH words. That ordering is asserted by test, not assumed.
+  var SHA3_IOTA_H = new Uint32Array(24);
+  var SHA3_IOTA_L = new Uint32Array(24);
+  for (let round = 0, R = 1, x = 1, y = 0; round < 24; round++) {
     [x, y] = [y, (2 * x + 3 * y) % 5];
     SHA3_PI.push(2 * (5 * y + x));
     SHA3_ROTL.push((round + 1) * (round + 2) / 2 % 64);
-    let t = _0n;
+    let lo = 0, hi = 0;
     for (let j = 0; j < 7; j++) {
-      R = (R << _1n ^ (R >> _7n) * _0x71n) % _256n;
-      if (R & _2n)
-        t ^= _1n << (_1n << BigInt(j)) - _1n;
+      R = ((R << 1) ^ ((R >> 7) * 113)) % 256;
+      if (R & 2) {
+        const p = (1 << j) - 1;
+        if (p < 32) lo ^= (1 << p) >>> 0; else hi ^= (1 << (p - 32)) >>> 0;
+      }
     }
-    _SHA3_IOTA.push(t);
+    SHA3_IOTA_H[round] = lo >>> 0;
+    SHA3_IOTA_L[round] = hi >>> 0;
   }
-  var IOTAS = split(_SHA3_IOTA, true);
-  var SHA3_IOTA_H = IOTAS[0];
-  var SHA3_IOTA_L = IOTAS[1];
   var rotlH = (h, l, s) => s > 32 ? rotlBH(h, l, s) : rotlSH(h, l, s);
   var rotlL = (h, l, s) => s > 32 ? rotlBL(h, l, s) : rotlSL(h, l, s);
   function keccakP(s, rounds = 24) {
@@ -582,8 +570,15 @@ var NobleMlDsa = (() => {
       const out = newPoly2(N2);
       for (let i = 0; i < N2; i++) {
         const b = reverseBits(i, brvBits);
-        const p = BigInt(ROOT_OF_UNITY2) ** BigInt(b) % BigInt(Q2);
-        out[i] = Number(p) | 0;
+        // ANIMICA PATCH: BigInt-free modpow. Q2 = 8380417 < 2^23, so r and base stay
+        // below 2^23 and every product is below 2^46 < 2^53 — exact in a double.
+        let _r = 1, _b = ROOT_OF_UNITY2 % Q2, _e = b;
+        while (_e > 0) {
+          if (_e % 2 === 1) _r = (_r * _b) % Q2;
+          _b = (_b * _b) % Q2;
+          _e = Math.floor(_e / 2);
+        }
+        out[i] = _r | 0;
       }
       return out;
     }

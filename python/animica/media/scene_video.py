@@ -97,15 +97,35 @@ def assemble_scene_video(
         chains = []
         for i in range(n):
             d_frames = max(1, round(durs[i] * fps))
-            cover = (f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-                     f"crop={width}:{height},setsar=1")
             if ken_burns:
-                # alternate zoom-in / gentle pan direction per scene so it doesn't feel mechanical
-                zrate = 0.0016 + (0.0004 if i % 2 else 0.0)
-                motion = (f"zoompan=z='min(zoom+{zrate:.4f},1.18)':"
-                          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                          f"d={d_frames}:s={width}x{height}:fps={fps}")
+                D = max(2, d_frames)
+                # SUPERSAMPLE the working frame (SS×) BEFORE zoompan. zoompan crops
+                # its pan/zoom window in INTEGER input pixels; at display resolution
+                # the sub-pixel per-frame motion rounds to whole-pixel jumps, so the
+                # image "wiggles"/jitters instead of gliding. Panning a larger
+                # frame makes each step a sub-pixel in the output → smooth. Cap the
+                # work-frame long edge (~2560px) so a 1080p output doesn't balloon
+                # into an 8K intermediate and OOM/stall the render.
+                ss = max(1, min(4, 2560 // max(width, height)))
+                cover = (f"[{i}:v]scale={width * ss}:{height * ss}:"
+                         f"force_original_aspect_ratio=increase,"
+                         f"crop={width * ss}:{height * ss},setsar=1")
+                prog = f"(on/{D - 1})"                      # 0 → 1 across the scene
+                zexpr = f"1+0.14*{prog}"                    # gentle linear zoom-in
+                xc = "iw/2-(iw/zoom/2)"                     # centered X
+                yc = "ih/2-(ih/zoom/2)"                     # centered Y
+                # A real DIRECTIONAL pan (rotated per scene) so the image visibly
+                # MOVES — a true Ken Burns glide, not just a centered zoom.
+                v = i % 4
+                if v == 0:      xe, ye = f"(iw-iw/zoom)*{prog}", yc          # pan →
+                elif v == 1:    xe, ye = f"(iw-iw/zoom)*(1-{prog})", yc      # pan ←
+                elif v == 2:    xe, ye = xc, f"(ih-ih/zoom)*{prog}"          # pan ↓
+                else:           xe, ye = xc, f"(ih-ih/zoom)*(1-{prog})"      # pan ↑
+                motion = (f"zoompan=z='{zexpr}':x='{xe}':y='{ye}':"
+                          f"d={D}:s={width}x{height}:fps={fps}")
             else:
+                cover = (f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                         f"crop={width}:{height},setsar=1")
                 motion = f"zoompan=z=1:d={d_frames}:s={width}x{height}:fps={fps}"
             # settb + fps pin a CONSTANT frame rate on each scene stream. ffmpeg 7's
             # xfade rejects the still-image's undefined input rate ("current rate of

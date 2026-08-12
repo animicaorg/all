@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/manifest.schema.json",
+  "name": "AnimicaDexRouter",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Animica VM-PY DEX router for pair creation, quoting, swaps, and liquidity operations.",
+  "source": { "path": "contract.py" },
+  "abi": {
+    "events": [
+      {"name": "PairCreateRequested", "fields": [{"name": "creator", "type": "bytes"}, {"name": "pair", "type": "bytes"}, {"name": "tokenA", "type": "bytes"}, {"name": "tokenB", "type": "bytes"}, {"name": "feeBps", "type": "int"}, {"name": "metadataUri", "type": "bytes"}]},
+      {"name": "RouterLiquidityAdded", "fields": [{"name": "provider", "type": "bytes"}, {"name": "pair", "type": "bytes"}, {"name": "tokenA", "type": "bytes"}, {"name": "tokenB", "type": "bytes"}, {"name": "amountA", "type": "int"}, {"name": "amountB", "type": "int"}, {"name": "lpMinted", "type": "int"}]},
+      {"name": "RouterLiquidityRemoved", "fields": [{"name": "provider", "type": "bytes"}, {"name": "pair", "type": "bytes"}, {"name": "tokenA", "type": "bytes"}, {"name": "tokenB", "type": "bytes"}, {"name": "amountA", "type": "int"}, {"name": "amountB", "type": "int"}, {"name": "lpBurned", "type": "int"}]},
+      {"name": "RouterSwap", "fields": [{"name": "sender", "type": "bytes"}, {"name": "pair", "type": "bytes"}, {"name": "tokenIn", "type": "bytes"}, {"name": "tokenOut", "type": "bytes"}, {"name": "amountIn", "type": "int"}, {"name": "amountOut", "type": "int"}, {"name": "to", "type": "bytes"}]},
+      {"name": "OwnershipTransferred", "fields": [{"name": "previousOwner", "type": "bytes"}, {"name": "newOwner", "type": "bytes"}]},
+      {"name": "FactoryUpdated", "fields": [{"name": "previousFactory", "type": "bytes"}, {"name": "newFactory", "type": "bytes"}]}
+    ],
+    "functions": [
+      {"name": "init", "stateMutability": "nonpayable", "inputs": [{"name": "owner", "type": "bytes"}, {"name": "factory", "type": "bytes"}], "outputs": []},
+      {"name": "owner", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "factory", "stateMutability": "view", "inputs": [], "outputs": [{"type": "bytes"}]},
+      {"name": "set_owner", "stateMutability": "nonpayable", "inputs": [{"name": "new_owner", "type": "bytes"}], "outputs": []},
+      {"name": "set_factory", "stateMutability": "nonpayable", "inputs": [{"name": "new_factory", "type": "bytes"}], "outputs": []},
+      {"name": "get_pair", "stateMutability": "view", "inputs": [{"name": "token_a", "type": "bytes"}, {"name": "token_b", "type": "bytes"}], "outputs": [{"type": "bytes"}]},
+      {"name": "create_pair", "stateMutability": "payable", "inputs": [{"name": "pair_address", "type": "bytes"}, {"name": "token_a", "type": "bytes"}, {"name": "token_b", "type": "bytes"}, {"name": "fee_bps", "type": "int"}, {"name": "metadata_uri", "type": "bytes"}], "outputs": [{"type": "bytes"}]},
+      {"name": "quote_exact_in", "stateMutability": "view", "inputs": [{"name": "token_in", "type": "bytes"}, {"name": "token_out", "type": "bytes"}, {"name": "amount_in", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "quote_exact_out", "stateMutability": "view", "inputs": [{"name": "token_in", "type": "bytes"}, {"name": "token_out", "type": "bytes"}, {"name": "amount_out", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "add_liquidity", "stateMutability": "payable", "inputs": [{"name": "token_a", "type": "bytes"}, {"name": "token_b", "type": "bytes"}, {"name": "amount_a_desired", "type": "int"}, {"name": "amount_b_desired", "type": "int"}, {"name": "min_lp", "type": "int"}, {"name": "deadline", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "remove_liquidity", "stateMutability": "nonpayable", "inputs": [{"name": "token_a", "type": "bytes"}, {"name": "token_b", "type": "bytes"}, {"name": "lp_amount", "type": "int"}, {"name": "min_amount_a", "type": "int"}, {"name": "min_amount_b", "type": "int"}, {"name": "deadline", "type": "int"}], "outputs": [{"type": "int"}, {"type": "int"}]},
+      {"name": "swap_exact_in", "stateMutability": "payable", "inputs": [{"name": "token_in", "type": "bytes"}, {"name": "token_out", "type": "bytes"}, {"name": "amount_in", "type": "int"}, {"name": "min_amount_out", "type": "int"}, {"name": "to", "type": "bytes"}, {"name": "deadline", "type": "int"}], "outputs": [{"type": "int"}]},
+      {"name": "swap_exact_out", "stateMutability": "payable", "inputs": [{"name": "token_in", "type": "bytes"}, {"name": "token_out", "type": "bytes"}, {"name": "amount_out", "type": "int"}, {"name": "max_amount_in", "type": "int"}, {"name": "to", "type": "bytes"}, {"name": "deadline", "type": "int"}], "outputs": [{"type": "int"}]}
+    ]
+  }
+}

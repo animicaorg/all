@@ -1,0 +1,11 @@
+# TEMPLATE ONLY — install per the .service header; not enabled by the repo change.
+[Unit]
+Description=Run the Animica Python Cloud reconciliation daily at 00:20 UTC (the just-closed UTC day; anm-price feed still in its grace window)
+
+[Timer]
+OnCalendar=*-*-* 00:20:00 UTC
+AccuracySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

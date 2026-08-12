@@ -6,6 +6,7 @@ import { ExplorerService, ChainClient } from './service.js'
 import { createServer } from './server.js'
 import { ExplorerStore } from './explorerStore.js'
 import { ContractVerifier } from './contractVerifier.js'
+import { TokenTracker } from './tokensService.js'
 import { extractDeployCode, extractTxInputData } from './txClassifier.js'
 import pino from 'pino'
 import { createHash } from 'node:crypto'
@@ -197,6 +198,19 @@ const service = new ExplorerService(chain, {
   verifier
 })
 
+// Token tracker: background ANM-20 indexer (deploys + init calls + promos),
+// served via /api/tokens*. Resilient by construction — a failed tick logs and
+// retries on the next interval; it can never crash the server.
+const tokenTracker = new TokenTracker({
+  chain,
+  store,
+  rpc: rpcClientRef ?? null,
+  dexFactory: config.dexFactoryAddress,
+  scanDepth: config.tokenScanDepth,
+  blocksPerTick: config.tokenScanBlocksPerTick
+})
+tokenTracker.start(config.tokenScanIntervalMs)
+
 // Export diagnostics info for /api/diagnostics endpoint
 export const diagnostics = {
   mode,
@@ -208,7 +222,7 @@ export const diagnostics = {
   runtimeStatus
 }
 
-const app = createServer(service, config.corsOrigin, config.logLevel, diagnostics, rpcClientRef)
+const app = createServer(service, config.corsOrigin, config.logLevel, diagnostics, rpcClientRef, tokenTracker)
 
 if (refreshRpcState) {
   const interval = setInterval(() => {

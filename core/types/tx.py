@@ -226,6 +226,7 @@ class TxDeploy:
 class TxCall:
     to: bytes
     data: bytes  # ABI-encoded call payload (function selector + args)
+    amount: int = 0  # ANM attached to the call (FORK_VALUE_CALL); 0 == valueless
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -235,13 +236,28 @@ class TxCall:
             raise TypeError("TxCall.data must be bytes")
         if len(self.data) == 0:
             raise ValueError("TxCall.data must be non-empty")
+        # `amount` is an optional, purely additive field: it is omitted from the
+        # canonical object when zero, so every CALL that predates FORK_VALUE_CALL
+        # encodes and hashes byte-identically. A bool is never a valid amount
+        # (isinstance(True, int) is True, so it must be rejected explicitly).
+        if isinstance(self.amount, bool) or not isinstance(self.amount, int):
+            raise TypeError("TxCall.amount must be an int")
+        if self.amount < 0:
+            raise ValueError("TxCall.amount must be >= 0")
 
     def to_obj(self) -> Mapping[str, Any]:
-        return {"to": self.to, "data": bytes(self.data)}
+        obj: Dict[str, Any] = {"to": self.to, "data": bytes(self.data)}
+        if self.amount:
+            obj["amount"] = int(self.amount)
+        return obj
 
     @staticmethod
     def from_obj(o: Mapping[str, Any]) -> "TxCall":
-        return TxCall(to=bytes(o["to"]), data=bytes(o["data"]))
+        return TxCall(
+            to=bytes(o["to"]),
+            data=bytes(o["data"]),
+            amount=int(o.get("amount", 0) or 0),
+        )
 
 
 TxPayload = TxTransfer | TxDeploy | TxCall

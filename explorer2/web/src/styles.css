@@ -1,21 +1,41 @@
+@import './animica-ds.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Animica design system — bring the explorer into the product family.
+   Additive: Tailwind components keep working; this sets the shared palette,
+   IBM Plex type, the vacuum-indigo base, and the entangled accent tokens, and
+   pins the dark theme the app already supports (color-scheme: light dark). */
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
+  --accent: var(--anm-wave);
+  --accent-2: var(--anm-collapse);
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background:
+    radial-gradient(1200px 600px at 78% -8%, #7AA6FF12, transparent 60%),
+    radial-gradient(900px 520px at 8% 8%, #14C79B10, transparent 55%),
+    var(--anm-void);
+  color: var(--anm-ink);
+  font-family: var(--anm-font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
 }
 
-/* Ensure smooth transitions for theme changes */
+/* hashes / addresses / numbers read as data */
+code, kbd, samp, pre, .font-mono, [class*="mono"] { font-family: var(--anm-font-mono); }
+
+a { color: var(--anm-wave); }
+a:hover { color: #fff; }
+::selection { background: #7AA6FF40; color: #fff; }
+
 * {
   transition-property: background-color, border-color, color;
   transition-duration: 200ms;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

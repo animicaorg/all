@@ -8,6 +8,115 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [8.5.0] - 2026-07-16
+### Animica Animal — your own 24/7 AI livestreamer (new, non-consensus)
+A complete pipeline that runs an animated character **live on YouTube around the clock**,
+sold as a $350/month product at **animica.dev/animal** (front-and-center on the homepage).
+
+- **`animica animal stream`** renders the character in real time (PIL renderer + behavior
+  state machine + animalese/piper voice + audio mixer), muxes through a single bundled
+  ffmpeg, and streams to YouTube over RTMP — or renders a local `--preview` MP4 with no
+  account. Two-writer-thread FIFO feed with `-analyzeduration 0 -probesize 32` per input so
+  the encoder never stalls.
+- **Interactive brain** reads the YouTube live chat and replies **out loud** (voice + on-screen
+  caption + optional chat reply), grounded in real network facts and the character's knowledge
+  base; in-character rule-based fallback when no LLM is reachable.
+- **Hourly VOD segments**: the stream is teed to `seg_%05d.mp4` (1-hour chunks) and each
+  completed segment auto-uploads as an unlisted VOD, then is deleted to bound disk.
+- **Character studio** (console): restyle the character by chat, tune palette + voice, **upload a
+  custom PNG mascot** (PNGtuber-style animation), and give it a **private knowledge base** (RAG).
+  Animica keeps **Momo the cat** as the default.
+- **Live status** heartbeat drives a **● LIVE** badge (viewers, uptime, watch link) on the console
+  and homepage; auto-clears after 90s offline.
+- YouTube Data API v3 client with offline refresh tokens for unattended 24/7 operation. Honest by
+  design: owned accounts only, official APIs only, AI content disclosed on the broadcast; no AI
+  model runs on the gateway box.
+
+## [8.0.3] - 2026-07-15
+### Verified & hardened — sync self-heals natural 1-block forks (no behavior change)
+An adversarial investigation (four independent code traces + an end-to-end
+reproduction) confirmed that the default P2P sync path **already self-heals** a
+natural 1-block fork on any node running ≥7.2.0: a node that accepted the losing
+orphan sibling at height N re-requests the fork height **by hash**, ingests the
+winning sibling, and reorgs onto it (depth 1) — **no pinned checkpoint and no HTTP
+fallback required**. The recurring per-fork pins (28167/38728/44854) were only ever
+needed to rescue nodes running **pre-7.2.0** software (the self-heal lives in code
+they weren't running); for ≥7.2.0 nodes they are now a fast-converge safety net, not
+a requirement.
+
+- **No runtime change.** The one non-self-healing case — a node that mined >96
+  blocks onto the *losing* branch — is left as-is on purpose: the reorg-depth cap is
+  a deliberate deep-reorg / long-range defense, and relaxing it would be
+  split-unsafe. That candidate "fix" was explicitly rejected.
+- **Added regression coverage** locking in the self-heal so a refactor can't silently
+  reintroduce the 28167/38728-class wedge:
+  - `p2p/tests/test_sync_fork_selfheal_repro.py` — drives the real `_process_headers`;
+    proves the winning sibling at the fork height is enqueued (not dropped) and the
+    reuse path surfaces it too.
+  - `core/chain/tests/test_fork_choice_height_index_selfheal.py` — real `BlockImporter`
+    proofs: depth-1 sibling reorg fires and repairs the by-height index; an
+    equal-height tie does **not** prematurely reorg; and the deep-loser-extension
+    reorg cap **holds** (documents the deliberate guard).
+
+## [8.0.2] - 2026-07-14
+### Fixed — un-wedge nodes stuck syncing at block 44,854
+A natural 1-block fork at mainnet height **44,854** on 2026-07-14 left some nodes
+stuck on the losing (orphan) sibling — the same headers-pipeline class as the
+28,167 and 38,728 wedges. Added a pinned canonical checkpoint at 44,854 →
+`0x0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9` (the block the
+live majority-hashpower head at 45,204+ descends from). At boot a node wedged on the
+orphan rolls its head back below 44,854 and re-pulls the canonical block; the orphan
+is also rejected at import. Kill-switch: `ANIMICA_DISABLE_PINNED_CHECKPOINTS=1`.
+
+**Operators stuck at 44,854: upgrade to 8.0.2 and restart** — the node converges on
+boot. No genesis reset, no state change; nodes already on the canonical chain are
+unaffected (the pin is a no-op for them).
+
+## [8.0.1] - 2026-07-14
+### Added — Animica dVPN (decentralized VPN) + one-click `.anm` access
+A decentralized VPN built into the node. Anyone can run an **exit** and (once settlement
+lands) earn ANM for the bandwidth carried; anyone can route their device or just their
+browser through a chosen exit location.
+
+- **Client (system VPN):** `animica vpn exits | up | status | doctor | down`. Real
+  WireGuard tunnel (kernel `wg-quick`, `boringtun`/`wireguard-go` fallback) with a
+  **fail-closed killswitch** and a `doctor` leak self-test that **gates** the "connected"
+  claim (handshake live, apparent IP changed, no IPv6 leak, killswitch present).
+- **Exit operator:** `animica vpn exit register | serve`. Off by default, opt-in, gated
+  behind a wallet-signed ToS. Installs an **isolated** nftables table that MASQUERADEs the
+  tunnel subnet and blocks LAN / loopback / link-local / cloud-metadata / abuse ports —
+  never touching the host or docker firewall. Two-sided **signed** byte accounting; the
+  registry reconciles client vs. exit counts (min, >10% divergence flagged).
+- **Browser proxy (extension v1.2.0):** the Animica Internet extension gains a **VPN** tab
+  that lists exit locations by country and routes *just that browser* via `chrome.proxy`.
+  Base install adds only the `proxy` permission; token-gated exits request more at pick
+  time. Honestly labeled browser-proxy — **not** a system VPN, **not** Tor, single-hop.
+- **Easy `.anm`:** `animica.dev/browser` zero-install gateway + one-click extension
+  download (`animica.dev/extension`); new `animica.dev/vpn` landing.
+
+### Added — VPN relay block rewards (consensus, gated + inert)
+- `FORK_VPN_RELAY_REWARDS`: forward-only, height-gated to **mainnet block 50,000**. When
+  live, a capped slice of each block's subsidy is paid straight from the coinbase to relay
+  operators (node operators), carved from the miner's share — **never more than 50 ANM per
+  block**, and the cap **decays with the halving**. Emission-conserving (never mints above
+  schedule).
+- Ships **INERT**: the on-chain distribution source returns empty, so at/after height
+  50,000 the block reward is **byte-identical to no-fork** — verified by three independent
+  adversarial reviews (mint / split / inertness) and a runtime stress test. Going live
+  requires sealing a relay-contribution root behind a fresh gated activation. Until then,
+  dVPN rewards are **off-chain IOUs** (no spendable balance).
+
+### Note
+Non-mandatory for consensus (the reward fork is inert), but recommended so nodes carry the
+dVPN + reward code ahead of block 50,000.
+
+## [8.0.0] - 2026-07-14
+### Added — Marketplace, agent economy, generative media & the sovereign `.anm` internet
+ANM-native AI marketplace (PQ-signed commerce/escrow/reputation), free image generation,
+audio + video job types served by miners, ENA media-model training + checkpoint
+distribution, the ANS `.anm` registry + gateway + browser extension, and node
+content-serving with CID/hosting rewards. See the release notes for the full surface.
+
 ## [7.1.7] - 2026-07-11
 ### Changed — AICF inference uses every GPU on a multi-GPU rig
 Worker-side; non-consensus. Especially benefits agent/coding workloads, which get

@@ -1,0 +1,26 @@
+# Animica app store — ANMLIC1 license anchor worker (Merkle batch + on-chain data-tx).
+# TEMPLATE ONLY — this repo file is NOT installed/enabled by the store change itself.
+# INSTALL (operator):
+#   cp deploy/systemd/animica-store-license-anchor.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now animica-store-license-anchor.timer
+# ARM (default below is observe-only dry-run):
+#   STORE_ANCHOR_ENABLED=1 in .env.production creates anchor batches + proofs (DB only);
+#   STORE_ANCHOR_POST=1 additionally posts the 1-nANM ANMLIC1 tx from the store treasury
+#   (spends real fee — the PAYOUT_ENABLED-style gate for this worker).
+
+[Unit]
+Description=Animica store license anchorer (batch unanchored Licenses -> Merkle root -> ANMLIC1 data-tx, DomainAnchor pattern)
+Documentation=file:/root/animica/apps/animica-marketplace/scripts/license-anchor-worker.ts
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/animica/apps/animica-marketplace
+# Conservative defaults — .env.production (EnvironmentFile) overrides these to arm.
+Environment=STORE_ANCHOR_ENABLED=0
+Environment=STORE_ANCHOR_POST=0
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+EnvironmentFile=/root/animica/apps/animica-marketplace/.env.production
+ExecStart=/usr/bin/flock -n /run/lock/animica-store-license-anchor.lock /root/animica/apps/animica-marketplace/node_modules/.bin/tsx scripts/license-anchor-worker.ts
+NoNewPrivileges=true

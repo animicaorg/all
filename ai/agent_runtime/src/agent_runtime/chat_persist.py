@@ -45,10 +45,23 @@ import httpx
 TURN_SCHEMA = "animica.chat.turn.v1"
 THREAD_INDEX_PATH = "~/.animica/chat_threads.json"
 
-# Cap the namespace to 63 bits so it fits in a signed int64 column / JSON
-# number without precision loss. 56 bits of SHA-256 is way more entropy
-# than needed and leaves headroom for the trainer's bucketing.
-_NS_BITS = 56
+# The DA layer's namespace width is a consensus constant: NAMESPACE_BITS = 32
+# (da/nmt/codec.py, da/nmt/namespace.py). This used to mask to 56 bits on the
+# reasoning that 63 bits "fits in a signed int64" — which is true and irrelevant,
+# because the node rejects anything above 2**32-1:
+#
+#     da.putBlob RPC error -32602: namespace id 24735062580947889
+#     exceeds maximum 4294967295 (NAMESPACE_BITS=32)
+#
+# So EVERY turn failed to persist, and with it `/threads` and `/resume` — the
+# whole cross-device session-resume feature — could never work. Nothing needs
+# migrating: no thread has ever been written successfully.
+#
+# 32 bits means a collision between two (wallet, thread) pairs is possible at
+# around 2**16 threads per the birthday bound, which is fine here: the blob
+# payload records its own wallet and thread_id, so a reader filters an unrelated
+# turn out rather than mistaking it for its own.
+_NS_BITS = 32
 _NS_MASK = (1 << _NS_BITS) - 1
 
 
@@ -287,9 +300,20 @@ def read_thread(rpc_url: str, wallet_address: str, thread_id: str,
         if not env:
             continue
         try:
-            turns.append(Turn.from_envelope(env))
+            turn = Turn.from_envelope(env)
         except ChatPersistError:
             continue
+        # A namespace is 32 bits (the DA consensus width), so two distinct
+        # (wallet, thread) pairs CAN land in the same one — around 2**16 threads
+        # by the birthday bound. Without this check a collision would splice a
+        # stranger's conversation into your transcript, which is both wrong and a
+        # disclosure. The blob carries its own wallet and thread_id, so the
+        # namespace is a lookup hint and these two fields are the actual identity.
+        if turn.thread_id != thread_id:
+            continue
+        if turn.wallet_address and turn.wallet_address != wallet_address:
+            continue
+        turns.append(turn)
     turns.sort(key=lambda t: (t.sequence, t.ts))
     return turns
 

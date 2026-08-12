@@ -22,6 +22,13 @@ from typing import Any, Mapping, Optional
 
 import cbor2
 
+from animica.wallet.at_rest import (
+    WalletEncryptionError,
+    decrypt_secret_hex,
+    is_encrypted_secret,
+    resolve_passphrase,
+)
+
 # These helpers live in animica.cli.tx; importing them keeps the wire
 # format identical to `animica tx send`, which is the only "canonical
 # signer" in the codebase. Re-implementing would risk drift.
@@ -152,6 +159,7 @@ def sign_payment_tx(
     max_fee_nanm: int = _DEFAULT_MAX_FEE_PER_GAS_NANM,
     domain: str = DEFAULT_DOMAIN,
     prehash: str = DEFAULT_PREHASH,
+    passphrase: Optional[str] = None,
 ) -> str:
     """Sign a simple value-transfer payment txn from the wallet's keys.
 
@@ -195,15 +203,32 @@ def sign_payment_tx(
         raise PaymentSigningError("wallet entry has no address")
     pk_hex = str(entry.get("public_key_hex") or entry.get("publicKeyHex") or "")
     sk_hex = str(entry.get("secret_key_hex") or entry.get("secretKeyHex") or "")
+    if not sk_hex:
+        # At-rest encrypted store (ANM-C07): decrypt the secret in memory using
+        # the caller-supplied passphrase, else ANIMICA_WALLET_PASSPHRASE(_FILE).
+        enc = entry.get("secret_key_enc")
+        if is_encrypted_secret(enc):
+            secret = resolve_passphrase(passphrase)
+            if not secret:
+                raise PaymentSigningError(
+                    "wallet secret is encrypted at rest; provide a passphrase "
+                    "(pass passphrase=... or set ANIMICA_WALLET_PASSPHRASE) to sign"
+                )
+            try:
+                sk_hex = decrypt_secret_hex(enc, secret, address=sender)
+            except WalletEncryptionError as exc:
+                raise PaymentSigningError(f"failed to decrypt wallet secret: {exc}") from exc
     if not pk_hex or not sk_hex:
         raise PaymentSigningError(
             "wallet entry missing public_key_hex / secret_key_hex; "
             "cannot sign without the PQ keypair"
         )
     try:
-        used_alg_id = int(entry.get("alg_id") or entry.get("algId") or 0x1001)
+        # ANM-M07: default a missing alg_id to ml_dsa_65 (0x1003, real FIPS 204),
+        # never the forgeable dilithium3 stub (0x1001).
+        used_alg_id = int(entry.get("alg_id") or entry.get("algId") or 0x1003)
     except (TypeError, ValueError):
-        used_alg_id = 0x1001
+        used_alg_id = 0x1003
 
     pk = _hex_to_bytes(pk_hex)
     sk = _hex_to_bytes(sk_hex)

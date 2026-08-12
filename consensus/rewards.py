@@ -29,7 +29,9 @@ from typing import Any, Dict, List, Mapping, Tuple
 # Imported at module top on purpose: if this core module ever failed to import, a
 # node must fail LOUDLY at startup rather than silently skip the split at runtime
 # (which would under-credit the foundation — the exact silent-divergence hazard).
-from core.network_params import is_fork_active, FORK_FOUNDATION_SPLIT
+from core.network_params import (is_fork_active, FORK_FOUNDATION_SPLIT,
+                                 FORK_VPN_RELAY_REWARDS, FORK_TREASURY_25,
+                                 FORK_SERVICE_CARVE)
 
 log = logging.getLogger("consensus.rewards")
 
@@ -82,6 +84,81 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
 # subsidy funds the Animica Foundation treasury from block 42,001 onward.
 FOUNDATION_TREASURY_ADDRESS = "anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga"
 FOUNDATION_TREASURY_SPLIT_PCT = 15
+# FORK_TREASURY_25 (9.7.0): the foundation-treasury share of the per-block
+# subsidy rises to 25% at/after the activation height. Below it the 15% split
+# holds, so history is unchanged.
+TREASURY_SPLIT_PCT_V2 = 25
+
+
+def _treasury_split_pct(height: int, chain_id: int) -> int:
+    """Foundation-treasury share of the subsidy at `height`: 25% once
+    FORK_TREASURY_25 is active on mainnet, else the original 15%."""
+    if chain_id == 1 and is_fork_active(FORK_TREASURY_25, height, chain_id=1):
+        return TREASURY_SPLIT_PCT_V2
+    return FOUNDATION_TREASURY_SPLIT_PCT
+
+
+# FORK_SERVICE_CARVE (9.7.0): from the activation height a fixed 25% of every
+# block's subsidy is reserved for inference/service claims, WITHHELD FROM THE
+# MINER whether or not anything claims it. Claimed anchors are paid up to the
+# carve; whatever is unclaimed rolls to the foundation treasury (the operator's
+# rule — no separate escrow account). Combined with FORK_TREASURY_25 at the same
+# height, the split becomes 50% miner / 25% treasury / 25% inference, i.e. up to
+# 50% treasury on a block where nothing is claimed. The carve arithmetic lives in
+# consensus/service_carve.py; this is the height-gated percentage.
+SERVICE_CARVE_PCT_V1 = 25
+
+
+def service_carve_pct(height: int, *, chain_id: int = 1) -> int:
+    """Service-carve percentage of the block subsidy at `height`: 25% once
+    FORK_SERVICE_CARVE is active on the network, else 0."""
+    if is_fork_active(FORK_SERVICE_CARVE, height, chain_id=chain_id):
+        return SERVICE_CARVE_PCT_V1
+    return 0
+
+# FORK_VPN_RELAY_REWARDS (8.0.1) — REALIZED in 9.0.0 as on-chain IOU settlement.
+# The per-block settlement pool is capped at 50 ANM and HALVES on the subsidy schedule
+# (cap scales with current_subsidy/start_subsidy), so it is never more than 50 ANM/block
+# and decays with emission. It is CARVED from the miner subsidy (emission-conserving:
+# settlement total is subtracted from the miner output, never minted above the subsidy).
+#
+# 9.0.0: the live mechanism is consensus/iou_settlement.py + the settlement hook in
+# core.chain.block_import._apply_block_state — distributions come from signed
+# settlement-anchor TRANSFER txs (authority-signed, in-block), which this function
+# cannot see (it has no access to block txs), so the in-function branch below stays
+# INERT and byte-identical to 8.0.x: `sealed_relay_distribution` still returns [].
+# Kept (not deleted) so every 8.0.x call site remains valid and the carve math has
+# one reviewed reference implementation (vpn_relay_pool_cap is shared with 9.0.0).
+VPN_RELAY_REWARD_CAP = 50 * COIN
+
+
+def vpn_relay_pool_cap(height_for_halving: int, schedule) -> int:
+    """Max relay pool for this block: 50 ANM, decaying with the subsidy (never more).
+
+    Scales the 50 ANM cap by current_subsidy/initial_subsidy, so it halves/decays exactly
+    on the emission schedule and is always <= 50 ANM. Deterministic (integer-only)."""
+    try:
+        start = int(schedule["start_nANM_per_block"])
+        m, a, t = compute_subsidy_for_height(height_for_halving, schedule)
+        cur_total = int(m) + int(a) + int(t)
+    except Exception:
+        return 0
+    if start <= 0 or cur_total <= 0:
+        return 0
+    cap = (VPN_RELAY_REWARD_CAP * cur_total) // start
+    return min(cap, VPN_RELAY_REWARD_CAP)
+
+
+def sealed_relay_distribution(height_for_halving: int, chain_id: int) -> List[Tuple[str, int]]:
+    """The on-chain-sealed relay reward distribution for this block's settled epoch.
+
+    PERMANENTLY INERT (returns []): superseded in 9.0.0 by anchor-based IOU
+    settlement (consensus/iou_settlement.py), which is applied in
+    core.chain.block_import where the block's transactions are visible. This
+    stub is kept so the 8.0.x branch below stays byte-identical (no relay
+    output is ever emitted from compute_block_reward itself) and existing
+    call sites/imports remain valid. Deterministic (no I/O, no clock)."""
+    return []
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)
 def _validate_premine_distribution() -> None:
@@ -208,7 +285,9 @@ def compute_block_reward(
                 # dust created/destroyed) and is float-free (deterministic).
                 total_subsidy = miner_amount + aicf_amount + treasury_amount
                 aicf_amount = 0
-                treasury_amount = (total_subsidy * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+                # FORK_TREASURY_25 (9.7.0): 25% at/after H, else the original 15%.
+                treasury_amount = (total_subsidy
+                                   * _treasury_split_pct(height_for_halving, chain_id)) // 100
                 miner_amount = total_subsidy - treasury_amount
                 aicf_params = {}
             else:
@@ -267,7 +346,8 @@ def compute_block_reward(
                     and is_fork_active(FORK_FOUNDATION_SPLIT, height_for_halving, chain_id=1)
                 ):
                     aicf_amount_capped = 0
-                    treasury_amount_capped = (capped_total * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+                    treasury_amount_capped = (capped_total
+                                              * _treasury_split_pct(height_for_halving, chain_id)) // 100
                     miner_amount_capped = capped_total - treasury_amount_capped
                 (
                     final_miner,
@@ -313,6 +393,38 @@ def compute_block_reward(
                     for idx, (addr, amt) in enumerate(rewards)
                 ]
                 rewards.append((dev_fee_addr, dev_fee_amount))
+
+        # FORK_VPN_RELAY_REWARDS (8.0.1): carve up to 50 ANM (decaying with emission)
+        # from the miner subsidy and pay it to dVPN relay operators per the sealed,
+        # on-chain relay-contribution distribution. SELF-GATING + INERT: in 8.0.1
+        # sealed_relay_distribution() always returns [], so this branch adds no output,
+        # carves nothing, and leaves `rewards` byte-identical to the pre-fork result.
+        # It can never mint (relay total is capped AND subtracted from the miner output).
+        if (
+            chain_id == 1
+            and rewards
+            and is_fork_active(FORK_VPN_RELAY_REWARDS, height_for_halving, chain_id=1)
+        ):
+            dist = sealed_relay_distribution(height_for_halving, chain_id)
+            if dist:
+                pool_cap = vpn_relay_pool_cap(height_for_halving, schedule)
+                relay_total = sum(max(0, int(a)) for _, a in dist)
+                miner_addr0, miner_amt0 = rewards[0]
+                # Emission-conserving: never pay relays more than the cap or the miner has.
+                relay_total = min(relay_total, pool_cap, miner_amt0)
+                if relay_total > 0:
+                    # Scale each relay share to the affordable total (deterministic floor;
+                    # remainder stays with the miner so miner + relays == original miner amt).
+                    paid = 0
+                    scaled: List[Tuple[str, int]] = []
+                    denom = sum(max(0, int(a)) for _, a in dist) or 1
+                    for addr, amt in dist:
+                        share = (relay_total * max(0, int(amt))) // denom
+                        if share > 0:
+                            scaled.append((addr, share))
+                            paid += share
+                    rewards[0] = (miner_addr0, miner_amt0 - paid)
+                    rewards.extend(scaled)
 
         return rewards
     except (KeyError, ValueError, TypeError) as e:

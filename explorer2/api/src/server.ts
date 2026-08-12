@@ -7,6 +7,7 @@ import { ExplorerService } from './service.js'
 import { HttpError } from './errors.js'
 import { rpcDiscover, getServiceStatus, getAICFInfo, getMiningInfo, getDAInfo, daGetBlob, daGetProof, daPutBlob, daListHistory, getQuantumInfo } from './rpcExtended.js'
 import { RpcClient, RpcError } from './rpcClient.js'
+import { TokenTracker } from './tokensService.js'
 import { bigIntSafeStringify } from './bigIntJson.js'
 import fs from 'node:fs'
 
@@ -24,7 +25,7 @@ interface DiagnosticsInfo {
   }
 }
 
-export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: DiagnosticsInfo, rpc?: RpcClient) {
+export function createServer(service: ExplorerService, corsOrigin: string, logLevel: string, diagnostics?: DiagnosticsInfo, rpc?: RpcClient, tokens?: TokenTracker) {
   const app = express()
   const logger = pino({ level: logLevel })
 
@@ -263,6 +264,62 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
         return
       }
       res.json(payload)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // ── Token Tracker (ANM-20 index; also consumed by the mobile wallet) ───────
+
+  app.get('/api/tokens', async (req, res, next) => {
+    try {
+      const limit = Number(req.query.limit || 100)
+      jsonSafe(res, { tokens: tokens ? tokens.listTokens(limit) : [] })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/tokens/featured', async (req, res, next) => {
+    try {
+      const limit = Number(req.query.limit || 50)
+      jsonSafe(res, { tokens: tokens ? tokens.listFeatured(limit) : [] })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/tokens/search', async (req, res, next) => {
+    try {
+      const query = typeof req.query.q === 'string' ? req.query.q : ''
+      const limit = Number(req.query.limit || 50)
+      jsonSafe(res, { tokens: tokens ? tokens.search(query, limit) : [] })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/tokens/:address', async (req, res, next) => {
+    try {
+      const token = tokens ? tokens.getToken(req.params.address) : null
+      if (!token) {
+        res.status(404).json({ error: 'not_found', message: 'Token not found' })
+        return
+      }
+      jsonSafe(res, token)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  app.get('/api/tokens/:address/history', async (req, res, next) => {
+    try {
+      if (!tokens) {
+        res.json([])
+        return
+      }
+      const range = typeof req.query.range === 'string' ? req.query.range : '7d'
+      jsonSafe(res, tokens.getHistory(req.params.address, parseHistoryRange(range)))
     } catch (err) {
       next(err)
     }
@@ -787,6 +844,16 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
   })
 
   return app
+}
+
+/** Parse a token history range ('24h' | '7d' | '30d' | 'all') to seconds. */
+function parseHistoryRange(range: string): number {
+  const normalized = range.trim().toLowerCase()
+  if (normalized === 'all' || normalized === '0') return 0
+  const match = /^([0-9]+)(h|d)$/.exec(normalized)
+  if (!match) return 7 * 86_400
+  const amount = Number.parseInt(match[1], 10)
+  return match[2] === 'h' ? amount * 3_600 : amount * 86_400
 }
 
 /** Redact credentials from URLs (user:pass@ patterns). */

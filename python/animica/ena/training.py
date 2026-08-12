@@ -339,7 +339,110 @@ def _require_transformers():
             "python_transformers backend needs transformers + datasets (+ torch)",
             hint="pip install 'animica[gpu]'  (adds torch/transformers/datasets); "
                  "for LoRA/QLoRA add peft/bitsandbytes, for DPO add trl") from exc
+    # RUNTIME COMPAT SHIM (belt-and-suspenders for transitive datasets/dill pins the
+    # pyproject floor can't reach in an already-provisioned env): old datasets ships
+    # datasets/utils/_dill.py Pickler._batch_setitems(self, items), but the stdlib
+    # pickle._Pickler on Python 3.13+ calls _batch_setitems(items, obj) with an
+    # extra positional arg → "takes 2 positional arguments but 3 were given". If the
+    # loaded Pickler._batch_setitems has no *args parameter, wrap it to swallow the
+    # extra positionals. Idempotent (marked _anm_compat) and fully guarded so a
+    # missing/renamed module can NEVER break import.
+    try:
+        import inspect as _insp
+        from datasets.utils import _dill as _ds_dill  # type: ignore
+        _P = _ds_dill.Pickler
+        if getattr(_P._batch_setitems, "_anm_compat", False) is False and not any(
+                p.kind == p.VAR_POSITIONAL
+                for p in _insp.signature(_P._batch_setitems).parameters.values()):
+            _orig_bsi = _P._batch_setitems
+
+            def _bsi_compat(self, items, *a, **k):
+                return _orig_bsi(self, items)
+
+            _bsi_compat._anm_compat = True
+            _P._batch_setitems = _bsi_compat
+    except Exception:  # noqa: BLE001 - shim is best-effort, never fatal
+        pass
     return transformers, hf_datasets
+
+
+def _maybe_enable_cuda_diag() -> None:
+    """Opt-in CUDA debugging. When ANIMICA_ENA_CUDA_DEBUG is truthy, force
+    synchronous kernel launches (CUDA_LAUNCH_BLOCKING) and device-side assertions
+    (TORCH_USE_CUDA_DSA) so an "illegal memory access" surfaces at the REAL
+    offending op instead of a later, unrelated CUDA call. Must run BEFORE the first
+    CUDA op to take effect; setdefault never clobbers an operator's own value."""
+    if str(os.environ.get("ANIMICA_ENA_CUDA_DEBUG", "")).strip().lower() in (
+            "1", "true", "yes", "on"):
+        os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "1")
+        os.environ.setdefault("TORCH_USE_CUDA_DSA", "1")
+
+
+def _train_guarded(trainer, method: str):
+    """Run ``trainer.train()`` behind a CUDA-fault guard. On a CUDA/CUBLAS/
+    device-side fault we best-effort synchronize + empty the allocator cache (so a
+    wedged context is cleaned up) and re-raise as :class:`TrainingError`, so
+    :func:`run` marks the round ``failed`` cleanly instead of leaking a raw
+    RuntimeError. Non-CUDA RuntimeErrors propagate unchanged."""
+    try:
+        return trainer.train()
+    except RuntimeError as exc:
+        msg = str(exc)
+        if any(s in msg for s in ("CUDA error", "illegal memory access",
+                                  "device-side assert", "CUBLAS")):
+            try:
+                import torch  # type: ignore
+                try:
+                    torch.cuda.synchronize()
+                except Exception:  # noqa: BLE001 - best-effort cleanup
+                    pass
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:  # noqa: BLE001 - best-effort cleanup
+                    pass
+            except Exception:  # noqa: BLE001 - torch not importable
+                pass
+            raise TrainingError(
+                f"{method} training hit a CUDA fault: {msg[:200]}",
+                hint="retry on a healthy GPU; set ANIMICA_ENA_CUDA_DEBUG=1 for a "
+                     "synchronous CUDA_LAUNCH_BLOCKING trace") from exc
+        raise
+
+
+# Signatures that specifically mean "this GPU/bitsandbytes build can't run the
+# 4-bit/8-bit quant matmul". Kept narrow on purpose: broad tokens like bare "8bit"
+# (matches the paged_adamw_8bit optimizer name) or "not implemented for" (matches
+# generic dtype errors like "not implemented for 'Half'") would misfire the fallback
+# and mask an unrelated failure.
+_QUANT_UNSUPPORTED_MARKERS = ("cublas_status_not_supported", "no kernel image is available", "cublaslt", "not supported on this")
+
+
+def _is_quant_unsupported(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(k.lower() in m for k in _QUANT_UNSUPPORTED_MARKERS) and "illegal memory access" not in m
+
+
+def _run_with_quant_fallback(impl, method, rec, manifest, out_dir, hp):
+    try:
+        return impl(rec, manifest, out_dir, hp)
+    except (TrainingError, RuntimeError) as exc:
+        msg = str(exc)
+        if (hp.get("quant") in ("4bit", "8bit")
+                and _is_quant_unsupported(msg)
+                and os.environ.get("ANIMICA_ENA_NO_QUANT_FALLBACK", "").lower() not in ("1", "true", "yes", "on")):
+            log.warning("[train] %s: %s-bit quant unsupported by this GPU/bitsandbytes "
+                        "(%s) — retrying WITHOUT quantization (LoRA, fp16). Upgrade "
+                        "bitsandbytes to keep QLoRA's memory savings.",
+                        method, hp.get("quant"), msg.strip().splitlines()[0][:180])
+            try:
+                import torch as _t
+                if _t.cuda.is_available():
+                    _t.cuda.synchronize(); _t.cuda.empty_cache()
+            except Exception:
+                pass
+            hp2 = dict(hp); hp2["quant"] = None; hp2.setdefault("torch_dtype", "float16")
+            return impl(rec, manifest, out_dir, hp2)
+        raise
 
 
 def _run_python_transformers(rec: dict[str, Any], manifest: dict[str, Any],
@@ -375,6 +478,8 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any],
 
     model_kwargs: dict[str, Any] = {"low_cpu_mem_usage": True}
     quant = hp.get("quant")
+    if quant in ("4bit", "8bit") and os.environ.get("ANIMICA_ENA_DISABLE_QUANT", "").lower() in ("1", "true", "yes", "on"):
+        quant = None
     if quant in ("4bit", "8bit"):
         try:
             import bitsandbytes  # type: ignore  # noqa: F401
@@ -394,6 +499,30 @@ def _load_tokenizer_and_model(base_model: str, hp: dict[str, Any],
         # half-precision weights (skip for fp32/CPU where it would be slower/unsafe)
         model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(base_model, **model_kwargs)
+    try:
+        if getattr(model.config, "pad_token_id", None) is None and tok.pad_token_id is not None:
+            model.config.pad_token_id = tok.pad_token_id
+        _gen = getattr(model, "generation_config", None)
+        if _gen is not None and getattr(_gen, "pad_token_id", None) is None:
+            _gen.pad_token_id = tok.pad_token_id
+    except Exception:  # pragma: no cover - defensive
+        pass
+    # GPU-safety: a top cause of "CUDA error: an illegal memory access" during
+    # training is an embedding gather with a token id >= the embedding rows
+    # (added/special tokens whose ids exceed the base model's vocab). Make sure
+    # the model can embed EVERY id the tokenizer can emit. Done before LoRA/peft
+    # wrapping so the (frozen) base embeddings are the right size. Skipped for
+    # k-bit quantized weights, which can't be resized in place.
+    if quant not in ("4bit", "8bit"):
+        try:
+            emb = model.get_input_embeddings()
+            cur_rows = int(emb.weight.shape[0]) if emb is not None else None
+            if cur_rows is not None and len(tok) > cur_rows:
+                model.resize_token_embeddings(len(tok))
+                log.info("[train] resized embeddings %d -> %d to cover tokenizer",
+                         cur_rows, len(tok))
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("[train] resize_token_embeddings skipped: %s", exc)
     if gc_on:
         model.config.use_cache = False  # incompatible with gradient checkpointing
 
@@ -489,8 +618,9 @@ def encode_sft_row(tok, r: dict[str, Any], max_len: int, has_chat: bool):
     return {"input_ids": f_ids, "attention_mask": [1] * len(f_ids), "labels": labels}
 
 
-def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
+def _run_sft_impl(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
              hp: dict[str, Any], method: str) -> dict[str, Any]:
+    _maybe_enable_cuda_diag()  # must precede any CUDA/model load to take effect
     transformers, hf_datasets = _require_transformers()
     base_model = manifest.get("base_model")
     train_path = (manifest.get("train") or {}).get("path") or manifest.get("train_dataset")
@@ -510,6 +640,17 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
 
     rows = list(ds.read_jsonl(train_path))
     max_len = int(hp.get("max_seq_len", 1024))
+    # Never let a sequence exceed the model's positional range: position ids past
+    # max_position_embeddings index off the end of the position table and trigger
+    # a CUDA "illegal memory access". Clamp to the model's real context window.
+    model_ctx = getattr(getattr(model, "config", None), "max_position_embeddings", None)
+    if isinstance(model_ctx, int) and 0 < model_ctx < 10_000_000:
+        max_len = min(max_len, model_ctx)
+    try:
+        _emb = model.get_input_embeddings()
+        _vocab_rows = int(_emb.weight.shape[0]) if _emb is not None else None
+    except Exception:
+        _vocab_rows = None
     # Build (input_ids, labels) with the PROMPT masked to -100 so the loss is taken
     # on the RESPONSE only (completion-style SFT). Use the model's chat template for
     # instruct bases (Qwen-Instruct etc.) so prompts are wrapped exactly as the
@@ -519,6 +660,16 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     has_chat = bool(getattr(tok, "chat_template", None))
     encoded = [e for e in (encode_sft_row(tok, r, max_len, has_chat)
                            for r in rows) if e is not None]
+    # Belt-and-suspenders on top of resize_token_embeddings: never feed the GPU a
+    # token id it can't embed. Drop (don't clamp — clamping corrupts the sample)
+    # any row carrying an out-of-vocab id so one bad row can't crash the kernel.
+    if _vocab_rows:
+        _before = len(encoded)
+        encoded = [e for e in encoded
+                   if e["input_ids"] and max(e["input_ids"]) < _vocab_rows]
+        if len(encoded) != _before:
+            log.warning("[train] dropped %d row(s) with out-of-vocab token ids "
+                        "(>= %d)", _before - len(encoded), _vocab_rows)
     if not encoded:
         raise TrainingError("no usable training rows in train split")
     warm_started = bool(manifest.get("init_adapter"))
@@ -546,7 +697,7 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
         logging_steps=10, save_strategy="no", report_to=[])
     trainer = transformers.Trainer(model=model, args=args, train_dataset=dset,
                                    data_collator=collator)
-    train_result = trainer.train()
+    train_result = _train_guarded(trainer, "sft")
     _assert_finite_after_train(train_result, model, method="sft")
     trainer.save_model(out_dir)
     tok.save_pretrained(out_dir)
@@ -567,8 +718,15 @@ def _run_sft(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     return rec
 
 
-def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
+def _run_sft(rec, manifest, out_dir, hp, method):
+    return _run_with_quant_fallback(
+        lambda r, m, o, h: _run_sft_impl(r, m, o, h, method),
+        "sft", rec, manifest, out_dir, hp)
+
+
+def _run_dpo_impl(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
              hp: dict[str, Any]) -> dict[str, Any]:
+    _maybe_enable_cuda_diag()  # must precede any CUDA/model load to take effect
     _require_transformers()
     try:
         from trl import DPOConfig, DPOTrainer  # type: ignore
@@ -587,6 +745,10 @@ def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
     profile = _detect_memory_profile()
     hp = _auto_memory_hparams(hp, profile)
     tok, model, peft_enabled = _load_tokenizer_and_model(base_model, hp)
+    max_len = int(hp.get("max_seq_len", 1024))
+    _model_ctx = getattr(getattr(model, "config", None), "max_position_embeddings", None)
+    if isinstance(_model_ctx, int) and 0 < _model_ctx < 10_000_000:
+        max_len = min(max_len, _model_ctx)
     pref = hf_datasets.Dataset.from_list(
         [{"prompt": str(r["prompt"]), "chosen": str(r["chosen"]),
           "rejected": str(r["rejected"])} for r in rows])
@@ -602,16 +764,21 @@ def _run_dpo(rec: dict[str, Any], manifest: dict[str, Any], out_dir: str,
         gradient_checkpointing=bool(hp.get("gradient_checkpointing")),
         gradient_checkpointing_kwargs={"use_reentrant": False},
         bf16=bf16, fp16=fp16, optim=optim,
-        beta=float(hp.get("dpo_beta", 0.1)), logging_steps=10, report_to=[])
+        beta=float(hp.get("dpo_beta", 0.1)), logging_steps=10, report_to=[],
+        max_length=max_len, max_prompt_length=max(16, max_len // 2))
     trainer = DPOTrainer(model=model, args=args, train_dataset=pref,
                          processing_class=tok)
-    result = trainer.train()
+    result = _train_guarded(trainer, "dpo")
     _assert_finite_after_train(result, model, method="dpo")
     trainer.save_model(out_dir)
     rec["metrics"] = {"method": "dpo", "peft": peft_enabled,
                       "train_loss": float(getattr(result, "training_loss", 0.0)),
                       "pairs": len(rows)}
     return rec
+
+
+def _run_dpo(rec, manifest, out_dir, hp):
+    return _run_with_quant_fallback(_run_dpo_impl, "dpo", rec, manifest, out_dir, hp)
 
 
 def _collect_checkpoints(out_dir: str) -> list[str]:

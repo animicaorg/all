@@ -81,9 +81,11 @@ def test_split_conserves_and_is_exact_across_halvings(height, mparams):
     miner = total - foundation
     # conservation: nothing minted or burned by the split
     assert miner + foundation == total
-    # treasury is exactly the integer floor of 15% (remainder favors nobody unfairly:
-    # miner gets total - floor, so the two always sum to total)
-    assert foundation == (total * FOUNDATION_TREASURY_SPLIT_PCT) // 100
+    # treasury is exactly the integer floor of the fork-aware split (15% before
+    # FORK_TREASURY_25 at 75,000, 25% at/after it); remainder favors nobody unfairly:
+    # miner gets total - floor, so the two always sum to total.
+    from consensus.rewards import _treasury_split_pct
+    assert foundation == (total * _treasury_split_pct(height, 1)) // 100
 
 
 def test_total_emission_unchanged_by_split(mparams):

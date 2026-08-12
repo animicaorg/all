@@ -408,19 +408,39 @@ def snapshot_download_chunk(
     """
     try:
         import base64
-        
+        from core.db.snapshot import _safe_chunk_name, MAX_CHUNK_FILE_BYTES
+
         if chain_id is None:
             chain_id = int(deps.get_chain_id())
-        
+
+        # Path-safety (ANM-M03): chunk_name is caller-supplied; a name like
+        # "../../etc/passwd" would otherwise escape the snapshot dir and return an
+        # arbitrary file. Only allow a plain filename inside the snapshot dir.
+        try:
+            chunk_name = _safe_chunk_name(chunk_name)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+
         snapshot_dir = _get_checkpoint_snapshots_dir(chain_id, height)
         chunk_file = snapshot_dir / chunk_name
-        
+
         if not chunk_file.exists():
             return {
                 "success": False,
                 "error": f"Chunk {chunk_name} not found in snapshot at height {height}",
             }
-        
+
+        # Size cap (ANM-H02): refuse to slurp + base64 an oversized file into memory.
+        file_size = chunk_file.stat().st_size
+        if file_size > MAX_CHUNK_FILE_BYTES:
+            return {
+                "success": False,
+                "error": (
+                    f"Chunk {chunk_name} size {file_size} exceeds cap "
+                    f"{MAX_CHUNK_FILE_BYTES}"
+                ),
+            }
+
         # Read and encode chunk data
         with open(chunk_file, "rb") as f:
             chunk_data = f.read()

@@ -32,6 +32,17 @@ class PoolConfig:
     # old conservative floor can set ANIMICA_STRATUM_MIN_DIFFICULTY.
     min_difficulty: float = 0.00001
     max_difficulty: float = 1.0
+    # Wire-difficulty floor (xmrig compatibility). The per-session vardiff may lower
+    # the share difficulty toward this value for smoother, lower-variance PPS, but
+    # the number sent in mining.set_difficulty must never drop below what the miner
+    # accepts. This xmrig build rejects a sub-1.0 set_difficulty (it enters a
+    # connect→set_difficulty→disconnect loop and submits nothing), which is why the
+    # pool was previously pinned at min=max=1.0 (= θ, block-only shares). Instead of
+    # pinning, _share_bounds_for_theta converts this floor to a θµ threshold and
+    # raises the EASIEST-share bound to it, so the vardiff ranges [floor, block]
+    # and the wire difficulty stays ≥ floor. Raise above 1.0 to hand very weak
+    # (sub-~70 MH/s) miners a harder-but-valid floor.
+    share_difficulty_floor: float = 1.0
     # Difficulty a fresh pool bootstraps the global vardiff at, BEFORE any shares
     # have been observed. MUST be achievable: starting at max_difficulty (= θ, the
     # block-finder share) deadlocks the vardiff — a miner cannot submit a
@@ -79,6 +90,15 @@ class PoolConfig:
     credit_cap_enabled: bool = False
     credit_cap_mined_base: int = 0
     credit_cap_credited_base: int = 0
+    # When the credit cap is active and a PPS block-winning share is credited,
+    # hold back this fraction (bps) of the remaining headroom for the
+    # NON-winning shares that arrive between blocks. Without it the winner's
+    # own share consumes the entire headroom its block just minted, pinning
+    # cap_remaining at 0 so every other miner's share credit clamps to zero —
+    # i.e. PPS silently degenerates into "paid only if you find the block".
+    # The holdback is not a fee: unconsumed reserve stays in cap_remaining and
+    # flows back to future block winners once small-share demand is met.
+    pps_block_reserve_bps: int = 500
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -138,6 +158,10 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
     # Keep the bootstrap difficulty inside the operating band so a new pool
     # never starts a miner harder than max or easier than the floor.
     start_difficulty = min(max(start_difficulty, min_difficulty), max_difficulty)
+    share_difficulty_floor = float(
+        overrides.get("share_difficulty_floor")
+        or _env("ANIMICA_STRATUM_SHARE_DIFFICULTY_FLOOR", "1.0")
+    )
     poll_interval = float(
         overrides.get("poll_interval") or _env("ANIMICA_STRATUM_POLL_INTERVAL", "1.0")
     )
@@ -223,6 +247,12 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         or _env("ANIMICA_POOL_CREDIT_CAP_CREDITED_BASE", "0")
         or 0
     )
+    pps_block_reserve_bps = int(
+        overrides.get("pps_block_reserve_bps")
+        if overrides.get("pps_block_reserve_bps") is not None
+        else _env("ANIMICA_POOL_PPS_BLOCK_RESERVE_BPS", "500") or 500
+    )
+    pps_block_reserve_bps = min(10_000, max(0, pps_block_reserve_bps))
 
     if not str(host or "").strip():
         raise ValueError("host must be non-empty")
@@ -294,6 +324,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         min_difficulty=min_difficulty,
         max_difficulty=max_difficulty,
         start_difficulty=start_difficulty,
+        share_difficulty_floor=share_difficulty_floor,
         poll_interval=poll_interval,
         log_level=log_level,
         api_host=api_host,
@@ -315,4 +346,5 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         credit_cap_enabled=credit_cap_enabled,
         credit_cap_mined_base=credit_cap_mined_base,
         credit_cap_credited_base=credit_cap_credited_base,
+        pps_block_reserve_bps=pps_block_reserve_bps,
     )

@@ -169,7 +169,11 @@ def _lookup_receipt_loc(tx_hash_b: bytes) -> _ReceiptLoc | None:
                     pass
 
     # 3) Scan recent canonical blocks as a resilient fallback if indexes lag.
-    scan_depth = int(os.environ.get("ANIMICA_TX_RECEIPT_SCAN_DEPTH", "4096") or 4096)
+    # Same bounded-fallback rationale as rpc/methods/tx.py. This path backs
+    # tx.getTransactionReceipt / eth_getTransactionReceipt — the calls wallets and
+    # exchanges poll hardest — so leaving it at 4096 reopened the same starvation
+    # that stalls block production. Env-overridable; 0 disables the scan entirely.
+    scan_depth = int(os.environ.get("ANIMICA_TX_RECEIPT_SCAN_DEPTH", "128") or 128)
     if scan_depth > 0:
         loc = _scan_receipt_loc_by_blocks(tx_hash_b, max_depth=scan_depth)
         if loc is not None:

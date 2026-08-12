@@ -154,11 +154,30 @@ def _is_local_ip(value: str | None) -> bool:
         return False
 
 
+def _is_public_edge_request(ctx: Any | None) -> bool:
+    """True if the request reached us through the public nginx edge.
+
+    The node RPC binds 127.0.0.1 only, so a genuine local/internal caller connects
+    directly with NONE of these headers, while every public vhost sets X-Real-IP /
+    X-Forwarded-For. Presence => treat as REMOTE regardless of the loopback socket
+    peer (which is always nginx/docker-proxy) or any client-spoofed header value.
+
+    Closes the unauthenticated wallet.* spend/key oracle (incident 2026-07-09):
+    behind nginx every request looked loopback, so _is_local_ip() authorized
+    wallet.send/importprivkey/etc. for the whole internet. Internal direct-localhost
+    callers keep working because they send no proxy headers.
+    """
+    h = _ctx_headers(ctx)
+    return bool(
+        h.get("x-forwarded-for") or h.get("x-real-ip") or h.get("x-animica-public-edge")
+    )
+
+
 def _authorize_wallet_rpc(ctx: Any | None) -> None:
     if _env_truthy("ANIMICA_WALLET_RPC_ALLOW_REMOTE"):
         return
     client_ip = _ctx_client_ip(ctx)
-    if _is_local_ip(client_ip):
+    if not _is_public_edge_request(ctx) and _is_local_ip(client_ip):
         return
     token = os.getenv("ANIMICA_RPC_ADMIN_TOKEN")
     if token and _ctx_headers(ctx).get("x-animica-admin-token") == token:

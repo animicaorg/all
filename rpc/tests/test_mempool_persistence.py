@@ -1,8 +1,22 @@
+import pytest
+
 from core.types.tx import Tx
 
 from rpc import deps as rpc_deps
 import rpc.instant_tx as instant_tx
 from rpc.mempool_service import MempoolService
+
+
+@pytest.fixture(autouse=True)
+def _disable_mempool_sig_verification(monkeypatch):
+    # These tests exercise the mempool persist/restore roundtrip using
+    # deliberately UNSIGNED fixture txs. Under 6.0.0 (ANM-H10) the mempool
+    # performs mandatory in-mempool PQ signature verification on mainnet
+    # admission, which correctly rejects the unsigned fixtures. Signature
+    # policy is covered by dedicated admission tests; here we opt out via the
+    # intended kill-switch env flag so the persistence behavior can be tested
+    # in isolation without weakening any production/security code.
+    monkeypatch.setenv("ANIMICA_MEMPOOL_VERIFY_SIGS", "0")
 
 
 def _build_transfer_tx() -> tuple[Tx, bytes]:

@@ -1,0 +1,12 @@
+# TEMPLATE ONLY — install per the .service header; not enabled by the repo change.
+[Unit]
+Description=Run the Animica Python Cloud janitor every 5 minutes (lease/watchdog latency well under the shortest lease)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

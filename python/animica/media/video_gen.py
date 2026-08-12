@@ -45,7 +45,9 @@ def resolve_video_model(mode: str, tier: str | None) -> str:
 
 def encode_mp4(frames: List, fps: int = 8) -> bytes:
     """Encode PIL frames (or HxWx3 uint8 arrays) to MP4 bytes. CPU-verifiable, no model needed."""
-    if not frames:
+    # `frames` is often a numpy array (diffusers returns an (N,H,W,C) stack);
+    # `if not frames` on an ndarray raises "truth value of an array is ambiguous".
+    if frames is None or len(frames) == 0:
         raise MediaError("no frames to encode")
     try:
         import imageio.v3 as iio
@@ -70,7 +72,32 @@ def encode_mp4(frames: List, fps: int = 8) -> bytes:
     return data
 
 
-def _load_pipeline(mode: str, model_id: str):
+def _reclaim_all_vram() -> None:
+    """Evict the video AND image pipeline caches and reclaim VRAM. A t2v/i2v load
+    on a 24 GB card routinely OOMs while an earlier image job's pipeline (sdxl-turbo
+    ~7 GB, FLUX ~33 GB) is still resident — neither cache evicts on its own."""
+    _PIPELINE_CACHE.clear()
+    try:
+        from . import image_gen as _ig
+        _ig._PIPELINE_CACHE.clear()
+    except Exception:
+        pass
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _looks_oom(e: Exception) -> bool:
+    s = str(e).lower()
+    return "out of memory" in s or "cuda oom" in s or "cublas" in s
+
+
+def _load_pipeline(mode: str, model_id: str, _retrying: bool = False):
     try:
         import torch
         import diffusers
@@ -88,12 +115,37 @@ def _load_pipeline(mode: str, model_id: str):
         else:
             from diffusers import DiffusionPipeline
             pipe = DiffusionPipeline.from_pretrained(model_id, torch_dtype=dtype)
-        pipe = pipe.to("cuda" if cuda else "cpu")
+        # Stable Video Diffusion is heavy (~16 GiB at full residency). Enable
+        # model CPU-offload + VAE slicing + UNet forward-chunking so it fits on
+        # ~10-12 GiB cards instead of only 24 GiB ones — offload also manages
+        # device placement, so do NOT also .to("cuda") in that path.
+        offloaded = False
+        if cuda and mode == "video_i2v" and \
+                os.environ.get("ANIMICA_VIDEO_NO_OFFLOAD", "") not in ("1", "true"):
+            try:
+                pipe.enable_model_cpu_offload()
+                offloaded = True
+                try:
+                    pipe.unet.enable_forward_chunking()
+                except Exception:
+                    pass
+                try:
+                    pipe.vae.enable_slicing()
+                except Exception:
+                    pass
+            except Exception:
+                offloaded = False
+        if not offloaded:
+            pipe = pipe.to("cuda" if cuda else "cpu")
         try:
             pipe.set_progress_bar_config(disable=True)
         except Exception:
             pass
     except Exception as e:
+        if _looks_oom(e) and not _retrying:
+            # Free every resident pipeline (ours and image_gen's) and try once more.
+            _reclaim_all_vram()
+            return _load_pipeline(mode, model_id, _retrying=True)
         raise MediaError(f"failed to load video model {model_id!r}: {e}") from e
     _PIPELINE_CACHE[key] = pipe
     return pipe
@@ -114,8 +166,18 @@ def generate_text_to_video(prompt: str, *, tier: str = "premium", num_frames: in
     import torch
     gen = torch.Generator(device="cuda" if torch.cuda.is_available() else "cpu").manual_seed(int(seed)) if seed is not None else None
     try:
-        with torch.no_grad():
-            out = pipe(prompt, num_frames=num_frames, num_inference_steps=steps, generator=gen)
+        try:
+            with torch.no_grad():
+                out = pipe(prompt, num_frames=num_frames, num_inference_steps=steps, generator=gen)
+        except Exception as e:
+            if not _looks_oom(e):
+                raise
+            # Generation-time OOM: another job's model is usually the squatter.
+            # Reclaim everything, reload just this pipeline, and retry once.
+            _reclaim_all_vram()
+            pipe = _load_pipeline("video_t2v", model_id)
+            with torch.no_grad():
+                out = pipe(prompt, num_frames=num_frames, num_inference_steps=steps, generator=gen)
         frames = out.frames[0] if hasattr(out, "frames") else out["frames"][0]
     except Exception as e:
         raise MediaError(f"t2v generation failed: {e}") from e

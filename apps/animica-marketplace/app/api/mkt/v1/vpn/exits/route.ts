@@ -3,6 +3,8 @@ import { authenticate, requireScope, ok, err, ApiError, withIdempotency } from '
 import { prisma } from '@/lib/db';
 import { reapStaleExits } from '@/lib/vpn';
 import { jsonSafe } from '@/lib/nanm';
+import { decodeAnimicaAddress } from '@/lib/address';
+import { ML_DSA_65_ALG_ID } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +70,24 @@ export async function POST(req: NextRequest) {
 
       const httpProxy = body.httpProxy ? String(body.httpProxy).trim().slice(0, 256) : null;
       const proxyToken = body.proxyToken ? String(body.proxyToken).slice(0, 256) : null;
+      // Optional operator payout address. When set, bandwidth-reward IOUs settle here instead of
+      // the owner's Account.address (the settlement worker COALESCEs payoutAddress -> owner addr).
+      // Validate the bech32m anim1 form now so a bad value never silently strands rewards later.
+      let payoutAddress: string | null = null;
+      if (body.payoutAddress != null && String(body.payoutAddress).trim() !== '') {
+        payoutAddress = String(body.payoutAddress).trim().slice(0, 128);
+        // Enforce ml_dsa_65 (algId 0x1003) — the ONLY real scheme. A valid-bech32m address for a
+        // broken/unknown scheme would be stored, paid on-chain, and the ANM stranded forever.
+        let decoded;
+        try {
+          decoded = decodeAnimicaAddress(payoutAddress);
+        } catch {
+          throw new ApiError(400, 'bad_exit', 'payoutAddress must be a valid anim1 address');
+        }
+        if (decoded.algId !== ML_DSA_65_ALG_ID) {
+          throw new ApiError(400, 'bad_exit', 'payoutAddress must be an ml_dsa_65 (0x1003) address');
+        }
+      }
       const capacityMbps = Math.max(0, Math.floor(Number(body.capacityMbps ?? 0)));
       if (!Number.isFinite(capacityMbps) || capacityMbps <= 0) {
         throw new ApiError(400, 'bad_exit', 'capacityMbps must be a positive integer');
@@ -88,6 +108,7 @@ export async function POST(req: NextRequest) {
       const data = {
         label, region, country, city, endpoint,
         httpProxy, proxyToken, capacityMbps, priceHintNanmPerGb, tosHash,
+        payoutAddress,
         online: true, lastSeenAt: new Date(),
       };
       const exit = existing

@@ -1,8 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Biometric unlock (local_auth). USE_BIOMETRIC covers Android 9+; the
+         legacy fingerprint permission keeps 6.0–8.1 working. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <application
-        android:label="animica_wallet"
+        android:label="Animica Wallet"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -23,6 +30,15 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!-- animica:// deep links. Currently `animica://wc?...`, the
+                 site-pairing URI animica.xyz renders as a QR code and offers
+                 as "Open in Animica app" on phones. Handled in main.dart. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="animica"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

@@ -145,7 +145,15 @@ def _validate_genesis(g: Dict[str, Any], override_chain_id: int | None = None) -
         raise GenesisError("alloc must be a list of {address, balance}")
 
     premine_total_units = int(g["economics"].get("premineTotal", 0))
-    # Optional soft-check: sum alloc balances should be <= premineTotal (if present)
+    # ANM-M04: the alloc-cap check (alloc_sum <= premineTotal) was skipped whenever
+    # premineTotal==0, masking a genesis that declares zero premine yet allocates
+    # coins. All four shipped genesis files (chainId 1/2/1337) declare premineTotal=0
+    # despite a real hardcoded mainnet premine; those genesis hashes cannot change
+    # (that would be a hard fork), so they are grandfathered with a transparency
+    # warning. Every OTHER (new) network must declare premineTotal >= allocation —
+    # the cap is enforced unconditionally there, including the premineTotal==0 case.
+    _GRANDFATHERED_GENESIS_CHAINS = {1, 2, 1337}
+    genesis_chain_id = int(g.get("chainId", 0) or 0)
     try:
         alloc_sum = 0
         for i, a in enumerate(g["alloc"]):
@@ -155,9 +163,25 @@ def _validate_genesis(g: Dict[str, Any], override_chain_id: int | None = None) -
             if bal < 0:
                 raise GenesisError(f"alloc[{i}] balance negative")
             alloc_sum += bal
-        if premine_total_units and alloc_sum > premine_total_units:
+        if genesis_chain_id in _GRANDFATHERED_GENESIS_CHAINS:
+            if premine_total_units == 0 and alloc_sum > 0:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "ANM-M04: genesis chainId=%d declares premineTotal=0 but allocates "
+                    "%d base units (grandfathered; premine is real and hardcoded)",
+                    genesis_chain_id,
+                    alloc_sum,
+                )
+            if premine_total_units and alloc_sum > premine_total_units:
+                raise GenesisError(
+                    f"alloc sum ({alloc_sum}) exceeds premineTotal ({premine_total_units})"
+                )
+        elif alloc_sum > premine_total_units:
+            # New network: enforce the cap unconditionally (premineTotal==0 included).
             raise GenesisError(
-                f"alloc sum ({alloc_sum}) exceeds premineTotal ({premine_total_units})"
+                f"alloc sum ({alloc_sum}) exceeds premineTotal ({premine_total_units}); "
+                f"declare the true premine in genesis economics.premineTotal"
             )
     except ValueError as e:
         raise GenesisError(f"alloc values must be integers: {e}")

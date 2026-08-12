@@ -46,6 +46,16 @@ class PoolPayoutScheduler:
         self._max_pending_reconcile = max(
             1, int(os.getenv("ANIMICA_POOL_PAYOUT_PENDING_LIMIT", "1000"))
         )
+        # Stuck-payout auto-release cutoff (unix ts). A payout submitted at/after
+        # this ts that is found dropped with its nonce ALREADY consumed can never
+        # confirm under its own nonce, so it is released (paid_out rolled back) to
+        # be re-paid — instead of retried forever (which pins paid_out so a miner
+        # reads as paid while the funds were never sent). Payouts submitted BEFORE
+        # the cutoff are grandfathered (e.g. a batch settled out-of-band) so they
+        # are never released and double-paid. Default 0 = release all eligible.
+        self._reconcile_release_min_ts = max(
+            0.0, float(os.getenv("ANIMICA_POOL_PAYOUT_RECONCILE_MIN_TS", "0") or 0.0)
+        )
         self._signer_resolution: Any = None
 
     async def run(self) -> None:
@@ -145,7 +155,15 @@ class PoolPayoutScheduler:
             return False
         return any(
             marker in message
-            for marker in ("too low", "too high", "mismatch", "already used", "invalid")
+            for marker in (
+                "too low", "too high", "mismatch", "already used", "invalid",
+                # Animica uses a nonce-less execution model (the sender nonce is
+                # never persisted/incremented), but the mempool still rejects
+                # non-contiguous nonces as a "nonce gap". Treat that as a nonce
+                # error so the submit path re-resolves the mempool-aware nonce and
+                # retries instead of burning attempts on a stale value.
+                "gap", "nonce_gap",
+            )
         )
 
     @staticmethod
@@ -399,14 +417,36 @@ class PoolPayoutScheduler:
                 continue
 
             if item_nonce is not None and chain_pending_nonce > item_nonce:
-                # Nonce is already consumed/pending by another tx; do not generate
-                # another resend for this payout slot.
-                if callable(record_retry):
+                # Nonce already consumed by another tx AND (we are here because) the
+                # tx is dropped/not-on-chain past the grace window: it can NEVER
+                # confirm under its own nonce. Retrying forever just pins paid_out —
+                # the miner reads as paid while the funds were never sent (the exact
+                # stuck-payout leak). Release the credit (roll back paid_out) so it
+                # can be re-paid with a fresh nonce. Grandfather payouts submitted
+                # before the release cutoff (settled out-of-band) to avoid a
+                # double-pay.
+                if (
+                    submitted_ts >= self._reconcile_release_min_ts
+                    and callable(mark_dropped)
+                ):
+                    try:
+                        mark_dropped(
+                            tx_hash=tx_hash,
+                            error=(
+                                "payout dropped and nonce already consumed "
+                                f"(chain_pending_nonce={chain_pending_nonce}, "
+                                f"tx_nonce={item_nonce}); credit released for re-payout"
+                            ),
+                            release_credit=True,
+                        )
+                    except Exception:
+                        pass
+                elif callable(record_retry):
                     try:
                         record_retry(
                             tx_hash=tx_hash,
                             error=(
-                                "rebroadcast skipped: nonce already advanced "
+                                "rebroadcast skipped: nonce already advanced, pre-cutoff "
                                 f"(chain_pending_nonce={chain_pending_nonce}, tx_nonce={item_nonce})"
                             ),
                             next_retry_ts=now + (self._retry_backoff_seconds * max(2, retry_count + 1)),
@@ -628,28 +668,49 @@ class PoolPayoutScheduler:
                 )
                 raise RuntimeError(f"payout signer unavailable: {exc}") from exc
 
-            nonce = self._resolve_nonce(rpc, resolved.sender)
+            # Nonce-less execution model: the chain never persists/increments the
+            # sender's account nonce (state.getNonce is always 0), yet the mempool
+            # enforces strict sequential nonces (expected = highest-pending-nonce
+            # + 1, or the committed 0 when the sender has nothing pending).
+            # Resolving the nonce ONCE per cycle and locally incrementing
+            # (0,1,2,...) produced `nonce_gap` rejections whenever a block mined a
+            # payout mid-burst and dropped the pending count. So resolve the
+            # mempool-aware nonce FRESH for every payout (and on every retry) — each
+            # tx then carries exactly the nonce the mempool currently expects, and
+            # the gap-aware retry below recovers from the residual submit/mine race.
             for item in due:
                 address = str(item.get("address") or "").strip()
                 amount = int(item.get("amount") or 0)
                 if not address or amount <= 0:
                     continue
 
+                current_nonce: Optional[int] = None
+                # Unique per-payout fee -> distinct tx hash so a repeat (address,
+                # amount) payout actually executes. The nonce-less chain rejects
+                # re-applying an already-included hash (block_import "duplicate tx
+                # apply attempt rejected"), so two identical payouts otherwise
+                # silently no-op the 2nd one while the ledger still marks it paid.
+                # Computed ONCE per payout (stable across retries). max_fee is a
+                # cap; the salt is sub-0.01 ANM.
+                payout_fee = int(self._max_fee) + (int(time.time() * 1_000_000) % 5_000_000)
                 try:
-                    current_nonce = nonce
                     tx_hash = None
                     signed_raw_tx: Optional[str] = None
                     attempt = 0
                     while attempt < self._retry_attempts:
                         attempt += 1
                         try:
+                            # Re-resolve every attempt so a retry after a nonce gap
+                            # (or any transient failure) uses the current expected
+                            # nonce rather than a stale one.
+                            current_nonce = self._resolve_nonce(rpc, resolved.sender)
                             tx_obj = tx_build.transfer(
                                 from_addr=resolved.sender,
                                 to_addr=address,
                                 amount=amount,
                                 nonce=current_nonce,
                                 gas_limit=None,
-                                max_fee=self._max_fee,
+                                max_fee=payout_fee,
                                 chain_id=int(self._config.chain_id),
                             )
                             signed = sign_transaction_with_rpc_context(
@@ -666,11 +727,6 @@ class PoolPayoutScheduler:
                         except Exception as submit_exc:  # noqa: BLE001
                             if attempt >= self._retry_attempts or not self._is_retryable_submit_error(submit_exc):
                                 raise
-                            if self._is_nonce_error(submit_exc):
-                                try:
-                                    current_nonce = self._resolve_nonce(rpc, resolved.sender)
-                                except Exception:
-                                    pass
                             self._log.warning(
                                 "pool_payout_submission_retry",
                                 extra={
@@ -693,7 +749,7 @@ class PoolPayoutScheduler:
                         amount=amount,
                         tx_hash=tx_hash,
                         raw_tx=signed_raw_tx,
-                        nonce=current_nonce,
+                        nonce=current_nonce if current_nonce is not None else 0,
                     )
                     self._log.info(
                         "pool_payout_submitted",
@@ -704,7 +760,6 @@ class PoolPayoutScheduler:
                             "nonce": current_nonce,
                         },
                     )
-                    nonce = current_nonce + 1
                     sent += 1
                 except Exception as exc:  # noqa: BLE001
                     self._metrics.record_payout_failed(
@@ -717,15 +772,10 @@ class PoolPayoutScheduler:
                         extra={
                             "address": address,
                             "amount": amount,
-                            "nonce": nonce,
+                            "nonce": current_nonce,
                             "error": str(exc),
                         },
                     )
-                    # Recover nonce for the next candidate after a failed submit.
-                    try:
-                        nonce = self._resolve_nonce(rpc, resolved.sender)
-                    except Exception:
-                        pass
                     if "insufficient" in str(exc).lower():
                         break
         return sent

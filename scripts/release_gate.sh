@@ -30,6 +30,10 @@ fi
 echo "wheel: $WHEEL"
 
 TMP="$(mktemp -d)"; "$PY" -c "import zipfile,sys;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$WHEEL" "$TMP"
+# Clean up the extracted wheel AND the clean-venv (set later) on any exit — otherwise
+# every gate run leaks a multi-GB tree into /tmp.
+_GATE_TMPDIRS=("$TMP")
+trap 'rm -rf "${_GATE_TMPDIRS[@]}"' EXIT
 
 note "1. wheel hygiene"
 for pat in '__pycache__' '*.pyc' '*.bak*' '*.fix_*' '*.orig' '*.rej' 'mykey.json' 'tx.json'; do
@@ -49,19 +53,24 @@ import animica.cli as cli
 for m in pkgutil.iter_modules(cli.__path__):
     try: importlib.import_module("animica.cli."+m.name)
     except Exception as e: fails.append(("animica.cli."+m.name, type(e).__name__, str(e)[:80]))
-for p in ("animica.ena","animica.quantum","animica.studio"):
+for p in ("animica.ena","animica.quantum","animica.studio","animica.media"):
     try:
         pk=importlib.import_module(p)
         for m in pkgutil.iter_modules(pk.__path__):
             try: importlib.import_module(p+"."+m.name)
             except Exception as e: fails.append((p+"."+m.name, type(e).__name__, str(e)[:80]))
     except Exception as e: fails.append((p, type(e).__name__, str(e)[:80]))
+# 9.0.0: the settle CLI chains into the vendored consensus stack — import the chain
+# explicitly so a wheel that broke the vendoring fails the gate, not the operator.
+for p in ("consensus.iou_settlement", "consensus.rewards"):
+    try: importlib.import_module(p)
+    except Exception as e: fails.append((p, type(e).__name__, str(e)[:80]))
 for n,t,e in fails: print("    BROKEN:", n, t, e)
 sys.exit(1 if fails else 0)
 PYEOF
 
 note "4. clean-venv install + pip check"
-VENV="$(mktemp -d)/v"; "$PY" -m venv "$VENV" >/dev/null 2>&1
+_VENV_ROOT="$(mktemp -d)"; _GATE_TMPDIRS+=("$_VENV_ROOT"); VENV="$_VENV_ROOT/v"; "$PY" -m venv "$VENV" >/dev/null 2>&1
 if "$VENV/bin/pip" install -q "$WHEEL" >/dev/null 2>&1; then
   ok "pip install (base, no AI extras)"
   if "$VENV/bin/pip" check >/dev/null 2>&1; then ok "pip check: no broken requirements"; else bad "pip check found broken requirements"; fi

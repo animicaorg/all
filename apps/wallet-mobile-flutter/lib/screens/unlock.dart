@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/auth_state.dart';
+import 'auth_error.dart';
 
 class UnlockScreen extends ConsumerStatefulWidget {
   const UnlockScreen({super.key});
@@ -17,12 +18,41 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
   final _ctrl2 = TextEditingController();
   String? _error;
   bool _busy = false;
+  bool _biometricTried = false;
 
   @override
   void dispose() {
     _ctrl.dispose();
     _ctrl2.dispose();
     super.dispose();
+  }
+
+  /// Auto-offer the biometric prompt once when the lock screen first shows for
+  /// a wallet that has it enabled. A decline/cancel just leaves the password
+  /// field ready — never an error.
+  Future<void> _maybeAutoBiometric(AuthStatus auth) async {
+    if (_biometricTried) return;
+    _biometricTried = true;
+    if (!auth.configured || !auth.biometricEnabled) return;
+    await _biometricUnlock();
+  }
+
+  Future<void> _biometricUnlock() async {
+    if (_busy) return;
+    setState(() {
+      _error = null;
+      _busy = true;
+    });
+    try {
+      final ok = await ref.read(authProvider.notifier).unlockWithBiometric();
+      if (!ok && mounted) {
+        // Not necessarily an error (user may have cancelled) — stay quiet and
+        // let them use the password.
+        setState(() {});
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _submit(AuthStatus auth) async {
@@ -58,9 +88,16 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
     return Scaffold(
       body: authAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Auth error: $e')),
+        error: (e, _) => AuthErrorContent(e),
         data: (auth) {
           final isSetup = !auth.configured;
+          final showBiometric = auth.configured && auth.biometricEnabled;
+          if (showBiometric) {
+            // Fire the one-shot auto-prompt after this frame.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _maybeAutoBiometric(auth);
+            });
+          }
           return SafeArea(
             child: Center(
               child: SingleChildScrollView(
@@ -125,6 +162,17 @@ class _UnlockScreenState extends ConsumerState<UnlockScreen> {
                         child: Text(isSetup ? 'Create password' : 'Unlock'),
                       ),
                     ),
+                    if (showBiometric) ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _busy ? null : _biometricUnlock,
+                          icon: const Icon(Icons.fingerprint),
+                          label: const Text('Unlock with biometrics'),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

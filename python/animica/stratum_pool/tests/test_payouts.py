@@ -235,7 +235,7 @@ def test_process_once_rebroadcasts_dropped_submitted_payout(monkeypatch):
                     "tx_hash": "0x" + ("ab" * 32),
                     "address": "anim1miner",
                     "amount": 25,
-                    "raw_tx": "raw:1:anim1poolwallet:anim1miner:25:7:15",
+                    "raw_tx": "raw:1:anim1poolwallet:anim1miner:25:7:300",
                     "retry_count": 0,
                     "timestamp": 0.0,
                     "nonce": 7,
@@ -258,10 +258,103 @@ def test_process_once_rebroadcasts_dropped_submitted_payout(monkeypatch):
 
     assert sent == 0
     assert len(rebroadcast_submit_calls) == 1
-    assert rebroadcast_submit_calls[0] != "raw:1:anim1poolwallet:anim1miner:25:7:15:0"
+    assert rebroadcast_submit_calls[0] != "raw:1:anim1poolwallet:anim1miner:25:7:300:0"
     assert rebroadcast_submit_calls[0].startswith(
-        "raw:1:anim1poolwallet:anim1miner:25:7:15:"
+        "raw:1:anim1poolwallet:anim1miner:25:7:300:"
     )
     assert len(metrics.rebroadcast_calls) == 1
     assert metrics.rebroadcast_calls[0]["tx_hash"] == "0x" + ("ab" * 32)
     assert metrics.rebroadcast_calls[0]["new_tx_hash"] == "0x" + ("cd" * 32)
+
+
+def _consumed_nonce_stubs(monkeypatch):
+    """Dropped tx whose nonce (3) is already consumed on-chain (getNonce -> 7)."""
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_DROP_GRACE_SECONDS", "0")
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_RETRY_BACKOFF_SECONDS", "0")
+
+    def _submit_raw(_rpc, raw_tx: str) -> str:  # pragma: no cover - must not run
+        raise AssertionError("a consumed-nonce dropped payout must NOT be rebroadcast")
+
+    def _request_handler(method: str, params: object) -> object:
+        if method == "state.getNonce":
+            return 7  # chain has advanced past the payout's nonce (3)
+        if method == "tx.getStatus":
+            return {"hash": str((params or [""])[0]), "status": "evicted", "state": "evicted"}
+        raise RuntimeError(f"unexpected method: {method}")
+
+    _install_omni_sdk_stubs(monkeypatch, submit_raw=_submit_raw, request_handler=_request_handler)
+
+
+class _ReleaseMetrics(StubMetrics):
+    def __init__(self, *, submitted_ts: float) -> None:
+        super().__init__(budget=0, due_items=[])
+        self._submitted_ts = float(submitted_ts)
+        self.dropped_calls: list[dict[str, object]] = []
+        self.retry_calls: list[dict[str, object]] = []
+
+    def pending_payout_submissions(self, *, limit: int = 200) -> list[dict[str, object]]:
+        _ = limit
+        return [
+            {
+                "tx_hash": "0x" + ("ab" * 32),
+                "address": "anim1miner",
+                "amount": 25,
+                "raw_tx": "raw:1:anim1poolwallet:anim1miner:25:3:300",
+                "retry_count": 5,
+                "timestamp": self._submitted_ts,
+                "nonce": 3,
+                "next_retry_ts": None,
+            }
+        ]
+
+    def mark_payout_dropped(self, *, tx_hash, error, release_credit=True, ts=None) -> bool:
+        self.dropped_calls.append(
+            {"tx_hash": tx_hash, "release_credit": bool(release_credit), "error": str(error)}
+        )
+        return True
+
+    def record_payout_retry(self, **kwargs: object) -> bool:
+        self.retry_calls.append(dict(kwargs))
+        return True
+
+
+def _release_scheduler(metrics) -> PoolPayoutScheduler:
+    scheduler = PoolPayoutScheduler(config=_config(), metrics=metrics)
+    scheduler._signer_resolution = SimpleNamespace(  # noqa: SLF001
+        sender="anim1poolwallet",
+        signer=SimpleNamespace(address="anim1poolwallet"),
+    )
+    return scheduler
+
+
+def test_process_once_releases_dropped_payout_with_consumed_nonce(monkeypatch):
+    # A dropped payout whose nonce is already consumed can NEVER confirm. Instead
+    # of retrying forever (which pins paid_out so the miner reads as paid while
+    # funds were never sent), the reconcile loop must release the credit.
+    monkeypatch.delenv("ANIMICA_POOL_PAYOUT_RECONCILE_MIN_TS", raising=False)  # default 0 -> release
+    _consumed_nonce_stubs(monkeypatch)
+    metrics = _ReleaseMetrics(submitted_ts=100.0)
+    scheduler = _release_scheduler(metrics)
+
+    sent = scheduler._process_once()  # noqa: SLF001
+
+    assert sent == 0
+    assert len(metrics.dropped_calls) == 1
+    assert metrics.dropped_calls[0]["release_credit"] is True
+    assert metrics.dropped_calls[0]["tx_hash"] == "0x" + ("ab" * 32)
+    assert metrics.retry_calls == []
+
+
+def test_process_once_grandfathers_pre_cutoff_consumed_nonce_payout(monkeypatch):
+    # A stuck payout submitted BEFORE the release cutoff must NOT be released
+    # (avoids double-paying a batch settled out-of-band) — it is retried instead.
+    monkeypatch.setenv("ANIMICA_POOL_PAYOUT_RECONCILE_MIN_TS", "1000")  # cutoff after the payout ts=100
+    _consumed_nonce_stubs(monkeypatch)
+    metrics = _ReleaseMetrics(submitted_ts=100.0)
+    scheduler = _release_scheduler(metrics)
+
+    sent = scheduler._process_once()  # noqa: SLF001
+
+    assert sent == 0
+    assert metrics.dropped_calls == []  # grandfathered: not released
+    assert len(metrics.retry_calls) == 1

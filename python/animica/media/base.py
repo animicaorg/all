@@ -14,6 +14,19 @@ class MediaKind(str, Enum):
     VIDEO_MULTISCENE = "video_multiscene"  # per-scene stills -> stitched video
     VIDEO_V2V = "video_v2v"              # video + text -> video (standalone service)
     AUDIO = "audio"                      # text -> audio (music / sfx / tts)
+    # 9.0.0 GPU Studios — uploaded-media transforms (docs/gpu-studios-9.0.0.md)
+    VIDEO_UPSCALE = "video_upscale"          # video -> 2x/4x super-resolved video
+    VIDEO_INTERPOLATE = "video_interpolate"  # video -> 2x/4x frame-rate video
+    VIDEO_SUBTITLES = "video_subtitles"      # video -> zip {subbed mp4, srt, txt}
+    VIDEO_BGREMOVE = "video_bgremove"        # video -> green-screen / alpha video
+    VIDEO_SHORTS = "video_shorts"            # video -> zip of vertical short clips
+    AUDIO_STEMS = "audio_stems"              # song -> zip of 4 stems
+    AUDIO_ISOLATE = "audio_isolate"          # song -> zip {vocals, instrumental}
+    AUDIO_ENHANCE = "audio_enhance"          # audio -> denoised/normalized audio
+    AUDIO_MASTER = "audio_master"            # audio (+ref) -> mastered audio
+    RENDER_BLENDER = "render_blender"        # .blend -> parent job (never claimed)
+    RENDER_CHUNK = "render_chunk"            # .blend frame range -> zip of PNGs
+    RENDER_ASSEMBLE = "render_assemble"      # chunk zips -> final mp4 / frames zip
 
     @classmethod
     def parse(cls, value: str) -> "MediaKind":
@@ -74,6 +87,14 @@ def validate_magic(data: bytes, expect: str) -> bool:
     if expect == "mp4":
         # ISO base media: 'ftyp' box near the start.
         return b"ftyp" in data[:32]
+    if expect == "zip":
+        return data[0:4] == b"PK\x03\x04"
+    if expect == "webm":
+        # EBML header + the webm doctype somewhere in the first bytes.
+        return data[0:4] == b"\x1aE\xdf\xa3" and b"webm" in data[:64]
+    if expect == "mp3":
+        # ID3v2 tag or a bare MPEG audio frame sync (0xFFEx).
+        return data[0:3] == b"ID3" or (data[0] == 0xFF and (data[1] & 0xE0) == 0xE0)
     return False
 
 

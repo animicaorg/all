@@ -896,11 +896,27 @@ class StratumCpuMiner:
         import os as _os
         aicf_features: dict = {}
         if not _os.environ.get("ANIMICA_AICF_DISABLE", "").strip():
+            # Only advertise LLM serving when a REAL inference backend is present. A stub-only
+            # box (no transformers+torch) would just echo prompts back — which must never serve
+            # animica.dev chat — so it advertises no AICF tiers. Opt back in (echo stubs) with
+            # ANIMICA_AICF_ALLOW_STUB=1. Proper model for the proper kind.
+            try:
+                import importlib as _il
+                _il.import_module("transformers")
+                _il.import_module("torch")
+                _llm_backend = "transformers"
+            except Exception:
+                _llm_backend = "stub"
             aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
             if aicf_tiers_env:
                 tiers = [t.strip() for t in aicf_tiers_env.split(",") if t.strip()]
             else:
                 tiers = ["standard"]
+            if _llm_backend == "stub" and not _os.environ.get("ANIMICA_AICF_ALLOW_STUB", "").strip():
+                if tiers:
+                    self.log.info("aicf: no transformers/torch backend installed — not advertising "
+                                  "chat serving (set ANIMICA_AICF_ALLOW_STUB=1 to serve echo stubs)")
+                tiers = []
             if tiers:
                 aicf_features["tiers"] = tiers
                 # Pre-download the models for the advertised tiers so the first

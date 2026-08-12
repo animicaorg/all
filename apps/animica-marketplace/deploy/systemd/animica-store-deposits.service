@@ -1,0 +1,23 @@
+# Animica marketplace — background deposit watcher (balance-delta crediting after finality).
+# TEMPLATE ONLY — this repo file is NOT installed/enabled by the store change itself.
+# INSTALL (operator):
+#   cp deploy/systemd/animica-store-deposits.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now animica-store-deposits.timer
+# ARM (default below is observe-only dry-run):
+#   set DEPOSIT_WATCHER_ENABLED=1 in .env.production (EnvironmentFile overrides Environment=).
+
+[Unit]
+Description=Animica marketplace deposit watcher (scans active DepositAddress rows via lib/deposit.ts; idempotent, finality-gated)
+Documentation=file:/root/animica/apps/animica-marketplace/scripts/deposit-watcher.ts
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/animica/apps/animica-marketplace
+# Conservative defaults — .env.production (EnvironmentFile) overrides these to arm.
+Environment=DEPOSIT_WATCHER_ENABLED=0
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+EnvironmentFile=/root/animica/apps/animica-marketplace/.env.production
+ExecStart=/usr/bin/flock -n /run/lock/animica-store-deposits.lock /root/animica/apps/animica-marketplace/node_modules/.bin/tsx scripts/deposit-watcher.ts
+NoNewPrivileges=true

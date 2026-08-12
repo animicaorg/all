@@ -435,6 +435,9 @@ class ProviderCascade:
                     wallet_label=wallet_label))
             elif name == "local-flagship":
                 self._providers.append(LocalFlagshipProvider(cfg=cfg))
+            elif name in ("animica-hosted", "hosted"):
+                from agent_runtime.provider_hosted import HostedProvider
+                self._providers.append(HostedProvider())
             elif name == "offline":
                 self._providers.append(OfflineProvider(cfg=cfg))
             else:
@@ -442,6 +445,17 @@ class ProviderCascade:
                     f"unknown provider in integration.yaml provider_order: "
                     f"{name!r}",
                 )
+
+        # `animica-hosted` is inserted automatically when the configured order
+        # predates it, so an existing integration.yaml does not leave a fresh
+        # install talking to the `offline` stub. It goes directly ABOVE offline:
+        # after the paid/local paths (which a configured user prefers) and before
+        # the placeholder that cannot answer anything.
+        if not any(p.name == "animica-hosted" for p in self._providers):
+            from agent_runtime.provider_hosted import HostedProvider
+            idx = next((i for i, p in enumerate(self._providers)
+                        if p.name == "offline"), len(self._providers))
+            self._providers.insert(idx, HostedProvider())
 
     def close(self) -> None:
         for p in self._providers:

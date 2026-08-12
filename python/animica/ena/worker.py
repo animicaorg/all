@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import signal
 import time
 import urllib.error
@@ -101,14 +102,28 @@ class _RemoteClient:
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(self.base + path, data=data, method=method,
                                      headers={"content-type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8") or "null")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:200] if exc.fp else ""
-            raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise RuntimeError(f"cannot reach {self.base}: {exc}") from exc
+        # Bounded, jittered retry on TRANSIENT failures only: HTTP 429 (rate limit)
+        # and 502/503/504 (gateway/overload/timeout), plus connection-level
+        # URLError/TimeoutError/OSError. Every other 4xx is a deterministic client
+        # error and MUST fail fast (no retry). Tunable via
+        # ANIMICA_ENA_WORKER_HTTP_RETRIES / ANIMICA_ENA_WORKER_HTTP_BACKOFF.
+        attempts = max(0, int(os.environ.get("ANIMICA_ENA_WORKER_HTTP_RETRIES", "4")))
+        base = float(os.environ.get("ANIMICA_ENA_WORKER_HTTP_BACKOFF", "1.0"))
+        for i in range(attempts + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8") or "null")
+            except urllib.error.HTTPError as exc:
+                if exc.code in (429, 502, 503, 504) and i < attempts:
+                    time.sleep(min(30, base * 2 ** i) * (0.5 + random.random()))
+                    continue
+                detail = exc.read().decode("utf-8", "replace")[:200] if exc.fp else ""
+                raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                if i < attempts:
+                    time.sleep(min(30, base * 2 ** i) * (0.5 + random.random()))
+                    continue
+                raise RuntimeError(f"cannot reach {self.base}: {exc}") from exc
 
     def claim(self, worker_id: str, types: Optional[list[str]]) -> Optional[dict]:
         return self._call("/jobs/claim", "POST",

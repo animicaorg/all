@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import sqlite3
 import time
@@ -12,6 +13,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from core.utils.pow import MICRO
 from mining.stratum_server import StratumServer
 
 from .config import PoolConfig
@@ -908,6 +910,10 @@ class PoolMetrics:
                 1.0 if accepted_block else float(getattr(job, "share_target", 0.0))
             )
         difficulty = float(difficulty_value)
+        # The share target the miner was actually assigned (pre block-force). PPS
+        # credit is priced off THIS, not the block-forced 1.0 below, so a
+        # block-winning share is credited its expected value like any other share.
+        assigned_ratio = min(1.0, max(0.0, difficulty))
         if accepted_block:
             # Block-winning shares should be credited at full ratio even when
             # legacy submit payloads omit d_ratio.
@@ -915,6 +921,21 @@ class PoolMetrics:
         # Raw SHA3 hashes this share represents (2**256 / share_target_int).
         # Summed over a window this gives the true H/s — see _expected_share_work.
         share_work = self._expected_share_work(job, difficulty)
+        # PPS credit weight = the fraction of a block this share is worth in
+        # expectation = P(a share also solves a block) = block_target/share_target
+        # = exp(-θ·(1-ratio)/MICRO). Computed analytically from θ and the assigned
+        # ratio (no target-int dependency, so it is exact and scale-consistent even
+        # when a legacy job omits share_target_int). Invariant to share difficulty:
+        # lowering the vardiff yields more shares each worth proportionally less —
+        # identical pool-wide payout — and it prices block-winning shares at
+        # expected value, closing the structural over-credit where full block
+        # rewards were credited on TOP of per-share credit. None => legacy ratio.
+        theta_micro_job = float(getattr(job, "theta_micro", 0) or 0)
+        credit_fraction: Optional[float] = (
+            math.exp(-theta_micro_job * (1.0 - assigned_ratio) / MICRO)
+            if theta_micro_job > 0.0
+            else None
+        )
         job_id = str(
             getattr(job, "job_id", None) or submit_params.get("jobId") or "unknown-job"
         )
@@ -954,6 +975,7 @@ class PoolMetrics:
             is_block=accepted_block,
             reward=reward,
             difficulty=difficulty,
+            credit_fraction=credit_fraction,
             reason=reason,
             share_mode=credit_mode,
             defer_commit=True,
@@ -1402,6 +1424,54 @@ class PoolMetrics:
             return 0
         return int(float(reward) * ratio)
 
+    def _credit_cap_remaining(self) -> int:
+        """New share credit still backed by newly-mined coinbase, measured from
+        the cap baseline:  (mined - mined_base) - (credited - credited_base).
+
+        Clamped to >= 0. When this reaches 0, further share credit is clamped so
+        cumulative pool credit can never outrun what the pool actually mined —
+        closing the class of crediting bug that let pool debt exceed mined
+        coinbase. The baseline (mined_base/credited_base, captured when the cap is
+        switched on) excludes any pre-existing credited>mined overhang, so the cap
+        only holds NEW credit to NEW coinbase and never tries to repay history.
+        No-op unless ``credit_cap_enabled``; recomputed per call (cheap sums,
+        only walked when the cap is on).
+        """
+        cfg = self._config
+        mined_base = int(getattr(cfg, "credit_cap_mined_base", 0) or 0)
+        credited_base = int(getattr(cfg, "credit_cap_credited_base", 0) or 0)
+        if self._db is not None:
+            with self._db_lock:
+                mined_total = int(
+                    (
+                        self._db.execute(
+                            "SELECT COALESCE(SUM(reward), 0) FROM blocks WHERE found_by_pool = 1"
+                        ).fetchone()
+                        or [0]
+                    )[0]
+                    or 0
+                )
+                credited_total = int(
+                    (
+                        self._db.execute(
+                            "SELECT COALESCE(SUM(total_credit), 0) FROM worker_balances"
+                        ).fetchone()
+                        or [0]
+                    )[0]
+                    or 0
+                )
+        else:
+            mined_total = sum(
+                int(b.get("reward") or 0)
+                for b in self._block_events
+                if bool(b.get("found_by_pool", True))
+            )
+            credited_total = sum(
+                int(r.get("total_credit") or 0)
+                for r in self._worker_balances_cache.values()
+            )
+        return max(0, (mined_total - mined_base) - (credited_total - credited_base))
+
     def _ena_fee_split(
         self, miner_address: str, pps_credit: int, solo_credit: int
     ) -> Tuple[int, int]:
@@ -1607,6 +1677,7 @@ class PoolMetrics:
         is_block: bool,
         reward: int,
         difficulty: float,
+        credit_fraction: Optional[float] = None,
         reason: Optional[str],
         share_mode: str,
         defer_commit: bool = False,
@@ -1622,7 +1693,15 @@ class PoolMetrics:
             pps_credit = 0
             solo_credit = 0
             if accounting_mode == "pps":
-                pps_credit = self._credit_for_share(reward, difficulty)
+                # PPS: credit the share its EXPECTED value = reward × credit_fraction
+                # (= reward × P(share also solves a block)). Invariant to the share
+                # difficulty and self-limiting to one block reward per block in
+                # aggregate, so a block-winning share is NOT also credited the full
+                # reward — that reward×ratio + block-bonus double-count is what
+                # inflated pool credit far past mined coinbase. Falls back to the
+                # legacy ratio only when the work fraction is unavailable.
+                weight = credit_fraction if credit_fraction is not None else difficulty
+                pps_credit = self._credit_for_share(reward, weight)
             elif accounting_mode == "solo" and is_block:
                 solo_credit = int(reward)
 
@@ -1635,6 +1714,19 @@ class PoolMetrics:
             )
             pps_credit -= ena_fee_pps
             solo_credit -= ena_fee_solo
+
+            # Credit cap: never let cumulative pool credit outrun mined coinbase
+            # (from the cap baseline). Clamp this share's credit to the remaining
+            # backed headroom so a crediting bug can't inflate pool debt past what
+            # was actually mined. Only one of pps/solo is non-zero per share.
+            # No-op unless credit_cap_enabled.
+            if getattr(self._config, "credit_cap_enabled", False):
+                cap_remaining = self._credit_cap_remaining()
+                if pps_credit > cap_remaining:
+                    pps_credit = max(0, cap_remaining)
+                cap_remaining = max(0, cap_remaining - pps_credit)
+                if solo_credit > cap_remaining:
+                    solo_credit = max(0, cap_remaining)
 
             if (
                 accounting_mode == "pps"

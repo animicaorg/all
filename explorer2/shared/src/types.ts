@@ -82,6 +82,11 @@ export interface TxSummary {
   value?: string
   status?: 'pending' | 'confirmed' | 'failed'
   classification?: TxClassification
+  // Populated by the address-detail scan (the wallet's history needs them):
+  blockNumber?: number
+  timestamp?: number | null // block time, seconds
+  gasPrice?: number | string | null
+  gasLimit?: number | string | null
 }
 
 export interface TxDetail {
@@ -242,6 +247,60 @@ export interface ContractDetailResponse {
   address: Address
   profile: ContractProfile
   txs: TxSummary[]
+}
+
+/**
+ * An indexed ANM-20 token (AnimicaTokenStandard deployment).
+ *
+ * This JSON shape is consumed verbatim by the mobile wallet's token index
+ * client — keep the field names stable. Market fields are null whenever the
+ * chain cannot provide them (e.g. contract execution disabled on the node):
+ * the explorer never fabricates prices or supplies.
+ */
+export interface TokenInfo {
+  address: Address
+  name: string
+  symbol: string
+  decimals: number
+  imageUrl: string | null
+  description: string | null
+  /** label -> url, e.g. { website: 'https://…', x: 'https://x.com/…' } */
+  links: Record<string, string>
+  /** Total supply in base units as a decimal string (BigInt-safe), or null. */
+  totalSupply: string | null
+  /** ANM per 1 whole token (pool mid-price), or null when unreadable. */
+  priceAnm: number | null
+  /** Total pool liquidity valued in ANM, or null. */
+  liquidityAnm: number | null
+  /** Signed 24h price change percent, or null. */
+  change24h: number | null
+  /** The ANM/token DEX pair contract, if a pool exists. */
+  pairAddress: string | null
+  feeBps: number | null
+  promoted: boolean
+  promoDaysLeft: number | null
+  // ── Explorer-side extras (ignored by the wallet) ──
+  metadataUri?: string | null
+  initialSupply?: string | null
+  maxSupply?: string | null
+  mintable?: boolean | null
+  creator?: string | null
+  creationHeight?: number | null
+  creationTx?: string | null
+  creationTime?: number | null
+  holders?: number | null
+  updatedAt?: number | null
+}
+
+/** One price observation for a token chart. */
+export interface TokenPricePoint {
+  /** Unix seconds when the price was read. */
+  t: number
+  priceAnm: number
+}
+
+export interface TokenListResponse {
+  tokens: TokenInfo[]
 }
 
 export interface ContractCodeResponse {

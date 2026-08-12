@@ -1249,7 +1249,20 @@ def _validate_sufficient_balance(obj: dict) -> None:
         return
 
     try:
-        value = _coerce_tx_int("value", tx_obj.get("value", 0) or 0)
+        # Canonical bodies carry the transfer amount at payload.v.amount, not
+        # at a top-level "value" key. Reading only the flat key made this
+        # guard require fee-only, so a send of (nearly) the full balance was
+        # admitted with a hash, then starved out of every block by selection's
+        # correct amount+fee math and silently evicted — the "stuck in
+        # mempool, then vanished with no details" failure. Resolve both shapes.
+        value_raw = tx_obj.get("value")
+        if value_raw is None:
+            payload = tx_obj.get("payload")
+            if isinstance(payload, dict):
+                inner = payload.get("v")
+                if isinstance(inner, dict) and inner.get("amount") is not None:
+                    value_raw = inner.get("amount")
+        value = _coerce_tx_int("value", value_raw or 0)
 
         # Handle gasLimit - may be int or dict {"limit": int, "price": int}
         gas_limit_raw = tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas") or 0
@@ -2029,7 +2042,17 @@ def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int
     # This keeps tx.getStatus aligned with canonical chain state even when auxiliary indexes lag.
     if bdb is not None:
         target = _b(tx_hash_hex)
-        scan_depth = int(os.getenv("ANIMICA_TX_STATUS_SCAN_DEPTH", "4096") or 4096)
+        # Bounded fallback. This is a LINEAR backwards scan that deserializes every
+        # block out of SQLite and re-hashes each tx; it is reached ONLY when both the
+        # receipt index (PFX_RXI) and tx_index (PFX_TXI) MISS — i.e. for a pending or
+        # unknown txid, which is exactly what tx-status pollers ask about. Measured at
+        # ~4.4ms/block, the old 4096 default cost ~18s of SQLite-lock-holding CPU per
+        # miss; because every DB read is serialised on one connection+lock and all sync
+        # RPC handlers share one executor, a few pollers starved miner.getBlockTemplate
+        # and stalled block production. 128 covers every case this fallback could
+        # legitimately rescue (DEFAULT_MAX_REORG_DEPTH=96, ~120-block tx validity
+        # window); indexed lookups are unaffected. Env-overridable.
+        scan_depth = int(os.getenv("ANIMICA_TX_STATUS_SCAN_DEPTH", "128") or 128)
         head_height: int | None = None
         try:
             getter = getattr(ctx, "get_head", None)

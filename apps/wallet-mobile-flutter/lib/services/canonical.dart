@@ -9,11 +9,13 @@
 //       + len_prefix(uvarint(fork_id))     // empty if null
 //       + len_prefix(uvarint(alg_id))
 //       + len_prefix(context)              // empty bytes for tx
-//       + len_prefix(msg)                  // canonical-CBOR-encoded tx body
+//       + len_prefix(msg)                  // tx_signing_preimage bytes
 //   prehash = SHA3-512(raw)                // 64 bytes
 //
-// The signer then runs the prehash through the alg's backend (SPHINCS-128s
-// in our case — see services/keys.dart).
+// `msg` is NOT the tx body: it is the canonical signing preimage
+// (`signer.dart:txSigningPreimage`), which wraps the normalized body together
+// with the chain id, genesis hash and network name. The signer then runs the
+// prehash through the alg's backend (ML-DSA-65 — see services/ml_dsa_65.dart).
 //
 // `pack_signed` produces the broadcast envelope:
 //   { "body": <tx body map>, "sig": { "algId": int, "pubkey": bytes, "sig": bytes } }
@@ -26,18 +28,28 @@ import 'package:pointycastle/digests/sha3.dart';
 
 // ── CBOR canonical encoder ─────────────────────────────────────────────
 //
-// Canonical rules (CBOR canonical = RFC 8949 §4.2.1 / "deterministic"):
-//   - Integers use the shortest valid encoding.
-//   - Map keys are sorted by their CBOR-encoded byte representation, but
-//     Animica's omni_sdk uses the "length-then-lex" order (sort keys by
-//     length first, then lexicographically). The chain accepts both, but
-//     to be byte-stable with the Python `canonical_body_dict` output we
-//     match length-then-lex.
+// Canonical rules (CBOR canonical = RFC 8949 §4.2.1 / "deterministic"),
+// matching `core/encoding/cbor.py:dumps` field for field:
+//   - Integers use the shortest valid encoding; magnitudes above 2^64-1 use
+//     the bignum tags 2 (positive) / 3 (negative), same as `_to_bignum_bytes`.
+//   - Map keys are pre-encoded and sorted by the LEXICOGRAPHIC ORDER OF THOSE
+//     ENCODED BYTES. For text keys shorter than 2^8 that is identical to the
+//     "length-then-lex" order the omni_sdk describes (the length lives in the
+//     head byte), and it is also correct for the INTEGER keys 1..7 of the
+//     signing preimage, where a `toString()` comparison would silently
+//     mis-order anything past single digits.
+//   - Duplicate keys (after encoding) are rejected rather than emitted.
 
 Uint8List canonicalCbor(Object? value) {
   final out = BytesBuilder();
   _encode(out, value);
   return out.toBytes();
+}
+
+Uint8List _encoded(Object? v) {
+  final b = BytesBuilder();
+  _encode(b, v);
+  return b.toBytes();
 }
 
 void _encode(BytesBuilder out, Object? v) {
@@ -50,45 +62,50 @@ void _encode(BytesBuilder out, Object? v) {
     return;
   }
   if (v is int) {
-    if (v >= 0) {
-      _encodeHead(out, 0, BigInt.from(v));
-    } else {
-      _encodeHead(out, 1, BigInt.from(-1 - v));
-    }
+    _encodeInt(out, BigInt.from(v));
     return;
   }
   if (v is BigInt) {
-    if (v.sign >= 0) {
-      _encodeHead(out, 0, v);
-    } else {
-      _encodeHead(out, 1, -BigInt.one - v);
-    }
+    _encodeInt(out, v);
     return;
   }
   if (v is String) {
     final bytes = utf8.encode(v);
-    _encodeHead(out, 3, BigInt.from(bytes.length));
+    _encodeHead(out, 3, bytes.length);
     out.add(bytes);
     return;
   }
   if (v is Uint8List || v is List<int>) {
     final bytes = v is Uint8List ? v : Uint8List.fromList(v as List<int>);
-    _encodeHead(out, 2, BigInt.from(bytes.length));
+    _encodeHead(out, 2, bytes.length);
     out.add(bytes);
     return;
   }
   if (v is Map) {
-    final entries = v.entries.toList();
-    entries.sort((a, b) => _cmpKey(a.key, b.key));
-    _encodeHead(out, 5, BigInt.from(entries.length));
-    for (final e in entries) {
-      _encode(out, e.key);
-      _encode(out, e.value);
+    final pairs = <List<Uint8List>>[];
+    for (final e in v.entries) {
+      final k = e.key;
+      if (k is! int && k is! BigInt && k is! String && k is! Uint8List) {
+        throw ArgumentError(
+            'canonicalCbor: unsupported map key type ${k.runtimeType}');
+      }
+      pairs.add(<Uint8List>[_encoded(k), _encoded(e.value)]);
+    }
+    pairs.sort((a, b) => _cmpBytes(a[0], b[0]));
+    for (var i = 1; i < pairs.length; i++) {
+      if (_cmpBytes(pairs[i - 1][0], pairs[i][0]) == 0) {
+        throw ArgumentError('canonicalCbor: duplicate map key after encoding');
+      }
+    }
+    _encodeHead(out, 5, pairs.length);
+    for (final p in pairs) {
+      out.add(p[0]);
+      out.add(p[1]);
     }
     return;
   }
   if (v is List) {
-    _encodeHead(out, 4, BigInt.from(v.length));
+    _encodeHead(out, 4, v.length);
     for (final x in v) {
       _encode(out, x);
     }
@@ -97,16 +114,58 @@ void _encode(BytesBuilder out, Object? v) {
   throw ArgumentError('canonicalCbor: unsupported type ${v.runtimeType}');
 }
 
-int _cmpKey(Object a, Object b) {
-  if (a is String && b is String) {
-    if (a.length != b.length) return a.length.compareTo(b.length);
-    return a.compareTo(b);
+final BigInt _uint64Max = BigInt.parse('18446744073709551615');
+
+void _encodeInt(BytesBuilder out, BigInt v) {
+  if (v.sign >= 0) {
+    if (v <= _uint64Max) {
+      _encodeBigHead(out, 0, v);
+    } else {
+      // Positive bignum: tag(2) + bstr(minimal big-endian magnitude).
+      _encodeHead(out, 6, 2);
+      final mag = _magnitudeBytes(v);
+      _encodeHead(out, 2, mag.length);
+      out.add(mag);
+    }
+    return;
   }
-  // Fall back to a stable ordering.
-  return a.toString().compareTo(b.toString());
+  final m = -BigInt.one - v;
+  if (m <= _uint64Max) {
+    _encodeBigHead(out, 1, m);
+  } else {
+    // Negative bignum: tag(3) + bstr(magnitude of -1 - n).
+    _encodeHead(out, 6, 3);
+    final mag = _magnitudeBytes(m);
+    _encodeHead(out, 2, mag.length);
+    out.add(mag);
+  }
 }
 
-void _encodeHead(BytesBuilder out, int major, BigInt v) {
+Uint8List _magnitudeBytes(BigInt n) {
+  assert(n >= BigInt.zero);
+  if (n == BigInt.zero) return Uint8List.fromList(<int>[0]);
+  final bytes = <int>[];
+  var rem = n;
+  final mask = BigInt.from(0xff);
+  while (rem > BigInt.zero) {
+    bytes.insert(0, (rem & mask).toInt());
+    rem = rem >> 8;
+  }
+  return Uint8List.fromList(bytes);
+}
+
+int _cmpBytes(Uint8List a, Uint8List b) {
+  final n = a.length < b.length ? a.length : b.length;
+  for (var i = 0; i < n; i++) {
+    if (a[i] != b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
+}
+
+void _encodeHead(BytesBuilder out, int major, int n) =>
+    _encodeBigHead(out, major, BigInt.from(n));
+
+void _encodeBigHead(BytesBuilder out, int major, BigInt v) {
   final m = major << 5;
   if (v < BigInt.from(24)) {
     out.addByte(m | v.toInt());

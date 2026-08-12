@@ -119,7 +119,8 @@ def up(ctx: typer.Context,
     if ctx.invoked_subcommand is not None:
         return
     from animica.unified import (Supervisor, UnifiedConfig, _resolve_best_pool,
-                                 build_plan, detect_capabilities, plan_summary,
+                                 _resolve_serve_pool, build_plan,
+                                 detect_capabilities, plan_summary,
                                  resolve_address)
     # zero-config: resolve (or auto-create) the payout wallet. For --plan we never
     # create anything; we just show what a real run would use.
@@ -142,8 +143,19 @@ def up(ctx: typer.Context,
         if pool_id:
             console.print(f"[green]auto-selected training pool[/green] → "
                           f"{pool_id} [dim](highest-paying)[/dim]")
+    # Serving is independent of joining an OPEN training round: a GPU rig serves
+    # the promoted ENA checkpoint (animica-knowledge) regardless. Resolve a serve
+    # pool even when no training pool was selected, so `animica up` brings ENA
+    # online on its own rather than leaving the model with nothing to answer it.
+    serve_pool_id = pool_id
+    if caps.gpu and not serve_pool_id:
+        serve_pool_id = _resolve_serve_pool(pool_host)
+        if serve_pool_id:
+            console.print(f"[green]serving ENA model[/green] → {serve_pool_id} "
+                          f"[dim](promoted checkpoint)[/dim]")
     cfg = UnifiedConfig(address=addr, pool_host=pool_host, pool_port=pool_port,
-                        pool_id=pool_id, worker_id=worker_id or "",
+                        pool_id=pool_id, serve_pool_id=serve_pool_id,
+                        worker_id=worker_id or "",
                         run_node=with_node, threads=threads, serve_port=serve_port,
                         bittensor_token=bittensor_token)
     components = build_plan(caps, cfg)
@@ -195,9 +207,84 @@ def up(ctx: typer.Context,
         console.print(f"[yellow]enabled but not yet runnable: "
                       f"{', '.join(summary['enabled_but_pending'])}[/yellow]")
     _ensure_media_models(caps, components, console)
+    _ensure_llm_model(caps, components, console)
     _ensure_media_miner(components, console)
+    _ensure_inference_worker(components, console, addr)
     _ensure_animal(console)
     Supervisor(components).run()
+
+
+def _ensure_inference_worker(components, console, address) -> None:
+    """Direct this node's LLM/AICF inference at animica.dev's shared queue by default.
+
+    animica.dev serves free chat by submitting on-chain AICF jobs to the canonical mainnet
+    node (fronted by rpc.animica.org). Any inference-capable node — POOL or SOLO, with or
+    without its own local node — should claim from THAT queue so its GPU/CPU serves the
+    animica.dev network's demand instead of an empty local queue. We set ANIMICA_AICF_ENDPOINT,
+    which the miner's ``--aicf`` worker (and any standalone worker) reads; os.environ propagates
+    to the miner subprocess (Supervisor spawns it with ``{**os.environ, **c.env}``). Mirrors
+    ``_ensure_media_miner``.
+
+    Opt out:
+      * ANIMICA_AICF_MINER=0 / ANIMICA_DISABLE_AICF_WORKER=1 / ANIMICA_AICF_DISABLE=1 — don't serve.
+      * ANIMICA_AICF_LOCAL=1 — serve your OWN node's queue (127.0.0.1:8545) instead of animica.dev.
+      * ANIMICA_AICF_ENDPOINT=… / AICF_URL=… — an explicit endpoint always wins.
+    """
+    import os
+
+    if (os.environ.get("ANIMICA_AICF_MINER") == "0"
+            or os.environ.get("ANIMICA_DISABLE_AICF_WORKER")
+            or os.environ.get("ANIMICA_AICF_DISABLE")):
+        # Make the opt-out actually reach the worker(s). The miner subprocess
+        # starts its own ``--aicf`` worker, which is gated ONLY by
+        # ANIMICA_DISABLE_AICF_WORKER=="1" (see agent_runtime.aicf_worker.
+        # is_disabled); a bare ANIMICA_AICF_MINER=0 / ANIMICA_AICF_DISABLE=1
+        # would otherwise be honored here but ignored by the subprocess, so
+        # the node would keep serving AICF against the operator's wishes.
+        # Canonicalize all three opt-outs into the flags every layer checks,
+        # and propagate via os.environ (Supervisor spawns with {**os.environ}).
+        os.environ["ANIMICA_DISABLE_AICF_WORKER"] = "1"
+        os.environ["ANIMICA_AICF_DISABLE"] = "1"
+        os.environ["ANIMICA_AICF_MINER"] = "0"
+        return
+
+    # Default the AICF claim endpoint to the animica.dev-fed canonical node, unless the operator
+    # pinned an endpoint or asked to keep serving local. Explicit config always wins.
+    default_gw = os.environ.get("ANIMICA_AICF_GATEWAY", "https://rpc.animica.org/rpc")
+    explicit = os.environ.get("ANIMICA_AICF_ENDPOINT") or os.environ.get("AICF_URL")
+    if not explicit and not os.environ.get("ANIMICA_AICF_LOCAL"):
+        os.environ["ANIMICA_AICF_ENDPOINT"] = default_gw
+    endpoint = (os.environ.get("ANIMICA_AICF_ENDPOINT")
+                or os.environ.get("AICF_URL") or "127.0.0.1:8545 (local node)")
+
+    enabled = {getattr(c, "name", "") for c in components if getattr(c, "enabled", True)}
+    if "miner" in enabled:
+        # The miner subprocess starts the AICF worker (--aicf) and inherits ANIMICA_AICF_ENDPOINT.
+        console.print(f"[dim]inference: this node serves AICF chat (incl. Kimi K3 · kimi-k3) to {endpoint}[/dim]")
+        return
+
+    # No miner in the plan (e.g. --profile provider / ai): start a standalone AICF worker so the
+    # node still serves inference to animica.dev. Best-effort — must never break `up`.
+    if not address or address.startswith("<"):
+        return
+    try:
+        from animica.cli.mining import _start_aicf_worker
+        _stop, stats = _start_aicf_worker(address)
+        tiers_list = stats.get("tiers") or []
+        if stats.get("started") and tiers_list:
+            tiers = ",".join(tiers_list)
+            console.print(f"[dim]inference: serving AICF chat (incl. Kimi K3 · kimi-k3) to {endpoint} · tiers {tiers}[/dim]")
+        elif stats.get("started"):
+            # Worker constructed but qualified out every tier (no installed
+            # flagship bundle to serve with). It won't advertise phantom
+            # capacity; tell the operator how to actually serve.
+            console.print("[dim]inference: worker idle (no installed model bundle) — "
+                          "run 'animica miner aicf-worker pull' to serve chat[/dim]")
+        else:
+            console.print(f"[dim]inference: worker idle ({stats.get('reason')}) — "
+                          f"run 'animica miner setup' to serve inference[/dim]")
+    except Exception as exc:  # noqa: BLE001 — never let inference-enroll break the supervisor
+        console.print(f"[dim]inference: worker not started ({exc})[/dim]")
 
 
 def _ensure_media_models(caps, components, console) -> None:
@@ -253,6 +340,90 @@ def _ensure_media_models(caps, components, console) -> None:
 
     console.print(f"[dim]media: ensuring image model {model_id} (~{gb}GB) in background…[/dim]")
     threading.Thread(target=_dl, name="animica-media-prefetch", daemon=True).start()
+
+
+def _ensure_llm_model(caps, components, console) -> None:
+    """Auto-install this miner's AICF chat/coding model bundle, in the BACKGROUND.
+
+    So ``animica up`` sets up a miner that actually serves network chat — including
+    the "Kimi K3" (kimi-k3) flagship brand — out of the box, with zero manual
+    ``animica miner setup``. Mirrors :func:`_ensure_media_models`: a daemon thread
+    downloads if missing, disk-guarded, env-gated, and fully best-effort so it can
+    never block or break ``up``.
+
+    Env:
+      * ANIMICA_AICF_AUTOINSTALL=0 — don't auto-install the LLM bundle.
+      * ANIMICA_AICF_TIER=<tiny|small|flagship|large> — pin the tier (else picked by VRAM).
+      * ANIMICA_AICF_MODEL=<hf repo id> — serve these exact weights instead of the tier
+        default (e.g. set it to the Kimi K3 backend, moonshotai/Kimi-K2-Instruct, on a rig
+        that can load it).
+    """
+    import os
+    import shutil
+    import threading
+
+    if os.environ.get("ANIMICA_AICF_AUTOINSTALL", "1") == "0":
+        return
+    if os.environ.get("ANIMICA_AICF_PREFETCH", "1") == "0":
+        return
+    # Opt-outs that disable AICF serving entirely also skip the model install.
+    if (os.environ.get("ANIMICA_AICF_MINER") == "0"
+            or os.environ.get("ANIMICA_DISABLE_AICF_WORKER")
+            or os.environ.get("ANIMICA_AICF_DISABLE")):
+        return
+    # Only relevant when this node serves work.
+    enabled = {getattr(c, "name", "") for c in components if getattr(c, "enabled", True)}
+    if not (enabled & {"miner", "aicf-worker", "server", "provider", "useful-work"}):
+        return
+    try:
+        from agent_runtime.aicf_worker import bootstrap_bundle_from_hf
+    except Exception:
+        return
+    # Optional fast-path skip: older agent_runtime builds don't export this, so
+    # treat it as "unknown" (proceed to install; the HF cache makes it idempotent).
+    try:
+        from agent_runtime.aicf_worker import _has_servable_bundle
+    except Exception:
+        _has_servable_bundle = None
+
+    # Pick a tier by hardware (catalog names tiny|small|flagship|large): a CPU / low-VRAM
+    # box gets the light tiny model (still coder-tuned, CPU-runnable); bigger rigs get more.
+    vram = float(getattr(caps, "vram_gb", 0) or 0)
+    if vram >= 40:
+        tier, gb = "flagship", 34.0
+    elif vram >= 16:
+        tier, gb = "small", 15.0
+    else:
+        tier, gb = "tiny", 4.0
+    tier = os.environ.get("ANIMICA_AICF_TIER", tier)
+    repo_override = os.environ.get("ANIMICA_AICF_MODEL", "").strip() or None
+
+    try:
+        if _has_servable_bundle is not None and _has_servable_bundle(tier):
+            console.print(f"[dim]inference: {tier}-tier chat model already installed[/dim]")
+            return
+    except Exception:
+        pass
+
+    _total, _used, free = shutil.disk_usage(os.path.expanduser("~"))
+    if free / 1e9 < gb * 1.3:
+        console.print(
+            f"[yellow]inference: skipping chat-model install — only {round(free/1e9, 1)}GB free "
+            f"(need ~{round(gb * 1.3, 1)}GB for the {tier} model); "
+            f"run 'animica miner setup' once you have space[/yellow]")
+        return
+
+    def _dl():
+        try:
+            bootstrap_bundle_from_hf(tier, repo_id=repo_override)
+        except Exception:
+            pass  # non-fatal; the worker / `animica miner setup` will retry on demand
+
+    label = repo_override or f"{tier}-tier default"
+    console.print(
+        f"[dim]inference: installing chat/coding model ({label}) in background so this "
+        f"miner serves Kimi K3 to the network…[/dim]")
+    threading.Thread(target=_dl, name="animica-aicf-model-prefetch", daemon=True).start()
 
 
 def _ensure_media_miner(components, console) -> None:

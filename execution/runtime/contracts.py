@@ -17,6 +17,7 @@ and the adapter will attempt to import vm_py lazily and route deploy/call.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
@@ -43,6 +44,18 @@ DEFAULT_INTRINSIC_CALL = 21_000
 DEFAULT_INTRINSIC_DEPLOY = 53_000
 ADDRESS_LEN = 32
 MAX_INTERCALL_DEPTH = 16
+
+# Per-call-tree computation budget for the tree engine (bounds loops/recursion
+# → deterministic OOG). Phase 5 threads the real tx gas_limit through here; for
+# now this generous cap protects against runaway execution while easily covering
+# the standard token/DEX contracts.
+DEFAULT_VM_GAS_LIMIT = 1_000_000_000
+
+# One GasMeter is shared across an entire inter-contract call tree so a sub-call
+# cannot escape the top-level budget. Set by the outermost _execute_contract_method.
+_GAS_VAR: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
+    "animica_vm_gas", default=None
+)
 
 
 def _get(obj: Any, *names: str, default: Any = None) -> Any:
@@ -117,6 +130,16 @@ def _ensure_account(state: Any, addr: bytes) -> None:
     m = getattr(state, "balances", None)
     if isinstance(m, dict) and addr not in m:
         m[addr] = 0
+
+
+def _call_amount_of(payload: Any) -> int:
+    """The ANM attached to a CALL payload; 0 for every payload that predates it."""
+    try:
+        from consensus.value_call import call_amount_of
+
+        return call_amount_of(payload)
+    except Exception:  # noqa: BLE001 — a missing helper must never block execution
+        return 0
 
 
 def _get_balance(state: Any, addr: bytes) -> int:
@@ -882,6 +905,125 @@ class _StateStoragePatch:
                 setattr(self._stdlib_storage, name, previous)
 
 
+def _inline_source_from_manifest(manifest: Any) -> Optional[str]:
+    """Extract inline contract source from a runtime manifest, if present."""
+    src = manifest.get("source") if isinstance(manifest, Mapping) else None
+    if isinstance(src, Mapping):
+        inline = src.get("inline")
+        if isinstance(inline, str) and inline.strip():
+            return inline
+    if isinstance(src, str) and _looks_like_inline_source(src):
+        return src
+    return None
+
+
+class _StateStorageHost:
+    """`storage.get/set/delete` bound to chain state, scoped to one contract.
+
+    Keys/values are per-contract (namespaced by address via the state backend),
+    so a contract can never read or write another contract's storage. Under
+    `read_only`, writes buffer in an in-memory overlay and are never persisted,
+    letting `simulate_call` run state-changing code speculatively.
+    """
+
+    def __init__(self, state: Any, contract_addr: bytes, *, read_only: bool) -> None:
+        self._state = state
+        self._addr = contract_addr
+        self._read_only = bool(read_only)
+        self._overlay: dict[bytes, Optional[bytes]] = {}
+
+    def get(self, key: Any, default: Any = b"") -> bytes:
+        k = _as_bytes(key)
+        if k in self._overlay:
+            v = self._overlay[k]
+            return _as_bytes(default) if v is None else bytes(v)
+        getter = getattr(self._state, "get_storage", None)
+        if callable(getter):
+            stored = getter(self._addr, k)
+            if stored is None:
+                return _as_bytes(default) if default is not None else b""
+            return _as_bytes(stored)
+        return _as_bytes(default) if default is not None else b""
+
+    def set(self, key: Any, value: Any) -> None:
+        k = _as_bytes(key)
+        v = _as_bytes(value)
+        if self._read_only:
+            self._overlay[k] = v
+            return
+        setter = getattr(self._state, "set_storage", None)
+        if not callable(setter):
+            raise ContractCallError(
+                "state backend does not expose set_storage",
+                code="STATE_STORAGE_UNAVAILABLE",
+            )
+        setter(self._addr, k, v)
+
+    def delete(self, key: Any) -> None:
+        k = _as_bytes(key)
+        if self._read_only:
+            self._overlay[k] = None
+            return
+        deleter = getattr(self._state, "delete_storage", None)
+        if callable(deleter):
+            deleter(self._addr, k)
+            return
+        self._overlay[k] = None
+
+
+class _StateTreasuryHost:
+    """`treasury.transfer/balance` bound to chain balances, scoped to one contract.
+
+    `transfer` debits THIS contract's native ANM and credits the recipient via the
+    chain balance ledger — the mechanism that settles the DEX's native-ANM legs
+    (pair LP payout, router launch fee). Rejected under `read_only`. Any shortfall
+    raises, which the caller turns into a clean REVERT with nothing moved.
+    """
+
+    def __init__(
+        self,
+        state: Any,
+        contract_addr: bytes,
+        *,
+        read_only: bool,
+        tx_hash: bytes = b"",
+        block_height: int = 0,
+    ) -> None:
+        self._state = state
+        self._addr = contract_addr
+        self._read_only = bool(read_only)
+        self._height = int(block_height) or None
+
+    def balance(self, addr: Any = None) -> int:
+        target = _as_bytes(addr, expect_len=ADDRESS_LEN) if addr is not None else self._addr
+        return _get_balance(self._state, target)
+
+    def balance_of(self, addr: Any) -> int:
+        return _get_balance(self._state, _as_bytes(addr, expect_len=ADDRESS_LEN))
+
+    def transfer(self, to: Any, amount: Any) -> None:
+        if self._read_only:
+            raise ContractCallError(
+                "treasury.transfer is not allowed in a read-only call",
+                code="TREASURY_READ_ONLY",
+            )
+        amt = int(amount)
+        if amt < 0:
+            raise ContractCallError("negative treasury transfer", code="TREASURY_NEGATIVE")
+        if amt == 0:
+            return
+        target = _as_bytes(to, expect_len=ADDRESS_LEN)
+        _debit_balance(
+            self._state, self._addr, amt,
+            reason="CONTRACT_TREASURY_DEBIT", tx_hash=None, height=self._height,
+        )
+        _ensure_account(self._state, target)
+        _credit_balance(
+            self._state, target, amt,
+            reason="CONTRACT_TREASURY_CREDIT", tx_hash=None, height=self._height,
+        )
+
+
 def _execute_contract_method(
     *,
     state: Any,
@@ -902,16 +1044,14 @@ def _execute_contract_method(
     max_depth: int = MAX_INTERCALL_DEPTH,
 ) -> Any:
     try:
-        from vm_py.runtime.loader import run_call as vm_run_call  # type: ignore
         from vm_py.runtime import abi as vm_abi  # type: ignore
-        try:
-            from vm_py.runtime import sandbox as vm_sandbox  # type: ignore
-
-            install_proxy = getattr(vm_sandbox, "install_stdlib_proxy", None)
-            if callable(install_proxy):
-                install_proxy(overwrite=True)
-        except Exception:
-            pass
+        from vm_py.runtime import events_api as vm_events  # type: ignore
+        from vm_py.runtime import hash_api as vm_hash  # type: ignore
+        from vm_py.runtime.tree_engine import (  # type: ignore
+            TreeInterpreter,
+            compile_contract,
+        )
+        from vm_py.runtime.gasmeter import GasMeter  # type: ignore
     except Exception as exc:
         raise ContractCallError(
             "vm_py runtime unavailable for contract execution",
@@ -1025,22 +1165,67 @@ def _execute_contract_method(
         read_only=bool(read_only),
     )
 
+    # Resolve the contract's source (the deploy stores raw contract.py as `code`),
+    # then compile (validate closed-subset + lower to IR, cached by hash) and run
+    # it on the deterministic, gas-metered tree interpreter. A single GasMeter is
+    # shared across the whole inter-contract call tree via a context var, so a
+    # sub-call cannot escape the caller's budget.
+    source = _source_text_from_code_bytes(code_bytes)
+    if source is None:
+        source = _inline_source_from_manifest(runtime_manifest)
+    if not source:
+        raise ContractCallError(
+            "contract has no executable source", code="CONTRACT_SOURCE_MISSING"
+        )
+    try:
+        functions = compile_contract(source)
+    except Exception as exc:
+        raise ContractCallError(
+            "contract failed to compile",
+            code="CONTRACT_COMPILE_FAILED",
+            data={"error": type(exc).__name__},
+        ) from exc
+
+    storage_host = _StateStorageHost(state, contract_addr, read_only=read_only)
+    treasury_host = _StateTreasuryHost(
+        state, contract_addr, read_only=read_only, tx_hash=tx_hash, block_height=block_height
+    )
+    hosts = {
+        "abi": vm_abi,
+        "events": vm_events,
+        "hash": vm_hash,
+        "storage": storage_host,
+        "treasury": treasury_host,
+    }
+
+    active_gas = _GAS_VAR.get()
+    own_gas = active_gas is None
+    if own_gas:
+        active_gas = GasMeter(limit=DEFAULT_VM_GAS_LIMIT)
+        gas_token = _GAS_VAR.set(active_gas)
+
     try:
         with vm_abi.runtime_context(ctx):
             vm_abi.push_call_hook(_inter_contract_call)
             try:
-                with _StateStoragePatch(state, contract_addr, read_only=read_only):
-                    out = vm_run_call(dict(runtime_manifest), method_name, list(method_args))
+                out = TreeInterpreter(functions, hosts, active_gas).call(
+                    method_name, list(method_args)
+                )
             finally:
                 vm_abi.pop_call_hook()
+    except ContractCallError:
+        raise
     except Exception as exc:
+        # Reverts (VmError), OOG, and any normalized failure land here → the
+        # caller (apply_call / _inter_contract_call) rolls back state.
         raise ContractCallError(
             "contract execution failed",
             code="CALL_EXECUTION_FAILED",
-            data={"error": str(exc)},
+            data={"error": type(exc).__name__},
         ) from exc
-    if isinstance(out, Mapping):
-        return out.get("result")
+    finally:
+        if own_gas:
+            _GAS_VAR.reset(gas_token)
     return out
 
 
@@ -1124,6 +1309,28 @@ def _apply_call_vm(
     block_height: int,
     block_timestamp: int,
 ) -> Any:
+    # FORK_VM_EXEC (9.6.0): a CALL only executes from the activation height.
+    # Below it every CALL reverted (the VM was never wired), so raising here keeps
+    # history byte-identical — apply_call catches this and REVERTs, exactly as
+    # before. Read-only simulate_call does NOT come through here, so RPC queries
+    # can preview before activation.
+    try:
+        from core.network_params import FORK_VM_EXEC, is_fork_active
+
+        if not is_fork_active(FORK_VM_EXEC, int(block_height), chain_id=int(chain_id)):
+            raise ContractCallError(
+                "contract execution is not active at this height",
+                code="VM_NOT_ACTIVE",
+            )
+    except ContractCallError:
+        raise
+    except Exception:
+        # If fork metadata can't be read, fail closed (revert) rather than
+        # executing at an unknown activation state.
+        raise ContractCallError(
+            "cannot determine vm activation state", code="VM_ACTIVATION_UNKNOWN"
+        )
+
     contract_addr, calldata = _extract_call_payload(tx)
     manifest_obj, code_bytes = _load_contract_from_state(state, contract_addr)
     abi_obj = manifest_obj.get("abi")
@@ -1246,7 +1453,10 @@ def apply_deploy(
         LogEvent(
             address=locals().get("contract_addr", b"\x00" * ADDRESS_LEN),
             topics=[b"vm.disabled", b"deploy"],
-            data=str(exc).encode("utf-8", errors="replace")
+            # ANM-L02: never hash freeform exception-message text (varies by
+            # Python version/platform/locale) into consensus logs. Use the
+            # deterministic exception class name as a fixed error code.
+            data=(b"err:" + type(exc).__name__.encode("ascii", "replace"))
             if "exc" in locals()
             else b"",
         )
@@ -1324,6 +1534,35 @@ def apply_call(
 
     state_snap = _take_state_snapshot(state)
     try:
+        # FORK_VALUE_CALL (9.5.0): move the ANM attached to the call BEFORE execution,
+        # caller -> callee. Deliberately placed INSIDE the snapshot region so revert
+        # semantics return it for free: any exception below lands in
+        # _revert_state_snapshot, which restores both balances. The docstring of this
+        # function already promised "value attached to the call is not transferred on
+        # REVERT" — this is what makes that true of a real amount.
+        #
+        # Below the fork height debit_credit_for_call raises, and an under-funded call
+        # raises too; both surface as a clean REVERT with nothing moved, which is the
+        # right outcome — it can never execute and leave the callee short.
+        _call_value = _call_amount_of(_extract_payload_value(tx))
+        if _call_value:
+            from consensus.value_call import debit_credit_for_call
+
+            _moved = debit_credit_for_call(
+                amount=_call_value,
+                sender_balance=_get_balance(state, sender),
+                height=_as_int(getattr(block_env, "height", 0)),
+                chain_id=_as_int(getattr(block_env, "chain_id", 1)) or 1,
+            )
+            if _moved:
+                _payee = _as_bytes(
+                    _get(_extract_payload_value(tx), "to",
+                         default=_get(tx, "to", "recipient")),
+                    expect_len=ADDRESS_LEN,
+                )
+                _set_balance(state, sender, _get_balance(state, sender) - _moved)
+                _set_balance(state, _payee, _get_balance(state, _payee) + _moved)
+
         _apply_call_vm(
             state=state,
             tx=tx,
@@ -1357,7 +1596,10 @@ def apply_call(
         LogEvent(
             address=to if any(to) else b"\x00" * ADDRESS_LEN,
             topics=[b"vm.disabled", b"call"],
-            data=str(exc).encode("utf-8", errors="replace")
+            # ANM-L02: never hash freeform exception-message text (varies by
+            # Python version/platform/locale) into consensus logs. Use the
+            # deterministic exception class name as a fixed error code.
+            data=(b"err:" + type(exc).__name__.encode("ascii", "replace"))
             if "exc" in locals()
             else b"",
         )

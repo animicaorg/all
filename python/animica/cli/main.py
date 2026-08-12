@@ -51,9 +51,9 @@ import typer
 
 # Import subcommand apps
 from . import (vpn,  # dVPN
-    ai, aicf, animal, beacon, bittensor, chain, chat, contract, da, debug, ena, faucet, growth, gui, key,
+    ai, aicf, animal, beacon, bittensor, chain, chat, cloud, contract, da, debug, ena, faucet, growth, gui, key,
                mcp, media, mempool, mining, network, node, p2p, peer, phase2, quantum,
-               rpc, script, snapshot, stratum, studio, sync, tx, up, wallet)
+               rpc, script, settle, snapshot, stratum, studio, sync, tx, up, wallet)
 
 app = typer.Typer(
     name="animica",
@@ -222,7 +222,20 @@ app.add_typer(ai.app, name="ai")
 app.add_typer(media.app, name="media")
 app.add_typer(growth.app, name="growth")
 app.add_typer(animal.app, name="animal")
+app.add_typer(settle.app, name="settle")
 app.add_typer(up.app, name="up")
+app.add_typer(cloud.app, name="cloud")
+
+# `animica deploy` — the same command as `animica cloud deploy`, one level up.
+#
+# Deploying a function is what people come to the CLI to do, and it sat three words
+# deep under a noun nobody thinks to type. The `animica cloud …` group is unchanged;
+# this is an alias, not a move, so existing scripts and docs keep working.
+app.command(
+    "deploy",
+    help="Deploy a Python function to Animica Cloud (alias for `animica cloud deploy`).",
+    context_settings={"allow_interspersed_args": True},
+)(cloud.deploy)
 
 
 # ============================================================================

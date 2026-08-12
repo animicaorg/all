@@ -1,0 +1,24 @@
+# Animica app store — ANMSTORE1 payment watcher (verify + credit wallet purchases).
+# TEMPLATE ONLY — this repo file is NOT installed/enabled by the store change itself.
+# INSTALL (operator):
+#   cp deploy/systemd/animica-store-payment-watcher.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now animica-store-payment-watcher.timer
+# ARM (money-moving; default below is observe-only dry-run):
+#   set STORE_PAYMENTS_ENABLED=1 in .env.production (EnvironmentFile overrides Environment=).
+
+[Unit]
+Description=Animica store payment watcher (ANMSTORE1 verify: 12-conf finality + sender balance-delta + treasury reconciliation; credits 70/30 + issues Licenses)
+Documentation=file:/root/animica/apps/animica-marketplace/scripts/store-payment-watcher.ts
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/animica/apps/animica-marketplace
+# Conservative defaults — .env.production (EnvironmentFile) overrides these to arm.
+Environment=STORE_PAYMENTS_ENABLED=0
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+EnvironmentFile=/root/animica/apps/animica-marketplace/.env.production
+# flock = first belt (whole-run single instance); the worker's pg advisory lock is the second.
+ExecStart=/usr/bin/flock -n /run/lock/animica-store-payment-watcher.lock /root/animica/apps/animica-marketplace/node_modules/.bin/tsx scripts/store-payment-watcher.ts
+NoNewPrivileges=true

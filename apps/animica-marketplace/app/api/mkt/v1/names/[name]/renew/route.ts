@@ -28,7 +28,15 @@ export async function POST(req: NextRequest, { params }: { params: { name: strin
     }
     const base = domain.expiresAt > new Date() ? domain.expiresAt.getTime() : Date.now();
     const expiresAt = new Date(base + years * 365 * 86400_000);
-    const updated = await prisma.anmDomain.update({ where: { name }, data: { expiresAt, status: 'ACTIVE' } });
+    // Renewing extends the registration; it must NOT un-shelve a plan-suspended name.
+    // Forcing ACTIVE here would put the owner back over their deployment limit, and the next
+    // enforcement sweep would then shelve a DIFFERENT site (keep-oldest) — silently swapping
+    // which of the user's sites is live. SUSPENDED names come back via /billing/keep or
+    // automatically once the plan fits again.
+    const updated = await prisma.anmDomain.update({
+      where: { name },
+      data: { expiresAt, status: domain.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE' },
+    });
     await prisma.domainEvent.create({ data: { domainId: domain.id, kind: 'renew', detail: `+${years}y` } });
     return ok({ domain: jsonSafe({ ...updated, fqdn: `${name}.anm` }), feeAnm: nanmToAnm(fee) });
   } catch (e) {
