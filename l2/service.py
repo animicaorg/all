@@ -359,14 +359,17 @@ class L2Service:
             end = min(l1_head, start + self._max_blocks_per_scan - 1)
             for height in range(start, end + 1):
                 try:
+                    # This node serves `chain.getBlockByNumber {number}` and
+                    # returns txs as HASH strings (not full objects), so each
+                    # candidate is fetched via `tx.getTransactionByHash`.
                     blk = await self._l1_rpc(
-                        "chain_getBlockByNumber", [height, True]
+                        "chain.getBlockByNumber", {"number": height}
                     )
                 except Exception as e:
                     log.debug("L1 block %d fetch failed: %s", height, e)
                     break  # retry from the same height next iteration
                 if isinstance(blk, dict):
-                    found += self._observe_block_deposits(blk, height, bridge_hex)
+                    found += await self._observe_block_deposits(blk, height, bridge_hex)
                 self._indexed_l1_height = height
 
         # Advance confirmation tiers even when no bridge address is configured
@@ -382,34 +385,66 @@ class L2Service:
             log.exception("bridge.update_l1_head failed")
         return found
 
-    def _observe_block_deposits(
+    async def _observe_block_deposits(
         self, block: dict, height: int, bridge_hex: str
     ) -> int:
-        """Feed one L1 block view's matching transfers to the bridge."""
+        """Observe bridge deposits in one L1 block.
+
+        This node's block view lists txs as HASH strings, so each is resolved
+        via ``tx.getTransactionByHash``. A transfer counts as a deposit when its
+        recipient is the bridge address. The credited L2 beneficiary is:
+          * the 32-byte address in an ``ANML2D1`` memo when present, else
+          * the L1 SENDER (``from``) — L1 and L2 share the same address
+            derivation, so a plain transfer to the bridge credits the sender on
+            L2. This matches what the wallet deposit screen instructs (send an
+            ordinary L1 transfer), so memo-less deposits are credited.
+        """
         bridge = self.node.sequencer.bridge
-        txs = block.get("transactions") or block.get("txs") or []
+        raw = block.get("transactions") or block.get("txs") or []
         found = 0
-        for tx in txs:
+        for entry in raw:
+            tx: Optional[dict] = None
+            if isinstance(entry, dict):
+                tx = entry
+            elif isinstance(entry, str):
+                try:
+                    # tx.getTransactionByHash takes a POSITIONAL hash arg on
+                    # this node (the object {hash:…} form errors); block fetch
+                    # above uses the object {number:…} form. Node conventions
+                    # differ per method.
+                    tx = await self._l1_rpc("tx.getTransactionByHash", [entry])
+                except Exception as e:
+                    log.debug("L1 tx %s fetch failed: %s", entry, e)
+                    continue
+                if isinstance(tx, dict) and not tx.get("hash"):
+                    tx["hash"] = entry
             if not isinstance(tx, dict):
-                continue  # hashes-only view; we always request full objects
+                continue
             if _norm_hex(tx.get("to")) != bridge_hex:
-                continue
-            memo = _hex_to_bytes(tx.get("data"))
-            if memo is None or not memo.startswith(DEPOSIT_MEMO_MAGIC):
-                continue
-            beneficiary = memo[len(DEPOSIT_MEMO_MAGIC) : len(DEPOSIT_MEMO_MAGIC) + _ADDR_LEN]
-            if len(beneficiary) != _ADDR_LEN:
-                log.warning(
-                    "Bridge deposit memo too short in L1 tx %s (block %d); skipped",
-                    tx.get("hash"),
-                    height,
-                )
                 continue
             try:
                 amount = int(tx.get("value") or 0)
             except (TypeError, ValueError):
                 continue
             if amount <= 0:
+                continue
+            memo = _hex_to_bytes(tx.get("data"))
+            if memo is not None and memo.startswith(DEPOSIT_MEMO_MAGIC):
+                beneficiary = memo[len(DEPOSIT_MEMO_MAGIC) : len(DEPOSIT_MEMO_MAGIC) + _ADDR_LEN]
+                if len(beneficiary) != _ADDR_LEN:
+                    log.warning(
+                        "Bridge deposit memo too short in L1 tx %s (block %d); "
+                        "falling back to sender", tx.get("hash"), height,
+                    )
+                    beneficiary = _hex_to_bytes(tx.get("from"))
+            else:
+                # Plain transfer: credit the L1 sender on L2 (same address).
+                beneficiary = _hex_to_bytes(tx.get("from"))
+            if beneficiary is None or len(beneficiary) != _ADDR_LEN:
+                log.warning(
+                    "Bridge deposit in L1 tx %s (block %d) has no resolvable "
+                    "beneficiary; skipped", tx.get("hash"), height,
+                )
                 continue
             l1_txid = _hex_to_bytes(tx.get("hash"))
             if l1_txid is None:
@@ -418,10 +453,9 @@ class L2Service:
                 dep = bridge.observe_deposit(l1_txid, beneficiary, amount, height)
                 found += 1
                 log.info(
-                    "Observed L1 bridge deposit id=0x%s amount=%d nanos at height %d",
-                    dep.deposit_id.hex()[:16],
-                    amount,
-                    height,
+                    "Observed L1 bridge deposit id=0x%s beneficiary=0x%s "
+                    "amount=%d nanos at height %d",
+                    dep.deposit_id.hex()[:16], beneficiary.hex()[:16], amount, height,
                 )
             except Exception:
                 log.exception(
