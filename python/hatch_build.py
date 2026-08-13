@@ -47,6 +47,7 @@ _VENDOR_MAP: list[tuple[str, str]] = [
     ("../mining", "mining"),
     ("../p2p", "p2p"),
     ("../pq", "pq"),
+    ("../sdk/python/omni_sdk", "omni_sdk"),
     ("../randomness", "randomness"),
     ("../rpc", "rpc"),
     ("../stdlib", "stdlib"),

@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional, Tuple
 
 # Public algorithm names we support here (match pq registry naming)
-AlgName = Literal["dilithium3", "sphincs_shake_128s"]
+AlgName = Literal["dilithium3", "sphincs_shake_128s", "ml_dsa_65"]
 
 __all__ = [
     "AlgName",
@@ -111,9 +111,18 @@ def _normalize_alg_name(name: str) -> AlgName:
         "sphincs+": "sphincs_shake_128s",
         "sphincs_shake_128s": "sphincs_shake_128s",
         "sphincs+-shake-128s": "sphincs_shake_128s",
+        # Real FIPS 204 ML-DSA-65 (alg_id 0x1003) — the ONLY scheme the node's
+        # tx allowlist (ACCEPTED_TX_SIG_ALG_IDS) accepts. `pq.py.sign` routes
+        # this name to the real ml_dsa_65 backend, so contract deploy/send can
+        # sign with it. Without this, deploys signed by an ml_dsa_65 wallet were
+        # rejected here before ever reaching the node, and stub-alg wallets were
+        # rejected BY the node — leaving on-chain deploys impossible.
+        "ml-dsa-65": "ml_dsa_65",
+        "mldsa65": "ml_dsa_65",
+        "ml_dsa_65": "ml_dsa_65",
     }
     n = aliases.get(n, n)
-    if n not in ("dilithium3", "sphincs_shake_128s"):
+    if n not in ("dilithium3", "sphincs_shake_128s", "ml_dsa_65"):
         raise ValueError(f"Unsupported algorithm name: {name!r}")
     return n  # type: ignore[return-value]
 
