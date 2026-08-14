@@ -12,15 +12,6 @@ export const metadata: Metadata = {
     description: 'Write Python. Deploy to Animica. Get paid when people use it.',
     type: 'website',
     siteName: 'Animica',
-    // Every page under this layout had NO og:image, so a share of /pricing — the page
-    // whose whole job is to be linked — rendered as a bare text snippet in Slack,
-    // Discord and every social preview. Per-page metadata still overrides this.
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Animica' }],
-  },
-  twitter: {
-    // Was defaulting to the small 'summary' card for the same reason.
-    card: 'summary_large_image',
-    images: ['/og.png'],
   },
 };
 

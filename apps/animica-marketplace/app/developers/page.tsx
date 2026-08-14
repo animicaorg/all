@@ -16,9 +16,6 @@ export const metadata: Metadata = {
     'The developers building on Animica Python Cloud. Browse public profiles, their published apps and functions, and start earning ANM with your own Python code.',
   alternates: { canonical: `${BASE}/developers` },
   openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
     title: 'Animica developers',
     description: 'The developers building and earning on Animica Python Cloud.',
     url: `${BASE}/developers`,

@@ -40,6 +40,7 @@ import 'address.dart';
 import 'canonical.dart';
 import 'ml_dsa_65.dart';
 import 'rpc.dart';
+import 'tx_history.dart';
 
 class SignedTx {
   final Uint8List rawTx;
@@ -60,8 +61,22 @@ class SignedTx {
 /// (ANMSTORE1) are always well under this (<=300 bytes).
 const int kMaxTransferDataBytes = 1024;
 
-/// Gas price (nanos per gas unit) the wallet offers by default.
-const int kDefaultGasPrice = 1000000000;
+/// Gas price (nanos PER GAS UNIT) the wallet offers by default.
+///
+/// This is a per-gas price, not a total fee: the network charges
+/// `gasLimit × gasPrice` nanos, so a plain transfer (21_000 gas) at price 1
+/// costs 21_000 nanos = 0.000021 ANM — matching the canonical CLI default
+/// (python/animica/wallet/payment.py) and what the rest of the network
+/// submits. 0.3.0/0.3.1 shipped 1_000_000_000 here (one whole ANM per gas
+/// unit), which silently burned 21,000 ANM of fees on every mined transfer.
+/// Never raise this without a fee oracle; see kMaxFeeNanos.
+const int kDefaultGasPrice = 1;
+
+/// Hard ceiling on the worst-case fee (gasPrice × gasLimit) of any tx this
+/// wallet will build: 100 ANM. Orders of magnitude above every legitimate
+/// fee on this chain, and exists so a bad default or a malicious dapp-
+/// supplied gas price can never silently drain a balance into fees again.
+final BigInt kMaxFeeNanos = BigInt.from(100) * BigInt.from(1000000000);
 
 /// Default gas limit for a plain transfer.
 const int kDefaultTransferGasLimit = 21000;
@@ -101,6 +116,15 @@ Map<String, dynamic> _canonicalBody({
   }
   if (gasLimit <= 0 || gasPrice < 0) {
     throw ArgumentError('invalid gas: price=$gasPrice limit=$gasLimit');
+  }
+  final worstCaseFee = BigInt.from(gasPrice) * BigInt.from(gasLimit);
+  if (worstCaseFee > kMaxFeeNanos) {
+    throw ArgumentError(
+      'refusing to build a transaction offering '
+      '${worstCaseFee ~/ BigInt.from(1000000000)} ANM in fees '
+      '(gasPrice=$gasPrice × gasLimit=$gasLimit exceeds the '
+      '${kMaxFeeNanos ~/ BigInt.from(1000000000)} ANM safety cap)',
+    );
   }
   return <String, dynamic>{
     'v': 1,
@@ -548,8 +572,25 @@ Future<String> signAndBroadcast({
   required Account account,
   required Map<String, dynamic> body,
   required AnimicaChainContext chainContext,
+  // Human-readable recipient for the local history. The body only carries
+  // 32-byte digests, which cannot be re-encoded to anim1… without the alg
+  // id, so flows that know the display address pass it here.
+  String? displayTo,
 }) async {
   final signed =
       await signTx(account: account, body: body, chainContext: chainContext);
-  return rpc.sendRawTransaction(signed.rawTx);
+  final txHash = await rpc.sendRawTransaction(signed.rawTx);
+  // Every send path funnels through here, so this is the one place local
+  // history can be complete. Bookkeeping must never break a broadcast
+  // that already succeeded — swallow storage errors.
+  try {
+    await TxHistoryStore.add(TxRecord.fromBody(
+      hash: txHash,
+      from: account.address,
+      body: body,
+      displayTo: displayTo,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+    ));
+  } catch (_) {}
+  return txHash;
 }

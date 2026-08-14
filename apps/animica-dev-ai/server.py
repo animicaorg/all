@@ -368,7 +368,7 @@ async def _run_timeout(client: httpx.AsyncClient) -> float:
 
 
 # Prefer higher-quality tiers, but run on ANY tier a worker is actually serving.
-_MODEL_PRIORITY = ["kimi-k3", "animica-chat-flagship", "animica-chat", "animica-chat-small"]
+_MODEL_PRIORITY = ["animica-chat-flagship", "animica-chat", "animica-chat-small"]
 
 
 def _next_lower_tier(current: str, unserved: set) -> Optional[str]:

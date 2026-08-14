@@ -16,6 +16,9 @@ import DAPage from './pages/DAPage'
 import QuantumPage from './pages/QuantumPage'
 import RpcInspectorPage from './pages/RpcInspectorPage'
 import DebugBundlePage from './pages/DebugBundlePage'
+import L2Page from './pages/L2Page'
+import L2BatchPage from './pages/L2BatchPage'
+import L2TxPage from './pages/L2TxPage'
 import SearchBar from './components/SearchBar'
 import ThemeToggle from './components/ThemeToggle'
 import NetworkHealthBanner from './components/NetworkHealthBanner'
@@ -50,6 +53,9 @@ export default function App() {
                 </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/tokens">
                   Tokens
+                </Link>
+                <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/l2">
+                  L2
                 </Link>
                 <Link className="hover:text-animica-600 dark:hover:text-animica-400" to="/aicf">
                   AICF
@@ -94,6 +100,9 @@ export default function App() {
           <Route path="/contracts" element={<ContractsPage />} />
           <Route path="/tokens" element={<TokensPage />} />
           <Route path="/token/:address" element={<TokenDetailPage />} />
+          <Route path="/l2" element={<L2Page />} />
+          <Route path="/l2/batch/:n" element={<L2BatchPage />} />
+          <Route path="/l2/tx/:hash" element={<L2TxPage />} />
           <Route path="/aicf" element={<AICFPage />} />
           <Route path="/mining" element={<MiningPage />} />
           <Route path="/da" element={<DAPage />} />

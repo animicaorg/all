@@ -75,6 +75,7 @@ from core.network_params import (
     FORK_ADDRESS_FREEZE,
     FORK_PQ_HARDENING,
     FORK_ROOT_COMMITMENT,
+    FORK_SERVICE_CARVE,
     FORK_VPN_RELAY_REWARDS,
     is_fork_active,
 )
@@ -1105,9 +1106,9 @@ class BlockImporter:
                     self._difficulty_anchor_hash = bytes(block_hash)
                 return
 
-            # Update theta for the next block.
-            # Pass the height so FORK_BOUNDED_RETARGET can gate itself. Without it
-            # the retarget silently keeps the legacy unclamped emergency valve.
+            # Update theta for the next block. Pass height + chain_id so
+            # FORK_BOUNDED_RETARGET governs the retarget from its activation height
+            # (below it, and for simulators that pass no height, the legacy path runs).
             self.difficulty_state = diff.update_theta(
                 self.difficulty_state,
                 dt_seconds=float(dt_seconds),
@@ -1558,6 +1559,29 @@ class BlockImporter:
                     ImportErrorCode.INVALID, height, h, False, f"address_freeze: {freeze_error}"
                 )
 
+            # FORK_QUANTUM_BEACON: presence-gated binding to attested quantum randomness.
+            # OPTIONAL BY CONSTRUCTION — a block that carries no beacon commitment is valid
+            # at every height, forever, so a QRNG outage can never halt or slow the chain
+            # (there is no path that rejects for absence). Only a block that DOES commit a
+            # beacon must commit a correct, chain-continuous one; below the activation
+            # height a commitment is ignored entirely. Grandfathered, writes no state.
+            try:
+                from consensus.quantum_beacon import BeaconError, validate_header_beacon
+
+                _hdr_extra = getattr(header, "extra", None)
+                if _hdr_extra is None and isinstance(hdr_map, dict):
+                    _hdr_extra = hdr_map.get("extra")
+                validate_header_beacon(
+                    _hdr_extra,
+                    height,
+                    parent_extra=getattr(parent_header, "extra", None),
+                    chain_id=int(self.params.chain_id),
+                )
+            except BeaconError as beacon_error:
+                return ImportResult(
+                    ImportErrorCode.INVALID, height, h, False, f"quantum_beacon: {beacon_error}"
+                )
+
             # Persist header & block
             self._store_header(height, h, header)
             self._store_block(h, block)
@@ -1823,6 +1847,7 @@ class BlockImporter:
             genesis_weight_micro=genesis_weight,
             genesis_height=0,
             max_reorg_depth=self._max_reorg_depth,
+            chain_id=int(self.params.chain_id),
         )
 
     def _init_fork_choice_from_db(self) -> None:
@@ -1851,6 +1876,7 @@ class BlockImporter:
             genesis_weight_micro=genesis_weight,
             genesis_height=0,
             max_reorg_depth=self._max_reorg_depth,
+            chain_id=int(self.params.chain_id),
         )
         self._seed_fork_choice_from_canonical()
         # Re-apply durable invalidations so a state-rejected block (and its
@@ -2827,14 +2853,16 @@ class BlockImporter:
             # tx bytes + static schedule. SettlementUnavailable fails CLOSED like
             # ANM-H08 (halt loudly, never silently pay nobody while peers pay).
             settlement_outputs: list[tuple[bytes, int]] = []
-            # Set only when FORK_SERVICE_CARVE withheld a slice, so the credit
-            # site below can prove it credited exactly what was subtracted.
-            _carve_total: int = 0
             if (
                 chain_id == 1
                 and miner_reward > 0
                 and not _is_instant_block(block.header)
                 and is_fork_active(FORK_VPN_RELAY_REWARDS, max(1, height), chain_id=1)
+                # From FORK_SERVICE_CARVE the 25%-of-block carve REPLACES the
+                # 50-ANM IOU settlement (both pay the same service anchors from the
+                # miner — running both would double-carve). Below 75,000 the IOU
+                # settlement still applies.
+                and not is_fork_active(FORK_SERVICE_CARVE, max(1, height), chain_id=1)
             ):
                 try:
                     from consensus.iou_settlement import (
@@ -2868,79 +2896,16 @@ class BlockImporter:
                     _dist = extract_settlement_distribution(
                         _executed_txs, chain_id=chain_id
                     )
-                    # FORK_SERVICE_CARVE (9.5.0): the carve is UNCONDITIONAL from H, and
-                    # anchors decide only where it goes. Before H this whole branch was
-                    # self-gating on `_dist` — no anchors meant no carve and the miner
-                    # kept 100%, which is exactly how "mining without serving earns the
-                    # full reward" was possible. Below H `_carve_pct` is 0, so the
-                    # behaviour is byte-identical to 9.4.x and history replays unchanged.
-                    from consensus.rewards import (
-                        FOUNDATION_TREASURY_ADDRESS,
-                        SERVICE_ESCROW_ADDRESS,
-                        service_carve_pct,
-                    )
-                    from consensus.service_carve import split_carve
-
-                    _carve_pct = service_carve_pct(max(1, height), chain_id=1)
-                    if _dist or _carve_pct > 0:
-                        if _carve_pct > 0:
-                            # The carve is a share of the WHOLE BLOCK, so reconstruct the
-                            # pre-split subsidy. miner_reward here is already
-                            # post-treasury (FORK_TREASURY_25 took its 25% inside
-                            # compute_block_reward), and 25% of that remainder would be
-                            # 18.75% of the block, not 25%.
-                            _total_subsidy = (
-                                int(miner_reward) + int(treasury_reward) + int(aicf_reward)
-                            )
-                            _carve_total_target = (_total_subsidy * _carve_pct) // 100
-                            # THE CARVE IS THE BUDGET. Do NOT also apply
-                            # settlement_pool_cap here: that cap is 50 ANM scaled by
-                            # subsidy/300, i.e. total/6 (16.67%), which is SMALLER than
-                            # the 25% carve at every height — so min(cap, carve) always
-                            # picked the cap and 8.33% of every block (25 ANM today) was
-                            # withheld from the miner while being structurally
-                            # unreachable by any provider, landing in the treasury
-                            # forever. That silently broke "paid entirely each block",
-                            # and the clamp against _carve_total_target was dead code.
-                            #
-                            # The pool cap made sense when the slice was taken OUT of the
-                            # miner's reward only when anchors existed. Now that 25% is
-                            # withheld unconditionally, the carve bounds anchor claims on
-                            # its own, and split_carve clamps every output against it.
-                            _cap = _carve_total_target
-                            _anchor_outputs = (
-                                scale_settlement_outputs(_dist, _cap, int(miner_reward))
-                                if _dist
-                                else []
-                            )
-                            from core.utils.address import address_to_bytes
-
-                            miner_reward, settlement_outputs, _carve_total = split_carve(
-                                miner_reward=int(miner_reward),
-                                total_subsidy=_total_subsidy,
-                                pct=_carve_pct,
-                                anchor_outputs=_anchor_outputs,
-                                # Nothing claimed -> treasury (operator rule: "if there is
-                                # no inference request at all it goes to the treasury").
-                                # Partially claimed -> the dedicated escrow holds what is
-                                # owed to providers. Both are consensus constants, so every
-                                # node routes identically.
-                                escrow_address=address_to_bytes(SERVICE_ESCROW_ADDRESS),
-                                treasury_address=address_to_bytes(
-                                    FOUNDATION_TREASURY_ADDRESS
-                                ),
-                            )
-                        else:
-                            # Pre-fork path, unchanged: pay only what anchors claim.
-                            _cap = settlement_pool_cap(
-                                max(1, height), self.full_params_dict or {}
-                            )
-                            settlement_outputs = scale_settlement_outputs(
-                                _dist, _cap, int(miner_reward)
-                            )
-                            _settle_total = sum(a for _, a in settlement_outputs)
-                            if _settle_total > 0:
-                                miner_reward = int(miner_reward) - _settle_total
+                    if _dist:
+                        _cap = settlement_pool_cap(
+                            max(1, height), self.full_params_dict or {}
+                        )
+                        settlement_outputs = scale_settlement_outputs(
+                            _dist, _cap, int(miner_reward)
+                        )
+                        _settle_total = sum(a for _, a in settlement_outputs)
+                        if _settle_total > 0:
+                            miner_reward = int(miner_reward) - _settle_total
                 except Exception as _settle_exc:
                     # Fail closed on ANY settlement-path error once the fork is
                     # active: proceeding without the carve while healthy peers
@@ -2950,6 +2915,81 @@ class BlockImporter:
                         "iou_settlement: settlement computation failed — failing closed at height %d: %r",
                         height,
                         _settle_exc,
+                    )
+                    raise
+
+            # FORK_SERVICE_CARVE (9.7.0): from H=75,000 reserve 25% of the block
+            # subsidy for inference, WITHHELD FROM THE MINER whether or not anyone
+            # claims it. Executed inference/service settlement anchors are paid up
+            # to the carve; whatever is unclaimed rolls to the foundation treasury.
+            # Net split at/after H: 50% miner / 25% base treasury / 25% inference
+            # (so up to 50% treasury when nothing is claimed). Emission-conserving
+            # (split_carve asserts outputs == carve) and fails CLOSED like the IOU
+            # path — proceeding without the carve while peers apply it would be a
+            # silent balance divergence.
+            if (
+                chain_id == 1
+                and miner_reward > 0
+                and not _is_instant_block(block.header)
+                and is_fork_active(FORK_SERVICE_CARVE, max(1, height), chain_id=1)
+            ):
+                try:
+                    from consensus.service_carve import split_carve, carve_amount
+                    from consensus.iou_settlement import (
+                        SettlementUnavailable,
+                        extract_settlement_distribution,
+                        scale_settlement_outputs,
+                    )
+                    from core.utils.address import address_to_bytes
+
+                    SERVICE_CARVE_PCT = 25
+                    # The carve is 25% of the WHOLE block subsidy (miner+treasury+aicf),
+                    # not of the post-treasury miner slice — see consensus/service_carve.py.
+                    _total_block_subsidy = int(miner_reward) + int(treasury_reward) + int(aicf_reward)
+                    _carve = carve_amount(_total_block_subsidy, SERVICE_CARVE_PCT)
+
+                    _claim_outputs: list[tuple[bytes, int]] = []
+                    if _carve > 0:
+                        # Executed (SUCCESS) non-coinbase anchors only — a replayed or
+                        # reverted anchor carries a valid signature but must never pay.
+                        if len(block_result.tx_results) != len(non_coinbase_txs):
+                            raise SettlementUnavailable(
+                                f"tx_results misaligned with block txs "
+                                f"({len(block_result.tx_results)} != {len(non_coinbase_txs)})"
+                            )
+                        _executed = []
+                        for _si, _stx in enumerate(non_coinbase_txs):
+                            _sst = getattr(block_result.tx_results[_si], "status", None)
+                            _sst_name = (getattr(_sst, "name", None) or str(_sst or "")).upper()
+                            if _sst_name == "SUCCESS":
+                                _executed.append(_stx)
+                        _dist = extract_settlement_distribution(_executed, chain_id=chain_id)
+                        if _dist:
+                            # Proportionally scale claims into the carve cap; split_carve
+                            # re-clamps so paid can never exceed the carve.
+                            _claim_outputs = scale_settlement_outputs(_dist, _carve, int(miner_reward))
+
+                    _treasury_bytes = address_to_bytes(FOUNDATION_TREASURY_ADDRESS)
+                    _new_miner, _carve_outputs, _carve_total = split_carve(
+                        miner_reward=int(miner_reward),
+                        total_subsidy=_total_block_subsidy,
+                        pct=SERVICE_CARVE_PCT,
+                        anchor_outputs=_claim_outputs,
+                        # No dedicated escrow account is wired: unclaimed value rolls to
+                        # the foundation treasury in BOTH the nothing-claimed and the
+                        # partially-claimed cases (the operator's stated rule).
+                        escrow_address=_treasury_bytes,
+                        treasury_address=_treasury_bytes,
+                    )
+                    miner_reward = int(_new_miner)
+                    # Credited by the settlement_outputs loop below (providers + the
+                    # treasury remainder).
+                    settlement_outputs = _carve_outputs
+                except Exception as _carve_exc:
+                    log.error(
+                        "service_carve: carve computation failed — failing closed at height %d: %r",
+                        height,
+                        _carve_exc,
                     )
                     raise
 
@@ -3083,19 +3123,6 @@ class BlockImporter:
                     _settle_amt,
                     height,
                     _settle_balance,
-                )
-
-            # The invariant whose violation mints or burns coin: whatever
-            # FORK_SERVICE_CARVE subtracted from the miner MUST have been credited here.
-            # split_carve proves its own LIST sums to the carve, but nothing until now
-            # proved that list was actually applied — an edit that skipped, reordered or
-            # filtered an output would have burned coin with no test, log or metric
-            # noticing. Fail closed: a silent balance divergence is far worse than a halt.
-            if _carve_total and settlement_credit_total != _carve_total:
-                raise BlockImportError(
-                    f"service carve credited {settlement_credit_total} but withheld "
-                    f"{_carve_total} at height {height} — refusing to apply a block that "
-                    f"would mint or burn coin"
                 )
             if settlement_credit_total > 0:
                 if not seal_only:

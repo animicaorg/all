@@ -118,11 +118,6 @@ class Session:
     low_diff_reject_streak: int = 0
     accepted_share_streak: int = 0
     is_v1: bool = False
-    # True when this client advertised sub-block share support on
-    # mining.subscribe. Only such sessions are handed a share target below the
-    # block target; everything else (xmrig, ASIC dashboards, older miners) keeps
-    # the wire-difficulty-floored target it has always received.
-    supports_subblock: bool = False
     subscription_ids: Tuple[str, str] = ("subscription-id-1", "subscription-id-2")
     # Features dict the miner sent on mining.subscribe. Captured so the
     # AUTHORIZE hook can forward AICF tier / hardware metadata to the
@@ -131,54 +126,6 @@ class Session:
 
     def touch(self) -> None:
         self.last_seen = time.time()
-
-
-def _share_identity(params: Any) -> Optional[tuple]:
-    """Identity of a submitted solution, for replay detection.
-
-    A solution is the (nonce, extranonce2) pair — everything else in the submit
-    is derived or advisory. Returns None when no nonce can be found, in which
-    case the share is simply not deduped (the validator will reject it anyway).
-    """
-    if not isinstance(params, dict):
-        return None
-    nonce = params.get("nonce")
-    if nonce in (None, ""):
-        hs = params.get("hashshare")
-        if isinstance(hs, dict):
-            nonce = hs.get("nonce")
-    if nonce in (None, ""):
-        return None
-    # Normalise 0x-prefixed / bare hex / int so "0x1", "1" and 1 collide.
-    try:
-        nonce_key: Any = int(str(nonce), 16) if isinstance(nonce, str) else int(nonce)
-    except (TypeError, ValueError):
-        nonce_key = str(nonce).strip().lower()
-    extranonce2 = params.get("extranonce2")
-    en2 = str(extranonce2).strip().lower() if extranonce2 not in (None, "") else ""
-    return (nonce_key, en2)
-
-
-def _parse_subblock_optin(features: Any) -> bool:
-    """True when a subscribe `features` dict opts in to sub-block share targets.
-
-    Accepts `subblockShares` / `subblock_shares` / `subShares` as a truthy flag,
-    a version number, or a dict (any of `{"version": n}` shapes). Deliberately
-    permissive on shape but never inferred from anything else — absence means
-    "send me exactly what you always sent".
-    """
-    if not isinstance(features, dict):
-        return False
-    for key in ("subblockShares", "subblock_shares", "subShares", "sub_shares"):
-        if key not in features:
-            continue
-        value = features[key]
-        if isinstance(value, dict):
-            return bool(value) and value.get("enabled", True) is not False
-        if isinstance(value, str):
-            return value.strip().lower() not in ("", "0", "false", "no", "off")
-        return bool(value)
-    return False
 
 
 def _parse_worker_identity(raw_worker: Any) -> tuple[Optional[str], Optional[str]]:
@@ -600,21 +547,6 @@ class StratumServer:
         # Sends left running past a broadcast deadline; held so the event loop
         # keeps a strong reference until they complete.
         self._detached_sends: set = set()
-        # Accepted (job_id, nonce, extranonce2) triples, so the same solution can
-        # never be credited twice. REQUIRED once sub-block shares exist: a
-        # non-block share is accepted locally and never reaches the node
-        # (stratum_pool/core.py returns early for `not is_block`), so nothing
-        # else dedupes it — a miner could replay one valid share for unlimited
-        # PPS credit. Block shares were always covered because the node reports
-        # duplicates. Keyed pool-wide, not per session, so a second connection
-        # cannot re-submit another session's solution either. Bounded: one entry
-        # set per cached job, evicted with the job.
-        self._seen_shares: Dict[str, set] = {}
-        # Policy hook: θµ -> share ratio for sub-block-capable sessions, or None
-        # to leave them on the normal floored target. Owned by the pool (it has
-        # the config and the live θ); the server only applies it, and only to
-        # sessions that advertised support. Unset => feature entirely inert.
-        self._subblock_ratio_for_theta: Optional[Callable[[int], Optional[float]]] = None
 
         # Stats
         self._accepted = 0
@@ -767,7 +699,6 @@ class StratumServer:
 
         for jid in stale_ids:
             self._jobs.pop(jid, None)
-            self._seen_shares.pop(jid, None)
             with suppress(ValueError):
                 self._job_order.remove(jid)
             if jid == self._current_job_id:
@@ -776,15 +707,8 @@ class StratumServer:
         while len(self._job_order) > self._max_cached_jobs:
             drop_id = self._job_order.pop(0)
             self._jobs.pop(drop_id, None)
-            self._seen_shares.pop(drop_id, None)
             if drop_id == self._current_job_id:
                 self._current_job_id = self._job_order[-1] if self._job_order else None
-        # A share can only be replayed against a job we would still accept, so
-        # the dedup set never outlives its job. Belt-and-braces against any
-        # path that adds a key without a cached job.
-        if len(self._seen_shares) > self._max_cached_jobs * 2:
-            for jid in [j for j in self._seen_shares if j not in self._jobs]:
-                self._seen_shares.pop(jid, None)
 
     def _find_authorized_session_by_address(self, address: str) -> Optional[Session]:
         addr = (address or "").strip()
@@ -934,53 +858,6 @@ class StratumServer:
                 len(self._sessions),
             )
 
-    def set_subblock_ratio_policy(
-        self, policy: Optional[Callable[[int], Optional[float]]]
-    ) -> None:
-        """Install the θµ -> sub-block ratio policy (see PoolConfig docs)."""
-        self._subblock_ratio_for_theta = policy
-
-    def _effective_share_target(
-        self, session: Session, share_target: float, theta_micro: int
-    ) -> float:
-        """The share target THIS session should mine at.
-
-        Sub-block-capable sessions get the (easier) policy ratio so their
-        non-winning work earns PPS credit. Everyone else — and every v1/xmrig
-        session regardless of what it claims, because their wire difficulty must
-        stay ≥ the compat floor — keeps `share_target` unchanged. The policy may
-        only make a target EASIER; it can never make one harder.
-        """
-        # Solo sessions are credited only for full blocks (95%-to-finder), so a
-        # sub-block target would just add traffic they earn nothing for.
-        if not session.supports_subblock or session.is_v1:
-            return float(share_target)
-        if str(session.pool_mode or "").strip().lower() == "solo":
-            return float(share_target)
-        policy = self._subblock_ratio_for_theta
-        if policy is None:
-            return float(share_target)
-        try:
-            ratio = policy(int(theta_micro))
-        except Exception as e:  # pragma: no cover - policy must never break mining
-            log.warning(f"[Stratum] subblock ratio policy failed: {e}")
-            return float(share_target)
-        if ratio is None:
-            return float(share_target)
-        ratio = float(ratio)
-        if not (0.0 < ratio <= 1.0):
-            return float(share_target)
-        return min(float(share_target), ratio)
-
-    def _is_subblock_active(self, session: Session) -> bool:
-        """True when this session is really mining below the block target."""
-        if not session.supports_subblock or session.is_v1:
-            return False
-        try:
-            return float(session.share_target) < float(self._default_share_target)
-        except (TypeError, ValueError):
-            return False
-
     async def set_global_difficulty(
         self, share_target: float, theta_micro: Optional[int] = None
     ) -> None:
@@ -992,22 +869,11 @@ class StratumServer:
         msg = push_set_difficulty(share_target=share_target, theta_micro=theta_micro)
         sends: List[Tuple[str, Session, JSON]] = []
         for sid, s in list(self._sessions.items()):
+            s.share_target = share_target
             s.theta_micro = theta_micro
-            session_target = self._effective_share_target(s, share_target, theta_micro)
-            s.share_target = session_target
-            s.current_difficulty = difficulty if s.is_v1 else session_target
+            s.current_difficulty = difficulty if s.is_v1 else share_target
             if s.is_v1:
                 sends.append((sid, s, push_set_difficulty_v1(difficulty)))
-            elif session_target != share_target:
-                sends.append(
-                    (
-                        sid,
-                        s,
-                        push_set_difficulty(
-                            share_target=session_target, theta_micro=theta_micro
-                        ),
-                    )
-                )
             else:
                 sends.append((sid, s, msg))
         dead = await self._send_batch(
@@ -1259,12 +1125,6 @@ class StratumServer:
         log_level: int = logging.INFO,
     ) -> None:
         """Send a set_difficulty notification for the given session."""
-        # v1 sessions keep the floored wire difficulty; capable sessions may be
-        # dropped to the sub-block ratio (never raised) — see
-        # _effective_share_target.
-        share_target = self._effective_share_target(
-            session, share_target, int(theta_micro)
-        )
         session.share_target = share_target
         session.theta_micro = theta_micro
         difficulty = share_target_to_difficulty(theta_micro, share_target)
@@ -1280,49 +1140,6 @@ class StratumServer:
             log_level,
             f"[Stratum] set_difficulty push worker={session.worker} session={session.session_id} shareTarget={share_target} θμ={theta_micro} diff={difficulty}",
         )
-
-    async def _resync_session_target(self, session: Session) -> None:
-        """Re-apply the sub-block policy after the session's mode is known.
-
-        `mining.authorize` can flip a session pps<->solo (pool_mode "both"), and
-        solo sessions must not hold a sub-block target. Also re-sends the current
-        job when the target moved: the native miner reads the ratio from the JOB
-        first and only falls back to the last set_difficulty, so a difficulty
-        push alone would leave it mining the stale ratio until the next job.
-        """
-        if session.session_id not in self._sessions:
-            return
-        desired = self._effective_share_target(
-            session, self._default_share_target, int(session.theta_micro)
-        )
-        if abs(float(desired) - float(session.share_target)) <= 1e-15:
-            return
-        await self._push_difficulty(
-            session, desired, int(session.theta_micro), log_level=logging.DEBUG
-        )
-        if not self._current_job_id:
-            return
-        job = self._jobs.get(self._current_job_id)
-        if job is None:
-            return
-        try:
-            if session.is_v1:
-                msg = self._build_v1_notify(job, clean_jobs=True)
-            else:
-                msg = push_notify(
-                    job_id=job.job_id,
-                    header=job.header,
-                    share_target=float(session.share_target),
-                    clean_jobs=True,
-                    hints=job.hints or {},
-                )
-        except Exception as e:  # pragma: no cover - never block authorize
-            log.warning(f"[Stratum] resync notify build failed: {e}")
-            return
-        await self._send(session, msg)
-        # Record it like any other delivery, otherwise the next broadcast treats
-        # this job as unsent for the session and pushes it a second time.
-        self._mark_job_seen(session, job.job_id, session.session_id, True)
 
     def _resolve_session_pool_mode(
         self,
@@ -1803,9 +1620,7 @@ class StratumServer:
                         mode_hint, current_mode=session.pool_mode
                     )
                 session.authorized = True
-                session.touch()
                 await self._send(session, res_authorize_v1(obj.get("id"), True))
-                await self._resync_session_target(session)
                 return
             if method_name == Method.SUBMIT.value:
                 mapped = {
@@ -1861,16 +1676,9 @@ class StratumServer:
                 session.subscribed_features = dict(features)
             except Exception:
                 session.subscribed_features = {}
-            # Sub-block share opt-in. A client must ASK for a target below the
-            # block target; we never infer capability, because a miner that
-            # mishandles an unexpected set_difficulty drops its connection and
-            # stops mining (that failure cost ~2h of mainnet block production on
-            # 2026-07-10). Unknown/absent feature => unchanged behaviour.
-            session.supports_subblock = _parse_subblock_optin(features)
             agent = params.get("agent", "unknown")
             log.info(
-                f"[Stratum] subscribe agent={agent} framing={framing} "
-                f"subblock={session.supports_subblock} session={session.session_id}"
+                f"[Stratum] subscribe agent={agent} framing={framing} session={session.session_id}"
             )
             reply = res_subscribe(
                 id_val,
@@ -1922,9 +1730,6 @@ class StratumServer:
             log.info(
                 f"[Stratum] authorize worker={session.worker} address={session.address} mode={session.pool_mode} session={session.session_id}"
             )
-            # The mode is only final here (authorize can flip pps<->solo), so
-            # re-apply the sub-block policy now.
-            await self._resync_session_target(session)
             # Fire-and-forget AICF worker registration. Miners that
             # advertised aicf features in mining.subscribe get registered
             # under their payout address so the local node's aicf job
@@ -1998,40 +1803,8 @@ class StratumServer:
             params_with_context["_worker"] = session.worker
             params_with_context["_address"] = resolved_address
             params_with_context["_pool_mode"] = session.pool_mode
-            # The share target is the POOL's assignment, never the miner's
-            # claim. PPS credit is priced from this ratio
-            # (credit_fraction = exp(-θ(1-r)/MICRO)), so a miner that mines the
-            # easy sub-block target and then claims d_ratio/shareTarget = 1.0
-            # would be paid a full block reward per share — 64x over-credit at
-            # S=64, silently, because validation uses the session target
-            # (_job_for_session) while pricing used to trust these fields.
-            # Harmless before 9.1.0 (every session was pinned at 1.0, the
-            # maximum); exploitable the moment sub-block targets exist. OVERWRITE
-            # both, unconditionally.
-            params_with_context["shareTarget"] = float(session.share_target)
-            params_with_context["d_ratio"] = float(session.share_target)
-            # Replay guard: the same solution must never be credited twice.
-            share_key = _share_identity(params)
-            if share_key is not None and share_key in self._seen_shares.get(job_id, ()):
-                self._rejected += 1
-                session.shares_rejected += 1
-                log.warning(
-                    f"[Stratum] duplicate share worker={session.worker} "
-                    f"session={session.session_id} job={job_id}"
-                )
-                if session.is_v1:
-                    await self._send(
-                        session, res_submit_v1(id_val, False, reason="duplicate share")
-                    )
-                else:
-                    await self._send(
-                        session,
-                        res_submit(
-                            id_val, False, reason="duplicate share",
-                            is_block=False, tx_count=0,
-                        ),
-                    )
-                return
+            if params_with_context.get("shareTarget") in (None, ""):
+                params_with_context["shareTarget"] = float(session.share_target)
             job_for_validation = self._job_for_session(session, job)
             ok, reason, is_block, tx_count = await self._validator.validate(
                 job_for_validation, params_with_context
@@ -2039,21 +1812,16 @@ class StratumServer:
             if ok:
                 self._accepted += 1
                 session.shares_accepted += 1
-                # Record only on ACCEPT: a share rejected for a transient
-                # reason (notably transport_error on the node submit) must stay
-                # re-submittable, or a timeout would permanently burn a
-                # solution — including a block.
-                if share_key is not None:
-                    self._seen_shares.setdefault(job_id, set()).add(share_key)
             else:
                 self._rejected += 1
                 session.shares_rejected += 1
             session.last_share_at = time.time()
             session.last_share_status = "accepted" if ok else "rejected"
-            # Same rule as pricing: report the target we ASSIGNED, not what the
-            # miner claimed, so dashboards and /api/miners can't be spoofed either.
             share_ratio = float(
-                session.share_target or job_for_validation.share_target or 0.0
+                params.get("d_ratio")
+                or params.get("shareTarget")
+                or session.share_target
+                or job_for_validation.share_target
             )
             session.current_difficulty = (
                 share_target_to_difficulty(session.theta_micro, share_ratio)
@@ -2253,14 +2021,6 @@ class StratumServer:
             "clients": len(self._sessions),
             "authorized_sessions": authorized,
             "unique_miners": len(unique_addresses),
-            # Sessions ACTUALLY mining a sub-block target. Counting mere opt-in
-            # over-reported: _effective_share_target also refuses v1, solo, a
-            # disabled/None policy and a theta too small to carve S shares, so a
-            # pool with the feature off still showed opted-in miners as if they
-            # were earning per share.
-            "subblock_sessions": sum(
-                1 for s in self._sessions.values() if self._is_subblock_active(s)
-            ),
             "refused_connections": self._refused_total,
             "capped_ips": sum(
                 1
@@ -2285,14 +2045,9 @@ class StratumServer:
                 "peer_ip": s.peer_ip,
                 "pool_mode": s.pool_mode,
                 "authorized": s.authorized,
-                "supports_subblock": s.supports_subblock,
                 "share_target": s.share_target,
                 "theta_micro": s.theta_micro,
                 "last_seen": s.last_seen,
-                # Inbound bytes only. `last_seen` is touched by our OWN outbound
-                # keepalives every ~45s, so it can never distinguish a live client
-                # from a dead socket — anything judging liveness must use this.
-                "last_inbound": s.last_inbound,
                 "connected_since": s.connected_since,
                 "last_share_at": s.last_share_at,
                 "last_share_status": s.last_share_status,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 import json
 
 from animica.ena import ENA
@@ -22,7 +20,6 @@ def _ena(home, monkeypatch) -> ENA:
     return ENA(cfg=load_config())
 
 
-@pytest.mark.no_auto_adapter
 def test_round_scales_to_active_miners(tmp_path, monkeypatch):
     """With many active miners, a round materialises one shard per miner
     (bounded by [min_shards, max_shards])."""
@@ -38,7 +35,6 @@ def test_round_scales_to_active_miners(tmp_path, monkeypatch):
     assert len(shards) == 8, f"expected 8 shards for 8 miners, got {len(shards)}"
 
 
-@pytest.mark.no_auto_adapter
 def test_round_shards_unlimited_by_default(tmp_path, monkeypatch):
     """No artificial ceiling: with many active miners (and enough rows) a round
     materialises one shard per miner, well beyond the old 64 cap — so each shard
@@ -54,7 +50,6 @@ def test_round_shards_unlimited_by_default(tmp_path, monkeypatch):
     assert len(shards) == 80, f"expected 80 shards (no cap), got {len(shards)}"
 
 
-@pytest.mark.no_auto_adapter
 def test_shard_count_capped_only_when_max_shards_set(tmp_path, monkeypatch):
     e = _ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=60)
@@ -69,7 +64,6 @@ def test_shard_count_capped_only_when_max_shards_set(tmp_path, monkeypatch):
     assert len(e.store.list_shards(pid, round=1)) == 5  # capped
 
 
-@pytest.mark.no_auto_adapter
 def test_touch_worker_does_not_clobber_served_checkpoint(tmp_path, monkeypatch):
     """The promote race: a heartbeat/claim carries a stale pool copy and must NOT
     overwrite a served_checkpoint/round that aggregate() just promoted."""
@@ -92,7 +86,6 @@ def test_touch_worker_does_not_clobber_served_checkpoint(tmp_path, monkeypatch):
     assert "worker-x" in (after.get("metadata") or {}).get("active_workers", {})
 
 
-@pytest.mark.no_auto_adapter
 def test_status_reports_actual_shard_count(tmp_path, monkeypatch):
     """status().num_shards is the ACTUAL materialised count (what the UI shows as
     'shards (total)'), not the static creation value."""
@@ -109,7 +102,6 @@ def test_status_reports_actual_shard_count(tmp_path, monkeypatch):
     assert st["shards_total"] == 8
 
 
-@pytest.mark.no_auto_adapter
 def test_size_driven_sharding_many_small_shards_one_miner(tmp_path, monkeypatch):
     """With max_rows_per_shard set, a round splits into many small shards even
     with a single miner — so a low-memory machine trains small shards (no OOM)."""
@@ -126,7 +118,6 @@ def test_size_driven_sharding_many_small_shards_one_miner(tmp_path, monkeypatch)
     assert all(s["row_count"] <= 8 for s in shards)  # every shard is small
 
 
-@pytest.mark.no_auto_adapter
 def test_reshard_round_restns_stuck_round(tmp_path, monkeypatch):
     """A stuck round (claimed, nothing submitted) can be re-sharded to apply new
     sizing; refuses once work is submitted."""
@@ -148,7 +139,6 @@ def test_reshard_round_restns_stuck_round(tmp_path, monkeypatch):
     assert res2["resharded"] is False and res2["submitted"] == 1
 
 
-@pytest.mark.no_auto_adapter
 def test_stale_claim_is_reclaimed_not_deadlocked(tmp_path, monkeypatch):
     """The bug: all shards claimed but never submitted → 'no shard available
     forever'. A stale claim must be reclaimable."""
@@ -169,7 +159,6 @@ def test_stale_claim_is_reclaimed_not_deadlocked(tmp_path, monkeypatch):
     assert reclaimed is not None and reclaimed["worker_id"] == "fresh"
 
 
-@pytest.mark.no_auto_adapter
 def test_release_reopens_shard(tmp_path, monkeypatch):
     e = _ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=12)
@@ -185,7 +174,6 @@ def test_release_reopens_shard(tmp_path, monkeypatch):
     assert again and again["shard_id"] == s["shard_id"]
 
 
-@pytest.mark.no_auto_adapter
 def test_scaled_round_completes_only_when_all_shards_submitted(tmp_path, monkeypatch):
     e = _ena(tmp_path / "e", monkeypatch)
     data = _write_dataset(tmp_path / "d.jsonl", n=60)

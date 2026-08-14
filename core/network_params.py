@@ -494,11 +494,12 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_STATE_COMMITMENT_HEIGHT. Self-gating on non-zero root means a
         # premature activation cannot split honest zero-root miners.
         FORK_STATE_COMMITMENT: 44_444,
-        # Treasury share 15% -> 25%. MOVED 70,000 -> 75,000 so the whole reward-split
-        # change (treasury raise + FORK_SERVICE_CARVE) activates in ONE coordinated step
-        # with the other 9.5.x/9.6.0 forks, and — since the live chain is already past
-        # 70,000, where nothing activated — moving it forward avoids a retroactive
-        # 15%-vs-25% inconsistency on already-produced blocks. Retune with
+        # Treasury share 15% -> 25% (9.7.0). MOVED to 75,000 so the full reward-
+        # split change activates in ONE step with FORK_SERVICE_CARVE and
+        # FORK_VM_EXEC: at 75,000 the split goes 85/15 -> 50% miner / 25% treasury
+        # / 25% inference (unclaimed inference rolls to the treasury -> up to 50%).
+        # It was never applied at 70,000 (the reward code never read the flag), so
+        # moving it changes no realized history. Retune with
         # ANIMICA_FORK_TREASURY_25_HEIGHT.
         FORK_TREASURY_25: 75_000,
         # Bounded retarget + floor escape (9.5.0). Operator-chosen height 75,000.

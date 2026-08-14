@@ -1,0 +1,26 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Animica",
+  "description": "Post-quantum Layer-1 blockchain with deterministic Python smart contracts, ANM-native L2 rollup, keyless OpenAI-compatible inference, and useful-work AI/quantum consensus (PoIES).",
+  "folders": [
+    "docs",
+    "docs/l2",
+    "spec",
+    "python/animica",
+    "sdk/docs",
+    "vm_py/specs",
+    "execution/specs"
+  ],
+  "excludeFiles": [
+    "CHANGELOG.md"
+  ],
+  "rules": [
+    "Addresses are bech32m with prefix anim1; there is no 0x address format on L1",
+    "All amounts are integer base units: 1 ANM = 10^9 base units (nano-ANM); never send floats",
+    "Sign only with ML-DSA-65 (FIPS 204, scheme id 0x1003) — the sole current signature scheme; SPHINCS+ is legacy, do not build on it",
+    "The JSON-RPC endpoint is POST https://rpc.animica.org/rpc — always include the /rpc path; the bare domain 301-redirects and breaks naive POST clients",
+    "AI-compute RPC methods are under the aicf.* namespace (L2 uses flat l2_* methods); there is no ai.* namespace and no chain.getHeight — use chain.getHead",
+    "Free keyless OpenAI-compatible inference lives at https://animica.dev/v1 (30 req/min/IP); check each model's serving flag in /v1/models before relying on it",
+    "Chain id is 1 (mainnet); faucet.request works on devnet/testnet only — there is no mainnet faucet"
+  ]
+}

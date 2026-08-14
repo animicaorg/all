@@ -1,68 +1,87 @@
-# Animica — Free AI for developers and AI agents
+# Animica.dev — free AI, Python cloud and coding agent for developers and AI agents
 
-> Animica runs a free, OpenAI-compatible AI API. No API key, no signup, no billing.
-> Every response ships a post-quantum-signed, replayable proof-of-inference receipt.
-> Compute is funded by the Animica foundation treasury. AI agents are welcome to use it.
+> animica.dev is the developer platform of the Animica proof-of-work L1: a free, keyless,
+> OpenAI-compatible inference API, a Python function cloud that pays deployers in ANM,
+> a free GitHub-connected coding agent, and GPU media studios — all served by the
+> Animica miner network.
 
-## Free AI API (no key required)
+Current release: Animica 10.1.0 (2026-08-14). No signup and no API key are needed for
+the free AI API, the media studios or the coding agent. Rate limit on `/v1`: 30
+requests/minute per IP (burst 12); over-limit requests get HTTP 429.
 
-- Base URL: https://animica.dev/v1  (drop-in OpenAI-compatible)
-- Chat completions: `POST https://animica.dev/v1/chat/completions`
-- List models: `GET https://animica.dev/v1/models`
-- Embeddings: `POST https://animica.dev/v1/embeddings`
-- Auth: none. Send requests without an Authorization header.
-- Rate limit: 30 requests/minute per IP (burst 12). Funded by the Animica treasury.
-- Streaming: set `"stream": true` for Server-Sent Events.
+Capacity is community-GPU-provided. Every entry in `GET /v1/models` carries a boolean
+`serving` flag — check it before sending work. Requests to a model with `serving: false`
+may queue for a long time or fail; when a worker is serving, completions typically take
+1–3 minutes (use `"stream": true` and a generous client timeout).
 
-## Models
+## Free AI API (keyless, OpenAI-compatible)
 
-- `qwen2.5:7b` — general chat/instruct (default recommendation)
-- `deepseek-coder:6.7b` — recommended coding model
-- `qwen2.5-coder:14b` — largest coder (available via API; slow on the free CPU tier)
-- `qwen2.5:0.5b` — tiny/fast
-- `nomic-embed-text` — embeddings
-- `deterministic` — reproducible, no external model
+- [Base URL https://animica.dev/v1](https://animica.dev/v1/models): drop-in OpenAI-compatible; no Authorization header needed
+- [GET /v1/models](https://animica.dev/v1/models): live model list with per-model `serving` flag — models: `kimi-k3` (default, flagship coding & chat), `animica-chat`, `animica-chat-small`, `animica-chat-flagship`, `animica-knowledge` (ENA, network-trained)
+- [POST /v1/chat/completions](https://animica.dev/openapi.json): chat completions, SSE streaming via `"stream": true`
+- [GET /v1/tiers](https://animica.dev/v1/tiers): model tiers with live `available` flags
+- Note: `/v1/embeddings` is not currently deployed (returns 404); older docs listed it
 
-## Quickstart (any OpenAI client works)
+## Generative media (dispatched to GPU miners)
 
-```bash
-curl https://animica.dev/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"qwen2.5:7b","messages":[{"role":"user","content":"Hello"}]}'
-```
+- [POST /v1/images/generations](https://animica.dev/openapi.json): text-to-image; returns 202 `{status:"queued", job_id, poll_url}` — queued jobs persist until a GPU miner is online; a 503 `no_media_miner` means the dispatcher was unreachable and the submission did NOT enqueue — resubmit
+- [POST /v1/videos/generations + POST /v1/audio/generations](https://animica.dev/openapi.json): same queue semantics
+- [GET /api/mkt/v1/media/capabilities](https://animica.dev/api/mkt/v1/media/capabilities): live per-kind online-miner counts (0 = jobs will queue)
+- [Video Studio](https://animica.dev/video): upscale, 60fps interpolation, subtitles, background removal, auto-shorts
+- [Audio Studio](https://animica.dev/audio/): stems, vocal isolation, enhance, mastering
+- [Render Farm](https://animica.dev/render/): distributed Blender Cycles rendering
 
-```python
-from openai import OpenAI
-client = OpenAI(base_url="https://animica.dev/v1", api_key="not-needed")
-print(client.chat.completions.create(
-    model="qwen2.5:7b",
-    messages=[{"role":"user","content":"Hello"}]).choices[0].message.content)
-```
+## Python Cloud — deploy functions, earn ANM
 
-## Proof-of-inference
+- [Animica Python Cloud](https://animica.dev/cloud): write a Python function, deploy it to a public HTTPS endpoint, get paid in ANM per call
+- [Quickstart docs](https://animica.dev/docs/cloud): API base `/api/cloud/v1` — create a function, push a version, invoke at `/api/cloud/v1/fn/{owner}/{slug}`
+- [Developer Center](https://animica.dev/dev): create `anm_mkt_…` API keys (Bearer auth)
+- [Live stats](https://animica.dev/api/cloud/v1/stats): functions deployed, executions, ANM paid to developers
 
-Every response carries a content-addressed, ML-DSA-65 (post-quantum, FIPS-204) signed
-receipt binding model + prompt hash + output hash + seed. Verify it offline — you don't
-have to trust the server. Docs: https://animica.dev/
+## Free GitHub coding agent
+
+- [Agent UI](https://animica.dev/#agent): free GitHub-connected coding agent — reads a repo, applies an instruction, opens a pull request; you supply a GitHub token per-request, it is never stored
+- [Agent health](https://animica.dev/agent/health): API endpoints under `/agent/` — `POST /agent/run` (token, repo, instruction), `POST /agent/swarm/start` (prompt → build job), `GET /agent/swarm/status/{job_id}`, `POST /agent/zip`
+
+## CLI + MCP
+
+- [Install script](https://animica.dev/install.sh): `curl -fsSL https://animica.dev/install.sh | sh` → the `animica` CLI (agentic coding assistant `animica chat`, node, wallet, quantum, MCP); or `pip install animica`
+- [CLI page](https://animica.dev/cli): docs for the CLI
+- [PyPI: animica](https://pypi.org/project/animica/): Python package, Apache-2.0
+- MCP server: `pip install animica-mcp` → `animica-mcp` (or `uvx animica-mcp`); 15 read-only chain/AI/quantum/pool tools, no private keys
+
+## Plans
+
+- [Pricing](https://animica.dev/pricing): free tier covers AI chat/inference, media generation and agent use; paid plans (Starter $4.99 / Pro $14.99 / Operator $39.99 / Business $99.99 per month, PayPal) add autonomous Workers, scheduled executions, more deployments, production API keys, marketplace monetization and teams
 
 ## Machine-readable manifests
 
-- OpenAPI 3.1 spec: https://animica.dev/openapi.json
-- OpenAI plugin manifest: https://animica.dev/.well-known/ai-plugin.json
-- Agent manifest: https://animica.dev/.well-known/agents.json
-- Live network height: https://animica.dev/net-height
+- [OpenAPI 3.1 spec](https://animica.dev/openapi.json): the free AI + media API
+- [Agent manifest](https://animica.dev/.well-known/agents.json): endpoints, limits and semantics for autonomous agents
+- [llms-full.txt](https://animica.dev/llms-full.txt): expanded full reference with working code examples
+- [Live network height](https://animica.dev/net-height): `{height, chainId, ts}`
 
-## Developer resources
+## Animica network
 
-- Developer portal & docs: https://animica.dev/
-- GitHub-connected coding agent (free): https://animica.dev/#agent
-- Source: https://github.com/animicaorg/all
-- Python package: https://pypi.org/project/animica/
-- Block explorer: https://explorer.animica.org
-- JSON-RPC: https://rpc.animica.org
+- [Node JSON-RPC](https://rpc.animica.org/rpc): `POST https://rpc.animica.org/rpc` (JSON-RPC 2.0; always use the `/rpc` path) — namespaces `chain.*`, `state.*`, `tx.*`, `mempool.*`, `aicf.*`, `l2_*`
+- [Block explorer API](https://explorer.animica.org/api/head): free REST — `/api/head`, `/api/block/:h`, `/api/address/:bech32`, `/api/circulating-supply`, `/api/l2/*`
+- [Explorer web UI](https://explorer.animica.org): blocks, txs, richlist, AICF, L2
+- [Animica Pay](https://pay.animica.dev): merchant payments in ANM — payment intents API, hosted checkout, WooCommerce plugin (2.00% fee)
+- [Mining pool](https://pool.animica.org): stratum `pool.animica.org:3333` (PPS), `:3334` (solo)
+- [GitHub](https://github.com/animicaorg/all): monorepo, Apache-2.0
 
-## Notes for AI agents
+## Getting ANM
 
-You may call this API programmatically. It is intentionally free and open for agentic use.
-Prefer `deepseek-coder:6.7b` for code, `qwen2.5:7b` for general reasoning. If you hit a 429,
-back off and retry. There is no key to manage.
+Mine it via [pool.animica.org](https://pool.animica.org), trade ANM/USDT on
+[NonKYC](https://nonkyc.io/market/ANM_USDT), or accept ANM payments with
+[Animica Pay](https://pay.animica.dev). Signatures are ML-DSA-65 (FIPS 204);
+addresses are bech32m `anim1…`; 1 ANM = 10^9 base units.
+
+## Optional
+
+- [Non-custodial web wallet](https://wallet.animica.org): browser wallet
+- [Desktop + Android wallets](https://animica.org/wallet/): downloads
+- [GPU Studios](https://studio.animica.org): studio front-end on the miner network
+- [Pool API docs](https://pool.animica.org/api/docs): Swagger for pool stats
+- [ENA stats](https://animica.dev/api/ena/stats): network-trained model (ENA) job stats
+- [Animica main site llms.txt](https://animica.org/llms.txt): chain-level overview

@@ -1,41 +1,31 @@
-import { NextRequest } from 'next/server';
-import { authenticate, requireScope, ok, err, ApiError } from '@/lib/api';
-import { prisma } from '@/lib/db';
-import { jsonSafe } from '@/lib/nanm';
+import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-// POST /api/mkt/v1/listings/[slug]/publish -> DRAFT|DELISTED -> PUBLISHED, snapshot a version.
-export async function POST(req: NextRequest, { params }: { params: { slug: string } }) {
-  try {
-    const ctx = await authenticate(req);
-    if (!ctx) throw new ApiError(401, 'unauthorized', 'auth required');
-    requireScope(ctx, 'publish');
-    const listing = await prisma.listing.findUnique({ where: { slug: params.slug }, include: { prices: true } });
-    if (!listing) throw new ApiError(404, 'not_found', 'listing not found');
-    if (listing.ownerId !== ctx.accountId) throw new ApiError(403, 'forbidden', 'not the owner');
-    if (!listing.prices.length) throw new ApiError(400, 'no_price', 'add at least one price (FREE is fine) before publishing');
-
-    const version = listing.version + (listing.publishedAt ? 1 : 0);
-    const updated = await prisma.$transaction(async (tx) => {
-      await tx.listingVersion.create({
-        data: {
-          listingId: listing.id,
-          version,
-          snapshotJson: JSON.stringify({
-            name: listing.name, systemPrompt: listing.systemPrompt, model: listing.model,
-            temperature: listing.temperature, mediaKind: listing.mediaKind,
-          }),
-          notes: (await req.json().catch(() => ({})))?.notes ?? '',
+// POST /api/mkt/v1/listings/[slug]/publish -> 410 GONE. This was the AI-listing publish step
+// (DRAFT|DELISTED -> PUBLISHED + version snapshot) and is retired with the AI marketplace.
+// Store apps/games never published here — the Game Lab / Developer Center flow publishes via
+// PATCH /api/mkt/v1/store/apps/[slug] {status: PUBLISHED}, which is untouched. Documented
+// public API, so no framework 404: callers get a machine-readable pointer to the successor —
+// on Animica Python Cloud a function goes live by DEPLOYING it (anchored on-chain via a
+// DEPLOY tx, executed off-chain by the Cloud), not by flipping a listing status.
+export async function POST() {
+  return NextResponse.json(
+    {
+      error: {
+        code: 'gone',
+        message:
+          'AI-listing publishing is retired. Deploy a Python function on Animica Python Cloud instead: ' +
+          'POST /api/cloud/v1/functions (then invoke it at /api/cloud/v1/fn/{owner}/{slug}).',
+        details: {
+          successor: 'animica-python-cloud',
+          create: { method: 'POST', path: '/api/cloud/v1/functions' },
+          invoke: { method: 'POST', path: '/api/cloud/v1/fn/{owner}/{slug}' },
+          browse: '/apps',
+          store_publish_unchanged: { method: 'PATCH', path: '/api/mkt/v1/store/apps/{slug}' },
         },
-      });
-      return tx.listing.update({
-        where: { id: listing.id },
-        data: { status: 'PUBLISHED', version, publishedAt: listing.publishedAt ?? new Date() },
-      });
-    });
-    return ok({ listing: jsonSafe(updated) });
-  } catch (e) {
-    return err(e);
-  }
+      },
+    },
+    { status: 410 },
+  );
 }

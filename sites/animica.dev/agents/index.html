@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Use Animica as an AI agent — free AI first</title>
+<meta name="description" content="AI-agent quickstarts for animica.dev: keyless OpenAI-compatible inference at animica.dev/v1 (no API key, 30 req/min/IP), the Animica MCP server, free blockchain APIs, and ANM merchant payments.">
+<link rel="canonical" href="https://animica.dev/agents/">
+<meta property="og:title" content="Use Animica as an AI agent — free AI first">
+<meta property="og:description" content="Keyless OpenAI-compatible AI API, MCP server, free chain APIs, and ANM payments — callable by agents without signup.">
+<meta property="og:url" content="https://animica.dev/agents/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Animica">
+<meta property="og:image" content="https://animica.org/logo.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Use Animica as an AI agent — free AI first",
+  "description": "Quickstarts for AI agents on animica.dev: keyless OpenAI-compatible inference at https://animica.dev/v1, the Animica MCP server (pip install animica-mcp), free blockchain APIs, and ANM merchant payments.",
+  "url": "https://animica.dev/agents/",
+  "datePublished": "2026-08-14",
+  "dateModified": "2026-08-14",
+  "inLanguage": "en",
+  "author": {"@type": "Organization", "name": "Animica", "url": "https://animica.org/"},
+  "publisher": {"@type": "Organization", "name": "Animica", "url": "https://animica.org/"},
+  "about": [
+    {"@type": "Thing", "name": "Free AI inference API"},
+    {"@type": "Thing", "name": "Model Context Protocol"},
+    {"@type": "Thing", "name": "Animica blockchain"}
+  ]
+}
+</script>
+<style>
+:root{
+  --bg:#fbfdfc;--surface:#f1f6f3;--text:#152420;--muted:#4b5f58;--border:#d8e3de;
+  --action:#2E63FF;--link:#2453d6;--truth:#14C79B;--truth-ink:#0b7a5e;
+  --code-bg:#11201a;--code-text:#d9ece4;--code-border:#1e332b;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0c1310;--surface:#121b17;--text:#e5efeb;--muted:#9db3ab;--border:#25332d;
+  --action:#7f9fff;--link:#8fabff;--truth-ink:#14C79B;--code-bg:#0a110e;--code-text:#d5e8e0;--code-border:#1d2c25}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--link)}
+header{border-bottom:1px solid var(--border);background:var(--surface)}
+.wrap{max-width:52rem;margin:0 auto;padding:0 1.25rem}
+header .wrap{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;padding-top:.8rem;padding-bottom:.8rem}
+.brand{font-weight:700;letter-spacing:.06em;text-decoration:none;color:var(--text)}
+.brand span{color:var(--truth-ink)}
+header nav{margin-left:auto;display:flex;gap:.9rem;flex-wrap:wrap;font-size:.9rem}
+header nav a{text-decoration:none;color:var(--muted)}
+header nav a:hover{color:var(--link)}
+main{padding:2rem 0 3rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.2rem 0 .8rem}
+h2{font-size:1.35rem;margin:2.2rem 0 .6rem;padding-top:1.2rem;border-top:1px solid var(--border)}
+h3{font-size:1.05rem;margin:1.4rem 0 .4rem}
+.kicker{color:var(--truth-ink);font-size:.8rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0}
+.lede{font-size:1.06rem}
+pre{background:var(--code-bg);color:var(--code-text);border:1px solid var(--code-border);border-radius:8px;padding:.9rem 1rem;overflow-x:auto;font-size:.86rem;line-height:1.5}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+:not(pre)>code{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:.08em .35em;font-size:.88em}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{border:1px solid var(--border);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--surface)}
+.facts{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--truth);border-radius:8px;padding:1rem 1.2rem;margin:1.4rem 0}
+.facts ul{margin:.4rem 0 0;padding-left:1.2rem}
+.facts li{margin:.25rem 0}
+.note{border-left:4px solid var(--action);background:var(--surface);border-radius:6px;padding:.7rem 1rem;margin:1rem 0;font-size:.95rem}
+footer{border-top:1px solid var(--border);background:var(--surface);padding:1.6rem 0 2.4rem;font-size:.9rem;color:var(--muted)}
+footer h2{border:0;margin:0 0 .5rem;font-size:1rem;padding:0;color:var(--text)}
+footer ul{margin:.3rem 0 1rem;padding-left:1.2rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="https://animica.dev/">ANIMICA.DEV<span>/agents</span></a>
+    <nav aria-label="Site">
+      <a href="https://animica.dev/llms.txt">llms.txt</a>
+      <a href="https://animica.org/developers/">Developers</a>
+      <a href="https://explorer.animica.org/">Explorer</a>
+      <a href="https://animica.org/agents/">animica.org/agents</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <p class="kicker">For AI agents · verified 2026-08-14</p>
+    <h1>Use Animica as an AI agent — free AI first</h1>
+    <p class="lede">animica.dev runs a <strong>free, keyless, OpenAI-compatible AI API</strong> at <code>https://animica.dev/v1</code> — no API key, no signup, no billing. Behind it sits the Animica post-quantum blockchain (chain id 1, coin ANM), whose chain APIs, MCP server, and payment rails are equally open to agents. Every URL here was verified live on 2026-08-14.</p>
+
+    <h2 id="free-inference">1. Free AI inference in 60 seconds</h2>
+    <p>Any OpenAI client works — point <code>base_url</code> at <code>https://animica.dev/v1</code> and pass any non-empty string as the key:</p>
+<pre><code>from openai import OpenAI
+
+client = OpenAI(base_url="https://animica.dev/v1", api_key="not-needed")
+resp = client.chat.completions.create(
+    model="kimi-k3",
+    messages=[{"role": "user", "content": "Say hello in five words."}],
+)
+print(resp.choices[0].message.content)</code></pre>
+<pre><code>curl -s https://animica.dev/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"kimi-k3","messages":[{"role":"user","content":"Hello"}]}'</code></pre>
+    <p>Streaming works too: set <code>"stream": true</code> for Server-Sent Events. List models with <code>GET https://animica.dev/v1/models</code>: <code>kimi-k3</code> (default, flagship coding &amp; chat), <code>animica-chat</code>, <code>animica-chat-small</code>, <code>animica-chat-flagship</code>, <code>animica-knowledge</code> (ENA, network-trained).</p>
+    <div class="note"><strong>Honest limits.</strong> Rate limit 30 requests/minute per IP. Compute is provided by community GPU workers on the Animica network — each entry in <code>/v1/models</code> carries a boolean <code>serving</code> flag. When <code>"serving": false</code> (all models at audit time), requests may queue for a long time or fail rather than return promptly, so <em>check the flag first and use a generous client timeout</em>. <code>kimi-k3</code> may emit <code>&lt;think&gt;…&lt;/think&gt;</code> reasoning blocks — strip them if you need clean output. Full reference: <a href="https://animica.org/free-ai-inference-api/">Free AI inference API</a>.</div>
+
+    <h2 id="mcp">2. Install the Animica MCP server</h2>
+    <p>15 read/compute tools for any MCP client: AI inference, chain head/block/account lookups, a verifiable quantum randomness beacon, pool stats, Studio cost estimates. Read-only chain access — no private keys, no signing, no spending.</p>
+<pre><code>pip install animica-mcp     # console command: animica-mcp
+# or run without installing:
+uvx animica-mcp</code></pre>
+    <h3>Claude Code</h3>
+<pre><code>claude mcp add animica -- uvx animica-mcp</code></pre>
+    <h3>Cursor (<code>~/.cursor/mcp.json</code>) / Claude Desktop (<code>claude_desktop_config.json</code>)</h3>
+<pre><code>{
+  "mcpServers": {
+    "animica": { "command": "uvx", "args": ["animica-mcp"] }
+  }
+}</code></pre>
+    <h3>VS Code (<code>.vscode/mcp.json</code>)</h3>
+<pre><code>{
+  "servers": {
+    "animica": { "type": "stdio", "command": "uvx", "args": ["animica-mcp"] }
+  }
+}</code></pre>
+    <p>Details: <a href="https://animica.org/blockchain-mcp-server/">Animica MCP server</a> · <a href="https://pypi.org/project/animica-mcp/">PyPI: animica-mcp</a>.</p>
+
+    <h2 id="query-chain">3. Query the chain (free, no key)</h2>
+    <p>JSON-RPC 2.0 at <code>POST https://rpc.animica.org/rpc</code> — always the <code>/rpc</code> path; the bare root 301-redirects and breaks naive POST clients:</p>
+<pre><code>curl -s -X POST https://rpc.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}'
+# {"jsonrpc":"2.0","id":1,"result":{"height":73191,"chainId":1,…}}</code></pre>
+    <p>Or REST via the explorer: <code>https://explorer.animica.org/api/head</code>, <code>/api/address/:anim1…</code>, <code>/api/block/:hashOrHeight</code>, <code>/api/circulating-supply</code>. Amounts are base units (1 ANM = 10<sup>9</sup>); addresses are bech32m <code>anim1…</code>; signatures are ML-DSA-65 (FIPS 204). Full page: <a href="https://animica.org/post-quantum-blockchain-api/">Post-quantum blockchain API</a>.</p>
+
+    <h2 id="payments">4. Accept ANM payments</h2>
+    <p><a href="https://pay.animica.dev/">pay.animica.dev</a> gives you hosted checkout, payment links, invoices, POS, a widget, WooCommerce, and HMAC-signed webhooks at a 2.00% fee. Sign up for a Bearer API key, then:</p>
+<pre><code>curl -s -X POST https://pay.animica.dev/api/v1/payment-intents \
+  -H "Authorization: Bearer $PAY_API_KEY" \
+  -H "Idempotency-Key: order-19482" \
+  -H "Content-Type: application/json" \
+  -d '{"amount":"25","currency":"ANM","merchant_order_id":"19482"}'</code></pre>
+    <p>The response carries <code>checkout_url</code> and <code>payment_address</code>. Price in USD (<code>"currency":"USD"</code>, rate locked server-side) or exact base units via <code>amount_nanm</code>. Docs: <a href="https://pay.animica.dev/docs">pay.animica.dev/docs</a> · <a href="https://pay.animica.dev/openapi.json">openapi.json</a>.</p>
+
+    <h2 id="machine-index">5. Machine-readable index</h2>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>File</th><th>URL</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr><td>Free-AI llms.txt</td><td><a href="https://animica.dev/llms.txt">animica.dev/llms.txt</a></td><td>This site's API reference for agents</td></tr>
+        <tr><td>Project llms.txt</td><td><a href="https://animica.org/llms.txt">animica.org/llms.txt</a></td><td>Curated map of the whole Animica project</td></tr>
+        <tr><td>llms-full.txt</td><td><a href="https://animica.org/llms-full.txt">animica.org/llms-full.txt</a></td><td>Expanded single-file reference</td></tr>
+        <tr><td>agents.json</td><td><a href="https://animica.org/.well-known/agents.json">animica.org/.well-known/agents.json</a></td><td>Structured index of agent-usable endpoints</td></tr>
+        <tr><td>OpenRPC spec</td><td><a href="https://rpc.animica.org/openrpc.json">rpc.animica.org/openrpc.json</a></td><td>141 documented JSON-RPC methods with schemas</td></tr>
+        <tr><td>Explorer OpenAPI</td><td><a href="https://explorer.animica.org/api/openapi.json">explorer.animica.org/api/openapi.json</a></td><td>Explorer REST API spec</td></tr>
+        <tr><td>RPC discovery</td><td><a href="https://explorer.animica.org/api/rpc/discover">explorer.animica.org/api/rpc/discover</a></td><td>Live list of all 540 served RPC methods</td></tr>
+        <tr><td>Explorer llms.txt</td><td><a href="https://explorer.animica.org/llms.txt">explorer.animica.org/llms.txt</a></td><td>Explorer REST API map</td></tr>
+        <tr><td>Pool OpenAPI</td><td><a href="https://pool.animica.org/api/openapi.json">pool.animica.org/api/openapi.json</a></td><td>Mining-pool platform API (Swagger at <a href="https://pool.animica.org/api/docs">/api/docs</a>)</td></tr>
+        <tr><td>Pay OpenAPI</td><td><a href="https://pay.animica.dev/openapi.json">pay.animica.dev/openapi.json</a></td><td>Merchant payments API spec</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2 id="more">Going further</h2>
+    <ul>
+      <li><a href="https://pypi.org/project/animica/">pip install animica</a> — node, wallet, miner, <code>animica chat</code> (agentic coding CLI), <code>animica mcp serve</code>. One-line install: <code>curl -fsSL https://animica.dev/install.sh | sh</code>.</li>
+      <li><a href="https://animica.org/developers/">Developer hub</a> · <a href="https://github.com/animicaorg/all">github.com/animicaorg/all</a> (Apache-2.0).</li>
+      <li>No mainnet faucet: get ANM by <a href="https://pool.animica.org/">mining</a>, <a href="https://nonkyc.io/market/ANM_USDT">trading ANM/USDT on NonKYC</a>, or <a href="https://pay.animica.dev/">accepting payments</a>.</li>
+      <li>Chain-side hub: <a href="https://animica.org/agents/">animica.org/agents</a>.</li>
+    </ul>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <h2>Machine-readable discovery</h2>
+    <ul>
+      <li><a href="https://animica.dev/llms.txt">animica.dev/llms.txt</a> · <a href="https://animica.org/llms.txt">animica.org/llms.txt</a> · <a href="https://animica.org/llms-full.txt">llms-full.txt</a> · <a href="https://animica.org/.well-known/agents.json">agents.json</a></li>
+      <li><a href="https://rpc.animica.org/openrpc.json">RPC openrpc.json</a> · <a href="https://explorer.animica.org/api/openapi.json">explorer openapi.json</a> · <a href="https://explorer.animica.org/api/rpc/discover">RPC method discovery</a> · <a href="https://pool.animica.org/api/openapi.json">pool openapi.json</a> · <a href="https://pay.animica.dev/openapi.json">pay openapi.json</a></li>
+      <li><a href="https://animica.org/free-ai-inference-api/">Free AI inference API</a> · <a href="https://animica.org/post-quantum-blockchain-api/">Post-quantum blockchain API</a> · <a href="https://animica.org/blockchain-mcp-server/">Animica MCP server</a> · <a href="https://animica.org/agents/">animica.org/agents</a></li>
+    </ul>
+    <p>Animica · Apache-2.0 · <a href="https://github.com/animicaorg/all">GitHub</a> · Contact: <a href="mailto:ai@3vdc.com">ai@3vdc.com</a></p>
+  </div>
+</footer>
+</body>
+</html>

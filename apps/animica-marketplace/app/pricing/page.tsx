@@ -11,9 +11,6 @@ export const metadata: Metadata = {
     'AI is free. Put it to work. Animica plans unlock autonomous Workers, scheduled execution, production APIs, larger .anm deployments, marketplace selling, teams and business infrastructure.',
   alternates: { canonical: 'https://animica.dev/pricing' },
   openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
     title: 'Pricing — Animica',
     description: 'AI is free. Put it to work. Plans for automation, production APIs and teams.',
     url: 'https://animica.dev/pricing',

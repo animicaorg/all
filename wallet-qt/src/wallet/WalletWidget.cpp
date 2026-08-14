@@ -7,6 +7,7 @@
 #include "CreateAccountDialog.h"
 #include "ReceiveWidget.h"
 #include "SendWidget.h"
+#include "L2Widget.h"
 #include "SettingsWidget.h"
 #include "TransactionHistoryWidget.h"
 #include "TransactionMonitor.h"
@@ -242,6 +243,9 @@ void WalletWidget::setupUi()
     m_receiveWidget = new ReceiveWidget(m_engine, this);
     m_tabWidget->addTab(m_receiveWidget, "Receive");
 
+    m_l2Widget = new L2Widget(m_engine, m_rpcClient, this);
+    m_tabWidget->addTab(m_l2Widget, "ANM Instant (L2)");
+
     m_historyWidget = new TransactionHistoryWidget(m_engine, this);
     m_tabWidget->addTab(m_historyWidget, "History");
 
@@ -256,6 +260,8 @@ void WalletWidget::setupUi()
             m_historyWidget->refresh();
         } else if (currentPage == m_receiveWidget) {
             m_receiveWidget->refresh();
+        } else if (currentPage == m_l2Widget) {
+            m_l2Widget->refresh();
         }
     });
     connect(
@@ -307,6 +313,9 @@ void WalletWidget::refresh()
     m_accountsWidget->refreshAccounts();
     m_addressBookWidget->refreshContacts();
     m_receiveWidget->refresh();
+    if (m_l2Widget) {
+        m_l2Widget->refresh();
+    }
     if (m_historyWidget) {
         m_historyWidget->refresh();
     }

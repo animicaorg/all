@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { authenticate, requireScope, ok, err, ApiError, withIdempotency, publicOk, publicPreflight } from '@/lib/api';
 import { prisma } from '@/lib/db';
 import { validateName, normalizeName, registrationFeeNanm } from '@/lib/ans';
+import { requireCanCreateDeployment } from '@/lib/plan';
 import { payNameFee, LedgerError } from '@/lib/ledger';
 import { nanmToAnm, jsonSafe } from '@/lib/nanm';
 
@@ -51,6 +52,11 @@ export async function POST(req: NextRequest) {
     return await withIdempotency(req, ctx, body, async () => {
       const existing = await prisma.anmDomain.findUnique({ where: { name } });
       if (existing && existing.status !== 'EXPIRED') throw new ApiError(409, 'taken', `${name}.anm is already registered`);
+
+      // Plan gate: every registration (incl. re-registering an EXPIRED name) activates a
+      // deployment slot (anm_deployments; free = 1). BEFORE the fee — nobody pays ANM for
+      // a domain their plan can't activate. 402 plan_limit carries the upgrade CTA.
+      await requireCanCreateDeployment(ctx.accountId);
 
       const years = Math.max(1, Math.min(Number(body.years ?? 1), 10));
       const fee = registrationFeeNanm(name, years);

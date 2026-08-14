@@ -800,67 +800,12 @@ def _render_tool_list() -> str:
     return "\n".join(lines)
 
 
-# Project instruction files, in the order they are looked for. AGENTS.md is the
-# emerging cross-tool convention; the others are what people already have lying
-# around from other assistants, and reading them costs nothing.
-PROJECT_CONTEXT_FILES = (
-    "AGENTS.md", "ANIMICA.md", "CLAUDE.md", ".animica/instructions.md",
-    ".github/copilot-instructions.md",
-)
-MAX_PROJECT_CONTEXT_BYTES = 8000
-
-
-def load_project_context(cwd: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
-    """The repo's own instructions, if it has any: (filename, text) or (None, None).
-
-    Walks up from `cwd` to the filesystem root, so running the agent in a
-    subdirectory of a repo still picks up the file at its top. Stops at the first
-    match rather than merging several, because two files disagreeing about house
-    style is a worse outcome than reading only the nearest one.
-
-    Truncated at 8 KiB. A long instruction file competes with the actual task for
-    the model's attention, and silently spending the context window on it is worse
-    than saying it was cut.
-    """
-    start = Path(cwd or os.getcwd()).expanduser().resolve()
-    for directory in [start, *start.parents]:
-        for name in PROJECT_CONTEXT_FILES:
-            candidate = directory / name
-            try:
-                if not candidate.is_file():
-                    continue
-                text = candidate.read_text(encoding="utf-8", errors="replace").strip()
-            except OSError:
-                continue
-            if not text:
-                continue
-            if len(text) > MAX_PROJECT_CONTEXT_BYTES:
-                text = (text[:MAX_PROJECT_CONTEXT_BYTES]
-                        + f"\n\n[truncated at {MAX_PROJECT_CONTEXT_BYTES} bytes]")
-            try:
-                shown = str(candidate.relative_to(start))
-            except ValueError:
-                shown = str(candidate)
-            return shown, text
-    return None, None
-
-
 def build_system_prompt(cwd: Optional[str] = None) -> str:
-    base = (
+    return (
         _SYSTEM_PROMPT_TEMPLATE
         .replace("__TOOL_LIST__", _render_tool_list())
         .replace("__CWD__", cwd or os.getcwd())
     )
-    name, text = load_project_context(cwd)
-    if not text:
-        return base
-    # Appended after the tool contract, not before: the house rules of one repo
-    # must not be able to talk the agent out of how tool calls are formatted.
-    return (base
-            + f"\n\n# Project instructions (from {name})\n"
-            + "The repository you are working in ships these. Follow them unless the "
-            + "user's request contradicts them, and say so if it does.\n\n"
-            + text)
 
 
 # Back-compat for any caller that reaches for SYSTEM_PROMPT directly.
@@ -1126,10 +1071,6 @@ class AgentRunResult:
     completed: bool
     total_cost: float
     stop_reason: str        # "done" | "max_iterations" | "max_cost" | "no_provider" | "user_abort"
-    # Why the provider gave up, when stop_reason == "no_provider". Kept SEPARATE
-    # from final_text on purpose: final_text is shown and remembered as the
-    # assistant's words, and an error message is not the assistant's words.
-    error: Optional[str] = None
 
 
 def _format_assistant_for_history(text: str) -> str:
@@ -1182,22 +1123,14 @@ def run_agent_loop(
     final_text = ""
     completed = False
     stop_reason = "max_iterations"
-    provider_error: Optional[str] = None
 
     for i in range(1, max_iterations + 1):
         prompt = _render_history_for_prompt(history)
         try:
             text, cost, latency_ms = submit_turn(prompt)
         except Exception as exc:
-            # DO NOT put this in final_text. The caller renders final_text as the
-            # assistant's reply and saves it to the session, so assigning an
-            # exception string here made a network fault into both a fake answer
-            # ("agent loop aborted: provider error: …" printed as if the model had
-            # said it) and a corrupted transcript that the next turn then read
-            # back as context. The reason belongs in stop_reason and error, where
-            # a caller can report it as a failure.
+            final_text = f"agent loop aborted: provider error: {exc}"
             stop_reason = "no_provider"
-            provider_error = str(exc)
             break
         total_cost += float(cost or 0.0)
 
@@ -1298,7 +1231,6 @@ def run_agent_loop(
         completed=completed,
         total_cost=total_cost,
         stop_reason=stop_reason,
-        error=provider_error,
     )
 
 

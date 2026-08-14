@@ -25,6 +25,10 @@ import type { WatchedToken } from '../types/token';
 import { buildAndSignTransaction, fetchChainContext, algIdToSchemeId } from '../tx';
 import { sign } from '../core/crypto/pq';
 
+// ANM Instant (L2) client — shares the L1 RPC endpoint (l2_* methods).
+import { L2Client } from '../l2/client';
+import type { L2Signer } from '../l2/client';
+
 let unlockedPassword: string | null = null;
 const DEBUG_WALLET = true; // Always enabled for troubleshooting
 let balanceRequestSeq = 1;
@@ -616,6 +620,22 @@ async function handleMessage(message: any, sender: chrome.runtime.MessageSender)
     
     case 'wallet_sendTransaction':
       return handleSendTransaction(params);
+
+    // ANM Instant (L2) — shares the L1 RPC endpoint.
+    case 'wallet_l2GetStatus':
+      return handleL2GetStatus();
+    case 'wallet_l2GetBalance':
+      return handleL2GetBalance(params?.address);
+    case 'wallet_l2GetTPS':
+      return handleL2GetTPS();
+    case 'wallet_l2GetTransaction':
+      return handleL2GetTransaction(params?.txid);
+    case 'wallet_l2GetWithdrawalProof':
+      return handleL2GetWithdrawalProof(params?.nullifier);
+    case 'wallet_l2SendInstant':
+      return handleL2SendInstant(params);
+    case 'wallet_l2WithdrawToL1':
+      return handleL2WithdrawToL1(params);
 
     case 'wallet_getRpcConfig':
       return handleGetRpcConfig();
@@ -1418,6 +1438,156 @@ async function handleSendTransaction(params: any): Promise<{ txid: string; contr
     throw error;
   } finally {
     if (fromForGuard) sendsInFlight.delete(fromForGuard);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ANM Instant (L2) handlers.
+//
+// L2 lives on the SAME node/RPC endpoint as L1 (l2_* methods). The signing key
+// never leaves the background: sendInstant/withdrawToL1 build an L2Client over
+// the shared RpcClient and a signer that closes over the active account's
+// secret key + the existing ML-DSA-65 `sign` primitive. The L2 address is
+// identical to the L1 address, so the same key works unchanged.
+// ---------------------------------------------------------------------------
+
+async function buildL2Client(): Promise<L2Client> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+  const network = vaultData.networkConfigs[vaultData.currentNetwork];
+  const client = await getRpcClient(network.rpcUrls);
+  return new L2Client(client);
+}
+
+function makeL2Signer(account: Account): L2Signer {
+  return {
+    address: account.address,
+    publicKey: account.publicKey,
+    algId: account.algId,
+    async signHash(hash: Uint8Array): Promise<Uint8Array> {
+      if (!account.secretKey || account.secretKey.length === 0) {
+        throw new Error('Cannot sign: account is watch-only or missing secret key');
+      }
+      // Sign the raw 64-byte L2 signingHash DIRECTLY — no re-hash. `sign`
+      // treats its first argument as the message for ML-DSA-65 (alg 0x1003).
+      return sign(hash, account.secretKey, account.algId, account.publicKey);
+    },
+  };
+}
+
+async function handleL2GetStatus(): Promise<any> {
+  const l2 = await buildL2Client();
+  return l2.l2Status();
+}
+
+async function handleL2GetBalance(address?: string): Promise<any> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+  const activeWallet = await resolveActiveWallet(vaultData);
+  const target = (typeof address === 'string' && address.trim()) ? address.trim() : activeWallet.address;
+  const l2 = await buildL2Client();
+  return l2.l2GetBalance(target);
+}
+
+async function handleL2GetTPS(): Promise<any> {
+  const l2 = await buildL2Client();
+  return l2.l2GetTPS();
+}
+
+async function handleL2GetTransaction(txid: unknown): Promise<any> {
+  if (typeof txid !== 'string' || !txid.trim()) {
+    throw new Error('Invalid txid');
+  }
+  const l2 = await buildL2Client();
+  return l2.l2GetTransaction(txid.trim());
+}
+
+async function handleL2GetWithdrawalProof(nullifier: unknown): Promise<any> {
+  if (typeof nullifier !== 'string' || !nullifier.trim()) {
+    throw new Error('Invalid nullifier');
+  }
+  const l2 = await buildL2Client();
+  return l2.l2GetWithdrawalProof(nullifier.trim());
+}
+
+// Serialize L2 sends per-from-address, mirroring the L1 double-spend guard.
+const l2SendsInFlight = new Set<string>();
+
+async function resolveL2SendContext(params: any): Promise<{ account: Account; to: string; amount: bigint; memo?: string }> {
+  const vaultData = getUnlockedVault();
+  if (!vaultData) {
+    throw new Error('Wallet is locked');
+  }
+  ensureVaultDefaults(vaultData);
+
+  const activeWallet = await resolveActiveWallet(vaultData);
+  const from = (typeof params?.from === 'string' && params.from.trim()) ? params.from.trim() : activeWallet.address;
+  if (from !== activeWallet.address) {
+    throw new Error(`From address must match active wallet (${activeWallet.address})`);
+  }
+
+  const account = vaultData.accounts.find((a) => a.address === activeWallet.address);
+  if (!account) {
+    throw new Error('Account not found');
+  }
+  if (!account.secretKey || account.secretKey.length === 0) {
+    throw new Error('Cannot sign: account is watch-only or missing secret key');
+  }
+  if (!account.publicKey || account.publicKey.length === 0) {
+    throw new Error('Cannot sign: account missing public key');
+  }
+
+  const to = typeof params?.to === 'string' ? params.to.trim() : '';
+  if (!to) {
+    throw new Error('Invalid recipient address');
+  }
+
+  const amount = parseBaseUnitAmount(params?.amount ?? params?.value ?? 0);
+  if (amount <= 0n) {
+    throw new Error('Amount must be greater than zero (nanos)');
+  }
+
+  return { account, to, amount, memo: typeof params?.memo === 'string' ? params.memo : undefined };
+}
+
+async function handleL2SendInstant(params: any): Promise<{ txid: string; status: string; proven: boolean }> {
+  const { account, to, amount, memo } = await resolveL2SendContext(params);
+
+  if (l2SendsInFlight.has(account.address)) {
+    throw new Error('A previous ANM Instant transfer from this account is still settling. Wait for it to complete.');
+  }
+  l2SendsInFlight.add(account.address);
+  try {
+    const l2 = await buildL2Client();
+    const result = await l2.sendInstant({ to, amount, memo }, makeL2Signer(account));
+    return { txid: result.txid, status: result.status, proven: result.proven };
+  } finally {
+    l2SendsInFlight.delete(account.address);
+  }
+}
+
+async function handleL2WithdrawToL1(params: any): Promise<{ txid: string; status: string; proven: boolean; withdrawalProof: unknown }> {
+  const { account, to, amount, memo } = await resolveL2SendContext(params);
+
+  if (l2SendsInFlight.has(account.address)) {
+    throw new Error('A previous ANM Instant transfer from this account is still settling. Wait for it to complete.');
+  }
+  l2SendsInFlight.add(account.address);
+  try {
+    const l2 = await buildL2Client();
+    const result = await l2.withdrawToL1({ to, amount, memo }, makeL2Signer(account));
+    return {
+      txid: result.txid,
+      status: result.status,
+      proven: result.proven,
+      withdrawalProof: result.withdrawalProof,
+    };
+  } finally {
+    l2SendsInFlight.delete(account.address);
   }
 }
 

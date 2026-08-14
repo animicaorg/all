@@ -29,9 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
-import logging
 import math
-import os
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -58,45 +56,11 @@ SHARD_SUBMITTED = "submitted"
 SHARD_VERIFIED = "verified"
 SHARD_REJECTED = "rejected"
 
-log = logging.getLogger(__name__)
-
-
-def _env_true(name: str) -> bool:
-    """True for 1/true/yes/on. Used for explicit, documented escape hatches only."""
-    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
-
-
 ROLES = ("funders", "trainers", "servers")
 _ROLE_SINGULAR = {"funders": "funder", "trainers": "trainer", "servers": "server"}
 _REWARD_SPLIT_TOTAL = 10000  # basis points
 
 DEFAULT_REWARD_SPLIT = {"funders": 2000, "trainers": 6000, "servers": 2000}
-
-# ---------------------------------------------------------------------------
-# Block-rate emission (replaces the funder-budget payout)
-# ---------------------------------------------------------------------------
-# The old model paid from a funder's deposited budget, and `payout --round N` handed the
-# ENTIRE remaining budget to one round's contributors. It was never run once in 84
-# rounds, so 297,000 ANM sat idle while 394 contributions earned nothing.
-#
-# The new model: a FLAT 10 ANM PER BLOCK of chain progress, always, split between
-# trainers and servers by contribution weight. No funder budget is consulted and no
-# per-round pot exists — the entitlement accrues with the chain, so nothing can drain a
-# pool in a single call.
-ENA_BLOCK_REWARD_NANO = 10 * 1_000_000_000          # exactly 10 ANM per block
-
-# Funders are NOT paid by emission (they fund; they do not earn a block reward). The
-# 60/20 trainer:server ratio the operator originally chose is preserved, renormalised to
-# 100% now that the funder share is gone.
-EMISSION_ROLE_SPLIT = {"trainers": 7500, "servers": 2500}
-
-# A tick never pays for more than this many blocks at once. Without it, a watermark that
-# is stale (long outage, fresh install, restored backup) would mint a single enormous
-# payout — e.g. 68,000 blocks x 10 ANM = 680,000 ANM in one call. Blocks beyond the
-# clamp are NOT banked: the entitlement is per block as it passes, so a coordinator that
-# was down does not accrue a backlog it can dump later.
-ENA_MAX_BLOCKS_PER_TICK = int(
-    os.environ.get("ANIMICA_ENA_MAX_BLOCKS_PER_TICK", "600") or 600)
 
 
 # ---------------------------------------------------------------------------
@@ -149,20 +113,8 @@ def _split_proportional(total: int, weighted: list[tuple[str, float]]) -> dict[s
     return floor
 
 
-def _checkpoint_digest(checkpoint_path: Optional[str],
-                       shard: dict[str, Any]) -> tuple[str, bool]:
-    """(digest, hashed_real_weights).
-
-    Returns a SHA3 over the actual weight files when they exist, otherwise a
-    deterministic ANCHOR over the shard identity. The second element says which
-    happened, and callers must not conflate them.
-
-    Conflating them is what broke this pool. The anchor hash looks exactly like a real
-    one, so a shard submitted with NO weights still got a plausible `checkpoint_hash`,
-    was marked `submitted`, and earned payout weight. Rounds 49-83 all did that: 259
-    contributions, real weights, nothing mergeable, and the promoted head frozen at
-    round 48 for six weeks with no error anywhere.
-    """
+def _checkpoint_digest(checkpoint_path: Optional[str], shard: dict[str, Any]) -> str:
+    """SHA3 of the checkpoint weights if present, else a deterministic anchor."""
     if checkpoint_path:
         p = Path(checkpoint_path)
         files: list[Path] = []
@@ -177,20 +129,17 @@ def _checkpoint_digest(checkpoint_path: Optional[str],
             files = [p]
         if files:
             h = hashlib.sha3_256()
-            hashed_any = False
             for f in files:
                 try:
                     with f.open("rb") as fh:
                         for block in iter(lambda: fh.read(1 << 20), b""):
                             h.update(block)
-                    hashed_any = True
                 except OSError:
                     continue
-            if hashed_any:
-                return h.hexdigest(), True
+            return h.hexdigest()
     return sha3_hex(canonical_json({
         "shard_id": shard["shard_id"], "path": checkpoint_path or "",
-        "sha256": shard["sha256"]})), False
+        "sha256": shard["sha256"]}))
 
 
 def _try_merge_adapters(submitted: list[dict[str, Any]], out: Path,
@@ -270,32 +219,14 @@ def merge_checkpoints(submitted: list[dict[str, Any]], out_dir: str | Path,
     real = _try_merge_adapters(submitted, out, weights)
     if real:
         return real
-    # No real merge was possible. Record WHY, in the artifact itself: every one of the
-    # 34 stalled rounds wrote a plan whose `checkpoints` values were all null, and
-    # nothing said that meant "this round produced no model". `merged: False` already
-    # stops promotion — the missing half was making the cause visible.
-    ckpts = {s["shard_id"]: s.get("checkpoint_path") for s in submitted}
-    missing = sorted(sid for sid, p in ckpts.items() if not p)
     plan_doc = {
         "schema": "ena.pool.merge.v1",
         "weights": weights,
-        "checkpoints": ckpts,
-        "merged": False,
-        "reason": ("no_checkpoint_weights" if missing and len(missing) == len(ckpts)
-                   else "partial_checkpoints" if missing
-                   else "merge_backend_unavailable"),
-        "shards_without_checkpoint": missing,
+        "checkpoints": {s["shard_id"]: s.get("checkpoint_path") for s in submitted},
     }
     plan_path = out / "merge-plan.json"
     plan_path.write_text(canonical_json(plan_doc), encoding="utf-8")
-    if missing:
-        log.warning(
-            "ena pool merge produced NO model: %d of %d shards have no checkpoint "
-            "(%s). The round cannot be promoted and this work is not payable.",
-            len(missing), len(ckpts), ", ".join(missing[:4]))
-    return {"path": str(plan_path), "hash": hash_obj(plan_doc), "merged": False,
-            "reason": plan_doc["reason"],
-            "shards_without_checkpoint": missing}
+    return {"path": str(plan_path), "hash": hash_obj(plan_doc), "merged": False}
 
 
 # ---------------------------------------------------------------------------
@@ -715,19 +646,7 @@ class PoolService:
         if shard["status"] in (SHARD_SUBMITTED, SHARD_VERIFIED):
             raise PoolError(f"shard already submitted: {shard_id}")
         metrics = dict(metrics or {})
-        ckpt_hash, has_weights = _checkpoint_digest(checkpoint_path, shard)
-        # FAIL LOUDLY on a submission with no weights instead of paying for it. A shard
-        # with no loadable checkpoint contributes nothing to the merge, so accepting it
-        # both awards unearned weight and stalls the pool: rounds 49-83 advanced for six
-        # weeks producing merge-plans whose every checkpoint entry was null, and the
-        # promoted head never moved past 48. The trainer must upload its checkpoint
-        # (/pool/checkpoint/upload) before submitting.
-        if not has_weights and not _env_true("ANIMICA_ENA_ALLOW_WEIGHTLESS_SUBMIT"):
-            raise PoolError(
-                f"shard {shard_id} has no loadable checkpoint "
-                f"(checkpoint_path={checkpoint_path!r}): upload the adapter weights "
-                f"before submitting, or the round cannot be merged and the work cannot "
-                f"be paid. Set ANIMICA_ENA_ALLOW_WEIGHTLESS_SUBMIT=1 only for tests.")
+        ckpt_hash = _checkpoint_digest(checkpoint_path, shard)
         run = {
             "run_id": run_id or f"{shard_id}-run",
             "created_at": shard.get("created_at", now_ts()), "updated_at": now_ts(),
@@ -746,9 +665,6 @@ class PoolService:
             status=SHARD_SUBMITTED, worker_id=worker_id or shard.get("worker_id"),
             miner_address=miner_address, run_id=run["run_id"],
             checkpoint_path=checkpoint_path, checkpoint_hash=ckpt_hash,
-            # Persisted so an operator can tell a real checkpoint from an anchor hash
-            # without re-reading the filesystem — the distinction that was invisible.
-            checkpoint_has_weights=bool(has_weights),
             metrics=metrics, training_receipt=receipt, updated_at=now_ts())
         self.store.upsert_shard(shard)
 
@@ -1321,29 +1237,10 @@ class PoolService:
     def payout(self, pool_id: str, *, round: Optional[int] = None,
                cap_nano: Optional[int] = None,
                roles: Optional[list[str]] = None) -> dict[str, Any]:
-        """REMOVED. The funder-budget payout is replaced by accrue() (10 ANM/block).
-
-        This paid from a funder's deposited budget and, called without cap_nano — which
-        the CLI never passed — handed the ENTIRE remaining budget to a single round's
-        contributors. On the live pool that was 297,000 ANM to one address for a weight
-        of 0.37. It was never run in 84 rounds, which is the only reason no one was
-        overpaid.
-
-        It refuses rather than being deleted so any operator or script that still calls
-        it gets told where to go instead of silently doing nothing.
-        """
-        raise PoolError(
-            "pool.payout() has been removed: it paid from the funder budget and would "
-            "hand the whole remaining pot to one round. Rewards are now a flat "
-            "10 ANM per block to trainers and servers by weight — use accrue() "
-            "(POST /pool/accrue). Contributions from rounds after the promoted "
-            "checkpoint are not eligible.")
-
-    def _payout_removed(self, pool_id: str, *, round: Optional[int] = None,
-                        cap_nano: Optional[int] = None,
-                        roles: Optional[list[str]] = None) -> dict[str, Any]:
-        # Retained only so the historical allocation logic stays readable in one place;
-        # unreachable. accrue() is the live path.
+        # cap_nano: pay AT MOST this many nano per role this call (slow-drip);
+        # roles: restrict payout to these role keys (e.g. ["trainers"]).
+        # serialize the whole read-unpaid → allocate → mark-paid sequence so two
+        # concurrent payouts can't pay the same contributions twice.
         with self._lock:
             pool = self.get(pool_id)
             rnd = (pool["round"] - 1) if round is None else int(round)
@@ -1421,368 +1318,6 @@ class PoolService:
                     "paid_nano": total_paid, "remaining_nano": pool["budget_nano"],
                     "reward_split": split, "entries": entries}
 
-    # -- block-rate emission ----------------------------------------------
-    def accrue(self, pool_id: str, *,
-               height: Optional[int] = None) -> dict[str, Any]:
-        """Credit 10 ANM per elapsed block to trainers and servers, by weight.
-
-        Replaces payout(): no funder budget, no per-round pot. What it pays is a pure
-        function of how many blocks have passed since the last credit, so it cannot
-        drain anything and needs no cap argument from the caller.
-
-        ELIGIBILITY — only rounds that actually produced a promoted checkpoint are paid.
-        The served head is the network's own statement of which work was usable, so
-        rounds after it earned weight while delivering nothing mergeable and are
-        excluded. On this pool that is rounds 49-83 (the head is round 48): their
-        merge-plans recorded null checkpoints, so there was nothing to merge.
-
-        SAFETY, all of which a money path needs:
-          * First call INITIALISES the watermark to the current height and pays nothing.
-            Starting from 0 would have paid 10 ANM x ~68,000 blocks in one go.
-          * Elapsed blocks are clamped (ENA_MAX_BLOCKS_PER_TICK) and never negative, so a
-            reorg or a clock/height regression pays zero rather than something absurd.
-          * The watermark advances by exactly what was accounted for, under the same lock
-            that marks contributions paid, so a crash cannot double-credit.
-          * Paying is LEDGER-ONLY and that is deliberate: this package can verify money
-            IN (payments.verify_payment) but has no signing key and no broadcast path, so
-            it must not pretend to transfer. `entries` is the auditable record of who is
-            owed what; settlement is a separate, key-holding step.
-        """
-        with self._lock:
-            pool = self.get(pool_id)
-            served = (pool.get("served_checkpoint") or {})
-            head_round = served.get("round")
-            if head_round is None:
-                return {"pool_id": pool_id, "entries": [], "paid_nano": 0,
-                        "reason": "no_promoted_checkpoint"}
-
-            if height is None:
-                height = self._chain_height()
-            if height is None:
-                return {"pool_id": pool_id, "entries": [], "paid_nano": 0,
-                        "reason": "chain_height_unavailable"}
-            height = int(height)
-
-            last = pool.get("last_paid_height")
-            if last is None:
-                pool["last_paid_height"] = height
-                pool["updated_at"] = now_ts()
-                self.store.upsert_pool(pool)
-                return {"pool_id": pool_id, "entries": [], "paid_nano": 0,
-                        "height": height, "reason": "watermark_initialised"}
-
-            elapsed = height - int(last)
-            if elapsed <= 0:
-                return {"pool_id": pool_id, "entries": [], "paid_nano": 0,
-                        "height": height, "reason": "no_new_blocks"}
-            dropped = max(0, elapsed - ENA_MAX_BLOCKS_PER_TICK)
-            elapsed = min(elapsed, ENA_MAX_BLOCKS_PER_TICK)
-
-            pot = ENA_BLOCK_REWARD_NANO * elapsed
-            # The round gate applies to TRAINERS only. A trainer is paid for work that
-            # became part of a promoted checkpoint, so rounds after the head — which
-            # earned weight while producing nothing mergeable — are excluded. A SERVER
-            # is paid for serving the head, and record_served() credits the CURRENT
-            # round (the head is by definition earlier), so gating servers the same way
-            # would mean they could never be paid at all.
-            eligible = []
-            for c in self.store.list_contributions(pool_id):
-                if c.get("paid") or not c.get("address"):
-                    continue
-                role = c.get("role")
-                if role not in ("trainer", "server"):
-                    continue
-                if float(c.get("weight", 0)) <= 0:
-                    continue
-                if role == "trainer" and int(c.get("round", -1)) > int(head_round):
-                    continue
-                eligible.append(c)
-            if not eligible:
-                # Still advance: the entitlement is per block as it passes, so idle
-                # blocks are not banked into a later lump sum.
-                pool["last_paid_height"] = int(last) + elapsed
-                pool["updated_at"] = now_ts()
-                self.store.upsert_pool(pool)
-                return {"pool_id": pool_id, "entries": [], "paid_nano": 0,
-                        "height": height, "blocks": elapsed, "dropped_blocks": dropped,
-                        "reason": "nothing_eligible"}
-
-            # ALWAYS 10 ANM/block: if one role has no payable contributor this tick, its
-            # share goes to the other role rather than being withheld. Otherwise the
-            # emission would silently drop to 7.5 ANM/block — which is the live state,
-            # since every existing server row has a NULL address and cannot be paid.
-            have = {
-                "trainers": any(c["role"] == "trainer" for c in eligible),
-                "servers": any(c["role"] == "server" for c in eligible),
-            }
-            active = {r: bps for r, bps in EMISSION_ROLE_SPLIT.items() if have[r]}
-            if not active:
-                active = dict(EMISSION_ROLE_SPLIT)
-            role_pot = _split_proportional(
-                pot, [(r, float(bps)) for r, bps in active.items()])
-            entries: list[dict[str, Any]] = []
-            paid_ids: list[str] = []
-            total = 0
-            for role, singular in (("trainers", "trainer"), ("servers", "server")):
-                members = [c for c in eligible if c["role"] == singular]
-                rp = int(role_pot.get(role, 0))
-                if not members or rp <= 0:
-                    continue
-                by_addr: dict[str, float] = {}
-                ids: dict[str, list[str]] = {}
-                rounds: dict[str, int] = {}
-                for c in members:
-                    a = str(c["address"])
-                    by_addr[a] = by_addr.get(a, 0.0) + float(c.get("weight", 0))
-                    ids.setdefault(a, []).append(c["contribution_id"])
-                    # Ledger rows are attributed to the round the WORK is from, not the
-                    # pool's current round — otherwise payouts(pool, round=N) finds
-                    # nothing and the ledger misattributes every credit.
-                    rounds[a] = max(rounds.get(a, -1), int(c.get("round", 0)))
-                for addr, nano in _split_proportional(rp, list(by_addr.items())).items():
-                    if nano <= 0:
-                        continue          # dust: leave unpaid rather than credit zero
-                    entries.append({"role": singular, "address": addr, "nano": int(nano),
-                                    "anm": pay.nano_to_anm(int(nano)),
-                                    "weight": by_addr[addr],
-                                    "round": rounds.get(addr, 0)})
-                    paid_ids.extend(ids[addr])
-                    total += int(nano)
-
-            ts = now_ts()
-            if entries:
-                # One record_payouts() call per source round so the ledger is queryable
-                # by round and the totals still reconcile exactly.
-                by_round: dict[int, list[dict[str, Any]]] = {}
-                for ent in entries:
-                    by_round.setdefault(int(ent.get("round", 0)), []).append(ent)
-                for rnd_key, rows in sorted(by_round.items()):
-                    self.store.record_payouts(pool_id, rnd_key, rows, ts)
-                self.store.mark_contributions_paid(paid_ids)
-            pool["last_paid_height"] = int(last) + elapsed
-            pool["emitted_nano"] = int(pool.get("emitted_nano", 0)) + total
-            pool["updated_at"] = ts
-            self.store.upsert_pool(pool)
-            return {"pool_id": pool_id, "height": height, "blocks": elapsed,
-                    "dropped_blocks": dropped, "pot_nano": pot, "paid_nano": total,
-                    "emitted_nano": pool["emitted_nano"],
-                    "eligible_max_round": int(head_round),
-                    "role_split": dict(EMISSION_ROLE_SPLIT), "entries": entries,
-                    "settlement": "ledger_only"}
-
-    def settle(self, pool_id: str, *, height: Optional[int] = None) -> dict[str, Any]:
-        """Pay credited earnings ON CHAIN, at most 10 ANM per block.
-
-        accrue() credits a ledger; this is the step that actually moves ANM. Kept
-        separate on purpose: crediting is safe to run unattended, spending is not, so
-        this does nothing at all unless ANIMICA_ENA_SETTLE=1 and a funded payer is
-        named in ANIMICA_ENA_SETTLE_FROM. There is no default payer — guessing which
-        account to spend from is not a decision code should make.
-
-        Safety properties, each of which a payout path needs:
-          * RATE LIMIT. Its own height watermark, capped at ENA_BLOCK_REWARD_NANO per
-            elapsed block, so settlement can never outrun the emission it is paying
-            out — the same 10 ANM/block ceiling, enforced independently.
-          * EXACTLY ONCE. A settlement row is inserted BEFORE the broadcast and the
-            payout_id is UNIQUE, so two settlers racing cannot both pay, and a crash
-            mid-flight leaves the credit marked rather than paying it twice. The
-            failure mode is under-payment, which is recoverable.
-          * NO SELF-PAY. A credit whose recipient IS the payer is marked settled with
-            no transaction: on this network the ENA treasury is itself a credited
-            trainer holding 83% of the credit, and paying yourself burns a fee to move
-            nothing.
-          * NEVER PARTIAL. A credit is skipped if it does not fit the remaining
-            allowance, rather than paying a fraction of it and losing the remainder.
-        """
-        if not _env_true("ANIMICA_ENA_SETTLE"):
-            return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
-                    "reason": "settlement_disabled",
-                    "hint": "set ANIMICA_ENA_SETTLE=1 and ANIMICA_ENA_SETTLE_FROM"}
-        payer = (os.environ.get("ANIMICA_ENA_SETTLE_FROM") or "").strip()
-        if not payer:
-            return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
-                    "reason": "no_payer_configured",
-                    "hint": "ANIMICA_ENA_SETTLE_FROM must name a funded address whose "
-                            "key is in the wallet store"}
-
-        with self._lock:
-            pool = self.get(pool_id)
-            if height is None:
-                height = self._chain_height()
-            if height is None:
-                return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
-                        "reason": "chain_height_unavailable"}
-            height = int(height)
-
-            last = pool.get("last_settled_height")
-            if last is None:
-                pool["last_settled_height"] = height
-                pool["updated_at"] = now_ts()
-                self.store.upsert_pool(pool)
-                return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
-                        "height": height, "reason": "watermark_initialised"}
-            elapsed = height - int(last)
-            if elapsed <= 0:
-                return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
-                        "height": height, "reason": "no_new_blocks"}
-            elapsed = min(elapsed, ENA_MAX_BLOCKS_PER_TICK)
-            allowance = ENA_BLOCK_REWARD_NANO * elapsed
-
-            pending = self.store.unsettled_payouts(pool_id)
-            if not pending:
-                pool["last_settled_height"] = int(last) + elapsed
-                pool["updated_at"] = now_ts()
-                self.store.upsert_pool(pool)
-                return {"pool_id": pool_id, "settled": [], "paid_nano": 0,
-                        "height": height, "blocks": elapsed,
-                        "reason": "nothing_unsettled"}
-
-            settled: list[dict[str, Any]] = []
-            skipped: list[dict[str, Any]] = []
-            spent = 0
-            for row in pending:
-                nano = int(row["nano"])
-                addr = str(row["address"])
-                if spent + nano > allowance:
-                    # Never split a credit; it waits for the next tick.
-                    skipped.append({"payout_id": row["payout_id"], "nano": nano,
-                                    "reason": "over_block_allowance"})
-                    continue
-                if not self.store.claim_settlement(
-                        int(row["payout_id"]), pool_id, addr, nano, payer, now_ts()):
-                    continue                       # another settler holds it
-                if addr == payer:
-                    self.store.finish_settlement(
-                        int(row["payout_id"]), txid=None, status="sent",
-                        reason="self_pay_noop", updated_at=now_ts())
-                    settled.append({"payout_id": row["payout_id"], "address": addr,
-                                    "nano": nano, "txid": None, "note": "self-pay, no tx"})
-                    spent += nano
-                    continue
-                res = self._broadcast_payment(payer, addr, nano, height)
-                if res.get("txid"):
-                    self.store.finish_settlement(
-                        int(row["payout_id"]), txid=res["txid"], status="sent",
-                        reason=None, updated_at=now_ts())
-                    settled.append({"payout_id": row["payout_id"], "address": addr,
-                                    "nano": nano, "anm": pay.nano_to_anm(nano),
-                                    "txid": res["txid"]})
-                    spent += nano
-                else:
-                    # Leave the row as failed WITH a reason: it is not retried
-                    # automatically, because a repeated broadcast of a partially
-                    # accepted transfer is the one thing worse than a late payment.
-                    self.store.finish_settlement(
-                        int(row["payout_id"]), txid=None, status="failed",
-                        reason=str(res.get("error"))[:300], updated_at=now_ts())
-                    skipped.append({"payout_id": row["payout_id"], "nano": nano,
-                                    "reason": res.get("error")})
-
-            pool["last_settled_height"] = int(last) + elapsed
-            pool["settled_nano"] = int(pool.get("settled_nano", 0)) + spent
-            pool["updated_at"] = now_ts()
-            self.store.upsert_pool(pool)
-            return {"pool_id": pool_id, "height": height, "blocks": elapsed,
-                    "allowance_nano": allowance, "paid_nano": spent,
-                    "paid_anm": pay.nano_to_anm(spent), "from": payer,
-                    "settled": settled, "skipped": skipped,
-                    "totals": self.store.settlement_totals(pool_id)}
-
-    def _broadcast_payment(self, payer: str, recipient: str, nano: int,
-                           height: int) -> dict[str, Any]:
-        """Sign a transfer from `payer` and broadcast it. {'txid': ...} or {'error': ...}.
-
-        Reuses animica.wallet.payment.sign_payment_tx — the same canonical signer as
-        `animica tx send` — so there is no second signing implementation to drift.
-        """
-        try:
-            from animica.wallet.payment import sign_payment_tx
-        except Exception as exc:            # noqa: BLE001
-            return {"error": f"wallet signer unavailable: {exc}"}
-        wallet_path = os.environ.get("ANIMICA_WALLET_PATH") or str(
-            Path("~/.animica/wallets.json").expanduser())
-        rpc_url = os.environ.get("ANIMICA_RPC_URL", "http://127.0.0.1:8545/rpc")
-        try:
-            rpc = pay.AnimicaRPC(rpc_url)
-            nonce = int(rpc.call("state.getNonce", {"address": payer}) or 0)
-        except Exception as exc:            # noqa: BLE001
-            return {"error": f"nonce lookup failed: {exc}"}
-        # The CHAIN IDENTITY is part of the signing preimage. Omitting it makes
-        # _build_chain_context fall back to genesis_hash=b"" and fork_id=0 while the node
-        # verifies against the real genesis and forkId, so the signature can never
-        # verify — the node rejects it with "Invalid post-quantum signature". This is not
-        # optional metadata; fetch it.
-        identity = None
-        try:
-            identity = rpc.call("chain.getChainIdentity", {}) or None
-        except Exception:                   # noqa: BLE001
-            identity = None
-        if not isinstance(identity, dict) or not identity.get("genesisHash"):
-            return {"error": "chain identity unavailable; refusing to sign a transfer "
-                            "whose preimage would not match the node"}
-        try:
-            raw = sign_payment_tx(
-                wallet_path=wallet_path, recipient=recipient,
-                amount=nano / 1_000_000_000, nonce=nonce,
-                chain_id=int(self.cfg.chain_id), from_address=payer,
-                chain_identity=identity,
-                current_height=height,
-                passphrase=os.environ.get("ANIMICA_WALLET_PASSPHRASE") or None)
-        except Exception as exc:            # noqa: BLE001
-            return {"error": f"signing failed: {exc}"}
-        try:
-            out = rpc.call("tx.sendRawTransaction", {"rawTx": raw})
-        except Exception as exc:            # noqa: BLE001
-            return {"error": f"broadcast failed: {exc}"}
-        if isinstance(out, str) and out:
-            return {"txid": out}
-        if isinstance(out, dict):
-            txid = out.get("tx_hash") or out.get("hash")
-            accepted = bool(out.get("accepted_to_mempool")
-                            or out.get("persisted_to_chain") or txid)
-            if accepted and txid:
-                return {"txid": txid}
-            return {"error": f"rejected: {out.get('reason') or out}"}
-        return {"error": f"unexpected broadcast result: {out!r}"}
-
-    def _chain_height(self) -> Optional[int]:
-        """Current canonical height, or None when the node is unreachable."""
-        try:
-            rpc = pay.AnimicaRPC(os.environ.get(
-                "ANIMICA_RPC_URL", "http://127.0.0.1:8545/rpc"))
-            head = rpc.call("chain.getHead", {})
-            for k in ("height", "number"):
-                if isinstance(head, dict) and head.get(k) is not None:
-                    return int(head[k])
-        except Exception:  # noqa: BLE001 — a missing node must not raise into a payout
-            return None
-        return None
-
-    def earnings(self, address: str,
-                 pool_id: Optional[str] = None) -> dict[str, Any]:
-        """What one address has earned, and what it is still owed.
-
-        Used by `animica up` to show a node its ENA income instead of leaving the
-        operator to guess whether serving earns anything.
-        """
-        pools = [pool_id] if pool_id else [p["pool_id"] for p in self.list_pools()]
-        credited = 0
-        pending_weight = 0.0
-        by_role: dict[str, int] = {}
-        for pid in pools:
-            for p in self.store.list_payouts(pid):
-                if p.get("address") == address:
-                    credited += int(p.get("nano", 0))
-                    by_role[str(p.get("role"))] = (
-                        by_role.get(str(p.get("role")), 0) + int(p.get("nano", 0)))
-            for c in self.store.list_contributions(pid):
-                if c.get("address") == address and not c.get("paid"):
-                    pending_weight += float(c.get("weight", 0))
-        return {"address": address, "credited_nano": credited,
-                "credited_anm": pay.nano_to_anm(credited),
-                "by_role": by_role, "pending_weight": pending_weight,
-                "settlement": "ledger_only"}
-
     # -- status / leaderboard ---------------------------------------------
     def status(self, pool_id: str) -> dict[str, Any]:
         pool = self.get(pool_id)
@@ -1808,21 +1343,16 @@ class PoolService:
             "shards_total": shards_total,
             "shards": shard_status, "contributions": by_role,
             "shards_submitted": shard_status.get("submitted", 0) + shard_status.get("verified", 0),
-            # The funder budget no longer drives rewards, so it is NOT reported as
-            # spendable — surfacing it invited the "pay the whole pot" mistake. Rewards
-            # are emission: a flat 10 ANM per block to trainers and servers by weight.
-            "emission_anm_per_block": ENA_BLOCK_REWARD_NANO / 1_000_000_000,
-            "emission_role_split": dict(EMISSION_ROLE_SPLIT),
-            "emitted_nano": int(pool.get("emitted_nano", 0)),
-            "emitted_anm": pay.nano_to_anm(int(pool.get("emitted_nano", 0))),
-            "last_paid_height": pool.get("last_paid_height"),
-            # auditable ledger total (sum of per-recipient credits) and the highest
-            # round whose work is eligible (the promoted head — later rounds earned
-            # weight but produced nothing mergeable and are not paid).
+            "funded": int(pool.get("budget_nano", 0)) > 0,
+            "budget_nano": int(pool.get("budget_nano", 0)),
+            "budget_anm": pay.nano_to_anm(int(pool.get("budget_nano", 0))),
+            "paid_out_nano": int(pool.get("paid_out_nano", 0)),
+            # auditable ledger total (sum of per-recipient disbursements) and the
+            # rounds that produced real finite work (payable).
             "paid_out_ledger_nano": self.store.total_paid_out_nano(pool_id),
-            "eligible_max_round": (pool.get("served_checkpoint") or {}).get("round"),
-            "settlement": "ledger_only",
+            "finite_rounds": list((pool.get("metadata") or {}).get("finite_rounds") or []),
             "served_checkpoint": pool.get("served_checkpoint"),
+            "reward_split": pool["reward_split"],
         }
 
     def payouts(self, pool_id: str,

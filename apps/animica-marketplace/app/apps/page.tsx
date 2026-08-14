@@ -21,9 +21,6 @@ export const metadata: Metadata = {
     'Browse Python apps deployed on Animica: AI tools, agents, automations, data services and more. Every deployment is anchored on-chain and executed off-chain in a hardened container; usage settles in ANM.',
   alternates: { canonical: `${BASE}/apps` },
   openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
     title: 'Animica app marketplace',
     description: 'Python apps deployed on Animica — anchored on-chain, metered in ANM.',
     url: `${BASE}/apps`,

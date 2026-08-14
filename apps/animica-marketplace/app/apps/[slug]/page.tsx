@@ -62,9 +62,6 @@ export async function generateMetadata({ params }: { params: { slug: string } })
     alternates: { canonical: url },
     ...(app.visibility === 'UNLISTED' ? { robots: { index: false, follow: false } } : {}),
     openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
       title: app.name,
       description: desc,
       url,

@@ -8,27 +8,126 @@ import ParticleLogo from "../components/ParticleLogo.astro";
 
 const title = "Animica — Post-Quantum Blockchain for Verifiable Compute";
 const description =
-  "Animica is a live post-quantum L1: Dilithium3 + SPHINCS+ signatures, deterministic Python smart contracts, and PoIES useful-work consensus — with a working mining pool, explorer, wallet, and public RPC.";
+  "Animica is a live post-quantum L1: ML-DSA-65 (FIPS 204) signatures, deterministic Python smart contracts, and PoIES useful-work consensus — with a working mining pool, explorer, wallet, free AI inference API, and public RPC.";
 
 const jsonLd = [
   {
     "@context": "https://schema.org",
     "@type": "Organization",
+    "@id": "https://animica.org/#org",
     name: "Animica",
     url: "https://animica.org",
-    logo: "https://animica.org/icons/logo.svg",
-    sameAs: ["https://x.com/animicaorg", "https://github.com/animicaorg/all"],
+    logo: "https://animica.org/logo.png",
+    sameAs: [
+      "https://github.com/animicaorg/all",
+      "https://pypi.org/project/animica/",
+      "https://explorer.animica.org/",
+      "https://x.com/animicaorg",
+    ],
   },
   {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: "Animica",
     url: "https://animica.org",
+    publisher: { "@id": "https://animica.org/#org" },
+  },
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebAPI",
+        "@id": "https://animica.org/#rpc-api",
+        name: "Animica Node JSON-RPC",
+        description:
+          "Free public JSON-RPC 2.0 endpoint for the Animica post-quantum L1 and its ANM-native L2. POST https://rpc.animica.org/rpc — namespaces chain.*, state.*, tx.*, mempool.*, net.*, aicf.* and l2_*. No API key required.",
+        url: "https://rpc.animica.org/rpc",
+        documentation: "https://animica.org/developers/",
+        provider: { "@id": "https://animica.org/#org" },
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      },
+      {
+        "@type": "WebAPI",
+        "@id": "https://animica.org/#explorer-api",
+        name: "Animica Explorer REST API",
+        description:
+          "Free, no-auth REST API for chain data: /api/head, /api/blocks, /api/tx/:hash, /api/address/:bech32, /api/richlist, /api/circulating-supply, /api/mining/info, /api/l2/*, and more.",
+        url: "https://explorer.animica.org/api/head",
+        documentation: "https://animica.org/developers/",
+        provider: { "@id": "https://animica.org/#org" },
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      },
+      {
+        "@type": "WebAPI",
+        "@id": "https://animica.org/#inference-api",
+        name: "Animica Free AI Inference API",
+        description:
+          "OpenAI-compatible inference API at https://animica.dev/v1 (chat/completions, models). Keyless — no API key or signup; rate limit 30 requests/minute per IP. Capacity is community-GPU-provided: check the per-model serving flag in /v1/models; requests to non-serving models may 503 or queue.",
+        url: "https://animica.dev/v1",
+        documentation: "https://animica.dev/llms.txt",
+        provider: { "@id": "https://animica.org/#org" },
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      },
+    ],
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: [
+      {
+        "@type": "Question",
+        name: "What is Animica?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Animica is an open-source (Apache-2.0) proof-of-work L1 blockchain (chain id 1) with post-quantum signatures and useful-work credits for AI and quantum workloads, plus an ANM-native L2 rollup. Native coin: ANM (1 ANM = 10^9 base units). Free public JSON-RPC at https://rpc.animica.org/rpc and a free explorer REST API at https://explorer.animica.org/api/.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "Is the Animica AI API free?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Yes. https://animica.dev/v1 is OpenAI-compatible (chat/completions, models) and keyless — no API key or signup. Rate limit is 30 requests/minute per IP. Capacity is provided by community GPUs: check each model's serving flag in /v1/models; requests to non-serving models may 503 or queue.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What signature scheme does Animica use?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "ML-DSA-65 (FIPS 204, the successor of Dilithium3), scheme id 0x1003 — the only current signature scheme. Addresses are bech32m with the anim1 prefix.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How do I get ANM?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Mine via the pool at https://pool.animica.org (stratum pool.animica.org:3333), trade ANM/USDT on NonKYC (https://nonkyc.io/market/ANM_USDT), or accept ANM payments via https://pay.animica.dev. There is no mainnet faucet.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "How do I run an Animica node?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "Install the CLI with pip install animica, then run animica node up (Docker quickstart) and animica node status. Local RPC listens on 127.0.0.1:8545/rpc; P2P uses port 30333. Full guide: https://animica.org/node/.",
+        },
+      },
+      {
+        "@type": "Question",
+        name: "What is the Animica L2?",
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: "An ANM-native rollup shipped in the 10.x releases, with a deterministic parallel executor and re-execution validity proofs. It is served through l2_* JSON-RPC methods (l2_status, l2_getBalance, l2_sendRawTransaction, …) on https://rpc.animica.org/rpc and /api/l2/* on https://explorer.animica.org.",
+        },
+      },
+    ],
   },
 ];
 
 const heroFacts: Array<{ label: string; value: string; href?: string; linkText?: string }> = [
-  { label: "Post-quantum", value: "Dilithium3 + SPHINCS+ signatures" },
+  { label: "Post-quantum", value: "ML-DSA-65 (FIPS 204) signatures" },
   { label: "Contracts", value: "Deterministic Python VM" },
   { label: "Consensus", value: "PoIES useful work" },
   {
@@ -43,7 +142,7 @@ const corePillars = [
   {
     title: "Post-Quantum Security",
     detail:
-      "Dilithium3 and SPHINCS+ signatures protect every account and transaction against both classical and future quantum attackers.",
+      "ML-DSA-65 (FIPS 204, the successor of Dilithium3) signatures protect every account and transaction against both classical and future quantum attackers.",
   },
   {
     title: "Useful-Work Consensus",
@@ -162,7 +261,7 @@ const ecosystemProducts = [
         <span class="aicf-kicker anm-reveal">Live mainnet · Post-quantum L1 · Native coin ANM</span>
         <h1 class="aicf-heading anm-reveal-2">The post-quantum chain where mining does <span class="anm-grad-text">useful work</span></h1>
         <p class="aicf-subheading anm-reveal-2">
-          Animica mainnet is live: Dilithium3 + SPHINCS+ signatures, smart contracts in
+          Animica mainnet is live: ML-DSA-65 (FIPS 204) post-quantum signatures, smart contracts in
           deterministic Python, and PoIES consensus that rewards useful compute — including
           attested, <span class="anm-grad-text">verifiable quantum randomness</span> — instead of
           wasted hashes.
@@ -400,8 +499,10 @@ const ecosystemProducts = [
       </div>
       <aside class="aicf-get-anm">
         <strong>How do I get ANM today?</strong>
-        <a href="/mine">Mine it through the pool</a> — that is the only official
-        channel today. There is no other sales channel.
+        <a href="/mine">Mine it through the pool</a>, trade ANM/USDT on
+        <a href="https://nonkyc.io/market/ANM_USDT" target="_blank" rel="noopener">NonKYC</a>, or accept
+        ANM payments via <a href="https://pay.animica.dev" target="_blank" rel="noopener">Animica Pay</a>.
+        There is no mainnet faucet.
       </aside>
     </div>
   </section>

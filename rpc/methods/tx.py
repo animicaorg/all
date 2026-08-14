@@ -1249,7 +1249,20 @@ def _validate_sufficient_balance(obj: dict) -> None:
         return
 
     try:
-        value = _coerce_tx_int("value", tx_obj.get("value", 0) or 0)
+        # Canonical bodies carry the transfer amount at payload.v.amount, not
+        # at a top-level "value" key. Reading only the flat key made this
+        # guard require fee-only, so a send of (nearly) the full balance was
+        # admitted with a hash, then starved out of every block by selection's
+        # correct amount+fee math and silently evicted — the "stuck in
+        # mempool, then vanished with no details" failure. Resolve both shapes.
+        value_raw = tx_obj.get("value")
+        if value_raw is None:
+            payload = tx_obj.get("payload")
+            if isinstance(payload, dict):
+                inner = payload.get("v")
+                if isinstance(inner, dict) and inner.get("amount") is not None:
+                    value_raw = inner.get("amount")
+        value = _coerce_tx_int("value", value_raw or 0)
 
         # Handle gasLimit - may be int or dict {"limit": int, "price": int}
         gas_limit_raw = tx_obj.get("gasLimit") or tx_obj.get("gas_limit") or tx_obj.get("gas") or 0

@@ -5,7 +5,7 @@ import InlineLink from "../../components/InlineLink.astro";
 const pageTitle = "Ethereum / EVM-Compatible RPC — Animica Docs";
 const pageDesc =
   "Connect ethers.js, web3.js and MetaMask to Animica. The EVM-compatible RPC facade exposes " +
-  "eth_*/net_*/web3_* methods over Animica's post-quantum PoIES L1 — chain id 149, address bridge, " +
+  "eth_*/net_*/web3_* methods over Animica's post-quantum PoIES L1 — address bridge " +
   "and honest boundaries (it's an RPC facade, not EVM execution).";
 const canonical = "https://animica.org/docs/evm-rpc";
 
@@ -37,7 +37,7 @@ const groups = [
 const network = [
   ["Network name", "Animica"],
   ["RPC URL", RPC],
-  ["Chain ID", "149"],
+  ["Chain ID", "1 (as currently reported by the facade — known deviation; do not rely on it for replay protection)"],
   ["Currency symbol", "ANM"],
   ["Decimals", "9 (1 ANM = 1e9 nANM)"],
   ["Block explorer", "https://explorer.animica.org"],
@@ -68,22 +68,22 @@ const faqs = [
   },
   {
     q: "What chain id does Animica use for EVM?",
-    a: "Chain id 149 (0x95) for eth_chainId / net_version — the lowest unregistered EIP-155 id. Animica's " +
-      "native chain id stays 1 internally; the facade advertises a dedicated id so it doesn't collide with " +
-      "Ethereum mainnet (also 1) in wallet chain-lists. Override with ANIMICA_EVM_CHAIN_ID.",
+    a: "The facade currently reports eth_chainId / net_version as 1 — a known deviation (it matches Animica's " +
+      "native chain id but collides with Ethereum mainnet in wallet chain-lists). Do not rely on eth_chainId " +
+      "for replay protection. Operators can override with ANIMICA_EVM_CHAIN_ID.",
   },
   {
     q: "How do Ethereum 0x addresses map to Animica anim1 accounts?",
     a: "Every Animica account gets a deterministic 20-byte EVM alias = 0x ‖ keccak256(anim1)[-20:], with a " +
       "binding registry so eth_getBalance(0xalias) resolves back. An alias is a display/lookup handle, not " +
-      "key-compatibility — a secp256k1 key cannot control an anim1 (ML-DSA/SPHINCS+) account.",
+      "key-compatibility — a secp256k1 key cannot control an anim1 (ML-DSA-65) account.",
   },
   {
     q: "Can I send a transaction from MetaMask?",
     a: "Yes, when the node operator enables the custodial relayer (ANIMICA_EVM_RELAYER=1). Each EVM address " +
       "maps to a relayer-held native account A(E); you fund A(E) (animica_evmAccount returns its anim1), then " +
       "sign a normal EVM tx and eth_sendRawTransaction moves ANM natively from A(E). It is custodial (the " +
-      "operator holds the keys) and enforces chainId 149, monotonic nonces, replay protection, and AES-256-GCM " +
+      "operator holds the keys) and enforces the facade chain id, monotonic nonces, replay protection, and AES-256-GCM " +
       "key-at-rest. With the relayer off, sends return a clear -32004 instead of failing silently.",
   },
 ];
@@ -97,7 +97,7 @@ const jsonLd = [
     url: canonical,
     inLanguage: "en",
     keywords: "Ethereum JSON-RPC, EVM compatible, eth_chainId, MetaMask, ethers.js, web3.js, " +
-      "chain id 149, EIP-1193, post-quantum blockchain, Animica",
+      "EIP-1193, post-quantum blockchain, Animica",
     about: ["Ethereum JSON-RPC", "EVM compatibility", "MetaMask", "ethers.js", "web3.js"],
     isPartOf: { "@type": "WebSite", name: "Animica", url: "https://animica.org" },
   },
@@ -170,7 +170,8 @@ const pre = "mt-4 overflow-x-auto rounded-2xl border p-5 text-sm leading-relaxed
 curl -s ${RPC}/ \\
   -H 'content-type: application/json' \\
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
-# -> {"jsonrpc":"2.0","id":1,"result":"0x95"}   (chain id 149)
+# -> {"jsonrpc":"2.0","id":1,"result":"0x1"}   (the facade currently reports chain id 1 — known
+#    deviation; do not rely on it for replay protection)
 
 # ethers v6
 import { JsonRpcProvider } from "ethers";
@@ -180,7 +181,7 @@ await provider.getBlockNumber();
 # web3.py
 from web3 import Web3
 w3 = Web3(Web3.HTTPProvider("${RPC}"))
-w3.is_connected(); w3.eth.chain_id        # 149
+w3.is_connected(); w3.eth.chain_id        # currently 1 (known deviation)
 w3.eth.block_number; w3.eth.get_block("latest")`}</code></pre>
 
     <!-- Add to MetaMask -->
@@ -201,9 +202,9 @@ w3.eth.block_number; w3.eth.get_block("latest")`}</code></pre>
       </table>
     </div>
     <p class="mt-3 text-xs opacity-60 max-w-3xl">
-      Chain id <strong>149</strong> is the lowest unregistered EIP-155 id (Ethereum mainnet is 1, which
-      would collide). It is registered with <InlineLink href="https://github.com/ethereum-lists/chains">
-      ethereum-lists/chains</InlineLink>, which feeds chainid.network and chainlist.org. The native
+      The facade currently reports chain id <strong>1</strong> — a known deviation (it collides with
+      Ethereum mainnet in wallet chain-lists; do not rely on <code>eth_chainId</code> for replay
+      protection). Operators can override with <code>ANIMICA_EVM_CHAIN_ID</code>. The native
       currency uses <strong>9 decimals</strong> (nANM is the wei-style smallest unit).
     </p>
 
@@ -232,7 +233,7 @@ w3.eth.block_number; w3.eth.get_block("latest")`}</code></pre>
             <td class="px-4 py-2.5">Ethereum method</td><td class="px-4 py-2.5">Animica source</td>
           </tr>
           {[
-            ["eth_chainId / net_version", "dedicated EVM id 149 (override ANIMICA_EVM_CHAIN_ID)"],
+            ["eth_chainId / net_version", "currently reports 1 — known deviation (override ANIMICA_EVM_CHAIN_ID)"],
             ["eth_blockNumber", "chain.getHead().height → hex"],
             ["eth_getBlockBy{Number,Hash}", "chain.getBlockByHeight / …ByHash → Ethereum block shape"],
             ["eth_getBalance", "state.getBalance (nANM as the wei-style smallest unit)"],
@@ -259,7 +260,7 @@ w3.eth.block_number; w3.eth.get_block("latest")`}</code></pre>
     <h2 class="mt-12 text-2xl font-semibold">The address &amp; signature boundary</h2>
     <p class="mt-2 text-sm opacity-80 max-w-3xl">
       Ethereum assumes 20-byte <code>0x</code> addresses and secp256k1 ECDSA. Animica is post-quantum
-      (<code>anim1…</code>, ML-DSA / SPHINCS+). The facade bridges the two:
+      (<code>anim1…</code>, ML-DSA-65). The facade bridges the two:
     </p>
     <div class="mt-4 grid gap-4 sm:grid-cols-2">
       <div class={card}>

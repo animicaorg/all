@@ -100,73 +100,6 @@ def is_disabled() -> bool:
     return os.environ.get("ANIMICA_DISABLE_AICF_WORKER") == "1"
 
 
-# TWO TIER VOCABULARIES, and mixing them up silently breaks all inference.
-#
-#   chain / job tiers   : free, standard, premium, elite   <- what a job carries
-#   model-catalog tiers : tiny, small, flagship, large     <- what bundles install as
-#
-# The node submits jobs tagged with the CHAIN tier, but bundles land in
-# `$ANIMICA_DATA_DIR/models/<CATALOG tier>` (that is what `animica up` and
-# `aicf-worker pull` create). So a worker handed a `standard` job used to look for
-# `models/standard`, which nothing ever creates: it claimed the job, raised
-# BundleError("no installed flagship bundle for tier='standard'"), and never returned a
-# result. The job then sat until the node's local-stub grace expired and the user got a
-# placeholder — i.e. inference NEVER worked, however many healthy workers were online.
-#
-# Kept in sync with `_CHAIN_TO_TIER` in apps/animica-chat/bridge/server.py, which is
-# where the mapping previously lived ALONE.
-_CHAIN_TO_CATALOG_TIER = {
-    "free": "tiny",
-    "standard": "small",
-    "premium": "flagship",
-    "elite": "large",
-}
-_CATALOG_TO_CHAIN_TIER = {v: k for k, v in _CHAIN_TO_CATALOG_TIER.items()}
-
-
-def bundle_dir_candidates(tier: str) -> list[str]:
-    """On-disk bundle directory names that could serve `tier`, in either vocabulary.
-
-    Accepts a chain tier ("standard") or a catalog tier ("small") and returns both, so
-    a lookup succeeds whichever name the caller happens to hold. Order puts the
-    caller's own spelling first; unknown tiers pass through unchanged rather than
-    being dropped, so a new tier name never becomes silently unservable.
-    """
-    t = str(tier or "").strip()
-    if not t:
-        return []
-    out = [t]
-    for alias in (_CHAIN_TO_CATALOG_TIER.get(t), _CATALOG_TO_CHAIN_TIER.get(t)):
-        if alias and alias not in out:
-            out.append(alias)
-    return out
-
-
-def advertised_tier_aliases(tiers: list[str]) -> list[str]:
-    """Expand a tier list to cover both vocabularies for job matching.
-
-    A worker qualified on the `small` bundle must also be claimable for `standard`
-    jobs, since the node matches on the chain name. Without this a correctly
-    installed worker advertises a vocabulary the queue never uses and is offered
-    nothing at all.
-    """
-    out: list[str] = []
-    for t in tiers:
-        for name in bundle_dir_candidates(t):
-            if name not in out:
-                out.append(name)
-    return out
-
-
-def _env_float(name: str, default: float) -> float:
-    """Positive float from the environment, falling back on anything unusable."""
-    try:
-        v = float(os.environ.get(name, "").strip())
-        return v if v > 0 else default
-    except (TypeError, ValueError):
-        return default
-
-
 def _has_servable_bundle(tier: str) -> bool:
     """True when an installed flagship bundle exists for ``tier``.
 
@@ -178,18 +111,14 @@ def _has_servable_bundle(tier: str) -> bool:
     stub bridge on every claim.
     """
     try:
-        root = Path(os.environ.get(
-            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models"
-        # Check every spelling of the tier — a `standard` job is served by the
-        # `small` bundle on disk. See bundle_dir_candidates().
-        for name in bundle_dir_candidates(tier):
-            base = root / name
-            if not base.is_dir():
-                continue
-            for bundle in base.iterdir():
-                if (bundle / "manifest.json").is_file() and \
-                        (bundle / "inference.json").is_file():
-                    return True
+        base = Path(os.environ.get(
+            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models" / str(tier)
+        if not base.is_dir():
+            return False
+        for bundle in base.iterdir():
+            if (bundle / "manifest.json").is_file() and \
+                    (bundle / "inference.json").is_file():
+                return True
         return False
     except OSError:
         return False
@@ -280,17 +209,20 @@ class AICFWorker:
             or bool(os.environ.get(
                 "ANIMICA_AICF_PIPELINE_MODEL_ID", "").strip())
         )
-        # Remember the hardware-eligible set BEFORE bundle qualification, so the
-        # filter can be re-applied later. `animica up` kicks off the bundle download
-        # in a background thread and then constructs this worker immediately, so at
-        # this moment a perfectly healthy install is still seconds (or, for a 34GB
-        # flagship tier, many minutes) from finishing. Qualifying once here and
-        # keeping the answer meant a worker that downloaded a bundle successfully
-        # still advertised nothing until the operator restarted.
-        self._eligible_tiers = list(self.tiers)
-        self._skip_bundle_qual = _skip_qual
         if not _skip_qual:
-            self.tiers = self._servable_tiers(warn=True)
+            real_before = [t for t in self.tiers if t != "pipeline"]
+            servable = [t for t in self.tiers
+                        if t == "pipeline" or _has_servable_bundle(t)]
+            if real_before and not any(t != "pipeline" for t in servable):
+                log.warning(
+                    "[aicf-worker] no installed flagship bundle for eligible "
+                    "tier(s) %s; not advertising AICF serving capacity. Run "
+                    "`animica miner aicf-worker pull --tier <tier>` to serve "
+                    "chat/inference, or set "
+                    "ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE=1 to override.",
+                    real_before,
+                )
+            self.tiers = servable
         # Direct worker-to-worker activation transport (optional). When
         # pipeline mode is on AND ANIMICA_AICF_PIPELINE_DIRECT_PORT is
         # set, the worker spins up a small HTTP server that peers can
@@ -388,11 +320,8 @@ class AICFWorker:
         return hashlib.sha256(f"aicf-pipeline:{pair}".encode("utf-8")).digest()
 
     def register(self) -> None:
-        # Advertise BOTH vocabularies. The node matches jobs on the chain tier, so a
-        # worker qualified on the `small` bundle that advertised only "small" would be
-        # offered nothing at all.
         self.client.register_worker(
-            address=self.address, tiers=advertised_tier_aliases(self.tiers),
+            address=self.address, tiers=self.tiers,
             hardware=self.profile.to_dict(),
             direct_endpoint=self._direct_endpoint,
         )
@@ -402,56 +331,19 @@ class AICFWorker:
     def stop(self) -> None:
         self.state.stopping = True
 
-    def _servable_tiers(self, *, warn: bool = False) -> list[str]:
-        """The hardware-eligible tiers we can actually load a bundle for, now.
-
-        Re-evaluated rather than cached: bundles appear on disk asynchronously (the
-        `animica up` prefetch thread, `animica miner setup`, an `aicf-worker pull`
-        run in another shell), and a worker that answered this question once at
-        startup would never notice.
-        """
-        if self._skip_bundle_qual:
-            return list(self._eligible_tiers)
-        real = [t for t in self._eligible_tiers if t != "pipeline"]
-        servable = [t for t in self._eligible_tiers
-                    if t == "pipeline" or _has_servable_bundle(t)]
-        if warn and real and not any(t != "pipeline" for t in servable):
-            log.warning(
-                "[aicf-worker] no installed flagship bundle for eligible "
-                "tier(s) %s yet; will keep checking and start serving as soon as "
-                "one finishes installing. Run "
-                "`animica miner aicf-worker pull --tier <tier>` to install now, or "
-                "set ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE=1 to override.",
-                real,
-            )
-        return servable
-
     def run(self, *, idle_sleep_ms: int = 1500,
             heartbeat_interval_sec: int = 30,
             max_idle_sleep_ms: int = 20000) -> None:
         """Main loop. Returns when self.state.stopping is set."""
         import random
-
-        # Wait for a bundle rather than exiting. `animica up` starts the bundle
-        # download in a background thread and constructs this worker immediately
-        # afterwards, so "no servable tier" at startup is the NORMAL state on a fresh
-        # miner for as long as the download takes. Returning here (the old behaviour)
-        # killed the worker thread seconds before its own bundle finished landing, so
-        # `animica up` reported "worker idle (no installed model bundle)" forever and
-        # the operator had to restart to get any serving at all.
-        requal_secs = _env_float("ANIMICA_AICF_REQUALIFY_SECS", 30.0)
-        while not self.tiers and not self.state.stopping:
-            log.info(
-                "[aicf-worker] waiting for a servable bundle for tier(s) %s "
-                "(re-checking every %.0fs)…", self._eligible_tiers, requal_secs,
+        if not self.tiers:
+            log.warning(
+                "[aicf-worker] no servable tiers to advertise; worker idle. "
+                "Install a bundle with `animica miner aicf-worker pull` to "
+                "participate in AICF serving."
             )
-            time.sleep(max(1.0, requal_secs))
-            self.tiers = self._servable_tiers()
-        if self.state.stopping:
             return
-        log.info("[aicf-worker] serving tiers %s", self.tiers)
         self.register()
-        last_requal = time.time()
         last_hb = time.time()
         idle_streak = 0
 
@@ -474,24 +366,6 @@ class AICFWorker:
             # claim. Pipeline jobs are time-sensitive (stage k blocks
             # stage k+1) so we don't want a pipeline-capable worker
             # sitting on a race job while a stage is waiting.
-            # A tier can finish installing while we are already serving another
-            # (`up` prefetches one tier, an operator pulls a second). Re-qualify
-            # periodically and re-register when the set actually changes, so the new
-            # capacity is advertised without a restart. Cheap: a couple of stat()s.
-            if time.time() - last_requal > requal_secs:
-                last_requal = time.time()
-                try:
-                    fresh = self._servable_tiers()
-                    if fresh and set(fresh) != set(self.tiers):
-                        log.info(
-                            "[aicf-worker] servable tiers changed %s -> %s; "
-                            "re-registering", self.tiers, fresh,
-                        )
-                        self.tiers = fresh
-                        self.register()
-                except Exception:  # noqa: BLE001 — never let this stop serving
-                    pass
-
             stage_handled = False
             if self.pipeline_enabled:
                 try:
@@ -509,10 +383,9 @@ class AICFWorker:
                 self._write_state()
                 continue
             try:
-                job = self.client.claim_next_job(
-                    address=self.address,
-                    tiers=advertised_tier_aliases(
-                        [t for t in self.tiers if t != "pipeline"]))
+                job = self.client.claim_next_job(address=self.address,
+                                                  tiers=[t for t in self.tiers
+                                                         if t != "pipeline"])
             except AgentRuntimeError as exc:
                 _eprint(f"[aicf-worker] claim failed: {exc.message}")
                 _idle_wait()
@@ -580,38 +453,31 @@ class AICFWorker:
             self._write_state()
 
     def _load_runner(self, tier: str):
-        """Locate the installed bundle for ``tier`` and return a runner.
-
-        ``tier`` arrives from the JOB, so it is a chain tier ("standard"), while the
-        bundle on disk is named for the model catalog ("small"). Both spellings are
-        searched — see bundle_dir_candidates(). Getting this wrong does not degrade
-        gracefully: the worker claims the job, throws, and the requester waits out the
-        node's stub grace for a placeholder.
-        """
+        """Locate the installed bundle for ``tier`` and return a runner."""
         from flagship_agent.inference import LocalBundleRunner
-        root = Path(os.environ.get(
-            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models"
-        searched: list[Path] = []
-        for name in bundle_dir_candidates(tier):
-            cache = root / name
-            searched.append(cache)
-            if not cache.is_dir():
+        cache = Path(os.environ.get(
+            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / \
+            "models" / tier
+        if not cache.is_dir():
+            raise BundleError(
+                f"no installed flagship bundle for tier={tier!r}",
+                hint="run `animica miner aicf-worker pull --tier <tier>` "
+                     "to download a bundle from the network's IPFS CIDs",
+            )
+        # Pick the highest-priority bundle (latest by exported_at).
+        candidates = sorted(cache.iterdir(),
+                             key=lambda p: p.stat().st_mtime, reverse=True)
+        for bundle in candidates:
+            mf = bundle / "manifest.json"
+            if not mf.is_file():
                 continue
-            # Pick the highest-priority bundle (latest by exported_at).
-            for bundle in sorted(cache.iterdir(),
-                                 key=lambda p: p.stat().st_mtime, reverse=True):
-                if not (bundle / "manifest.json").is_file():
-                    continue
-                spec = bundle / "inference.json"
-                if not spec.is_file():
-                    continue
-                inf = json.loads(spec.read_text(encoding="utf-8"))
-                return LocalBundleRunner(bundle_dir=bundle, inference_spec=inf)
+            spec = bundle / "inference.json"
+            if not spec.is_file():
+                continue
+            inf = json.loads(spec.read_text(encoding="utf-8"))
+            return LocalBundleRunner(bundle_dir=bundle, inference_spec=inf)
         raise BundleError(
-            f"no installed bundle for tier={tier!r}; searched "
-            + ", ".join(str(p) for p in searched),
-            hint="run `animica miner aicf-worker pull --tier <tier>` "
-                 "to download a bundle from the network's IPFS CIDs",
+            f"no usable bundles found under {cache}",
         )
 
     def _get_layer_range_runner(self):

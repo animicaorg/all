@@ -110,17 +110,6 @@ export const PLAN_DEFAULTS: Record<PlanKey, PlanLimits> = {
     custom_branding: false,
     reseller_features: false,
   }),
-  // `starter` is the rung formerly named `developer`. It was missing here, so a
-  // $4.99 subscriber resolved to the FREE defaults: 0 team members, 0 API keys.
-  starter: fromCloud('starter', {
-    team_members: 3,
-    workspaces: 1,
-    api_keys: 3,
-    private_agents: true,
-    white_label: false,
-    custom_branding: false,
-    reseller_features: false,
-  }),
   developer: fromCloud('developer', {
     team_members: 3,
     workspaces: 1,
@@ -134,20 +123,6 @@ export const PLAN_DEFAULTS: Record<PlanKey, PlanLimits> = {
     team_members: 10,
     workspaces: 5,
     api_keys: 10,
-    private_agents: true,
-    white_label: true,
-    custom_branding: true,
-    reseller_features: false,
-  }),
-  // `operator` ($39.99) was missing, so it resolved to the FREE defaults while
-  // `pro` ($14.99) got 10 team members and 10 API keys. These values come from the
-  // features already marketed on the Plan row ("Up to 10 team members",
-  // "Higher API limits, multiple keys", "White-label & custom branding") — nothing
-  // invented, and every one is >= pro so the ladder cannot invert.
-  operator: fromCloud('operator', {
-    team_members: 10,
-    workspaces: 10,
-    api_keys: 20,
     private_agents: true,
     white_label: true,
     custom_branding: true,

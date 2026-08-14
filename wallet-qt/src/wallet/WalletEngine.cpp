@@ -710,6 +710,49 @@ QJsonObject WalletEngine::submitTransaction(const QJsonObject& request)
     return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
 }
 
+// ==================== ANM Instant (L2) ====================
+
+QJsonObject WalletEngine::l2Status() const
+{
+    if (!m_rpcClient) {
+        return QJsonObject();
+    }
+    return m_rpcClient->l2StatusJson();
+}
+
+QJsonObject WalletEngine::l2Balance(const QString& address) const
+{
+    if (!m_rpcClient || address.trimmed().isEmpty()) {
+        return QJsonObject();
+    }
+    return m_rpcClient->l2GetBalanceJson(address);
+}
+
+QJsonObject WalletEngine::l2TransactionStatus(const QString& txid) const
+{
+    if (!m_rpcClient || txid.trimmed().isEmpty()) {
+        return QJsonObject();
+    }
+    return m_rpcClient->l2GetTransactionJson(txid);
+}
+
+QJsonObject WalletEngine::sendInstant(const QString& fromAddress, const QString& toAddress, const QString& amount)
+{
+    if (m_locked) {
+        m_lastError = "Wallet is locked.";
+        emit error(m_lastError);
+        return QJsonObject();
+    }
+    QJsonObject request;
+    request["from_address"] = fromAddress;
+    request["to_address"] = toAddress;
+    request["amount"] = amount;
+    // The bridge performs l2_prepareTransfer -> ml_dsa_65.sign(signingHash) ->
+    // l2_submitSigned with the sender account's existing ML-DSA-65 key.
+    const QJsonObject response = backendResult("l2_send_instant", request, 180000);
+    return response.value("ok").toBool() ? response.value("result").toObject() : QJsonObject();
+}
+
 QJsonObject WalletEngine::transactionStatus(const QString& txHash) const
 {
     QJsonObject args;

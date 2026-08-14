@@ -117,21 +117,13 @@ def test_record_served_pays_server_bucket(funded_ena, tmp_path, monkeypatch):
     pid = p["pool_id"]
     r = _fund(e, monkeypatch, pid, p["pool_hash"], 10_000_000_000, "f1")
     assert r["funded"]
-    # A server serves tokens in the (still-current) round 1. Rewards are now block
-    # emission, not a slice of the funder budget: 10 ANM/block, servers take 25% when
-    # trainers are also present and the FULL 10 when they are not.
-    # Emission needs a promoted head to judge eligibility against — work from rounds
-    # after the head produced nothing mergeable and is deliberately unpayable — so
-    # promote a round first, exactly as a live pool does.
-    _promote(e, pid)
+    # a server serves tokens in the (still-current) round 1
     e.pool.record_served(pid, "node-A", 100, address="anim1serverA")
-    e.pool.accrue(pid, height=500)                     # initialise the watermark
-    out = e.pool.accrue(pid, height=501)               # one block
+    out = e.pool.payout(pid, round=1)
     server_entries = [x for x in out["entries"] if x["role"] == "server"]
+    # servers bucket = 20% of 10 ANM = 2 ANM, all to the one server
     assert server_entries and server_entries[0]["address"] == "anim1serverA"
-    # No trainer has submitted here, so the server role receives the whole block.
-    assert server_entries[0]["nano"] == 10_000_000_000
-    assert out["paid_nano"] == 10_000_000_000
+    assert server_entries[0]["nano"] == 2_000_000_000
 
 
 def test_openai_endpoint_serves_and_credits(funded_ena, tmp_path, monkeypatch):

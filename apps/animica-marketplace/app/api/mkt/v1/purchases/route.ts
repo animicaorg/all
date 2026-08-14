@@ -39,7 +39,16 @@ export async function POST(req: NextRequest) {
         return { status: 201, data: { purchase: jsonSafe(purchase), entitled: true } };
       }
 
-      // ONE_TIME / SUBSCRIPTION => debit + split.
+      // SUBSCRIPTION => must go through the consent-gated start flow. This route cannot record a
+      // wallet-signed StoreConsent, so a subscription bought here would be orphaned: the armed
+      // renewal worker (autoRenew=true + consentId + StoreConsent) would never renew it. Refuse
+      // and redirect, rather than silently create a one-period, never-renewing "subscription".
+      if (price.model === 'SUBSCRIPTION') {
+        throw new ApiError(400, 'subscription_requires_consent',
+          'subscriptions require signed consent — use POST /api/mkt/v1/store/subscriptions/start');
+      }
+
+      // ONE_TIME => debit + split.
       try {
         await settlePurchaseFromBalance({
           buyerId: ctx.accountId,
@@ -55,12 +64,11 @@ export async function POST(req: NextRequest) {
         }
         throw e;
       }
-      const expiresAt = price.model === 'SUBSCRIPTION'
-        ? new Date(Date.now() + price.periodDays * 86400_000) : null;
+      // ONE_TIME grants perpetual access (no expiry); SUBSCRIPTION is refused above.
       const purchase = await prisma.purchase.create({
         data: {
           buyerId: ctx.accountId, listingId: listing.id, priceId: price.id,
-          priceModel: price.model, amountNanm: price.amountNanm, status: 'ACTIVE', expiresAt,
+          priceModel: price.model, amountNanm: price.amountNanm, status: 'ACTIVE', expiresAt: null,
         },
       });
       await bumpUsers(listing.id);

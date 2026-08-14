@@ -24,32 +24,8 @@ export default function StatsPage() {
   const { data: xmr } = useQuery({ queryKey: ["xmr-summary"], queryFn: () => getJson<any>("/api/pool/xmr/summary"), refetchInterval: 30000 });
   const { data: blocks } = useQuery({ queryKey: ["recent-blocks"], queryFn: () => getJson<any>("/api/blocks/recent"), refetchInterval: 30000 });
   const { data: rev } = useQuery({ queryKey: ["rev-pub"], queryFn: () => getJson<any>("/api/revenue/public") });
-  // ANM price is sourced from the live NonKYC ANM/USDT feed (same-origin
-  // /anm-price.json, republished every 60s by the anm-price timer).
-  const { data: anm } = useQuery({ queryKey: ["anm-price"], queryFn: () => getJson<any>("/anm-price.json"), refetchInterval: 60000 });
 
   const blockItems: any[] = blocks?.items ?? blocks?.recent_blocks ?? [];
-  // Prefer the NonKYC feed's pre-formatted display; fall back to the
-  // internal revenue price only if the feed is unavailable.
-  const anmDisplay: string | null = anm?.display ?? (rev?.prices?.anmUsd != null ? String(rev.prices.anmUsd) : null);
-  const anmIndicative = Boolean(anm?.is_indicative);
-  const anmPriceLabel = anmDisplay ? `${anmIndicative ? "~" : ""}$${anmDisplay}` : "—";
-
-  // FORK_SERVICE_CARVE advance notice. Every figure comes from the pool API, which
-  // derives them from consensus (consensus.rewards + core.network_params) — none of
-  // the percentages or the activation height are restated here, because a "coming
-  // soon" panel that drifts from the rule is worse than no panel.
-  const carve = pool?.service_carve ?? null;
-  const fmtAnm = (n: unknown) => {
-    const v = Number(n ?? 0) / 1e9;
-    return `${v % 1 === 0 ? v.toFixed(0) : v.toFixed(2)} ANM`;
-  };
-  const carveEta = (blocksLeft: number) => {
-    const mins = blocksLeft; // ~60s target spacing
-    if (mins < 90) return `~${mins} min`;
-    if (mins < 60 * 36) return `~${Math.round(mins / 60)} h`;
-    return `~${Math.round(mins / 1440)} days`;
-  };
 
   return (
     <div className="space-y-10">
@@ -67,7 +43,7 @@ export default function StatsPage() {
         <Stat label="Network hashrate" value={hr(Number(pool?.network_hashrate_hps ?? 0))} />
         <Stat label="Active miners" value={String(pool?.num_miners ?? pool?.miners ?? 0)} />
         <Stat label="Blocks found" value={String(pool?.blocks_found_total ?? 0)} />
-        <Stat label="ANM price" value={anmPriceLabel} />
+        <Stat label="ANM price" value={rev?.prices?.anmUsd ? `$${Number(rev.prices.anmUsd)}` : "—"} />
       </section>
 
       <p className="-mt-4 text-xs text-white/40">
@@ -75,131 +51,6 @@ export default function StatsPage() {
           ? `Live miner-reported (${pool?.reporting_miners ?? 0} reporting)`
           : "Estimated from share work (no miners reporting yet)"}
       </p>
-
-      {/* "Active miners" counts distinct addresses with PROVEN work that are here now.
-          Connected miners additionally includes anyone authorized and hashing who has
-          not landed a first share yet — a real category, since a miner on the full
-          block target only submits when it finds a block. Sockets are shown last
-          because one machine can hold hundreds of them and it is not a miner count. */}
-      {pool?.connected_miners != null && (
-        <p className="-mt-6 text-xs text-white/40">
-          {Number(pool.connected_miners)} connected
-          {Number(pool?.unproven_miners ?? 0) > 0
-            ? ` (${Number(pool.unproven_miners)} awaiting a first share)`
-            : ""}
-          {pool?.num_connections != null
-            ? ` · ${Number(pool.num_connections)} stratum connection${Number(pool.num_connections) === 1 ? "" : "s"}`
-            : ""}
-          . &ldquo;Active miners&rdquo; counts only addresses with recent proven work.
-        </p>
-      )}
-
-      {carve && (
-        <section className="card space-y-5">
-          <div className="flex flex-wrap items-baseline justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-white/45">
-                Inference rewards per block
-              </p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-white">
-                {carve.active ? (
-                  <>Live since block {Number(carve.activation_height).toLocaleString()}</>
-                ) : (
-                  <>Starts at block {Number(carve.activation_height).toLocaleString()}</>
-                )}
-              </h2>
-            </div>
-            {!carve.active && (
-              <span className="badge">
-                {Number(carve.blocks_remaining).toLocaleString()} blocks &middot;{" "}
-                {carveEta(Number(carve.blocks_remaining))}
-              </span>
-            )}
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-              <p className="text-xs text-white/50">Reserved for inference</p>
-              <p className="mt-1 text-3xl font-semibold tracking-tight text-neon-live">
-                {fmtAnm(carve.inference_per_block)}
-              </p>
-              <p className="mt-1 text-xs text-white/40">
-                {carve.inference_pct}% of every block
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-              <p className="text-xs text-white/50">Miner share</p>
-              <p className="mt-1 text-3xl font-semibold tracking-tight text-white">
-                {fmtAnm(carve.miner_per_block)}
-              </p>
-              <p className="mt-1 text-xs text-white/40">
-                {carve.miner_pct}% &middot; {carve.active ? "now" : "from activation"}
-                {!carve.active && (
-                  <>
-                    {" "}
-                    (today {fmtAnm(carve.miner_per_block_now)}, {carve.miner_pct_now}%)
-                  </>
-                )}
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-              <p className="text-xs text-white/50">Foundation treasury</p>
-              <p className="mt-1 text-3xl font-semibold tracking-tight text-white">
-                {fmtAnm(carve.treasury_per_block)}
-              </p>
-              <p className="mt-1 text-xs text-white/40">{carve.treasury_pct}% of every block</p>
-            </div>
-          </div>
-
-          {/* The honest part. Withholding is unconditional, and nothing is claiming the
-              slice yet, so a miner reading this must not conclude 25% is already
-              reaching providers — nor that the cut is conditional on demand. */}
-          <div className="space-y-2 text-sm text-white/60">
-            <p>
-              From block {Number(carve.activation_height).toLocaleString()},{" "}
-              {carve.inference_pct}% of every block is reserved for inference and media work
-              and is <span className="text-white">withheld from the block reward whether or
-              not anyone claims it</span>. Total emission and the halving schedule do not
-              change &mdash; only the division does.
-            </p>
-            <p>
-              On a block where no inference work is claimed, the reserved{" "}
-              {fmtAnm(carve.inference_per_block)} goes to the {carve.unclaimed_goes_to}, which
-              then receives {Number(carve.treasury_pct) + Number(carve.inference_pct)}% of that
-              block. Providers are paid out of this slice as they settle work on chain.
-            </p>
-            {!carve.active && (
-              <p className="text-white/45">
-                Nothing has changed yet: miners are paid{" "}
-                {fmtAnm(carve.miner_per_block_now)} ({carve.miner_pct_now}%) per block today.
-                Run <code className="rounded bg-black/40 px-1.5 py-0.5 text-white/70">animica --version</code>{" "}
-                &ge; 9.5.2 before the activation height.
-              </p>
-            )}
-          </div>
-        </section>
-      )}
-
-      {anmDisplay && (
-        <p className="-mt-6 text-xs text-white/40">
-          ANM price: {anmIndicative ? "indicative (bid/ask mid)" : "last trade"} on{" "}
-          <a
-            href={anm?.market_url || "https://nonkyc.io/market/ANM_USDT"}
-            target="_blank"
-            rel="noopener"
-            className="text-neon-blue hover:underline"
-          >
-            NonKYC ANM/USDT
-          </a>
-          {typeof anm?.change_percent === "number" && anm.change_percent !== 0 ? (
-            <span className={anm.change_percent >= 0 ? "text-neon-green" : "text-red-400"}>
-              {" · "}
-              {anm.change_percent >= 0 ? "+" : ""}
-              {anm.change_percent.toFixed(2)}% 24h
-            </span>
-          ) : null}
-        </p>
-      )}
 
       {pool?.hashrate_source !== "reported" && (
         <section className="grid gap-4 sm:grid-cols-3">

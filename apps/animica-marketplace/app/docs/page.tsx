@@ -11,9 +11,6 @@ export const metadata: Metadata = {
     'Complete tutorials for the Animica Internet: browse and deploy .anm sites, use the dVPN, and build with the free /v1 AI API, ANS, marketplace, agent and media APIs.',
   alternates: { canonical: 'https://animica.dev/docs' },
   openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
     title: 'Animica Docs',
     description: 'Tutorials for the Animica Internet + the full developer API reference.',
     url: 'https://animica.dev/docs', siteName: 'Animica', type: 'website',

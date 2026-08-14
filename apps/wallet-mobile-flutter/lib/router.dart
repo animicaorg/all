@@ -11,7 +11,10 @@ import 'screens/dex/launch_token.dart';
 import 'screens/dex/liquidity.dart';
 import 'screens/dex/promote.dart';
 import 'screens/dex/swap.dart';
+import 'screens/games.dart';
+import 'screens/history.dart';
 import 'screens/home.dart';
+import 'screens/l2.dart';
 import 'screens/nfts.dart';
 import 'screens/receive.dart';
 import 'screens/send.dart';
@@ -22,6 +25,7 @@ import 'screens/store/store_library.dart';
 import 'screens/store/subscriptions_screen.dart';
 import 'screens/store/topup_screen.dart';
 import 'screens/tokens.dart';
+import 'screens/tx_detail.dart';
 
 final router = GoRouter(
   initialLocation: '/',
@@ -42,6 +46,9 @@ final router = GoRouter(
           GoRoute(path: '/browser', builder: (c, s) => const BrowserScreen()),
         ]),
         StatefulShellBranch(routes: [
+          GoRoute(path: '/games', builder: (c, s) => const GamesScreen()),
+        ]),
+        StatefulShellBranch(routes: [
           GoRoute(path: '/store', builder: (c, s) => const StoreHomeScreen()),
         ]),
         StatefulShellBranch(routes: [
@@ -49,8 +56,22 @@ final router = GoRouter(
         ]),
       ],
     ),
+    // Games open in the dapp browser (provider-enabled on whitelisted hosts,
+    // so in-game wallet sign-in works) — pushed on TOP of the shell so the
+    // player gets a full-screen session with a back affordance.
+    GoRoute(
+      path: '/games/play',
+      builder: (c, s) =>
+          BrowserScreen(initialUrl: s.uri.queryParameters['url']),
+    ),
     GoRoute(path: '/send', builder: (c, s) => const SendScreen()),
+    GoRoute(path: '/l2', builder: (c, s) => const L2Screen()),
     GoRoute(path: '/receive', builder: (c, s) => const ReceiveScreen()),
+    GoRoute(path: '/history', builder: (c, s) => const HistoryScreen()),
+    GoRoute(
+      path: '/history/tx/:hash',
+      builder: (c, s) => TxDetailScreen(hash: s.pathParameters['hash']!),
+    ),
     // `uri` is set when we arrive from an `animica://wc?...` deep link; when
     // opened from the wallet UI it is absent and the screen shows the scanner.
     GoRoute(
@@ -109,6 +130,7 @@ class _Shell extends StatelessWidget {
           NavigationDestination(icon: Icon(Icons.toll_outlined), selectedIcon: Icon(Icons.toll), label: 'Tokens'),
           NavigationDestination(icon: Icon(Icons.collections_outlined), selectedIcon: Icon(Icons.collections), label: 'NFTs'),
           NavigationDestination(icon: Icon(Icons.travel_explore_outlined), selectedIcon: Icon(Icons.travel_explore), label: 'Browser'),
+          NavigationDestination(icon: Icon(Icons.sports_esports_outlined), selectedIcon: Icon(Icons.sports_esports), label: 'Games'),
           NavigationDestination(icon: Icon(Icons.storefront_outlined), selectedIcon: Icon(Icons.storefront), label: 'Store'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
         ],

@@ -3,6 +3,7 @@ import type { Account } from '../../types/wallet';
 import type { PendingTx } from '../../types/tx';
 import AccountsTab from '../components/AccountsTab';
 import SendTab from '../components/SendTab';
+import InstantTab from '../components/InstantTab';
 import ActivityTab from '../components/ActivityTab';
 import SettingsTab from '../components/SettingsTab';
 import CollectionTab from '../components/CollectionTab';
@@ -29,9 +30,11 @@ interface HomeProps {
 const DEBUG_WALLET_UI = true; // Always enabled for troubleshooting
 
 function Home({ onLock }: HomeProps) {
-  const [activeTab, setActiveTab] = useState<'accounts' | 'send' | 'collection' | 'activity' | 'settings'>('accounts');
+  const [activeTab, setActiveTab] = useState<'accounts' | 'send' | 'instant' | 'collection' | 'activity' | 'settings'>('accounts');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [balance, setBalance] = useState<{ confirmed: string; available: string } | null>(null);
+  const [l2Balance, setL2Balance] = useState<string | null>(null);
+  const [l2Enabled, setL2Enabled] = useState<boolean>(false);
   const [balanceError, setBalanceError] = useState<string | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
   const [network, setNetwork] = useState<any>(null);
@@ -83,6 +86,7 @@ function Home({ onLock }: HomeProps) {
     if (currentAccount) {
       refreshBalance(currentAccount.address, true);
       loadBalance(currentAccount.address);
+      loadL2Instant(currentAccount.address);
     }
   }, [currentAccount, refreshBalance]);
 
@@ -175,6 +179,34 @@ function Home({ onLock }: HomeProps) {
   async function refreshCurrentBalance(): Promise<void> {
     if (currentAccount) {
       await loadBalance(currentAccount.address);
+      await loadL2Instant(currentAccount.address);
+    }
+  }
+
+  // ANM Instant (L2) balance line. L2 shares the L1 RPC endpoint; this reads
+  // the L2-side balance for the active account, kept DISTINCT from the L1
+  // balance above. Failures are silent — L2 may simply not be enabled.
+  async function loadL2Instant(address: string): Promise<void> {
+    try {
+      const statusResp = await chrome.runtime.sendMessage({ method: 'wallet_l2GetStatus' });
+      const enabled = !!(statusResp && !statusResp.error && statusResp.enabled);
+      setL2Enabled(enabled);
+      if (!enabled) {
+        setL2Balance(null);
+        return;
+      }
+      const balResp = await chrome.runtime.sendMessage({
+        method: 'wallet_l2GetBalance',
+        params: { address },
+      });
+      if (balResp?.error || balResp?.balance == null) {
+        setL2Balance('0');
+      } else {
+        setL2Balance(String(balResp.balance));
+      }
+    } catch {
+      setL2Enabled(false);
+      setL2Balance(null);
     }
   }
 
@@ -220,6 +252,12 @@ function Home({ onLock }: HomeProps) {
           Send
         </button>
         <button
+          className={`tab ${activeTab === 'instant' ? 'active' : ''}`}
+          onClick={() => setActiveTab('instant')}
+        >
+          Instant
+        </button>
+        <button
           className={`tab ${activeTab === 'collection' ? 'active' : ''}`}
           onClick={() => setActiveTab('collection')}
         >
@@ -259,6 +297,15 @@ function Home({ onLock }: HomeProps) {
                   Confirmed: {formatANM(balance.confirmed)} ANM
                 </div>
               </>
+            )}
+            {l2Enabled && l2Balance != null && (
+              <div
+                style={{ fontSize: '12px', color: '#4338ca', marginTop: 4, cursor: 'pointer' }}
+                onClick={() => setActiveTab('instant')}
+                title="Open ANM Instant (L2)"
+              >
+                ⚡ ANM Instant (L2): {formatANM(l2Balance)} ANM
+              </div>
             )}
             <div style={{ fontSize: '11px', color: '#777', marginTop: 6 }}>
               RPC: {network?.effectiveRpcUrl ? new URL(network.effectiveRpcUrl).host : 'unknown'}
@@ -402,6 +449,10 @@ function Home({ onLock }: HomeProps) {
             balance={balance}
             onSent={loadData}
           />
+        )}
+
+        {activeTab === 'instant' && currentAccount && network && (
+          <InstantTab currentAccount={currentAccount} network={network} />
         )}
 
         {activeTab === 'collection' && currentAccount && (

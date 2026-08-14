@@ -28,11 +28,8 @@ from __future__ import annotations
 
 import hmac
 import json
-import logging
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-log = logging.getLogger(__name__)
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -42,14 +39,6 @@ from urllib.parse import parse_qs, urlparse
 _SENSITIVE_ROUTES = frozenset({
     "/pool/create", "/pool/fund/confirm", "/demand/confirm",
     "/pool/aggregate", "/pool/payout", "/feedback",
-    # /pool/accrue CREDITS ANM (10 per block, by weight) and advances the height
-    # watermark, so it is economic and must be operator-authorized. It was added in
-    # 9.5.5 without being listed here, which left it callable by anything that could
-    # reach the coordinator.
-    "/pool/accrue",
-    # /pool/settle BROADCASTS TRANSFERS from the configured payer. Strictly more
-    # sensitive than accrue, which only writes a ledger.
-    "/pool/settle",
 })
 _ENA_API_TOKEN_ENV = "ANIMICA_ENA_API_TOKEN"
 
@@ -289,35 +278,6 @@ def _make_handler(facade):
                         address=body.get("address"), run_id=body.get("run_id"),
                         latency_ms=body.get("latency_ms"),
                         served_round=body.get("served_round")))
-                # A node that serves the promoted checkpoint had no way to ANNOUNCE
-                # itself: pool.register_server() existed with ZERO callers and no route,
-                # so pool_servers stayed empty and nothing could discover a server to
-                # route inference to. Without this the trained model is unreachable no
-                # matter how many nodes serve it.
-                if path == "/pool/server/register":
-                    return self._send(200, facade.pool.register_server(
-                        body["pool_id"], body["worker_id"], body["endpoint"],
-                        address=body.get("address"),
-                        metadata=body.get("metadata")))
-                if path == "/pool/servers":
-                    return self._send(200, {"servers": facade.pool.list_servers(
-                        body["pool_id"], status=body.get("status", "active"))})
-                # What one address has earned. `animica up` shows this so an operator can
-                # see ENA income instead of guessing whether serving pays anything.
-                if path == "/pool/earnings":
-                    return self._send(200, facade.pool.earnings(
-                        body["address"], pool_id=body.get("pool_id")))
-                # Credit the per-block emission (10 ANM/block to trainers+servers by
-                # weight). Ledger-only: this package can verify money IN but holds no
-                # signing key, so it must never claim to have transferred.
-                if path == "/pool/accrue":
-                    return self._send(200, facade.pool.accrue(
-                        body["pool_id"], height=body.get("height")))
-                # Pay credited earnings ON CHAIN. Does nothing unless
-                # ANIMICA_ENA_SETTLE=1 and ANIMICA_ENA_SETTLE_FROM name a funded payer.
-                if path == "/pool/settle":
-                    return self._send(200, facade.pool.settle(
-                        body["pool_id"], height=body.get("height")))
                 if path == "/pool/tools/propose":
                     return self._send(200, facade.tools.propose(
                         body["name"], body.get("description", ""),
@@ -360,72 +320,6 @@ def _make_handler(facade):
     return Handler
 
 
-def _start_emission(facade) -> None:
-    """Background ticker that credits the per-block emission.
-
-    Without this, accrue() is a route nobody calls — which is precisely how the old
-    funder-budget payout went unrun for 84 rounds while 394 contributions earned nothing,
-    and why miner logs read "earned 0.0 ANM" no matter how much work they did. The
-    entitlement is per block, so crediting has to be automatic.
-
-    Safe to run unattended: accrue() is ledger-only (no key, no broadcast), pays exactly
-    10 ANM per elapsed block, clamps the elapsed count, and initialises its watermark to
-    the current height on first run so it can never emit retroactively.
-
-    Disable with ENA_EMISSION=0; interval via ENA_EMISSION_SECS (default 60, i.e. about
-    one chain block).
-    """
-    import os
-    import threading
-    import time
-
-    if os.environ.get("ENA_EMISSION", "1") == "0":
-        return
-    interval = max(30, int(os.environ.get("ENA_EMISSION_SECS", "60")))
-    pool = getattr(facade, "pool", None)
-    accrue = getattr(pool, "accrue", None)
-    if not callable(accrue):
-        return
-
-    def _loop() -> None:
-        while True:
-            time.sleep(interval)
-            try:
-                for p in pool.list_pools():
-                    pid = p.get("pool_id")
-                    if not pid:
-                        continue
-                    try:
-                        res = accrue(pid)
-                    except Exception as exc:      # noqa: BLE001
-                        log.warning("ena emission failed for %s: %s", pid, exc)
-                        continue
-                    if int(res.get("paid_nano") or 0) > 0:
-                        log.info(
-                            "ena emission: credited %.6f ANM across %d recipient(s) "
-                            "for %d block(s) in %s",
-                            int(res["paid_nano"]) / 1e9, len(res.get("entries") or []),
-                            int(res.get("blocks") or 0), pid)
-                    # Then pay out what is due. settle() is a no-op unless the operator
-                    # set ANIMICA_ENA_SETTLE=1 and named a payer, so crediting keeps
-                    # working on nodes that never opt into spending.
-                    try:
-                        st = pool.settle(pid)
-                    except Exception as exc:      # noqa: BLE001
-                        log.warning("ena settlement failed for %s: %s", pid, exc)
-                        st = None
-                    if st and int(st.get("paid_nano") or 0) > 0:
-                        log.info(
-                            "ena settlement: PAID %.6f ANM on chain in %d transfer(s) "
-                            "from %s (pool %s)",
-                            int(st["paid_nano"]) / 1e9, len(st.get("settled") or []),
-                            str(st.get("from"))[:20], pid)
-            except Exception as exc:              # noqa: BLE001 — never kill the ticker
-                log.warning("ena emission tick failed: %s", exc)
-
-    threading.Thread(target=_loop, name="ena-emission", daemon=True).start()
-
-
 def _start_pool_sweeper(facade) -> None:
     """Background ticker that unsticks stalled training rounds.
 
@@ -460,26 +354,10 @@ def _start_pool_sweeper(facade) -> None:
     print(f"[ena] pool sweeper started (every {interval}s)")
 
 
-class _Coordinator(ThreadingHTTPServer):
-    """ThreadingHTTPServer with a listen backlog that survives a real fleet.
-
-    `http.server` defaults request_queue_size to 5. Every connection beyond five
-    waiting to be accepted overflows the kernel accept queue, and the client sees
-    "connection reset by peer" — which is exactly what workers reported while claiming
-    (this box showed 18,514 ListenOverflows). Workers poll on their own cadence and a
-    claim burst is normal, so the queue must absorb it.
-    """
-    request_queue_size = int(os.environ.get("ANIMICA_ENA_LISTEN_BACKLOG", "512") or 512)
-    daemon_threads = True
-    allow_reuse_address = True
-
-
 def serve(facade, host: str = "127.0.0.1", port: int = 8787) -> None:
-    httpd = _Coordinator((host, port), _make_handler(facade))
-    print(f"[ena] serving on http://{host}:{port} "
-          f"(listen backlog {_Coordinator.request_queue_size})")
+    httpd = ThreadingHTTPServer((host, port), _make_handler(facade))
+    print(f"[ena] serving on http://{host}:{port}")
     _start_pool_sweeper(facade)
-    _start_emission(facade)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:  # pragma: no cover

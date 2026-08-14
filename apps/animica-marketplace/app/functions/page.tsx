@@ -20,9 +20,6 @@ export const metadata: Metadata = {
     'Every public Python function deployed on Animica, callable over plain HTTPS. Deployments are anchored on-chain and executed off-chain in a hardened container; each call is metered in ANM and pays its developer.',
   alternates: { canonical: `${BASE}/functions` },
   openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
     title: 'Animica public functions',
     description: 'Deployed Python functions with public HTTPS endpoints, metered in ANM.',
     url: `${BASE}/functions`,

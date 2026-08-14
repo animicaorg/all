@@ -49,9 +49,21 @@ from .models import Head, TxView  # type: ignore
 
 log = logging.getLogger(__name__)
 
-Topic = Literal["newHeads", "pendingTxs"]
+Topic = Literal[
+    "newHeads",
+    "pendingTxs",
+    "l2SoftConfirmations",
+    "l2NewBatches",
+    "l2FinalizedBatches",
+]
 
-ALLOWED_TOPICS: Set[str] = {"newHeads", "pendingTxs"}
+ALLOWED_TOPICS: Set[str] = {
+    "newHeads",
+    "pendingTxs",
+    "l2SoftConfirmations",
+    "l2NewBatches",
+    "l2FinalizedBatches",
+}
 
 # --------------------------------------------------------------------------------------
 # Utilities
@@ -286,6 +298,45 @@ class WebSocketHub:
                 count += 1
         return count
 
+    async def publish_l2_soft_confirmation(self, payload: Any) -> int:
+        """
+        Broadcast an L2 soft-confirmation event (sequencer sealed the txs).
+        """
+        data = _model_to_dict(payload)
+        frame = {"topic": "l2SoftConfirmations", "data": data, "ts": _now_ms()}
+        count = 0
+        async with self._lock:
+            for c in list(self._subs["l2SoftConfirmations"]):
+                await c.enqueue(frame)
+                count += 1
+        return count
+
+    async def publish_l2_new_batch(self, payload: Any) -> int:
+        """
+        Broadcast a newly sealed L2 batch (header view).
+        """
+        data = _model_to_dict(payload)
+        frame = {"topic": "l2NewBatches", "data": data, "ts": _now_ms()}
+        count = 0
+        async with self._lock:
+            for c in list(self._subs["l2NewBatches"]):
+                await c.enqueue(frame)
+                count += 1
+        return count
+
+    async def publish_l2_finalized_batch(self, payload: Any) -> int:
+        """
+        Broadcast an L2 batch whose anchor reached L1 finality.
+        """
+        data = _model_to_dict(payload)
+        frame = {"topic": "l2FinalizedBatches", "data": data, "ts": _now_ms()}
+        count = 0
+        async with self._lock:
+            for c in list(self._subs["l2FinalizedBatches"]):
+                await c.enqueue(frame)
+                count += 1
+        return count
+
     # --------------------------
     # Introspection (optional)
     # --------------------------
@@ -307,7 +358,11 @@ router = APIRouter()
 async def ws_route(
     websocket: WebSocket,
     topics: Optional[str] = Query(
-        default=None, description="Comma-separated topics: newHeads,pendingTxs"
+        default=None,
+        description=(
+            "Comma-separated topics: newHeads,pendingTxs,"
+            "l2SoftConfirmations,l2NewBatches,l2FinalizedBatches"
+        ),
     ),
 ):
     """
@@ -322,6 +377,9 @@ async def ws_route(
 # Convenience re-exports for other modules
 publish_new_head = hub.publish_new_head
 publish_pending_tx = hub.publish_pending_tx
+publish_l2_soft_confirmation = hub.publish_l2_soft_confirmation
+publish_l2_new_batch = hub.publish_l2_new_batch
+publish_l2_finalized_batch = hub.publish_l2_finalized_batch
 
 
 def publish_new_head_sync(head: Head) -> int:

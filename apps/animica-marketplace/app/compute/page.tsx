@@ -12,9 +12,6 @@ export const metadata: Metadata = {
     'Join the Animica Python Cloud provider network: your machine claims sandboxed Python executions, runs them in the same hardened Docker contract the gateway uses, and is paid a share of every execution in real, spendable ANM.',
   alternates: { canonical: 'https://animica.dev/compute' },
   openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
     title: 'Animica Compute — get paid ANM to run Python Cloud jobs',
     description:
       'Run the Animica cloud worker, claim sandboxed Python jobs, get paid a share of every execution in spendable ANM — settled the moment your result lands.',

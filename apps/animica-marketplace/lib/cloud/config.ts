@@ -178,16 +178,7 @@ export function isCapability(v: string): v is Capability {
 // checkout and may override any limit via limitsJson without a deploy.
 // ---------------------------------------------------------------------------
 
-// MUST list every plan key the `Plan` table actually sells, because entitlements are
-// resolved BY KEY with a fallback to `free` (`PLAN_ENTITLEMENTS[key] ?? PLAN_ENTITLEMENTS.free`
-// in lib/cloud/entitlements.ts). The ladder was renamed to
-// free/starter/pro/operator/business, but this list still said `developer` and had no
-// `operator` at all — so BOTH `starter` ($4.99) and `operator` ($39.99) missed the map
-// and silently resolved to FREE entitlements: api_rate_limit 30 and 0 team members,
-// while `pro` at $14.99 got 600 and 10. Two of the four paid tiers were selling limits
-// they did not grant, and the more expensive one granted less than the cheaper one.
-// `developer` stays as a legacy alias so any historical row still resolves.
-export const CLOUD_PLAN_KEYS = ['free', 'starter', 'developer', 'pro', 'operator', 'business', 'enterprise'] as const;
+export const CLOUD_PLAN_KEYS = ['free', 'developer', 'pro', 'business', 'enterprise'] as const;
 export type CloudPlanKey = (typeof CLOUD_PLAN_KEYS)[number];
 
 export interface Entitlements {
@@ -236,30 +227,6 @@ export const PLAN_ENTITLEMENTS: Record<CloudPlanKey, Entitlements> = {
     private_deployments: false,
     support: 'community',
   },
-  // `starter` IS the rung this file used to call `developer` — same numbers, the
-  // marketed name changed. Spelled out rather than aliased so the
-  // Record<CloudPlanKey, Entitlements> type keeps forcing every key to exist.
-  starter: {
-    max_apps: 10,
-    max_functions: 50,
-    max_agents: 10,
-    max_deployments_per_day: 100,
-    monthly_executions: 100_000,
-    monthly_compute_units: 20_000,
-    monthly_ai_units: 5_000,
-    max_concurrency: 4,
-    max_schedules: 20,
-    min_schedule_minutes: 15,
-    max_secrets: 25,
-    log_retention_days: 14,
-    api_rate_limit: 120,
-    priority_class: 1,
-    marketplace_publishing: true,
-    premium_analytics: false,
-    overage_allowed: true,
-    private_deployments: false,
-    support: 'email',
-  },
   developer: {
     max_apps: 10,
     max_functions: 50,
@@ -282,36 +249,6 @@ export const PLAN_ENTITLEMENTS: Record<CloudPlanKey, Entitlements> = {
     support: 'email',
   },
   pro: {
-    max_apps: 50,
-    max_functions: 250,
-    max_agents: 50,
-    max_deployments_per_day: 500,
-    monthly_executions: 1_000_000,
-    monthly_compute_units: 150_000,
-    monthly_ai_units: 40_000,
-    max_concurrency: 12,
-    max_schedules: 100,
-    min_schedule_minutes: 5,
-    max_secrets: 100,
-    log_retention_days: 30,
-    api_rate_limit: 600,
-    priority_class: 2,
-    marketplace_publishing: true,
-    premium_analytics: true,
-    overage_allowed: true,
-    private_deployments: false,
-    support: 'priority email',
-  },
-  // INTERIM — deliberately a copy of `pro`, with NO invented quotas.
-  //
-  // `operator` sells at $39.99, above pro's $14.99, and it was resolving to FREE.
-  // The one outcome that must be impossible is a dearer tier granting less than a
-  // cheaper one, and matching pro guarantees that without this file inventing
-  // numbers nobody decided. The real Operator quotas are a pricing decision —
-  // its marketed features (20 Workers, 10,000 scheduled executions/month, 50 .anm
-  // deployments, multiple API keys, 10 team members) imply values ABOVE pro, so
-  // these should be raised deliberately rather than left at parity.
-  operator: {
     max_apps: 50,
     max_functions: 250,
     max_agents: 50,

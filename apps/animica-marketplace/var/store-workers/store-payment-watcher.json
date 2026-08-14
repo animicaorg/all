@@ -1,0 +1,17 @@
+{
+  "treasuryBaselineNanm": "0",
+  "halted": null,
+  "senders": {},
+  "adminFlags": [
+    {
+      "at": "2026-07-19T17:22:03.283Z",
+      "event": "treasury_shortfall_halt",
+      "detail": "treasury shortfall: available 0 nANM < required 1000000000 (purchase cmrs1p64z0008h30ojjso77ns, tx 7af4dafe28758a0e069c7a306fb029bd7f294ed1f8347aefef0774aca5fb6ea5)"
+    },
+    {
+      "at": "2026-07-19T17:22:20.218Z",
+      "event": "treasury_shortfall_halt",
+      "detail": "treasury shortfall: available 0 nANM < required 1000000000 (purchase cmrs1p64z0008h30ojjso77ns, tx 7af4dafe28758a0e069c7a306fb029bd7f294ed1f8347aefef0774aca5fb6ea5)"
+    }
+  ]
+}

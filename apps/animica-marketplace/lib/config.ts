@@ -19,6 +19,12 @@ export const config = {
   treasuryLabel: env('MKT_TREASURY_LABEL', 'animica-marketplace'),
   treasuryAddress: env('MKT_TREASURY_ADDRESS'),
 
+  // The Animica Foundation. .anm name-registration + renewal fees route here (the Animica
+  // Internet's revenue → Foundation), as a ledger credit backed by the buyer's deposited ANM;
+  // the Foundation withdraws its balance on-chain. Overridable via env.
+  foundationAddress: env('MKT_FOUNDATION_ADDRESS',
+    'anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga'),
+
   payoutEnabled: env('PAYOUT_ENABLED', '0') === '1',
   payoutMaxPerTxAnm: BigInt(env('PAYOUT_MAX_PER_TX_ANM', '5000')),
   payoutMaxPerDayAnm: BigInt(env('PAYOUT_MAX_PER_DAY_ANM', '20000')),
@@ -27,6 +33,13 @@ export const config = {
 
   feeBps: Number(env('MKT_FEE_BPS', '2000')), // 20%
   minWithdrawalNanm: BigInt(env('MIN_WITHDRAWAL_ANM', '1')) * NANM_PER_ANM,
+
+  // App store (APP / DIGITAL_GOOD). FAIL-CLOSED: no default for either — the purchase-intent
+  // route 503s until BOTH are configured. storeTreasuryAddress is a DEDICATED address used
+  // ONLY for ANMSTORE1 purchases (the watcher's baseline reconciliation depends on that).
+  storeTreasuryAddress: env('STORE_TREASURY_ADDRESS'),
+  storeFeeBps: process.env.STORE_FEE_BPS != null ? Number(process.env.STORE_FEE_BPS) : NaN, // 3000 = 30% treasury / 70% creator
+  storeDownloadSecret: env('STORE_DOWNLOAD_SECRET') || env('SESSION_SECRET', 'dev-insecure-secret'),
 
   sessionSecret: env('SESSION_SECRET', 'dev-insecure-secret'),
   baseUrl: env('PUBLIC_BASE_URL', 'https://animica.dev'),
@@ -43,7 +56,10 @@ export const CATEGORIES = [
   'Finance', 'Science', 'Gaming', 'Personal', 'Enterprise',
 ] as const;
 
-export const API_SCOPES = ['read', 'buy', 'use', 'publish', 'withdraw', 'names', 'message', 'host', 'vpn'] as const;
+// 'workers' gates Animica Workers + workspace management: creating/editing/starting an
+// autonomous worker (and minting its trigger token) is strictly more powerful than reading,
+// so a read-scoped key must never reach it.
+export const API_SCOPES = ['read', 'buy', 'use', 'publish', 'withdraw', 'names', 'message', 'host', 'vpn', 'workers'] as const;
 
 // Hosting rewards: IOU accrual rate for proven content availability (bytes-hours).
 // Honest accounting — accrues as an IOU, NOT a spendable balance credit, until treasury-funded

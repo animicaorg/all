@@ -1,0 +1,12 @@
+# TEMPLATE ONLY — install per the .service header; not enabled by the repo change.
+[Unit]
+Description=Run the Animica store subscription renewals hourly (renew-ahead window is 24h)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+AccuracySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

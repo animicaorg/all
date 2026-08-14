@@ -82,6 +82,11 @@ export interface TxSummary {
   value?: string
   status?: 'pending' | 'confirmed' | 'failed'
   classification?: TxClassification
+  // Populated by the address-detail scan (the wallet's history needs them):
+  blockNumber?: number
+  timestamp?: number | null // block time, seconds
+  gasPrice?: number | string | null
+  gasLimit?: number | string | null
 }
 
 export interface TxDetail {

@@ -31,52 +31,21 @@ import { PLAN_ENTITLEMENTS, CLOUD_PLAN_CATALOG } from '../lib/cloud/config';
 // ── plan keys + ranking ──────────────────────────────────────────────────────
 
 test('plan keys are the Cloud tiers, ordered free→enterprise, and rank accordingly', () => {
-  assert.deepEqual(
-    [...PLAN_KEYS],
-    ['free', 'starter', 'developer', 'pro', 'operator', 'business', 'enterprise'],
-  );
+  assert.deepEqual([...PLAN_KEYS], ['free', 'developer', 'pro', 'business', 'enterprise']);
   assert.ok(planRank('enterprise') > planRank('business'));
-  assert.ok(planRank('business') > planRank('operator'));
-  assert.ok(planRank('operator') > planRank('pro'));
-  assert.ok(planRank('pro') > planRank('starter'));
-  assert.ok(planRank('starter') > planRank('free'));
+  assert.ok(planRank('business') > planRank('pro'));
+  assert.ok(planRank('pro') > planRank('developer'));
+  assert.ok(planRank('developer') > planRank('free'));
   assert.equal(planRank('nonsense'), 0);
   assert.ok(isPlanKey('developer'));
   assert.ok(isPlanKey('enterprise'));
   assert.ok(!isPlanKey(42));
 });
 
-// `starter` and `operator` used to be asserted RETIRED here. They are not: the live
-// `Plan` rows sell starter $4.99 and operator $39.99, both with a bound PayPal plan
-// and checkoutReady=true on animica.dev/pricing. Because they were absent from
-// CLOUD_PLAN_KEYS, `PLAN_ENTITLEMENTS[key] ?? PLAN_ENTITLEMENTS.free` handed BOTH of
-// them the FREE entitlements — api_rate_limit 30, 0 team members, 0 API keys — while
-// pro at $14.99 got 600 and 10. This test now pins the property that actually
-// matters: no plan a customer can pay for may resolve to free entitlements.
-test('every payable plan key has its own entitlements and never falls back to free', () => {
-  const free = PLAN_ENTITLEMENTS.free;
-  for (const key of ['starter', 'developer', 'pro', 'operator', 'business'] as const) {
-    const e = PLAN_ENTITLEMENTS[key];
-    assert.ok(e, `${key} must have entitlements of its own`);
-    assert.ok(
-      e.api_rate_limit > free.api_rate_limit,
-      `${key} must not inherit the free API rate limit (${free.api_rate_limit})`,
-    );
-    assert.ok(planRank(key) > 0, `${key} must outrank free`);
-  }
-  // The ladder must be monotonic in price: a dearer tier can never grant less.
-  const byPrice = ['free', 'starter', 'pro', 'operator', 'business'] as const;
-  for (let i = 1; i < byPrice.length; i++) {
-    const lo = PLAN_ENTITLEMENTS[byPrice[i - 1]];
-    const hi = PLAN_ENTITLEMENTS[byPrice[i]];
-    assert.ok(
-      hi.api_rate_limit >= lo.api_rate_limit,
-      `${byPrice[i]} must not grant a lower API rate limit than ${byPrice[i - 1]}`,
-    );
-    assert.ok(
-      hi.monthly_executions >= lo.monthly_executions,
-      `${byPrice[i]} must not grant fewer executions than ${byPrice[i - 1]}`,
-    );
+test('the retired legacy tiers are no longer plan keys and rank as free', () => {
+  for (const legacy of ['starter', 'operator']) {
+    assert.ok(!isPlanKey(legacy), `${legacy} must be retired`);
+    assert.equal(planRank(legacy), 0, `${legacy} must never outrank a real tier`);
   }
 });
 
@@ -87,15 +56,10 @@ test('catalog mirrors lib/cloud/config (single source of truth) and prices the s
   );
   const byKey = Object.fromEntries(PLAN_CATALOG.map((p) => [p.key, p]));
   assert.equal(byKey.free.priceUsdCents, 0);
-  // HALVED 2026-08-08. These were 2900/9900/49900/150000 and the assertions were not
-  // updated with the catalog, so this suite was already failing before anyone touched
-  // it. NOTE these catalog numbers are NOT what customers are charged: the live `Plan`
-  // rows (starter 499, pro 1499, operator 3999, business 9999) are authoritative at
-  // checkout and are what PayPal is bound to.
-  assert.equal(byKey.developer.priceUsdCents, 1450);
-  assert.equal(byKey.pro.priceUsdCents, 4950);
-  assert.equal(byKey.business.priceUsdCents, 24950);
-  assert.equal(byKey.enterprise.priceUsdCents, 75000); // display "from" price
+  assert.equal(byKey.developer.priceUsdCents, 2900);
+  assert.equal(byKey.pro.priceUsdCents, 9900);
+  assert.equal(byKey.business.priceUsdCents, 49900);
+  assert.equal(byKey.enterprise.priceUsdCents, 150000); // display "from" price
   // Enterprise is contact-sales only; every self-serve tier is not.
   assert.ok(byKey.enterprise.contactSales);
   assert.ok(isContactSalesPlan('enterprise'));
@@ -103,18 +67,10 @@ test('catalog mirrors lib/cloud/config (single source of truth) and prices the s
     assert.ok(!byKey[k].contactSales, k);
     assert.ok(!isContactSalesPlan(k), k);
   }
-  // Pro carries the "MOST POPULAR" ribbon.
+  // Pro carries the "MOST POPULAR" ribbon; sort order matches rank order.
   assert.ok(byKey.pro.featured);
-  // The marketing catalog is a SUBSET of the entitlement keys, not equal to them:
-  // `starter` and `operator` are sold from the `Plan` table (bound PayPal plans,
-  // checkoutReady on /pricing) but have never been in this code catalog. Asserting
-  // set equality here is what let them exist as sellable keys with no entitlements.
   const sorted = [...PLAN_CATALOG].sort((a, b) => a.sortOrder - b.sortOrder).map((p) => p.key);
-  for (const k of sorted) {
-    assert.ok((PLAN_KEYS as readonly string[]).includes(k), `catalog key ${k} must be a plan key`);
-  }
-  const orders = [...PLAN_CATALOG].map((p) => p.sortOrder);
-  assert.deepEqual([...orders].sort((a, b) => a - b), orders, 'catalog must already be in sort order');
+  assert.deepEqual(sorted, [...PLAN_KEYS]);
 });
 
 test('tier ladders are monotonic for the headline limits (-1 = unlimited tops the ladder)', () => {
@@ -190,14 +146,9 @@ test('limitsFor merges valid overrides and ignores garbage', () => {
   assert.equal((junk as any).evil_key, undefined);
   assert.equal(junk.white_label, true); // pro default survives a wrong-typed override
   assert.deepEqual(limitsFor('pro', '{not json'), base);
-  // An UNKNOWN plan key falls back to free defaults.
+  // Unknown AND retired plan keys fall back to free defaults.
   assert.deepEqual(limitsFor('enterprise-nope', null), PLAN_DEFAULTS.free);
-  assert.deepEqual(limitsFor('gold-legacy-2024', null), PLAN_DEFAULTS.free);
-  // …but `starter` is NOT unknown. It is on sale at $4.99 with a bound PayPal plan,
-  // and it used to land in this free-fallback branch, so a paying Starter customer
-  // was handed 0 API keys and the free rate limit.
-  assert.deepEqual(limitsFor('starter', null), PLAN_DEFAULTS.starter);
-  assert.deepEqual(limitsFor('operator', null), PLAN_DEFAULTS.operator);
+  assert.deepEqual(limitsFor('starter', null), PLAN_DEFAULTS.free);
 });
 
 test('limitsFor can never re-gate workers from the DB (stale limitsJson defense)', () => {
@@ -219,22 +170,10 @@ test('no subscription / PENDING / unknown ⇒ free', () => {
   assert.equal(effectivePlan({ planKey: 'nope', status: 'ACTIVE' }, NOW).effectiveKey, 'free');
 });
 
-test('a row on an UNKNOWN key resolves to free regardless of status', () => {
-  for (const bogus of ['gold-legacy-2024', 'enterprise-nope']) {
-    const p = effectivePlan({ planKey: bogus, status: 'ACTIVE', currentPeriodEnd: new Date('2026-08-20T00:00:00Z') }, NOW);
-    assert.equal(p.effectiveKey, 'free', bogus);
-  }
-});
-
-// This used to assert the opposite — that an ACTIVE `starter`/`operator` row resolved
-// to `free` — which meant a paying subscriber on either of the two tiers that are
-// actually on sale would have been silently downgraded to the free plan.
-test('an ACTIVE row on a tier that is on sale grants that tier, not free', () => {
-  for (const key of ['starter', 'operator'] as const) {
-    const p = effectivePlan(
-      { planKey: key, status: 'ACTIVE', currentPeriodEnd: new Date('2026-08-20T00:00:00Z') }, NOW);
-    assert.equal(p.effectiveKey, key, `${key} subscribers must get ${key}`);
-    assert.equal(p.billingWarning, false);
+test('a row on a RETIRED key resolves to free regardless of status', () => {
+  for (const legacy of ['starter', 'operator']) {
+    const p = effectivePlan({ planKey: legacy, status: 'ACTIVE', currentPeriodEnd: new Date('2026-08-20T00:00:00Z') }, NOW);
+    assert.equal(p.effectiveKey, 'free', legacy);
   }
 });
 

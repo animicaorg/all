@@ -103,6 +103,7 @@ set(SOURCES
     src/wallet/ReconciliationJob.cpp
     src/wallet/ReceiveWidget.cpp
     src/wallet/ReceiveQrService.cpp
+    src/wallet/L2Widget.cpp
     src/wallet/ContractInteractionWidget.cpp
     src/wallet/SettingsWidget.cpp
     src/wallet/WalletImporter.cpp
@@ -136,6 +137,7 @@ set(HEADERS
     src/wallet/ReconciliationJob.h
     src/wallet/ReceiveWidget.h
     src/wallet/ReceiveQrService.h
+    src/wallet/L2Widget.h
     src/wallet/ContractInteractionWidget.h
     src/wallet/SettingsWidget.h
     src/wallet/WalletImporter.h

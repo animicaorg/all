@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Animica Internet — a browser for the .anm web</title>
+  <meta name="description" content="Animica Internet is a standalone Windows, macOS, and Linux desktop browser for the .anm web: registry-only browsing, a built-in ANM wallet, name reservation, and one-click publish and serve." />
+  <meta property="og:title" content="Animica Internet — a browser for the .anm web" />
+  <meta property="og:description" content="A standalone desktop browser for .anm registry sites only. Built-in wallet, name reservation, one-click publish." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="/favicon.ico" />
+  <style>
+    :root {
+      --anm-bg: #0A0E16;
+      --anm-bg-raise: #10182A;
+      --anm-line: rgba(110, 168, 254, 0.16);
+      --anm-text: #E6EBF5;
+      --anm-muted: #98A6C2;
+      --anm-blue: #6EA8FE;
+      --anm-violet: #B98CFF;
+      --anm-live: #4FE3B0;
+      --anm-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --anm-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--anm-bg);
+      color: var(--anm-text);
+      font-family: var(--anm-sans);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--anm-blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: var(--anm-mono);
+      font-size: 0.9em;
+      background: rgba(110, 168, 254, 0.10);
+      border: 1px solid var(--anm-line);
+      border-radius: 6px;
+      padding: 0.1em 0.4em;
+      color: var(--anm-blue);
+      white-space: nowrap;
+    }
+
+    .aicf-section { padding: 4.5rem 1.25rem; }
+    .aicf-container { max-width: 1080px; margin: 0 auto; }
+    .aicf-kicker {
+      display: inline-block;
+      font-family: var(--anm-mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--anm-live);
+      border: 1px solid rgba(79, 227, 176, 0.35);
+      border-radius: 999px;
+      padding: 0.3rem 0.85rem;
+      margin-bottom: 1.1rem;
+      background: rgba(79, 227, 176, 0.06);
+    }
+    .aicf-heading {
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    h1.aicf-heading {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      max-width: 22ch;
+    }
+    h1 .grad {
+      background: linear-gradient(92deg, var(--anm-blue), var(--anm-violet));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .aicf-h2 { font-size: clamp(1.4rem, 3vw, 2rem); margin-bottom: 0.75rem; }
+    .aicf-subheading {
+      color: var(--anm-muted);
+      font-size: 1.06rem;
+      max-width: 62ch;
+      margin-top: 1rem;
+    }
+
+    .aicf-btn-row { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.8rem; }
+    .aicf-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--anm-sans);
+      font-weight: 600;
+      font-size: 0.98rem;
+      color: #0A0E16;
+      background: linear-gradient(92deg, var(--anm-blue), var(--anm-violet));
+      border: none;
+      border-radius: 10px;
+      padding: 0.75rem 1.35rem;
+      cursor: pointer;
+      transition: filter 120ms ease, transform 120ms ease;
+    }
+    .aicf-btn:hover { filter: brightness(1.1); transform: translateY(-1px); text-decoration: none; }
+    .aicf-ghost-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      font-size: 0.98rem;
+      color: var(--anm-text);
+      background: transparent;
+      border: 1px solid var(--anm-line);
+      border-radius: 10px;
+      padding: 0.75rem 1.35rem;
+      transition: border-color 120ms ease, background 120ms ease;
+    }
+    .aicf-ghost-btn:hover { border-color: var(--anm-blue); background: rgba(110, 168, 254, 0.07); text-decoration: none; }
+    .btn-os { font-family: var(--anm-mono); font-size: 0.72rem; opacity: 0.75; letter-spacing: 0.06em; }
+
+    .aicf-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .aicf-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    @media (max-width: 860px) {
+      .aicf-grid-3 { grid-template-columns: 1fr; }
+      .aicf-grid-2 { grid-template-columns: 1fr; }
+      .aicf-section { padding: 3rem 1.1rem; }
+    }
+    .aicf-card {
+      background: var(--anm-bg-raise);
+      border: 1px solid var(--anm-line);
+      border-radius: 14px;
+      padding: 1.4rem 1.4rem 1.5rem;
+    }
+    .aicf-card h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.45rem;
+      letter-spacing: -0.01em;
+    }
+    .aicf-card p { color: var(--anm-muted); font-size: 0.95rem; }
+    .card-glyph {
+      font-family: var(--anm-mono);
+      color: var(--anm-live);
+      font-size: 0.85rem;
+      display: block;
+      margin-bottom: 0.7rem;
+      letter-spacing: 0.08em;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding-top: 6rem;
+      padding-bottom: 5rem;
+      background:
+        radial-gradient(1100px 480px at 15% -10%, rgba(110, 168, 254, 0.14), transparent 60%),
+        radial-gradient(900px 420px at 90% 0%, rgba(185, 140, 255, 0.12), transparent 60%),
+        var(--anm-bg);
+      border-bottom: 1px solid var(--anm-line);
+    }
+    .hero-note {
+      margin-top: 1.1rem;
+      font-family: var(--anm-mono);
+      font-size: 0.82rem;
+      color: var(--anm-muted);
+    }
+    .hero-note .dot { color: var(--anm-live); }
+
+    .dl-note {
+      margin-top: 0.9rem;
+      color: var(--anm-muted);
+      font-size: 0.88rem;
+      max-width: 70ch;
+    }
+    .dl-note strong { color: var(--anm-text); font-weight: 600; }
+
+    .addr-demo {
+      display: inline-block;
+      margin-top: 1.6rem;
+      font-family: var(--anm-mono);
+      font-size: 0.92rem;
+      color: var(--anm-live);
+      background: rgba(79, 227, 176, 0.06);
+      border: 1px solid rgba(79, 227, 176, 0.25);
+      border-radius: 10px;
+      padding: 0.55rem 1rem;
+    }
+    .addr-demo .proto { color: var(--anm-muted); }
+
+    .ext-note {
+      border: 1px solid var(--anm-line);
+      border-left: 3px solid var(--anm-violet);
+      border-radius: 10px;
+      background: var(--anm-bg-raise);
+      padding: 1.1rem 1.3rem;
+      color: var(--anm-muted);
+      font-size: 0.95rem;
+      max-width: 72ch;
+    }
+    .ext-note strong { color: var(--anm-text); }
+
+    footer {
+      border-top: 1px solid var(--anm-line);
+      padding: 2rem 1.25rem 2.5rem;
+      color: var(--anm-muted);
+      font-size: 0.85rem;
+    }
+    footer .aicf-container { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; align-items: center; }
+    footer nav { display: flex; flex-wrap: wrap; gap: 1.1rem; }
+
+    ol.steps { margin: 1rem 0 0 1.2rem; color: var(--anm-muted); font-size: 0.98rem; }
+    ol.steps li { margin-bottom: 0.4rem; }
+    ol.steps code { white-space: normal; }
+  </style>
+</head>
+<body>
+
+  <section class="hero aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">New &middot; Desktop app &middot; Windows / macOS / Linux</span>
+      <h1 class="aicf-heading">Animica Internet — <span class="grad">a browser for the .anm web</span></h1>
+      <p class="aicf-subheading">
+        A standalone desktop browser that speaks only <strong>.anm</strong> — the
+        on-chain web registered on Animica. No clearnet, no DNS, no trackers:
+        every site you visit resolves through the Animica name registry. A wallet
+        is built in, so reserving a name, paying in ANM, and publishing your own
+        site is one click away.
+      </p>
+      <span class="addr-demo"><span class="proto">anm://</span>your-name.anm</span>
+
+      <div class="aicf-btn-row" id="download">
+        <a class="aicf-btn" href="/internet/animica-internet-windows-x64-setup.exe" download>
+          Download for Windows <span class="btn-os">x64 · setup.exe</span>
+        </a>
+        <a class="aicf-btn" href="/internet/animica-internet-macos.dmg" download>
+          Download for macOS <span class="btn-os">Apple Silicon · .dmg</span>
+        </a>
+        <a class="aicf-btn" href="/internet/animica-internet-linux-x86_64.AppImage" download>
+          Download for Linux <span class="btn-os">x86_64 · AppImage</span>
+        </a>
+      </div>
+      <p class="dl-note">
+        <strong>macOS:</strong> the build is unsigned — right-click the app and choose <em>Open</em>
+        the first time.&ensp;
+        <strong>Linux:</strong> it&rsquo;s an AppImage —
+        <code>chmod +x animica-internet-linux-x86_64.AppImage</code> then run it (self-contained;
+        Python&nbsp;+&nbsp;Qt bundled).
+      </p>
+      <p class="hero-note"><span class="dot">&#9679;</span> Free &middot; self-contained (Python + Qt bundled) &middot; no account required</p>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">What is it?</span>
+      <h2 class="aicf-heading aicf-h2">What is the Animica Internet?</h2>
+      <p class="aicf-subheading">
+        The Animica Internet is a parallel web that lives on the Animica chain.
+        Instead of DNS and certificate authorities, names ending in
+        <code>.anm</code> are reserved directly on the Animica name registry —
+        owned by your wallet key, paid for in ANM, and resolvable by anyone
+        running the browser. Sites are served by their owners and discovered
+        through the registry, so there is no registrar, no renewal middleman,
+        and no takedown by a hosting company.
+      </p>
+      <p class="aicf-subheading">
+        Animica Internet is the front door: a purpose-built desktop browser that
+        renders <code>anm://</code> pages and nothing else. Because it never
+        touches the clearnet, there are no ad networks, no cross-site trackers,
+        and no surprise redirects — just the .anm web.
+      </p>
+
+      <div class="aicf-grid-2" style="margin-top:2rem;">
+        <article class="aicf-card">
+          <span class="card-glyph">[ anm:// ]</span>
+          <h3>.anm-only browsing</h3>
+          <p>
+            The address bar accepts only <code>anm://</code> names from the
+            Animica registry. Clearnet URLs are refused by design — the browser
+            has no route to the ordinary internet.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <span class="card-glyph">[ wallet ]</span>
+          <h3>Built-in ANM wallet</h3>
+          <p>
+            A native Animica wallet ships inside the app. Create or import keys,
+            hold ANM, and sign registry transactions without leaving the browser.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <span class="card-glyph">[ reserve ]</span>
+          <h3>Name reservation</h3>
+          <p>
+            Pick a <code>.anm</code> name and reserve it on-chain, paying in ANM
+            from the built-in wallet. The name is yours — bound to your key, not
+            to a registrar.
+          </p>
+        </article>
+        <article class="aicf-card">
+          <span class="card-glyph">[ publish ]</span>
+          <h3>One-click publish &amp; serve</h3>
+          <p>
+            Point the app at a folder and hit publish: it serves your site to the
+            .anm network under your reserved name. No hosting account, no upload
+            pipeline — your machine is the host.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section" style="padding-top:0;">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Get started</span>
+      <h2 class="aicf-heading aicf-h2">From download to your own .anm site</h2>
+      <ol class="steps">
+        <li>Download the app for your OS above and launch it.</li>
+        <li>Create (or import) a wallet in the built-in wallet panel and fund it with a little ANM.</li>
+        <li>Browse: type any registered name, e.g. <code>anm://animica.anm</code>.</li>
+        <li>Reserve your own name — the app walks you through the registry payment.</li>
+        <li>Publish: choose a local folder and serve it under your name with one click.</li>
+      </ol>
+
+      <div class="ext-note" style="margin-top:2.2rem;">
+        <strong>Prefer to stay in Chrome?</strong> The Animica browser extension
+        still exists and still works — it resolves <code>.anm</code> names from
+        inside Chrome for casual visits. The desktop app is the full experience
+        (wallet, reservation, publishing), but the extension remains available
+        for Chrome users who just want to read .anm sites.
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="aicf-container">
+      <div>Animica Internet &middot; part of the <a href="https://animica.org">Animica</a> network</div>
+      <nav>
+        <a href="https://animica.org">animica.org</a>
+        <a href="https://animica.org/docs">Docs</a>
+        <a href="https://animica.org/wallet">Wallet</a>
+        <a href="https://animica.org/downloads">All downloads</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script>
+  // Direct downloads are served from /internet/. Any installer not yet built (e.g. a platform
+  // still compiling on the release runners) gracefully shows "Building…" instead of 404-ing.
+  (function(){
+    var links = document.querySelectorAll('#download a[href^="/internet/"]');
+    links.forEach(function(a){
+      fetch(a.getAttribute('href'), { method: 'HEAD' }).then(function(r){
+        if(!r.ok){ throw 0; }
+      }).catch(function(){
+        a.style.opacity = '.5';
+        a.style.pointerEvents = 'none';
+        a.removeAttribute('download');
+        a.removeAttribute('href');
+        var os = a.querySelector('.btn-os');
+        if(os){ os.textContent = 'building…'; }
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

@@ -400,25 +400,88 @@ class SettingsScreen extends ConsumerWidget {
     final ctrl = TextEditingController();
     return showDialog<String>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Paste wallets.json'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: TextField(
-            controller: ctrl,
-            maxLines: 10,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: '{"wallets": [...]}',
+      builder: (c) => StatefulBuilder(
+        builder: (c, setLocal) {
+          // A full wallets.json (many ML-DSA-65 keys) is large and often a
+          // single minified line — the field must accept UNLIMITED text.
+          // maxLines:null + a fixed-height scroll view takes any size and
+          // scrolls; no maxLength/formatter caps input. The "Paste from
+          // clipboard" button reads the whole clipboard directly, which is the
+          // most reliable way to get a big blob in on Android regardless of
+          // any long-press-paste quirk.
+          return AlertDialog(
+            title: const Text('Paste wallets.json'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 320),
+                    child: Scrollbar(
+                      thumbVisibility: true,
+                      child: TextField(
+                        controller: ctrl,
+                        // Unbounded: accept any number of lines / characters.
+                        maxLines: null,
+                        minLines: 8,
+                        expands: false,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          hintText: '{"wallets": [...]}',
+                        ),
+                        onChanged: (_) => setLocal(() {}),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        icon: const Icon(Icons.content_paste, size: 18),
+                        label: const Text('Paste from clipboard'),
+                        onPressed: () async {
+                          final data = await Clipboard.getData(Clipboard.kTextPlain);
+                          final t = data?.text ?? '';
+                          if (t.isNotEmpty) {
+                            // Append rather than replace so a two-part paste
+                            // still works; users almost always start empty.
+                            ctrl.text = ctrl.text.isEmpty ? t : ctrl.text + t;
+                            ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
+                            setLocal(() {});
+                          }
+                        },
+                      ),
+                      const Spacer(),
+                      Text('${ctrl.text.length} chars',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(c).colorScheme.outline)),
+                      if (ctrl.text.isNotEmpty)
+                        IconButton(
+                          tooltip: 'Clear',
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () => setLocal(() => ctrl.clear()),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(c, ctrl.text),
-              child: const Text('Import')),
-        ],
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(c, ctrl.text),
+                  child: const Text('Import')),
+            ],
+          );
+        },
       ),
     );
   }

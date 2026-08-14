@@ -84,6 +84,11 @@ resolve_version() {
 version_to_dotted() {
     local version="${1#v}"
     version="${version%%-*}"
+    # Repo tags can be non-numeric (e.g. "anmnet-v0.1.1"); extract the first
+    # numeric X[.Y[.Z]] so NSIS gets a valid X.X.X.X VIProductVersion. Fall
+    # back to the wallet's own CMake project version.
+    version="$(printf '%s' "$version" | grep -oE '[0-9]+(\.[0-9]+){0,3}' | head -1)"
+    [ -n "$version" ] || version="0.2.0"
     local major minor patch
     IFS=. read -r major minor patch <<EOF
 $version

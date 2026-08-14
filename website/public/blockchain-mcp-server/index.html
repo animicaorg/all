@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animica MCP server — blockchain tools for AI agents</title>
+<meta name="description" content="pip install animica-mcp gives any MCP client (Claude Code, Claude Desktop, Cursor, VS Code) 15 read/compute tools: Animica chain lookups, free AI inference, a verifiable quantum randomness beacon, mining-pool stats. Read-only, no private keys.">
+<link rel="canonical" href="https://animica.org/blockchain-mcp-server/">
+<meta property="og:title" content="Animica MCP server — blockchain tools for AI agents">
+<meta property="og:description" content="15 read/compute MCP tools for the Animica post-quantum blockchain: chain lookups, AI inference, quantum randomness, pool stats. No keys, no signing.">
+<meta property="og:url" content="https://animica.org/blockchain-mcp-server/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Animica">
+<meta property="og:image" content="https://animica.org/logo.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What is the Animica MCP server?",
+      "acceptedAnswer": {"@type": "Answer", "text": "A Model Context Protocol server for the Animica post-quantum blockchain and AI network. Installing animica-mcp (pip install animica-mcp, or run ad hoc with uvx animica-mcp) gives any MCP client 15 read/compute tools: chain head, block, and account lookups, OpenAI-compatible AI inference, a verifiable quantum randomness beacon, mining-pool stats, and Studio compute cost estimates."}
+    },
+    {
+      "@type": "Question",
+      "name": "Can the Animica MCP server spend funds or sign transactions?",
+      "acceptedAnswer": {"@type": "Answer", "text": "No. It is read + compute only. Chain access goes through a hard-coded allow-list of read-only JSON-RPC methods, so mutating methods (send, sign, deploy, claim) cannot be reached even by a bug. The server never handles private keys, never signs, and never spends."}
+    },
+    {
+      "@type": "Question",
+      "name": "Which MCP clients does it work with?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Any MCP client. Tested configs are documented for Claude Code (claude mcp add animica -- uvx animica-mcp), Claude Desktop, Cursor, and VS Code. The default transport is stdio; streamable-http and legacy SSE are available via the MCP_TRANSPORT environment variable."}
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need an API key or a wallet to use it?",
+      "acceptedAnswer": {"@type": "Answer", "text": "No. All backends default to public Animica infrastructure and the server works with zero configuration. An optional ANIMICA_API_KEY environment variable exists for the inference API but is not required, and no wallet is involved."}
+    },
+    {
+      "@type": "Question",
+      "name": "What are the honest limitations?",
+      "acceptedAnswer": {"@type": "Answer", "text": "The AI inference tool (animica_ai_ask) rides on community-GPU capacity, so responses can be slow or unavailable when no worker is serving the requested model — check animica_ai_models first. Chain tools are read-only by design: an agent that needs to send transactions must use the full animica package with its own wallet instead."}
+    }
+  ]
+}
+</script>
+<style>
+:root{
+  --bg:#fbfdfc;--surface:#f1f6f3;--text:#152420;--muted:#4b5f58;--border:#d8e3de;
+  --action:#2E63FF;--link:#2453d6;--truth:#14C79B;--truth-ink:#0b7a5e;
+  --code-bg:#11201a;--code-text:#d9ece4;--code-border:#1e332b;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0c1310;--surface:#121b17;--text:#e5efeb;--muted:#9db3ab;--border:#25332d;
+  --action:#7f9fff;--link:#8fabff;--truth-ink:#14C79B;--code-bg:#0a110e;--code-text:#d5e8e0;--code-border:#1d2c25}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--link)}
+header{border-bottom:1px solid var(--border);background:var(--surface)}
+.wrap{max-width:52rem;margin:0 auto;padding:0 1.25rem}
+header .wrap{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;padding-top:.8rem;padding-bottom:.8rem}
+.brand{font-weight:700;letter-spacing:.06em;text-decoration:none;color:var(--text)}
+.brand span{color:var(--truth-ink)}
+header nav{margin-left:auto;display:flex;gap:.9rem;flex-wrap:wrap;font-size:.9rem}
+header nav a{text-decoration:none;color:var(--muted)}
+header nav a:hover{color:var(--link)}
+main{padding:2rem 0 3rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.2rem 0 .8rem}
+h2{font-size:1.35rem;margin:2.2rem 0 .6rem;padding-top:1.2rem;border-top:1px solid var(--border)}
+h3{font-size:1.05rem;margin:1.4rem 0 .4rem}
+.kicker{color:var(--truth-ink);font-size:.8rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0}
+.lede{font-size:1.06rem}
+pre{background:var(--code-bg);color:var(--code-text);border:1px solid var(--code-border);border-radius:8px;padding:.9rem 1rem;overflow-x:auto;font-size:.86rem;line-height:1.5}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+:not(pre)>code{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:.08em .35em;font-size:.88em}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{border:1px solid var(--border);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--surface)}
+.note{border-left:4px solid var(--action);background:var(--surface);border-radius:6px;padding:.7rem 1rem;margin:1rem 0;font-size:.95rem}
+footer{border-top:1px solid var(--border);background:var(--surface);padding:1.6rem 0 2.4rem;font-size:.9rem;color:var(--muted)}
+footer h2{border:0;margin:0 0 .5rem;font-size:1rem;padding:0;color:var(--text)}
+footer ul{margin:.3rem 0 1rem;padding-left:1.2rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="https://animica.org/">ANIMICA<span>/reference</span></a>
+    <nav aria-label="Site">
+      <a href="https://animica.org/agents/">Agents hub</a>
+      <a href="https://pypi.org/project/animica-mcp/">PyPI</a>
+      <a href="https://animica.org/developers/">Developers</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <p class="kicker">Reference · verified 2026-08-14</p>
+    <h1>Animica MCP server — blockchain tools for AI agents</h1>
+    <p class="lede"><code>pip install animica-mcp</code> gives any Model Context Protocol client — Claude Code, Claude Desktop, Cursor, VS Code — <strong>15 read/compute tools</strong> for the Animica post-quantum blockchain: chain head/block/account lookups, OpenAI-compatible AI inference, a verifiable quantum randomness beacon, mining-pool stats, and Studio compute estimates. It is read-only by design: no private keys, no signing, no spending, zero required configuration.</p>
+
+    <h2 id="install">Install</h2>
+<pre><code>pip install animica-mcp     # console command: animica-mcp
+# or run without installing:
+uvx animica-mcp</code></pre>
+    <p><code>animica-mcp</code> is a thin console wrapper around <code>animica[mcp]</code>; the server implementation lives in the <a href="https://pypi.org/project/animica/">animica</a> package (<code>animica.mcp.server</code>, also runnable as <code>animica mcp serve</code>).</p>
+
+    <h2 id="clients">Client setup</h2>
+    <h3>Claude Code</h3>
+<pre><code>claude mcp add animica -- uvx animica-mcp</code></pre>
+    <h3>Claude Desktop (<code>claude_desktop_config.json</code>)</h3>
+<pre><code>{
+  "mcpServers": {
+    "animica": { "command": "uvx", "args": ["animica-mcp"] }
+  }
+}</code></pre>
+    <h3>Cursor (<code>~/.cursor/mcp.json</code> or project <code>.cursor/mcp.json</code>)</h3>
+<pre><code>{
+  "mcpServers": {
+    "animica": { "command": "uvx", "args": ["animica-mcp"] }
+  }
+}</code></pre>
+    <h3>VS Code (<code>.vscode/mcp.json</code>)</h3>
+<pre><code>{
+  "servers": {
+    "animica": { "type": "stdio", "command": "uvx", "args": ["animica-mcp"] }
+  }
+}</code></pre>
+    <p>If you installed with pip, replace <code>"command": "uvx", "args": ["animica-mcp"]</code> with <code>"command": "animica-mcp"</code>.</p>
+
+    <h2 id="tools">The 15 tools</h2>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>animica_info</code></td><td>Orientation: what Animica is, endpoints, docs. Start here.</td></tr>
+        <tr><td><code>animica_ai_ask</code></td><td>Ask Animica's AI a question (OpenAI-compatible chat inference).</td></tr>
+        <tr><td><code>animica_ai_models</code></td><td>List available AI models.</td></tr>
+        <tr><td><code>animica_ai_job_status</code></td><td>Status of an AI request/job by id (read-only).</td></tr>
+        <tr><td><code>animica_quantum_beacon_latest</code></td><td>Latest round of the verifiable quantum randomness beacon.</td></tr>
+        <tr><td><code>animica_quantum_draw</code></td><td>Verifiable quantum-random draw off a beacon round (lottery, weighted choice, shuffle, range, coin, dice, bytes).</td></tr>
+        <tr><td><code>animica_quantum_verify</code></td><td>Re-verify a quantum draw client-side — pure offline compute.</td></tr>
+        <tr><td><code>animica_qdna_verify_gene</code></td><td>Verify a qDNA training-genome gene seal — pure offline compute.</td></tr>
+        <tr><td><code>animica_chain_head</code></td><td>Chain head: height, hash, chain id. Read-only.</td></tr>
+        <tr><td><code>animica_chain_block</code></td><td>Read a block by height or hash. Read-only.</td></tr>
+        <tr><td><code>animica_chain_account</code></td><td>Balance + nonce for an <code>anim1…</code> address. No keys, no signing.</td></tr>
+        <tr><td><code>animica_pool_stats</code></td><td>Live mining-pool stats.</td></tr>
+        <tr><td><code>animica_network_hashrate</code></td><td>Current network hashrate.</td></tr>
+        <tr><td><code>animica_studio_estimate</code></td><td>Estimate the ANM cost of an Animica Studio run — local quote, charges nothing.</td></tr>
+        <tr><td><code>animica_studio_functions</code></td><td>List functions deployed to Animica Studio. Read-only.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2 id="config">Configuration (all optional)</h2>
+    <p>Every backend defaults to public Animica infrastructure — the server works with zero configuration. Environment variables if you want to override:</p>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>ANIMICA_BASE_URL</code></td><td><code>https://pool.animica.org/v1</code></td><td>OpenAI-compatible inference base. <code>https://animica.dev/v1</code> is the free keyless endpoint if you prefer it.</td></tr>
+        <tr><td><code>ANIMICA_RPC_URL</code></td><td><code>https://rpc.animica.org/rpc</code></td><td>Node JSON-RPC (read-only calls).</td></tr>
+        <tr><td><code>ANIMICA_POOL_URL</code></td><td><code>https://pool.animica.org</code></td><td>Mining-pool stats API.</td></tr>
+        <tr><td><code>ANIMICA_BEACON_URL</code></td><td><code>https://pool.animica.org</code></td><td>Quantum randomness beacon.</td></tr>
+        <tr><td><code>ANIMICA_API_KEY</code></td><td><em>(empty)</em></td><td>Optional Bearer key for inference; not required.</td></tr>
+        <tr><td><code>ANIMICA_MCP_TIMEOUT_S</code></td><td><code>60</code></td><td>HTTP timeout for backend calls.</td></tr>
+        <tr><td><code>MCP_TRANSPORT</code></td><td><code>stdio</code></td><td><code>stdio</code>, <code>streamable-http</code> (serves 127.0.0.1:8765), or <code>sse</code>.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2 id="security">Security posture &amp; honest limits</h2>
+    <ul>
+      <li><strong>Read + compute only.</strong> Chain access goes through a hard-coded allow-list of read-only JSON-RPC methods; mutating methods (send, sign, deploy, claim) are not on the list and cannot be reached, even by a bug.</li>
+      <li><strong>No keys.</strong> The server never handles private keys, never signs, never spends, and never mutates wallet state. Agents that need to transact must use the full <a href="https://pypi.org/project/animica/">animica</a> package with their own wallet.</li>
+      <li><strong>Inference depends on community capacity.</strong> <code>animica_ai_ask</code> rides on community GPU workers; when no worker serves the requested model, responses can be slow or unavailable. Call <code>animica_ai_models</code> first.</li>
+      <li>Quantum draw/verify and qDNA verification are pure local compute and work fully offline.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>What is the Animica MCP server?</h3>
+    <p>A Model Context Protocol server for the Animica post-quantum blockchain and AI network. Installing <code>animica-mcp</code> (<code>pip install animica-mcp</code>, or run ad hoc with <code>uvx animica-mcp</code>) gives any MCP client 15 read/compute tools: chain head, block, and account lookups, OpenAI-compatible AI inference, a verifiable quantum randomness beacon, mining-pool stats, and Studio compute cost estimates.</p>
+    <h3>Can the Animica MCP server spend funds or sign transactions?</h3>
+    <p>No. It is read + compute only. Chain access goes through a hard-coded allow-list of read-only JSON-RPC methods, so mutating methods (send, sign, deploy, claim) cannot be reached even by a bug. The server never handles private keys, never signs, and never spends.</p>
+    <h3>Which MCP clients does it work with?</h3>
+    <p>Any MCP client. Tested configs are documented for Claude Code (<code>claude mcp add animica -- uvx animica-mcp</code>), Claude Desktop, Cursor, and VS Code. The default transport is stdio; streamable-http and legacy SSE are available via the <code>MCP_TRANSPORT</code> environment variable.</p>
+    <h3>Do I need an API key or a wallet to use it?</h3>
+    <p>No. All backends default to public Animica infrastructure and the server works with zero configuration. An optional <code>ANIMICA_API_KEY</code> environment variable exists for the inference API but is not required, and no wallet is involved.</p>
+    <h3>What are the honest limitations?</h3>
+    <p>The AI inference tool (<code>animica_ai_ask</code>) rides on community-GPU capacity, so responses can be slow or unavailable when no worker is serving the requested model — check <code>animica_ai_models</code> first. Chain tools are read-only by design: an agent that needs to send transactions must use the full <code>animica</code> package with its own wallet instead.</p>
+
+    <h2 id="docs">Canonical docs</h2>
+    <ul>
+      <li><a href="https://pypi.org/project/animica-mcp/">PyPI: animica-mcp</a> · <a href="https://pypi.org/project/animica/">PyPI: animica</a></li>
+      <li><a href="https://github.com/animicaorg/all">github.com/animicaorg/all</a> (Apache-2.0)</li>
+      <li><a href="https://animica.org/agents/">Agents hub</a> — chain, inference, and payments quickstarts</li>
+      <li><a href="https://animica.org/free-ai-inference-api/">Free AI inference API</a> — the endpoint behind <code>animica_ai_ask</code></li>
+      <li><a href="https://animica.org/post-quantum-blockchain-api/">Post-quantum blockchain API</a> — the RPC behind the chain tools</li>
+    </ul>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <h2>Machine-readable discovery</h2>
+    <ul>
+      <li><a href="https://animica.org/llms.txt">llms.txt</a> · <a href="https://animica.org/llms-full.txt">llms-full.txt</a> · <a href="https://animica.org/.well-known/agents.json">agents.json</a> · <a href="https://animica.dev/llms.txt">animica.dev/llms.txt</a></li>
+      <li><a href="https://rpc.animica.org/openrpc.json">RPC openrpc.json</a> · <a href="https://explorer.animica.org/api/openapi.json">explorer openapi.json</a> · <a href="https://explorer.animica.org/api/rpc/discover">RPC method discovery</a> · <a href="https://pool.animica.org/api/openapi.json">pool openapi.json</a> · <a href="https://pay.animica.dev/openapi.json">pay openapi.json</a></li>
+      <li><a href="https://animica.org/agents/">Agents hub</a> · <a href="https://animica.org/free-ai-inference-api/">Free AI inference API</a> · <a href="https://animica.org/post-quantum-blockchain-api/">Post-quantum blockchain API</a></li>
+    </ul>
+    <p>Animica · Apache-2.0 · <a href="https://github.com/animicaorg/all">GitHub</a> · Contact: <a href="mailto:ai@3vdc.com">ai@3vdc.com</a></p>
+  </div>
+</footer>
+</body>
+</html>

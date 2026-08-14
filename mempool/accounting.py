@@ -195,7 +195,17 @@ def effective_gas_price(tx: "Tx", *, base_fee: int = 0) -> int:
          base_fee + max_priority_fee_per_gas).
       3) Else 0.
     """
-    gp = getattr(tx, "gas_price", None)
+    # Canonical Tx nests the price at tx.unsigned.gas_price (mirroring
+    # mempool/select.py's _tx_gas_price); the top-level attribute only
+    # exists on legacy flat shapes. Missing the nested read made every
+    # canonical tx price as 0 here, which let admission approve spends
+    # that selection would starve forever.
+    gp = None
+    unsigned = getattr(tx, "unsigned", None)
+    if unsigned is not None:
+        gp = getattr(unsigned, "gas_price", None)
+    if gp is None:
+        gp = getattr(tx, "gas_price", None)
     if gp is not None:
         gas_price = _safe_int_from_value(gp)
         if base_fee > 0 and gas_price < int(base_fee):
@@ -309,11 +319,27 @@ def estimate_max_spend(
     """
     cfg = cfg or AccountingConfig()
     ig = intrinsic_gas(tx, cfg=cfg)
-    gas_limit = _safe_int_from_value(getattr(tx, "gas_limit", 0))
+    # Canonical Tx keeps its fields nested (tx.unsigned.gas_limit /
+    # tx.unsigned.payload.amount), not as top-level attributes. Resolve those
+    # first, exactly like mempool/select.py does — otherwise both gas_limit
+    # and value read as 0 here, admission approves any spend, and the tx is
+    # admitted only to be starved out of every block by selection's correct
+    # math and then silently evicted.
+    unsigned = getattr(tx, "unsigned", None)
+    if unsigned is not None and getattr(unsigned, "gas_limit", None) is not None:
+        gas_limit = _safe_int_from_value(unsigned.gas_limit)
+    else:
+        gas_limit = _safe_int_from_value(getattr(tx, "gas_limit", 0))
     price = effective_gas_price(tx, base_fee=base_fee)
     max_fee_paid = gas_limit * price
 
-    value = _safe_int_from_value(getattr(tx, "value", getattr(tx, "amount", 0)))
+    value = None
+    if unsigned is not None:
+        payload = getattr(unsigned, "payload", None)
+        if payload is not None and hasattr(payload, "amount"):
+            value = _safe_int_from_value(getattr(payload, "amount", 0))
+    if value is None:
+        value = _safe_int_from_value(getattr(tx, "value", getattr(tx, "amount", 0)))
     total = value + max_fee_paid
 
     return SpendEstimate(

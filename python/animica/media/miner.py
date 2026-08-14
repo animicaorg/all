@@ -631,44 +631,7 @@ def run_miner(gateway: str, *, token: Optional[str] = None, label: Optional[str]
     gw = GatewayClient(gateway, token)
 
     idle = 0
-    # Capabilities are NOT fixed for the life of the process. `animica up` starts the
-    # media-model download in a background thread and probes capabilities milliseconds
-    # later, so a fresh node registers before its diffusion model exists — advertising
-    # `video_i2v` (ffmpeg only) or nothing at all, and never `image`. Since nothing
-    # re-probed, that node never served image jobs no matter how long it ran, which is
-    # why animica.dev showed 0 renderers online for `image` while nodes were up.
-    # Re-registering with the SAME token is idempotent (the gateway keys the row on the
-    # token hash), so this updates capacity in place rather than adding a duplicate.
-    recheck_secs = float(os.environ.get("ANIMICA_MEDIA_RECHECK_CAPS_SECS", "120") or 120)
-    last_cap_check = time.time()
-
     while True:
-        if recheck_secs > 0 and (time.time() - last_cap_check) >= recheck_secs:
-            last_cap_check = time.time()
-            try:
-                fresh = probe_capabilities()
-            except Exception:  # noqa: BLE001 — a probe failure must never stop serving
-                fresh = None
-            if fresh and set(fresh) != set(caps):
-                gained = sorted(set(fresh) - set(caps))
-                lost = sorted(set(caps) - set(fresh))
-                caps = fresh
-                try:
-                    _req(f"{base}/miner/register",
-                         {"token": token, "label": label, "capabilities": caps, "device": dev,
-                          "address": os.environ.get("ANIMICA_MEDIA_REWARD_ADDRESS"),
-                          "maxPixels": int(os.environ.get("ANIMICA_MEDIA_MAX_PIXELS", 1024 * 1024))},
-                         bearer=None)
-                    bits = []
-                    if gained:
-                        bits.append("+" + ",".join(gained))
-                    if lost:
-                        bits.append("-" + ",".join(lost))
-                    log(f"  capabilities changed ({' '.join(bits)}) — re-registered "
-                        f"as {','.join(caps)}")
-                except Exception as e:  # noqa: BLE001
-                    log(f"  capability re-register failed ({e}) — keeping previous set")
-
         # Transient network failures (DNS blip, gateway restart, timeout) must never kill
         # the loop — `animica up` runs this in a daemon thread that would silently die.
         try:

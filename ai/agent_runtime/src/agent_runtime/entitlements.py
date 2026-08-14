@@ -3,20 +3,14 @@
 The shape (decided 2026-08-08)
 ------------------------------
 ======================  ==================================  ==========================
-                        free                                pro — any paid plan
+                        free                                pro — $9.99/mo
 ======================  ==================================  ==========================
 chat                    unlimited                           unlimited
 agentic tasks           10 per day                          unlimited
 agentic iterations      10 per task                         50 per task
-parallel /swarm agents  2                                   8
+tier                    standard                            flagship + long context
+thread sync             local + your own DA namespace       hosted sync
 ======================  ==================================  ==========================
-
-That table is the whole difference, and it is deliberately short. ``hosted_sync``
-and ``long_context`` exist as fields because the entitlement API returns them,
-but **nothing reads either one** — there is one model (kimi-k3) and sessions are
-local JSON files. Do not put them on a pricing page until something consumes
-them; animica.dev advertised "flagship tier" and "hosted session sync" off the
-back of these flags for a while, and neither was real.
 
 Pro is sold as a PayPal subscription on animica.dev/pricing, which issues a
 licence key. The key lives in ``~/.animica/licence`` and is sent to the
@@ -65,16 +59,10 @@ PRO_AGENT_ITERATIONS = 50
 # How long a verified Pro licence is honoured without re-checking.
 GRACE_DAYS = 7
 
-# Quotes the CHEAPEST paid plan, and quotes it as a floor ("from"), because the
-# CLI is bundled into every paid tier rather than sold at one price. It said
-# "$9.99/mo" — a price that has never existed since the ladder was halved, so the
-# one place a free user is told what upgrading costs was telling them a made-up
-# number. If the ladder moves again, this line moves with it.
-_CHEAPEST_PAID_USD = "4.99"
 _UPGRADE_HINT = (
     f"free tier: {FREE_AGENT_TASKS_PER_DAY} agentic tasks/day, "
     f"{FREE_AGENT_ITERATIONS} iterations each. "
-    f"Paid plans from ${_CHEAPEST_PAID_USD}/mo lift both — {PRICING_URL}"
+    f"$9.99/mo lifts both — {PRICING_URL}"
 )
 
 

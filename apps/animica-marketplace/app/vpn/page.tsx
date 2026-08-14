@@ -12,9 +12,6 @@ export const metadata: Metadata = {
     'Route your device (WireGuard CLI) or just your browser (extension) through a chosen exit location on the Animica network. Single-hop, post-quantum-authenticated, and — at block 50,000 — paid straight from the block reward, capped at 50 ANM/block.',
   alternates: { canonical: 'https://animica.dev/vpn' },
   openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
     title: 'Animica dVPN — a decentralized VPN that pays its relays',
     description:
       'Pick an exit location and route your device or browser through it. Post-quantum auth, fail-closed killswitch, and relay rewards paid from the block subsidy (capped 50 ANM/block).',

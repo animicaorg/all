@@ -40,6 +40,13 @@ export async function getObject(cid: string): Promise<{ mime: string; bytes: Buf
   return { mime: o.mime, bytes: Buffer.from(o.bytes) };
 }
 
+// Cheap metadata read (mime + size) WITHOUT loading the bytes — for listing/serve decisions.
+export async function statObject(cid: string): Promise<{ mime: string; size: number } | null> {
+  if (!isCid(cid)) return null;
+  const o = await prisma.contentObject.findUnique({ where: { cid }, select: { mime: true, size: true } });
+  return o ? { mime: o.mime, size: o.size } : null;
+}
+
 // Verify stored bytes still hash to their CID (tamper check the gateway can run before serving).
 export function verifyObject(cid: string, bytes: Buffer): boolean {
   return isCid(cid) && computeCid(bytes) === cid;

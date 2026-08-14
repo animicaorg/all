@@ -163,14 +163,9 @@ def test_pool_http_lifecycle(server, tmp_path, monkeypatch):
     assert status == 200
     assert agg["promoted"] is True and agg["next_round"] == 2
 
-    # --- POST /pool/accrue (replaces /pool/payout) ---
-    # The funder-budget payout is removed; rewards are 10 ANM per block to trainers and
-    # servers by weight. The first call only sets the height watermark.
-    status, first = _call(port, "POST", "/pool/accrue", {"pool_id": pid, "height": 5000})
-    assert status == 200, first
-    assert first["reason"] == "watermark_initialised" and first["paid_nano"] == 0
-    status, out = _call(port, "POST", "/pool/accrue", {"pool_id": pid, "height": 5001})
-    assert status == 200, out
-    assert out["paid_nano"] == 10_000_000_000, out
+    # --- POST /pool/payout ---
+    status, out = _call(port, "POST", "/pool/payout", {"pool_id": pid, "round": 1})
+    assert status == 200
+    assert out["paid_nano"] == 8_000_000_000
     roles = {ent["role"] for ent in out["entries"]}
-    assert "trainer" in roles and "funder" not in roles
+    assert "funder" in roles and "trainer" in roles

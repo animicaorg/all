@@ -1,0 +1,534 @@
+# Animica — full agent reference (llms-full.txt)
+
+Current release: **10.1.0** (PyPI `animica`, git tag v10.1.0).
+Last updated: 2026-08-14. Curated companion file: https://animica.org/llms.txt
+
+This is a single-file reference for AI agents and LLM-driven tooling. Every
+endpoint and example below was verified live on 2026-08-14 (read-only calls
+executed; write paths described but not executed). Live values shown (heights,
+balances, hashrates) were current at verification time and will have changed.
+
+## 1. What Animica is
+
+Animica is a live, public, post-quantum proof-of-work Layer-1 blockchain with
+a native coin, **ANM**, plus an ecosystem of services that run on it:
+
+- **L1 chain** — chain id **1**, PoIES consensus (Proof of Integrated Extended
+  Sacrifice: PoW plus useful-work AI/quantum credits), deterministic Python
+  smart contracts, post-quantum signatures. Mainnet height was ~73,190 on
+  2026-08-14 (~66 s average block time at that moment).
+- **L2 rollup** (10.x) — ANM-native rollup with a deterministic parallel
+  executor and validity re-execution proofs; `l2_*` JSON-RPC + explorer
+  `/api/l2/*`.
+- **AI compute (AICF)** — miners can serve AI inference for on-chain credits;
+  exposed to the world as a free, keyless, OpenAI-compatible API at
+  `https://animica.dev/v1`.
+- **Quantum** — attested HW-QRNG randomness beacon (`animica quantum` CLI,
+  explorer `/api/quantum/info`, MCP tools).
+- **Products** — block explorer, mining pool, non-custodial merchant payments
+  (pay.animica.dev), $20 AI website deployment (animica.org/deploy), GPU
+  Studios serverless compute, wallets, games.
+
+Key protocol facts (memorize these):
+
+| Fact | Value |
+|---|---|
+| Chain id | `1` |
+| Address format | bech32m, prefix `anim1…` |
+| Base unit | 1 ANM = 10^9 base units ("nano-ANM" / nANM); all API amounts are base units unless stated |
+| Signature scheme | **ML-DSA-65** (FIPS 204, the successor of Dilithium3), scheme id `0x1003` — the ONLY current scheme |
+| Consensus | PoW (PoIES) with useful-work AI/quantum credits |
+| Smart contracts | deterministic Python VM (not Solidity/EVM bytecode) |
+| Mainnet faucet | none (faucet.request is devnet-only) |
+| License / source | Apache-2.0, https://github.com/animicaorg/all |
+
+How to get ANM: mine via https://pool.animica.org, trade on NonKYC
+(https://nonkyc.io/market/ANM_USDT), or accept payments as a merchant via
+https://pay.animica.dev.
+
+## 2. Install and run
+
+```bash
+pip install animica          # node, wallet, miner, CLI, chat, MCP — most users want this
+pip install "animica[all]"   # everything + optional extras (quote brackets for zsh)
+```
+
+The `animica` CLI includes:
+
+- `animica node …` — run a node
+- `animica up` — unified miner (PoW + useful-work + GPU serve + Studio functions)
+- `animica wallet …` — key management, send, sign (ML-DSA-65)
+- `animica chat` — agentic coding CLI (plan/manual/auto-edit/auto modes),
+  backed by the free animica.dev AI endpoint
+- `animica quantum …` — quantum beacon tools
+- `animica mcp serve` — Model Context Protocol server (see §12)
+- `animica studio …` — serverless compute client (see §13)
+
+Installer for the chat CLI alone: `curl -fsSL https://animica.dev/install.sh | sh`
+(verified 200).
+
+## 3. Wallets and addresses
+
+- Canonical address format: **bech32m with prefix `anim1…`** (bech32m, not
+  bech32 — the checksum differs; wrong variant = invalid addresses).
+- Signature scheme: **ML-DSA-65 only** (scheme id `0x1003`). Addresses derived
+  from the legacy SPHINCS+ scheme (`0x1002`) exist on-chain historically but
+  are stranded — they cannot spend and services refuse them. Do not generate
+  or advertise SPHINCS+ anything.
+- Wallet downloads (Android APK, desktop Qt for Windows/macOS/Linux):
+  https://animica.org/wallet/
+- Web wallet (non-custodial): https://wallet.animica.org
+- Browser extension: linked from the wallet page.
+- There is **no custodial wallet** — the former custodial wallet-RPC service
+  was shut down in 2026 after an incident. All current wallets are
+  non-custodial; keys never leave the device.
+
+## 4. Node JSON-RPC reference
+
+Endpoint: `POST https://rpc.animica.org/rpc` (JSON-RPC 2.0, Content-Type
+application/json).
+
+**Important:** always use the `/rpc` path. The bare origin
+`https://rpc.animica.org` answers with a 301 redirect that breaks naive POST
+clients (many HTTP libraries re-issue the POST as a GET).
+
+Mirrors (same chain, verified live): `https://mainnet.animica.org/rpc` (direct
+node). `https://evm.animica.org` additionally hosts an experimental
+Ethereum-JSON-RPC compatibility facade (see §14).
+
+The node exposes ~540 methods. Enumerate them all live:
+`GET https://explorer.animica.org/api/rpc/discover`
+
+### Namespaces
+
+| Namespace | Purpose | Representative methods |
+|---|---|---|
+| `chain.*` | chain metadata | `chain.getHead`, `chain.getParams`, `chain.getChainId`, `chain.getBlockByHeight`, `chain.getBlockByHash`, `chain.getForks`, `chain.getCheckpoints`, `chain.getNetworkHashrate` |
+| `state.*` | account/state reads + calls | `state.getBalance`, `state.getAccount`, `state.getNextNonce`, `state.getRichList`, `state.getTotalSupply`, `state.call`, `state.simulateCall` |
+| `tx.*`, `tx2.*` | transactions | `tx.sendRawTransaction`, `tx.getStatus`, `tx.getTransaction`, `tx.getReceipt`, `tx.decodeRawTransaction`, `tx.explainReject`, `tx.getSupportedSignatureSchemes`, `tx2.getMempoolStats` |
+| `mempool.*` | mempool inspection | `mempool.getInfo`, `mempool.getPending`, `mempool.getStats`, `mempool.simulateAdmission` |
+| `net.*` | networking | `net.peerCount`, `net.peers`, `net.getBootstrapSeeds` |
+| `aicf.*` | AI compute fabric (59 methods) | `aicf.submitInferenceJob`, `aicf.jobStatus`, `aicf.estimateJobCost`, `aicf.listProviders`, `aicf.summary`, `aicf.work.*` (job market) |
+| `l2_*` | ANM-native rollup (24 methods) | `l2_status`, `l2_getBalance`, `l2_getTPS`, `l2_getBatch`, `l2_sendRawTransaction`, `l2_getStateRoot`, `l2_verifyBatch` (see §11) |
+| `quantum.*` | QRNG beacon | `quantum.getStatus`, `quantum.quw.getBeacon`, `quantum.quw.verify`, `quantum.quw.randomBytes` |
+| `da.*` | data availability blobs | `da.putBlob`, `da.getBlob`, `da.getProof` |
+| `ena.*` | collaborative training layer | `ena.*` (17 methods) |
+| `miner.*`, `mining.*` | work templates | `miner.getWork`, `miner.submitWork` |
+
+There is **no** `chain.getHeight` and **no** `ai.*` namespace. Use
+`chain.getHead` and the `aicf.*` namespace respectively.
+
+### Working examples (all tested live 2026-08-14)
+
+Head of chain:
+
+```bash
+curl -s https://rpc.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"height":73188,"number":73188,
+ "hash":"0x00000000011b657a3d2408823d5fb183a7eb6c6f31b3c09195f8afe39e6fe3c4",
+ "chainId":1,"thetaMicro":26554312,"canonicalHeight":73188, "...":"..."}}
+```
+
+Balance of an address (base units, hex-encoded):
+
+```bash
+curl -s https://rpc.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"state.getBalance",
+       "params":{"address":"anim1zqpm5cstcss6ct8jwtguefsfh7ufga2y8r6lcsxrq2yz6ek05gt0yfqrnye8q"}}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":"0xf48dbd1780"}
+```
+
+(`0xf48dbd1780` = 1,050,350,000,000 base units = 1,050.35 ANM.)
+
+Supported signature schemes — note only `ml_dsa_65` is enabled:
+
+```bash
+curl -s https://rpc.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tx.getSupportedSignatureSchemes","params":{}}'
+```
+
+The result lists every scheme the node knows. As of 10.1.0 the only entry with
+`"enabled": true` is:
+
+```json
+{"schemeId":11,"name":"ml_dsa_65","pubkeyLengths":[1952],
+ "signatureLengths":[3309],"enabledByCode":true,"enabledByPolicy":true,
+ "enabledEffective":true,"enabled":true}
+```
+
+Legacy entries (`dilithium3`, `sphincs_shake_128s/128f/256s`) all report
+`"enabled": false` (`disabled_by_code` / `backend_missing`). Do not build
+against them. (The RPC registry id above is internal; the transaction-envelope
+scheme id for ML-DSA-65 is `0x1003`.)
+
+Total supply + network hashrate:
+
+```bash
+curl -s https://rpc.animica.org/rpc -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"state.getTotalSupply","params":{}}'
+# -> {"result":{"height":73188,"totalSupply":"0x1810e9cca75edfd","addressCount":146}}
+
+curl -s https://rpc.animica.org/rpc -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getNetworkHashrate","params":{}}'
+```
+
+Sending transactions: build and sign with the `animica` wallet
+(`animica wallet send …`) or a wallet SDK — signatures are ML-DSA-65 over the
+canonical `tx_signing_preimage`; then `tx.sendRawTransaction` and poll
+`tx.getStatus`. Nonces: use `state.getNextNonce`. Inclusion in a block is not
+execution — always confirm a successful receipt (`tx.getReceipt`) before
+treating value as received.
+
+## 5. Explorer REST reference
+
+Base: `https://explorer.animica.org/api` — free, no auth, CORS-friendly.
+Web UI: https://explorer.animica.org
+
+| Path | Returns |
+|---|---|
+| `/head` | head summary + peer/mempool stats + theta history |
+| `/blocks?limit=N` | recent blocks |
+| `/block/:hashOrHeight` | one block |
+| `/tx/:hash` | transaction detail |
+| `/address/:bech32` | balance + recent txs for an `anim1…` address |
+| `/mempool` | pending txs |
+| `/search?q=…` | height / hash / address search |
+| `/richlist`, `/richlist/summary` | top holders |
+| `/circulating-supply` | plain number (e.g. `108383932.60801587`) — aggregator-friendly |
+| `/mining/info` | mining status/template info |
+| `/network/status` | per-service health (chain, pool, AI, …) |
+| `/aicf/*` | AI-compute fabric stats |
+| `/contracts/*` | deployed contract info |
+| `/tokens`, `/tokens/:address` | ANM20 token registry |
+| `/quantum/info` | QRNG beacon info |
+| `/da/*`, `/ena/*` | data-availability and training-layer info |
+| `/l2/overview`, `/l2/status`, `/l2/stateRoot`, `/l2/tps`, `/l2/batch/:number`, `/l2/tx/:hash`, `/l2/account/:address` | L2 rollup views |
+| `/rpc/discover` | full JSON list of all node RPC methods |
+| `/meta`, `/health` | explorer metadata / health |
+
+Example (tested):
+
+```bash
+curl -s https://explorer.animica.org/api/circulating-supply
+# 108383932.60801587
+
+curl -s "https://explorer.animica.org/api/address/anim1zqpm5cstcss6ct8jwtguefsfh7ufga2y8r6lcsxrq2yz6ek05gt0yfqrnye8q"
+# {"address":"anim1…","accountType":"eoa","confirmedBalance":"0xf48dbd1780", …}
+```
+
+## 6. Free AI API — animica.dev/v1 (OpenAI-compatible, keyless)
+
+Base URL: `https://animica.dev/v1`. **No API key required.** Rate limit:
+30 requests/min/IP. Endpoints: `/v1/chat/completions`, `/v1/models`,
+plus media (`/v1/images`, `/v1/videos`, `/v1/audio`).
+Note: the embeddings endpoint is not currently deployed — `/v1/embeddings` returns 404.
+
+Models (live from `/v1/models`, verified): `kimi-k3` (default flagship
+coding/chat), `animica-chat`, `animica-chat-small`, `animica-chat-flagship`,
+`animica-knowledge` (ENA collaboratively-trained model).
+
+**Capacity caveat — read before relying on it:** inference is served by
+community GPU workers on the AICF network, not by a central cluster. Each
+model object in `/v1/models` carries a boolean `"serving"` flag. At
+verification time (2026-08-14) all models reported `"serving": false` (no live
+worker online), and a test chat completion hung/timed out rather than
+answering. Always check `serving` first; requests to non-serving models may
+503, queue, or hang. Media endpoints return 202 `{status:"queued", job_id,
+poll_url}` when no GPU miner is online — queued jobs persist until a miner
+connects. A 503 `no_media_miner` fires only when the dispatcher itself is
+unreachable; that submission did NOT enqueue — resubmit.
+
+```bash
+# Discover models and serving status (always works):
+curl -s https://animica.dev/v1/models
+
+# Chat completion (works when a model shows "serving": true):
+curl -s https://animica.dev/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"kimi-k3","messages":[{"role":"user","content":"hello"}]}'
+```
+
+Python with the OpenAI SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="https://animica.dev/v1", api_key="none")  # keyless
+
+# Check serving status first
+models = client.models.list()
+serving = [m.id for m in models.data if getattr(m, "serving", False)]
+if serving:
+    resp = client.chat.completions.create(
+        model=serving[0],
+        messages=[{"role": "user", "content": "Explain PoIES in one sentence."}],
+        stream=True,  # kimi-k3 works best streamed
+    )
+    for chunk in resp:
+        print(chunk.choices[0].delta.content or "", end="")
+else:
+    print("No model currently serving — retry later or queue the request.")
+```
+
+Note: `kimi-k3` emits `<think>…</think>` reasoning blocks; the gateway strips
+them, but if you consume raw worker output, strip them yourself.
+
+Agent discovery files on that host (all verified 200):
+https://animica.dev/llms.txt · https://animica.dev/openapi.json ·
+https://animica.dev/.well-known/ai-plugin.json
+
+animica.dev also hosts the Python cloud (deploy Python services, earn ANM) and
+the agentic coding tools; see its own llms.txt for details.
+
+## 7. Pool mining quickstart
+
+Pool: https://pool.animica.org (PPS with sub-block shares, so non-block-finders
+get paid too). Setup guide: https://pool.animica.org/setup
+
+```bash
+pip install animica
+# Pooled mining (PPS), payout to your anim1 address:
+animica up --pool stratum+tcp://pool.animica.org:3333 --address anim1YOURADDRESS
+```
+
+- Stratum (PPS): `stratum+tcp://pool.animica.org:3333` (port verified open)
+- Stratum (solo): `stratum+tcp://pool.animica.org:3334` — 95% finder / 5% pool
+  (port verified open)
+- Payouts run automatically (~15-minute interval); amounts are in base units.
+- `animica up` is the unified miner: CPU PoW by default, plus opt-in
+  useful-work (AI serve / GPU train / Studio functions / rendering queues)
+  that earns AICF credits on top of PoW.
+
+Pool stats REST (free, verified):
+
+```bash
+curl -s https://pool.animica.org/v1/pool/status
+# {"host":"pool.animica.org","port":3333,"stratum_url":"stratum+tcp://pool.animica.org:3333",
+#  "connected_miners":2,"network":"mainnet","synced":true,"payouts_enabled":true, …}
+
+curl -s https://pool.animica.org/api/pool/summary    # pool mode, height, reward split
+curl -s https://pool.animica.org/api/pool/network    # network hashrate (~4.4 GH/s at verification)
+curl -s https://pool.animica.org/api/miners
+curl -s https://pool.animica.org/api/blocks/recent
+```
+
+Full platform API: Swagger UI at https://pool.animica.org/api/docs, OpenAPI
+JSON at https://pool.animica.org/api/openapi.json (both verified 200).
+
+Reward split note: from block 75,000 the block subsidy splits 50% miner /
+25% inference providers / 25% treasury (visible in `/api/pool/summary` as
+`service_carve`); unclaimed service portions go to the treasury.
+
+## 8. Animica Pay — merchant payments (pay.animica.dev)
+
+Non-custodial ANM payments: the merchant receives coins at their own address.
+2.00% protocol fee on successful payments. No chargebacks, no monthly fee.
+Docs: https://pay.animica.dev/docs (API reference, webhooks, WooCommerce
+plugin, test mode).
+
+- **API**: `POST/GET https://pay.animica.dev/api/v1/payment-intents`,
+  `/api/v1/refunds`, `/api/v1/balance`. Auth: `Authorization: Bearer <secret
+  API key>` plus an `Idempotency-Key` header on writes. Unauthenticated
+  requests return 401 (verified).
+- **Amounts**: decimal strings counting nANM (1 ANM = 10^9 nANM). Never parse
+  as floats — large values do not survive a double.
+- **Flow**: server creates a PaymentIntent → customer pays via hosted checkout
+  `/c/:id` (SSE `/events` for live status), invoice `/i/:token`, shop page,
+  POS, or the embeddable `widget.js` → customer sends one ANM TRANSFER
+  carrying an `ANMPAY1` reference in `data` → the indexer matches by
+  reference+recipient (never by amount) → at 12 confirmations **with a
+  successful receipt** the intent becomes PAID and a signed (HMAC) webhook
+  fires. Webhook handlers must be idempotent.
+- **Payout addresses**: `anim1…` ML-DSA-65 (`0x1003`) only; legacy SPHINCS+
+  (`0x1002`) addresses are refused because they cannot spend.
+- **Refunds** are new transactions, not reversals.
+- **Integrations**: WooCommerce plugin, widget embed, full REST.
+- Sign up for a merchant dashboard on the site: https://pay.animica.dev
+
+## 9. Animica Deploy — $20 website + AI (animica.org/deploy)
+
+https://animica.org/deploy/ — a one-time **$20** (PayPal) product that builds
+and hosts a website with an integrated AI assistant. Primarily
+human-oriented, but agents can drive the live preview:
+
+- `POST https://animica.org/deploy/api/preview` — JSON body `{"url": "https://…"}`
+  → plain JSON crawl summary of the site:
+  `{"siteName":"…","origin":"…","pagesDiscovered":1,"topics":[…],
+  "samplePages":[{"url":"…","title":"…"}],"normalizedUrl":"…"}`.
+  A missing/invalid `url` returns 400 `{"error":"url_required"}`.
+- Checkout is a PayPal flow; login is passwordless magic-link.
+- The deployed sites' crawler identifies as AnimicaDeployBot:
+  https://animica.org/deploy/bot.html
+
+## 10. Thronebound and other apps
+
+- **Thronebound** — free browser strategy game with 19 building minigames:
+  https://animica.org/thronebound/ (also exported to Newgrounds).
+- **Internet (dVPN)** — decentralized VPN exits paid in ANM:
+  https://animica.org/internet/
+- **Discovery/quests**: https://animica.net · **Forge prompt-to-app**:
+  https://animica.io · **Launchpad** (wallet sign-in, token launches):
+  https://animica.xyz
+
+## 11. L2 rollup (10.x)
+
+The ANM-native L2 is a rollup settling to L1 with **validity re-execution
+proofs** (settlementMode `VALIDITY`), a deterministic parallel executor, and
+its own chain id **1001**. Bridge deposits lock ANM on L1 and credit it on L2
+(bridge invariant: locked == credited + burned). Explorer views under
+`https://explorer.animica.org/api/l2/*`; RPC via `l2_*` methods on the main
+endpoint.
+
+24 `l2_*` methods, including: `l2_status`, `l2_chainId`, `l2_getBalance`,
+`l2_getNonce`, `l2_getTPS`, `l2_getMetrics`, `l2_getBatch`, `l2_getBatchData`,
+`l2_getStateRoot`, `l2_getTransaction`, `l2_getReceipt`, `l2_estimateFee`,
+`l2_prepareTransfer`, `l2_sendRawTransaction`, `l2_submitSigned`,
+`l2_getDeposit`, `l2_getWithdrawalProof`, `l2_getAccountProof`,
+`l2_verifyBatch`, `l2_getProofStatus`, `l2_getSequencerStatus`,
+`l2_getSyncStatus`.
+
+Tested examples:
+
+```bash
+curl -s https://rpc.animica.org/rpc -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"l2_status","params":{}}'
+# {"result":{"enabled":true,"l2ChainId":1001,"settlementMode":"VALIDITY","headBatch":2,
+#  "stateRoot":"0x7012d7a0…","bridgeAddress":"anim1zqpm5cst…","depositsEnabled":true,
+#  "bridge":{"lockedOnL1":1000350000000,"creditedTotal":1000350000000,"burnedTotal":0,…}}}
+
+curl -s https://rpc.animica.org/rpc -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"l2_getTPS","params":{}}'
+# {"result":{"ingressTotal":0,"executedTotal":1,"softConfirmedTotal":1,"settledTotal":0,
+#  "batchesTotal":1,"ingressTps":0.0,"executedTps":0.0,…}}
+
+# l2_getBalance takes the 32-byte hex account digest (not the bech32 form):
+curl -s https://rpc.animica.org/rpc -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"l2_getBalance",
+       "params":["0xba620bc421ac2cf272d1cca609bfb894754438f5fc40c302882d66cfa216f224"]}'
+# {"result":{"address":"0xba620bc…","balance":"0","nonce":0,"pendingNonce":0,"unit":"nanos"}}
+```
+
+Explorer equivalents: `/api/l2/overview`, `/api/l2/status`, `/api/l2/tps`,
+`/api/l2/stateRoot`, `/api/l2/batch/:number`, `/api/l2/tx/:hash`,
+`/api/l2/account/:address` (all verified 200).
+
+## 12. MCP server (Model Context Protocol)
+
+Animica ships an official Python MCP server for agent frameworks
+(Claude Desktop/Code, and any MCP-capable client):
+
+```bash
+pip install animica          # then:
+animica mcp serve            # stdio transport (default)
+animica mcp serve --transport streamable-http   # or sse
+
+# Or the thin wrapper package (verified on PyPI):
+pip install animica-mcp && animica-mcp
+uvx animica-mcp              # zero-install
+```
+
+15 read/compute tools: chain head/block/account lookups, AI ask + model list,
+quantum beacon fetch/verify, pool stats, network hashrate, Studio estimate and
+function list, and `animica_info`. By design it holds **no private keys** and
+has **read-only** chain access — safe to wire into agents.
+
+Example Claude Desktop / MCP client config:
+
+```json
+{"mcpServers": {"animica": {"command": "uvx", "args": ["animica-mcp"]}}}
+```
+
+Note: an older TypeScript `animica-mcp` npm package existed; the **Python**
+server above is the current, supported implementation (see §15).
+
+## 13. Studio — serverless Python compute
+
+Run Python functions on the decentralized GPU/CPU fleet, paid in ANM.
+Docs: https://animica.org/docs/studio/ · Console: https://studio.animica.org
+
+```python
+import animica.studio as studio
+app = studio.App("agent-jobs")
+
+@app.function(image=studio.Image.debian_slim().pip_install("numpy"), gpu="A100")
+def run(seed: int) -> float:
+    import numpy as np
+    return float(np.random.default_rng(seed).standard_normal(1000).mean())
+
+run.remote(42)       # one call on the fleet (local sandbox in dev mode)
+run.map(range(64))   # fan-out
+```
+
+CLI: `animica studio run app.py::run --kw seed=42` ·
+`animica studio deploy app.py`. `ANIMICA_STUDIO_MODE=local` uses a local
+sandbox; `remote` escrows ANM and dispatches to the fleet. Capacity is
+community-provided (same caveat as §6).
+
+## 14. Compatibility facades (experimental)
+
+- **Ethereum JSON-RPC facade** — `eth_*`/`net_*`/`web3_*` method names are
+  answered by the node (34 `eth_*` methods visible in `/api/rpc/discover`) so
+  existing Ethereum tooling can connect for basic reads. It is an RPC facade,
+  **not** EVM execution — Animica does not run Solidity bytecode. dApp/front
+  end: https://evm.animica.org (verified 200). Docs:
+  https://animica.org/docs/evm-rpc/. Treat it as experimental; query
+  `eth_chainId` yourself rather than trusting any documented value.
+- **Bitcoin Core facade** — Bitcoin-Core-shaped methods
+  (`getblockchaininfo`, `getblockcount`, `getrawtransaction`, …) for
+  bitcoin-cli-style tooling. A compatibility layer, not an identity claim.
+  Docs: https://animica.org/docs/bitcoin-rpc/.
+
+Native namespaces at `/rpc` (§4) are always the source of truth.
+
+## 15. Current vs deprecated — do not build on the wrong thing
+
+| Feature | Status |
+|---|---|
+| ML-DSA-65 signatures (`0x1003`) | **Current** — the only enabled scheme |
+| SPHINCS+ signatures (`0x1002`) | **Legacy/stranded** — historical addresses cannot spend; disabled in the node; refused by services. Never advertise or generate. |
+| Dilithium3 (scheme id 1) | **Disabled** — mention only as lineage of ML-DSA-65 |
+| `anim1…` bech32m addresses | **Current** |
+| XMR dual-mining on the pool | **Removed** (2026-07) — the pool mines ANM only |
+| Custodial wallet / wallet-RPC | **Shut down** (2026-07 incident) — all wallets are non-custodial now |
+| npm `animica-mcp` (TypeScript MCP server) | **Deprecated** — use the Python server: `pip install animica` (`animica mcp serve`) or `pip install animica-mcp` |
+| NOWPayments buy gateway (buy.animica.org) | **Shut down** — acquire ANM via mining, NonKYC, or payments |
+| `l2_*` RPC + L2 explorer API | **Current** (10.x) |
+| Free AI `/v1` (animica.dev) | **Current** — capacity community-provided; check `serving` |
+| `animica chat` agentic CLI | **Current** |
+| animica.org/deploy, pay.animica.dev, Thronebound | **Current** |
+
+## 16. All verified links
+
+- Site: https://animica.org · Developers: https://animica.org/developers/ ·
+  Docs: https://animica.org/docs/
+- llms files: https://animica.org/llms.txt · https://animica.org/llms-full.txt
+  (this file) · https://animica.dev/llms.txt
+- RPC: https://rpc.animica.org/rpc (POST) · mirror
+  https://mainnet.animica.org/rpc
+- Explorer: https://explorer.animica.org ·
+  API base https://explorer.animica.org/api
+- Free AI: https://animica.dev/v1 (keyless)
+- Pool: https://pool.animica.org · stratum `pool.animica.org:3333` / `:3334` ·
+  API docs https://pool.animica.org/api/docs
+- Payments: https://pay.animica.dev · docs https://pay.animica.dev/docs
+- Deploy: https://animica.org/deploy/
+- Wallets: https://animica.org/wallet/ · https://wallet.animica.org
+- Trade: https://nonkyc.io/market/ANM_USDT
+- Source: https://github.com/animicaorg/all ·
+  https://github.com/animicaorg/animica-core ·
+  PyPI https://pypi.org/project/animica/ ·
+  https://pypi.org/project/animica-mcp/
+- Games/apps: https://animica.org/thronebound/ ·
+  https://animica.org/internet/ · https://animica.net · https://animica.io ·
+  https://animica.xyz · https://studio.animica.org
+- Contact: ai@3vdc.com

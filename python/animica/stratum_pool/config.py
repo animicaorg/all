@@ -68,17 +68,6 @@ class PoolConfig:
     # are refused until they update. Reversible by clearing the flag.
     min_miner_version: str = ""
     require_min_version: bool = False
-    # Pool-level INFERENCE-SERVING requirement (policy only — never consensus).
-    # When set, a miner that advertises no AICF serving tier on mining.subscribe
-    # earns nothing here: same mechanism as the version gate, so its shares are
-    # refused and no AICF row is created for it.
-    #
-    # DEFAULT OFF, and that default is load-bearing. Serving is gated on the miner
-    # having `transformers`+`torch` importable, and at the time of writing ZERO
-    # workers advertise a tier — so switching this on would reject EVERY connected
-    # miner and stop the pool producing blocks. Turn it on only once real serving
-    # capacity exists, and expect to lose every miner that cannot run a model.
-    require_inference_serving: bool = False
     # ENA training-treasury fee: route this fraction (in basis points) of each
     # accepted share's ANM credit to the ENA training treasury. The miner keeps
     # the remainder. 0 disables the fee. The treasury accrues as an ordinary
@@ -110,35 +99,6 @@ class PoolConfig:
     # The holdback is not a fee: unconsumed reserve stays in cap_remaining and
     # flows back to future block winners once small-share demand is met.
     pps_block_reserve_bps: int = 500
-    # Sub-block shares (9.1.0). The wire share target is a RATIO of θ, and the
-    # xmrig-compat floor pins it at 1.0 == θ == the block target, so a "share"
-    # IS a block here and PPS pays only block finders. Rather than lower the
-    # floor for everyone (a sub-1.0 wire difficulty puts the xmrig build into a
-    # connect→set_difficulty→disconnect loop; doing that on 2026-07-10 cost ~2h
-    # of mainnet block production), sub-block targets go ONLY to sessions that
-    # explicitly advertise support on mining.subscribe. Every other client —
-    # xmrig, ASIC dashboards, any miner predating this — keeps the exact target
-    # it gets today.
-    #
-    # shares_per_block (S) is the knob: the ratio is derived per job from live θ
-    # so a share is worth 1/S of a block in expectation. The pool-wide share
-    # rate is then simply S / block_time, independent of hashrate (rate =
-    # H·p_share = H·p_block·S = S/T_block), so S bounds the share flood by
-    # construction. At S=64 with ~30s blocks that is ~2 shares/s pool-wide,
-    # each worth ~1/64 of a block reward.
-    # ON by default as of 9.2.0. The first deployment surfaced two money bugs
-    # that exist only once sub-block shares do — miner-supplied d_ratio priced
-    # the credit, and a non-block share had no replay guard because it never
-    # reaches the node — both fixed in 9.1.2, and every remaining confirmed
-    # review finding is fixed in 9.2.0 (deferred instead of destroyed clamped
-    # credit, correct per-share work, honest subblock_sessions, bounded stats
-    # scans, block-submit retry). Kill switch: ANIMICA_POOL_SUBBLOCK_SHARES=0.
-    subblock_shares_enabled: bool = True
-    shares_per_block: int = 64
-    # Hard floor on the derived ratio: a θ shock (or an absurd S) must not be
-    # able to open the floodgates. If the derived ratio would fall below this,
-    # sub-block shares are disabled for that job rather than clamped.
-    subblock_min_ratio: float = 0.5
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -253,10 +213,6 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         overrides.get("require_min_version"),
         _env("ANIMICA_POOL_REQUIRE_MIN_VERSION", "false"),
     )
-    require_inference_serving = _as_bool(
-        overrides.get("require_inference_serving"),
-        _env("ANIMICA_POOL_REQUIRE_INFERENCE_SERVING", "false"),
-    )
     ena_fee_bps = int(
         overrides.get("ena_fee_bps")
         or _env("ANIMICA_POOL_ENA_FEE_BPS", "0")
@@ -297,28 +253,6 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         else _env("ANIMICA_POOL_PPS_BLOCK_RESERVE_BPS", "500") or 500
     )
     pps_block_reserve_bps = min(10_000, max(0, pps_block_reserve_bps))
-    subblock_shares_enabled = _as_bool(
-        overrides.get("subblock_shares_enabled"),
-        _env("ANIMICA_POOL_SUBBLOCK_SHARES", "true"),
-    )
-    shares_per_block = int(
-        overrides.get("shares_per_block")
-        or _env("ANIMICA_POOL_SHARES_PER_BLOCK", "64")
-        or 64
-    )
-    # S must exceed 1 for a sub-block share to mean anything (S=1 is a block),
-    # and is capped so a typo cannot ask for a share rate the pool can't persist.
-    # Capped at 1024: shares/sec = S / block_time, so a large S is a share
-    # flood the pool must persist and credit. At S=1024 with ~85s blocks that is
-    # already ~12 shares/s; the ratio floor alone cannot catch this because
-    # ln(S) grows too slowly (S=100k still yields r>0.55 at live θ).
-    shares_per_block = min(1024, max(2, shares_per_block))
-    subblock_min_ratio = float(
-        overrides.get("subblock_min_ratio")
-        or _env("ANIMICA_POOL_SUBBLOCK_MIN_RATIO", "0.5")
-        or 0.5
-    )
-    subblock_min_ratio = min(1.0, max(0.0, subblock_min_ratio))
 
     if not str(host or "").strip():
         raise ValueError("host must be non-empty")
@@ -404,7 +338,6 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         payout_wallet=payout_wallet,
         min_miner_version=min_miner_version,
         require_min_version=require_min_version,
-        require_inference_serving=require_inference_serving,
         ena_fee_bps=ena_fee_bps,
         ena_treasury_address=ena_treasury_address,
         solo_host=solo_host,
@@ -414,7 +347,4 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         credit_cap_mined_base=credit_cap_mined_base,
         credit_cap_credited_base=credit_cap_credited_base,
         pps_block_reserve_bps=pps_block_reserve_bps,
-        subblock_shares_enabled=subblock_shares_enabled,
-        shares_per_block=shares_per_block,
-        subblock_min_ratio=subblock_min_ratio,
     )

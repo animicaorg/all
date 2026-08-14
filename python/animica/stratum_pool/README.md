@@ -140,49 +140,9 @@ curl -s http://127.0.0.1:8545/rpc -d '{"jsonrpc":"2.0","id":1,"method":"chain.ge
 
 `animica stratum ...` remains supported; `animica pool ...` is the operator alias.
 
-## Sub-block shares (PPS pays non-finders) — 9.1.0
-
-The wire share target is a **ratio of θ**. With the xmrig-compat floor at 1.0 it
-equals θ — the block target — so the only submittable hash is a whole block and
-PPS silently degenerates into "paid only if you find the block". Sub-block
-shares fix that without lowering the floor for everyone, because a sub-1.0 wire
-difficulty puts the xmrig build into a connect→set_difficulty→disconnect loop
-(that mistake cost ~2h of mainnet block production on 2026-07-10).
-
-**How it works.** A miner opts in on `mining.subscribe` with
-`features.subblockShares`. Only those sessions get an easier target; xmrig, ASIC
-dashboards and older miners keep exactly what they get today. The ratio is
-derived per job from live θ so a share is worth `1/S` of a block in
-expectation:
-
-```
-r = 1 - MICRO·ln(S) / θµ
-```
-
-which makes the pool-wide share rate **`S / block_time`** regardless of
-hashrate — that is what bounds the share flood by construction. Solo sessions
-are excluded (solo credit is block-only, so sub-block shares would earn nothing).
-
-| env | default | meaning |
-| --- | --- | --- |
-| `ANIMICA_POOL_SUBBLOCK_SHARES` | `true` | kill switch; `0` restores block-only shares |
-| `ANIMICA_POOL_SHARES_PER_BLOCK` | `64` | S — expected shares per block, pool-wide |
-| `ANIMICA_POOL_SUBBLOCK_MIN_RATIO` | `0.5` | if the derived ratio falls below this, the feature turns **off** for that job rather than flooding |
-| `ANIMICA_MINER_NO_SUBBLOCK` | unset | miner-side opt-out |
-| `ANIMICA_POOL_CREDIT_CAP_CACHE_TTL` | `30` | credit-cap headroom snapshot TTL (exact: spend is tracked locally and a new block invalidates it) |
-
-At live θ≈25.7M and S=64 the ratio is ≈0.838, each share is worth ≈1/64 of a
-block reward, and `/api/pool/summary` reports `subblock_sessions` alongside
-`num_miners`. Raising S increases both payout smoothness and share rate
-linearly — `S=64` with ~30s blocks is ~2 shares/s.
-
 ## Troubleshooting
 
 - `Pool payout address is not configured`: set `ANIMICA_POOL_ADDRESS` or pass `--pool-address`.
-- Miners connect but only ever get credit when they find a block: they are not
-  opted in to sub-block shares (check `subblock_sessions` in the summary and the
-  `subblock=` field in the `[Stratum] subscribe` log line), or θ is too small for
-  the configured `S` so the policy disabled itself for that job.
 - `Template probe failed`: the node RPC is reachable but `miner.getBlockTemplate` is failing or returning malformed data.
 - `managed pool is not running`: start it with `animica pool up --daemon`.
 - `Failed to query pool API`: the pool process is up but the API bind/port is unreachable.

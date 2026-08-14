@@ -29,13 +29,9 @@ from typing import Any, Dict, List, Mapping, Tuple
 # Imported at module top on purpose: if this core module ever failed to import, a
 # node must fail LOUDLY at startup rather than silently skip the split at runtime
 # (which would under-credit the foundation — the exact silent-divergence hazard).
-from core.network_params import (
-    is_fork_active,
-    FORK_FOUNDATION_SPLIT,
-    FORK_SERVICE_CARVE,
-    FORK_TREASURY_25,
-    FORK_VPN_RELAY_REWARDS,
-)
+from core.network_params import (is_fork_active, FORK_FOUNDATION_SPLIT,
+                                 FORK_VPN_RELAY_REWARDS, FORK_TREASURY_25,
+                                 FORK_SERVICE_CARVE)
 
 log = logging.getLogger("consensus.rewards")
 
@@ -88,107 +84,37 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
 # subsidy funds the Animica Foundation treasury from block 42,001 onward.
 FOUNDATION_TREASURY_ADDRESS = "anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga"
 FOUNDATION_TREASURY_SPLIT_PCT = 15
+# FORK_TREASURY_25 (9.7.0): the foundation-treasury share of the per-block
+# subsidy rises to 25% at/after the activation height. Below it the 15% split
+# holds, so history is unchanged.
+TREASURY_SPLIT_PCT_V2 = 25
 
-# FORK_TREASURY_25 (9.4.0): the same subsidy, divided 75/25 instead of 85/15, from
-# mainnet height 70,000. Still emission-conserving — miner == total - treasury every
-# block — and still a code-committed constant, never params/env/wallclock.
-FOUNDATION_TREASURY_SPLIT_PCT_V2 = 25
 
-
-def foundation_split_pct(height: int, *, chain_id: int = 1) -> int:
-    """The treasury share of the subsidy at `height`, as a whole percent.
-
-    A FUNCTION rather than a constant because the share changes at a fork height,
-    and every caller must agree on the value for a given height or the coinbase
-    they compute differs and the chain splits. Its only input is the height, so two
-    honest nodes on the same chain always return the same number.
-
-    Callers must pass the SAME height they use for the halving schedule, so the
-    split and the subsidy are always read at one consistent point in the chain.
-    """
-    if is_fork_active(FORK_TREASURY_25, height, chain_id=chain_id):
-        return FOUNDATION_TREASURY_SPLIT_PCT_V2
+def _treasury_split_pct(height: int, chain_id: int) -> int:
+    """Foundation-treasury share of the subsidy at `height`: 25% once
+    FORK_TREASURY_25 is active on mainnet, else the original 15%."""
+    if chain_id == 1 and is_fork_active(FORK_TREASURY_25, height, chain_id=1):
+        return TREASURY_SPLIT_PCT_V2
     return FOUNDATION_TREASURY_SPLIT_PCT
 
-# ==================================================================================
-# FORK_SERVICE_CARVE (9.5.0) — a fixed slice of the miner subsidy is reserved for
-# service providers, whether or not any provider claims it.
-# ==================================================================================
-# THE PROBLEM THIS SOLVES, and why it is shaped the way it is. The ask was "mining
-# without serving inference should not earn the full block reward". Nothing in a block
-# can prove a miner served: there is no on-chain worker keyring, no job ids, no result
-# hashes, and `header.extra` is miner-authored — so a stub box with no ML stack could
-# sign "I served 100 jobs" and no validator could contradict it. Any rule that PAYS on a
-# self-attestation pays every miner who edits one config value, out of the honest
-# miners' subsidy. That whole class is rejected.
-#
-# What IS consensus-visible is the inverse: the block height, and whether the block
-# carries valid authority-signed settlement anchors (verified from its own tx bytes by
-# consensus/iou_settlement.py). So the chain never measures serving. It simply refuses
-# to hand the service slice to the block producer, and lets anchors decide whether that
-# slice reaches providers or falls to escrow.
-#
-# Before this fork the settlement carve was SELF-GATING: no anchors meant no carve and
-# the miner kept 100%. From H the carve is UNCONDITIONAL and anchors choose only the
-# destination. That one change — subtracting the carve rather than the amount actually
-# paid — is the entire rule.
-#
-# Emission is CONSERVED: miner loses exactly `carve`, and paid + residual == carve, so
-# nothing is minted or burned and MAX_MONEY is untouched. Integer floor, float-free.
-#
-# 25% OF THE WHOLE BLOCK SUBSIDY, and it is measured against the TOTAL, not against the
-# post-treasury remainder. Operator decision. With FORK_TREASURY_25 already taking 25%,
-# the per-block split from H is exactly:
-#
-#     miner 50%  |  foundation treasury 25%  |  inference 25%
-#
-# Getting the BASE wrong is the easy mistake here: 25% of the post-treasury miner slice
-# would be 25% of 75% = 18.75% of the block, not 25%. The carve is therefore computed
-# from (miner + treasury + aicf) — the reconstructed pre-split subsidy — and subtracted
-# from the miner's share.
-SERVICE_CARVE_PCT_V1 = 25
 
-# A DEDICATED escrow address, distinct from the foundation treasury, holding value that is
-# OWED TO PROVIDERS. It is not the destination for every unclaimed slice — see
-# consensus/service_carve.py for the routing, which is two-way by operator decision:
-#
-#   * no inference requests settled in the block -> the whole slice goes to the FOUNDATION
-#     TREASURY ("if there is no inference request at all it goes to the treasury"). Nobody
-#     is owed anything, so it is operator revenue. Combined with the treasury's own separate
-#     25%, the operator receives 50% of such a block — which is every block today.
-#   * settled but not fully claimed -> the remainder is owed to providers and holds HERE.
-#
-# WHY A SEPARATE ADDRESS AT ALL. If both cases paid the treasury, no observer — including
-# the operator — could tell from a balance whether the service slice had ever reached a
-# provider or had merely piled up unclaimed; the two are the same number in the same
-# account. Splitting them makes it continuously auditable with no extra bookkeeping: this
-# balance can only move when inference actually happened.
-#
-# THE HARD REQUIREMENT IS SPENDABILITY. This is not a burn address and must never become
-# one: from the activation height it accrues 25% of every block forever, so an address that
-# does not decode, or whose key nobody holds, destroys that share permanently and silently.
-# The literal below is therefore a real ml_dsa_65 (0x1003) account whose key exists,
-# generated 2026-08-09 and verified before being written here: the 4032-byte secret produces
-# a 3309-byte signature that verifies under the 1952-byte public key, the address derives
-# from that exact public key, and it decodes to 32 non-zero bytes distinct from the
-# treasury's. Do not edit this string by hand — a single altered character yields a
-# well-formed bech32m address that nobody can spend, which is the one failure mode here that
-# cannot be undone after the fact.
-SERVICE_ESCROW_ADDRESS = (
-    "anim1zqpkeju8kw8h708mc0z72kap8vfrhqqez7444yg9v63v8s3shsj0f2s3p6gjp"
-)
+# FORK_SERVICE_CARVE (9.7.0): from the activation height a fixed 25% of every
+# block's subsidy is reserved for inference/service claims, WITHHELD FROM THE
+# MINER whether or not anything claims it. Claimed anchors are paid up to the
+# carve; whatever is unclaimed rolls to the foundation treasury (the operator's
+# rule — no separate escrow account). Combined with FORK_TREASURY_25 at the same
+# height, the split becomes 50% miner / 25% treasury / 25% inference, i.e. up to
+# 50% treasury on a block where nothing is claimed. The carve arithmetic lives in
+# consensus/service_carve.py; this is the height-gated percentage.
+SERVICE_CARVE_PCT_V1 = 25
 
 
 def service_carve_pct(height: int, *, chain_id: int = 1) -> int:
-    """Percent of the TOTAL block subsidy reserved for service, at `height`.
-
-    Zero below the activation height, so history replays byte-identically. A pure
-    function of the height, which is what lets every node agree.
-    """
-    if is_fork_active(FORK_SERVICE_CARVE, int(height), chain_id=int(chain_id)):
+    """Service-carve percentage of the block subsidy at `height`: 25% once
+    FORK_SERVICE_CARVE is active on the network, else 0."""
+    if is_fork_active(FORK_SERVICE_CARVE, height, chain_id=chain_id):
         return SERVICE_CARVE_PCT_V1
     return 0
-
 
 # FORK_VPN_RELAY_REWARDS (8.0.1) — REALIZED in 9.0.0 as on-chain IOU settlement.
 # The per-block settlement pool is capped at 50 ANM and HALVES on the subsidy schedule
@@ -359,11 +285,9 @@ def compute_block_reward(
                 # dust created/destroyed) and is float-free (deterministic).
                 total_subsidy = miner_amount + aicf_amount + treasury_amount
                 aicf_amount = 0
-                # 15% until FORK_TREASURY_25, 25% from it (9.4.0). Read through the
-                # height-gated helper so this site and the capped site below can
-                # never disagree about the share at a given height.
-                _pct = foundation_split_pct(height_for_halving, chain_id=1)
-                treasury_amount = (total_subsidy * _pct) // 100
+                # FORK_TREASURY_25 (9.7.0): 25% at/after H, else the original 15%.
+                treasury_amount = (total_subsidy
+                                   * _treasury_split_pct(height_for_halving, chain_id)) // 100
                 miner_amount = total_subsidy - treasury_amount
                 aicf_params = {}
             else:
@@ -422,8 +346,8 @@ def compute_block_reward(
                     and is_fork_active(FORK_FOUNDATION_SPLIT, height_for_halving, chain_id=1)
                 ):
                     aicf_amount_capped = 0
-                    _pct_capped = foundation_split_pct(height_for_halving, chain_id=1)
-                    treasury_amount_capped = (capped_total * _pct_capped) // 100
+                    treasury_amount_capped = (capped_total
+                                              * _treasury_split_pct(height_for_halving, chain_id)) // 100
                     miner_amount_capped = capped_total - treasury_amount_capped
                 (
                     final_miner,

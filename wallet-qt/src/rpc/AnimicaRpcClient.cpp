@@ -143,6 +143,51 @@ RpcReply* AnimicaRpcClient::getChainParams()
     return call("chain.getParams", QJsonArray());
 }
 
+// ==================== ANM Instant (L2) ====================
+
+RpcReply* AnimicaRpcClient::l2ChainId()
+{
+    return call("l2_chainId", QJsonArray());
+}
+
+RpcReply* AnimicaRpcClient::l2Status()
+{
+    return call("l2_status", QJsonArray());
+}
+
+RpcReply* AnimicaRpcClient::l2GetBalance(const QString& address)
+{
+    QJsonObject params;
+    params["address"] = address;
+    return call("l2_getBalance", params);
+}
+
+RpcReply* AnimicaRpcClient::l2PrepareTransfer(const QJsonObject& intent)
+{
+    return call("l2_prepareTransfer", intent);
+}
+
+RpcReply* AnimicaRpcClient::l2SubmitSigned(const QString& bodyHex, const QString& pubkeyHex, const QString& signatureHex)
+{
+    QJsonObject params;
+    params["body"] = bodyHex;
+    params["pubkey"] = pubkeyHex;
+    params["signature"] = signatureHex;
+    return call("l2_submitSigned", params);
+}
+
+RpcReply* AnimicaRpcClient::l2GetTransaction(const QString& txid)
+{
+    QJsonObject params;
+    params["txid"] = txid;
+    return call("l2_getTransaction", params);
+}
+
+RpcReply* AnimicaRpcClient::l2GetTPS()
+{
+    return call("l2_getTPS", QJsonArray());
+}
+
 // ==================== Private Methods ====================
 
 RpcReply* AnimicaRpcClient::call(const QString& method)
@@ -303,6 +348,79 @@ QJsonObject AnimicaRpcClient::getTransactionStatusByHash(const QString& txHash)
             }
             return normalized;
         }
+    }
+    return QJsonObject();
+}
+
+// ==================== ANM Instant (L2) — synchronous wrappers ====================
+
+qint64 AnimicaRpcClient::l2ChainIdSync()
+{
+    QJsonValue result = rpcCallSync("l2_chainId", QJsonArray());
+    if (result.isDouble() || result.isString()) {
+        return result.toVariant().toLongLong();
+    }
+    return -1;
+}
+
+QJsonObject AnimicaRpcClient::l2StatusJson()
+{
+    QJsonValue result = rpcCallSync("l2_status", QJsonArray());
+    if (result.isObject()) {
+        return result.toObject();
+    }
+    return QJsonObject();
+}
+
+QJsonObject AnimicaRpcClient::l2GetBalanceJson(const QString& address)
+{
+    QJsonObject params;
+    params["address"] = address;
+    QJsonValue result = rpcCallSync("l2_getBalance", params);
+    if (result.isObject()) {
+        return result.toObject();
+    }
+    return QJsonObject();
+}
+
+QJsonObject AnimicaRpcClient::l2PrepareTransferJson(const QJsonObject& intent)
+{
+    QJsonValue result = rpcCallSync("l2_prepareTransfer", intent);
+    if (result.isObject()) {
+        return result.toObject();
+    }
+    return QJsonObject();
+}
+
+QString AnimicaRpcClient::l2SubmitSignedSync(const QString& bodyHex, const QString& pubkeyHex, const QString& signatureHex)
+{
+    QJsonObject params;
+    params["body"] = bodyHex;
+    params["pubkey"] = pubkeyHex;
+    params["signature"] = signatureHex;
+    QJsonValue result = rpcCallSync("l2_submitSigned", params);
+    if (result.isString()) {
+        return result.toString();
+    }
+    return QString();
+}
+
+QJsonObject AnimicaRpcClient::l2GetTransactionJson(const QString& txid)
+{
+    QJsonObject params;
+    params["txid"] = txid;
+    QJsonValue result = rpcCallSync("l2_getTransaction", params);
+    if (result.isObject()) {
+        return result.toObject();
+    }
+    return QJsonObject();
+}
+
+QJsonObject AnimicaRpcClient::l2GetTPSJson()
+{
+    QJsonValue result = rpcCallSync("l2_getTPS", QJsonArray());
+    if (result.isObject()) {
+        return result.toObject();
     }
     return QJsonObject();
 }

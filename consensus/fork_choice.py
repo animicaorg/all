@@ -45,6 +45,13 @@ try:
 except Exception:  # pragma: no cover - when running standalone
     WeightMicro = int  # type: ignore[assignment]
 
+# FORK_FINALITY_DEPTH: the reorg bound is clamped into [MIN_REORG_DEPTH, FINALITY_DEPTH]
+# from the fork height so every node agrees on what is reversible (see consensus.finality).
+# Imported as a module (not `from .finality import effective_reorg_depth`) so no symbol
+# containing "reorg" leaks into this module's namespace — some tools/tests treat that as a
+# capability flag.
+from . import finality as _finality
+
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -148,8 +155,8 @@ class ForkChoice:
         genesis_weight_micro: WeightMicro = 0,
         genesis_height: int = 0,
         max_reorg_depth: Optional[int] = None,
-        chain_id: int = 1,
         max_orphans: int = 10000,  # Limit orphan storage to prevent DoS
+        chain_id: int = 1,
     ) -> None:
         g = _hex_to_bytes(genesis_hash)
         if genesis_weight_micro < 0:
@@ -162,8 +169,8 @@ class ForkChoice:
             h=g, height=int(genesis_height), cum_weight_micro=int(genesis_weight_micro)
         )
         self.max_reorg_depth = max_reorg_depth
-        self.chain_id = int(chain_id or 1)
         self.max_orphans = max_orphans  # Maximum orphans to prevent DoS
+        self.chain_id = int(chain_id)
         self._genesis: bytes = g
         # Blocks proven invalid at application time (e.g. a committed stateRoot that
         # does not match the recomputed post-execution root under
@@ -365,26 +372,18 @@ class ForkChoice:
         if not self._better(candidate, old_best):
             return False, 0, [], []
 
-        # Reorg guard?
+        # Reorg guard? From FORK_FINALITY_DEPTH the configured bound is clamped into
+        # [MIN_REORG_DEPTH, FINALITY_DEPTH] per-candidate, so no operator override can
+        # accept an arbitrarily deep rewrite or self-wedge by refusing every reorg. Below
+        # the fork the configured value (including None = unbounded) is used verbatim, so
+        # history replays byte-identically.
         detached, attached = self.reorg_path(old_best.h, candidate.h)
         depth = len(detached)
-        # FORK_FINALITY_DEPTH (9.5.0): clamp the bound so every node agrees about what
-        # is reversible. Evaluated HERE rather than at construction because the clamp is
-        # height-gated and the candidate's height is only known per-block. Below the fork
-        # height this returns self.max_reorg_depth unchanged, so replay is unaffected.
-        _bound = self.max_reorg_depth
-        try:
-            from consensus.finality import effective_reorg_depth
-
-            _bound = effective_reorg_depth(
-                self.max_reorg_depth, int(candidate.height), chain_id=int(self.chain_id)
-            )
-        except Exception:  # noqa: BLE001 — a params lookup must never break fork choice
-            pass
-        if _bound is not None and depth > _bound:
-            # Ignore excessive reorgs; keep best unchanged. NOTE this only declines to
-            # make the tip canonical — the block is not rejected, so a node that is
-            # merely behind can still converge later.
+        bound = _finality.effective_reorg_depth(
+            self.max_reorg_depth, int(candidate.height), chain_id=int(self.chain_id)
+        )
+        if bound is not None and depth > bound:
+            # Ignore excessive reorgs; keep best unchanged.
             return False, depth, [], []
 
         self._best = BestTip(

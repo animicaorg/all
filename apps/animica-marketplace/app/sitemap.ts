@@ -11,11 +11,6 @@ const BASE = process.env.PUBLIC_BASE_URL || 'https://animica.dev';
 
 const STATIC_ROUTES: Array<{ path: string; priority: number; changeFrequency: MetadataRoute.Sitemap[number]['changeFrequency'] }> = [
   { path: '/', priority: 1, changeFrequency: 'daily' },
-  // /cli is the free product that acquires everyone else, and it was missing from
-  // this list entirely — it had no URL at all until 2026-08-08. It is a static page
-  // (/var/www/animica.dev/cli/index.html) served by nginx, not a Next route, which is
-  // exactly why it has to be named here by hand.
-  { path: '/cli', priority: 0.9, changeFrequency: 'weekly' },
   { path: '/apps', priority: 0.9, changeFrequency: 'hourly' },
   { path: '/functions', priority: 0.8, changeFrequency: 'hourly' },
   { path: '/developers', priority: 0.7, changeFrequency: 'daily' },

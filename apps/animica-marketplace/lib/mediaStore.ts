@@ -10,10 +10,16 @@ import { join, resolve } from 'node:path';
 // The DB (MediaUpload / MediaJob.resultPath) is the source of truth for lifecycle; the
 // sweep unlinks files when their row is wiped. Nothing here trusts client sizes: the
 // caller passes maxBytes and the stream is aborted the moment it is exceeded.
+//
+// App store (10.x) — 'builds' is the DURABLE third subdir: published APK releases
+// (AppBuild.path). Builds are sweep-EXEMPT: no TTL, never wiped by mediaQueue.sweep()
+// or any lazy maintenance here — their lifecycle is owned by the AppBuild row
+// (lib/appStore.ts deletes the file only when the build row itself is deleted).
+// Only aborted temp files (.part-* / incoming-*) are ever cleaned out of builds/.
 
 const STORE_DIR = process.env.MEDIA_STORE_DIR || join(process.cwd(), 'var', 'media-store');
 
-export function storeDir(sub: 'uploads' | 'artifacts'): string {
+export function storeDir(sub: 'uploads' | 'artifacts' | 'builds'): string {
   return join(STORE_DIR, sub);
 }
 
@@ -23,6 +29,11 @@ export function uploadPath(id: string): string {
 
 export function artifactPath(jobId: string): string {
   return join(storeDir('artifacts'), jobId);
+}
+
+// Durable APK store path for an AppBuild row (sweep-exempt — see header note).
+export function buildPath(buildId: string): string {
+  return join(storeDir('builds'), buildId);
 }
 
 // Refuse ids that could escape the store dir (ids are cuids, but never trust input).
@@ -96,15 +107,18 @@ export async function freeDiskBytes(): Promise<number> {
 }
 
 // Remove abandoned .part temp files (aborted uploads/results) older than maxAgeMs.
+// builds/ is included ONLY for its temp names (.part-* mid-stream files and incoming-*
+// staged uploads that never reached registerBuild) — completed builds live under their
+// AppBuild id, never match either pattern, and are NEVER touched here (sweep-exempt).
 export async function sweepPartFiles(maxAgeMs = 3600_000): Promise<number> {
   const { readdir } = await import('node:fs/promises');
   let removed = 0;
-  for (const sub of ['uploads', 'artifacts'] as const) {
+  for (const sub of ['uploads', 'artifacts', 'builds'] as const) {
     const dir = storeDir(sub);
     let names: string[] = [];
     try { names = await readdir(dir); } catch { continue; }
     for (const n of names) {
-      if (!n.includes('.part-')) continue;
+      if (!(n.includes('.part-') || (sub === 'builds' && n.startsWith('incoming-')))) continue;
       const p = join(dir, n);
       try {
         const st = await stat(p);
@@ -121,9 +135,16 @@ export async function removeFile(path: string | null | undefined): Promise<void>
 }
 
 // Stream a stored file as a web Response (artifact download / miner input fetch).
-export function fileResponse(path: string, opts: { mime: string; bytes?: number | null; filename?: string }): Response {
+// Pass `range` (inclusive byte offsets, pre-validated against `bytes`) for a 206 partial
+// response — the store download route uses this for resumable APK downloads.
+export function fileResponse(
+  path: string,
+  opts: { mime: string; bytes?: number | null; filename?: string; range?: { start: number; end: number } | null },
+): Response {
   const abs = safeStorePath(path);
-  const nodeStream = createReadStream(abs);
+  const range = opts.range ?? null;
+  if (range && opts.bytes == null) throw new Error('fileResponse: range requires total bytes');
+  const nodeStream = createReadStream(abs, range ? { start: range.start, end: range.end } : undefined);
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       nodeStream.on('data', (chunk: string | Buffer) => {
@@ -140,8 +161,14 @@ export function fileResponse(path: string, opts: { mime: string; bytes?: number 
   const headers: Record<string, string> = {
     'Content-Type': opts.mime || 'application/octet-stream',
     'Cache-Control': 'no-store',
+    'Accept-Ranges': 'bytes',
   };
-  if (opts.bytes != null) headers['Content-Length'] = String(opts.bytes);
+  if (range) {
+    headers['Content-Range'] = `bytes ${range.start}-${range.end}/${opts.bytes}`;
+    headers['Content-Length'] = String(range.end - range.start + 1);
+  } else if (opts.bytes != null) {
+    headers['Content-Length'] = String(opts.bytes);
+  }
   if (opts.filename) headers['Content-Disposition'] = `attachment; filename="${opts.filename.replace(/[^\w.\-]+/g, '_')}"`;
-  return new Response(stream, { status: 200, headers });
+  return new Response(stream, { status: range ? 206 : 200, headers });
 }

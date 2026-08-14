@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type {
   ProviderAdapter, InferenceRequest, ProviderHealthResult,
-  ProviderCostEstimate, ProviderInferenceResult, ProviderEmbeddingResult,
+  ProviderCostEstimate, ProviderInferenceResult,
 } from "@animica/shared";
 import { estimateTokens, requestInputText } from "@animica/provider-router";
 import type { PrismaService } from "../prisma/prisma.service";
@@ -75,47 +75,5 @@ export class AnimicaWorkerAdapter implements ProviderAdapter {
     // Timed out — release the job so it isn't stuck claimed, then fall back.
     await this.prisma.workerJob.updateMany({ where: { id: job.id, status: { in: ["queued", "claimed"] } }, data: { status: "failed", errorMessage: "timed out waiting for worker" } });
     throw new Error("no worker completed the job in time");
-  }
-
-  async runEmbedding(req: InferenceRequest): Promise<ProviderEmbeddingResult> {
-    const start = Date.now();
-    const inputs = Array.isArray(req.input) ? req.input : [req.input ?? ""];
-    const inTokEst = inputs.reduce((s, t) => s + estimateTokens(String(t)), 0);
-    const job = await this.prisma.workerJob.create({
-      data: {
-        kind: "embedding", status: "queued", model: req.model,
-        payload: { input: req.input } as object,
-        rewardUsd: new Prisma.Decimal(workerCost(inTokEst, 0)),
-      },
-    });
-
-    // Await a worker to claim + complete the job; the worker JSON-encodes the
-    // embedding vector(s) into resultText.
-    const deadline = Date.now() + this.timeoutMs;
-    while (Date.now() < deadline) {
-      await sleep(POLL_MS);
-      const cur = await this.prisma.workerJob.findUnique({ where: { id: job.id } });
-      if (!cur) break;
-      if (cur.status === "completed") {
-        let embeddings: number[][];
-        try {
-          embeddings = JSON.parse(cur.resultText ?? "[]");
-        } catch {
-          throw new Error("worker returned unparseable embeddings");
-        }
-        if (!Array.isArray(embeddings) || embeddings.length === 0 || !Array.isArray(embeddings[0])) {
-          throw new Error("worker returned malformed embeddings");
-        }
-        const inTok = cur.inputTokens || inTokEst;
-        return {
-          provider: this.name, model: req.model, requestId: req.requestId, status: "success",
-          inputTokens: inTok, providerCostUsd: workerCost(inTok, 0),
-          latencyMs: Date.now() - start, embeddings,
-        };
-      }
-      if (cur.status === "failed") throw new Error(cur.errorMessage || "worker embedding job failed");
-    }
-    await this.prisma.workerJob.updateMany({ where: { id: job.id, status: { in: ["queued", "claimed"] } }, data: { status: "failed", errorMessage: "timed out waiting for worker" } });
-    throw new Error("no worker completed the embedding job in time");
   }
 }

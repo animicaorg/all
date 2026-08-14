@@ -11,9 +11,6 @@ export const metadata: Metadata = {
     'Order professionally managed Animica deployments with recurring monthly billing: dedicated mining pools, RPC endpoints / full nodes, managed websites and custom infrastructure — deployed, monitored and maintained for you.',
   alternates: { canonical: 'https://animica.dev/hire' },
   openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
     title: 'Hire Me — Managed Animica Infrastructure',
     description: 'Professionally managed deployments with ongoing support and monthly billing.',
     url: 'https://animica.dev/hire',

@@ -1,0 +1,12 @@
+# TEMPLATE ONLY — install per the .service header; not enabled by the repo change.
+[Unit]
+Description=Run the Animica store license anchorer every 10 min (design cadence: 10 min or 500 licenses per batch)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

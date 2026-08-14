@@ -1,16 +1,3 @@
-      msgHtml =
-        "<strong style='color:#FFC24B'>Block 70,000 has passed. Now upgrade before 75,000.</strong> "
-        + "animica <strong style='color:#fff'>9.5.1</strong> reserves "
-        + "<strong style='color:#fff'>25% of every block for inference payments</strong>, paid out in "
-        + "full each block and falling to the treasury when nothing is claimed. From 75,000 the split "
-        + "is <strong style='color:#fff'>50% miner / 25% treasury / 25% inference</strong>. Total "
-        + "emission and the halving schedule are <strong style='color:#fff'>unchanged</strong>."
-        + " <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span>"
-        + " then confirm <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">animica --version</span>"
-        + " reports <strong style='color:#fff'>9.5.1</strong>." + count
-        + " A node left on 9.4.x will <strong style='color:#fff'>not fork or error</strong> — it accepts "
-        + "the same blocks and reports <strong style='color:#fff'>WRONG BALANCES, silently</strong>. "
-        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
 /*
  * Animica network-upgrade notice bar.
  * Central, self-contained, cross-origin-includable. One
@@ -34,7 +21,29 @@
  *   retired 50,000 IOU copy while the new text sat in the post-activation branch
  *   nobody would see until it was already too late. Check which branch renders at
  *   the current height before shipping banner copy.
- * Current release: animica 9.4.0 — MANDATORY CONSENSUS UPGRADE at block 70,000.
+ * Current release: animica 9.7.0. CONSENSUS FLOOR IS 9.7.0 — VERSION and CONSENSUS_MIN
+ *   are the same number here because 9.7.0 is the release that WIRED the 75,000 forks.
+ *   They were defined-but-dead in network_params before it (the node computed the old
+ *   split and reverted the new rules), so every earlier node is non-compliant at 75,000.
+ * ONE MANDATORY CONSENSUS HEIGHT, 75,000. FORK_TREASURY_25 was once slated for 70,000 but
+ *   the reward code never read the flag there, so nothing activated and no realized history
+ *   changed; 9.7.0 moves it to 75,000 so the whole reward-split change lands in one step.
+ *   75,000 — the split becomes 50% miner / 25% treasury / 25% inference:
+ *     FORK_TREASURY_25 raises the treasury 15% -> 25%, and FORK_SERVICE_CARVE reserves
+ *     25% of every block for inference, WITHHELD FROM THE MINER whether or not anything
+ *     claims it (miner 85% -> 50%). Unclaimed inference rolls to the foundation treasury
+ *     (escrow == treasury in the wiring), so a no-claim block is 50/50 and any unclaimed
+ *     remainder on a partly-claimed block also goes to the treasury.
+ *     Also at 75,000: on-chain contract execution (FORK_VM_EXEC — the token launcher +
+ *     DEX), value-carrying CALL, bounded difficulty retarget, uniform reorg bound, and
+ *     quantum-beacon binding (optional/dormant by design). All were unwired before 9.7.0.
+ *   COUNTDOWN: mount() counts to the NEXT pending height, not always DEADLINE — a
+ *     countdown to 75,000 while 70,000 is still ahead understates urgency by ~2,000 blocks.
+ *   BANNER SELF-CHECK: this file once carried a stray copy fragment ABOVE the IIFE that
+ *     referenced `count`, so the whole script threw ReferenceError on load and NO banner
+ *     rendered on any site for a while. `node --check` passes on that file — it is
+ *     syntactically fine. Always EXECUTE it against a fake DOM before shipping.
+ * Superseded headline: animica 9.4.0 — MANDATORY CONSENSUS UPGRADE at block 70,000.
  *   FORK_TREASURY_25: the foundation-treasury share of every block subsidy goes from
  *   15% to 25% (miner 85% -> 75%). The subsidy TOTAL and the halving schedule are
  *   unchanged, so emission and MAX_MONEY are untouched — only the division changes.
@@ -90,12 +99,25 @@
   if (window.__anmUpgradeBanner) return;                 // idempotent
   window.__anmUpgradeBanner = true;
 
-  var DEADLINE = 75000;                                   // FORK_TREASURY_25 (9.4.0) — MANDATORY
-  var VERSION = "9.5.1";
+  // ONE mandatory height now. FORK_TREASURY_25 was originally scheduled for 70,000 but
+  // the reward code never read the flag there, so nothing activated at 70,000 and no
+  // realized history changed; 9.7.0 moves it to 75,000 so the WHOLE reward-split change
+  // lands in one coordinated step alongside the other 9.5.x/9.6.0 forks. DEADLINE_FIRST
+  // is kept equal to DEADLINE so the single-height copy renders for every reader.
+  var DEADLINE = 75000;                                   // all forks activate here — MANDATORY
+  var DEADLINE_FIRST = DEADLINE;
+  var VERSION = "10.0.0";
+  // The lowest release that computes post-75,000 state correctly. 9.7.0 is the floor:
+  // block 75,000 activates the treasury 15%->25% raise AND the 25% inference carve
+  // (emission split), value-carrying CALL and on-chain contract execution (state), and
+  // the bounded difficulty retarget (theta). All were defined-but-unwired before 9.7.0,
+  // so a node below it computes the OLD 85/15 split and a divergent state root the moment
+  // the fork height passes. 9.7.0 supersedes the 9.6.0 VM floor and carries it.
+  var CONSENSUS_MIN = "9.7.1";
   var NOTICE = "https://animica.dev/upgrade/";            // a consensus deadline: the guide is the action
   var GUIDE = "https://animica.dev/upgrade/";             // still the right link for node operators
   var HEIGHT_URL = "https://animica.dev/net-height";
-  var KEY = "anmUpgrade-951";                             // re-show: 9.4.0 MANDATORY consensus upgrade
+  var KEY = "anmUpgrade-971";                             // re-show: 9.7.1 canonical consensus (supersedes 9.7.0; all forks @ 75,000)
   // Fail-safe retirement: if live height is never readable (cross-origin/CORS/network),
   // still stop showing a pre-activation notice after this date. Height stays the
   // authoritative deadline; this only ever HIDES the bar, so it can't misfire in the
@@ -133,7 +155,7 @@
     window.removeEventListener("resize", onResize);
   }
 
-  function mount(blocksLeft, postActivation) {
+  function mount(blocksLeft, postActivation, nextHeight) {
     if (document.getElementById("anm-upgrade-bar")) return;
 
     bar = el("div", [
@@ -167,31 +189,41 @@
     if (postActivation) {
       msgHtml =
         "<strong style='color:#FFC24B'>Block 75,000 has passed.</strong> "
-        + "The split is now <strong style='color:#fff'>75% miner / 25% foundation</strong>. "
-        + "A node still below <strong style='color:#fff'>9.5.1</strong> computes the OLD split. It will "
+        + "The split is now <strong style='color:#fff'>50% miner / 25% treasury / 25% inference</strong>. "
+        + "A node still below <strong style='color:#fff'>" + CONSENSUS_MIN + "</strong> computes the OLD split. It will "
         + "<strong style='color:#fff'>not fork, stall or show an error</strong> &mdash; coinbase amounts "
         + "are not validated against the schedule, so it accepts the same blocks and simply reports "
         + "<strong style='color:#fff'>WRONG BALANCES, silently and permanently</strong>. Exchanges and "
         + "explorers especially: there is no symptom to wait for. "
         + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span> "
         + "and restart to rejoin. Balances read from an un-upgraded node are wrong. "
-        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
+        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span> <span style='color:#8FB8FF'>New in 10.0.0: <strong style=\'color:#fff\'>ANM Instant</strong> \u2014 an ANM-native L2 for near-instant payments (additive &amp; opt-in). Update your wallet to try it.</span>";
     } else {
+      // ONE mandatory height (75,000) now — see the DEADLINE note above. Every fork,
+      // including the treasury raise once slated for 70,000, activates here in one step.
+      var head = "Mandatory consensus upgrade at block 75,000.";
       msgHtml =
-        "<strong style='color:#FFC24B'>Upgrade before block 70,000.</strong> "
-        + "animica <strong style='color:#fff'>9.4.0</strong> moves the foundation-treasury "
-        + "share of each block subsidy from <strong style='color:#fff'>15% to 25%</strong> "
-        + "(miner 85% &rarr; 75%). Total emission and the halving schedule are "
+        "<strong style='color:#FFC24B'>" + head + "</strong> "
+        + "animica <strong style='color:#fff'>" + VERSION + "</strong> carries it. At 75,000 the "
+        + "foundation-treasury share goes from <strong style='color:#fff'>15% to 25%</strong> and the block "
+        + "also reserves <strong style='color:#fff'>25% of every block for inference payments</strong>, "
+        + "withheld from the miner whether or not anything claims it &mdash; so the split becomes "
+        + "<strong style='color:#fff'>50% miner / 25% treasury / 25% inference</strong> (miners go from "
+        + "85% to 50%). On a block where nothing claims the inference slice it goes to the treasury, so the "
+        + "treasury receives 50% of that block. The same height also turns on on-chain contract execution "
+        + "(the token launcher + DEX), value-carrying CALL, a bounded difficulty retarget and a uniform "
+        + "reorg bound. Total emission and the halving schedule are "
         + "<strong style='color:#fff'>unchanged</strong> &mdash; only the split. "
         + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span> "
-        + "on every <strong style='color:#fff'>full node, pool and exchange</strong>: a node "
-        + "still on 9.3.x computes the old split and "
-        + "<strong style='color:#fff'>diverges from the network</strong> at 70,000." + count
+        + "on every <strong style='color:#fff'>full node, pool and exchange</strong>." + count
         + " Then CHECK IT TOOK: "
         + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">animica --version</span>"
-        + " must report <strong style='color:#fff'>9.4.0</strong> or later &mdash; if it does not, the "
+        + " must report <strong style='color:#fff'>" + CONSENSUS_MIN + "</strong> or later &mdash; if it does not, the "
         + "release has not reached your index yet and you are NOT upgraded. "
-        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
+        + "A node left below it will <strong style='color:#fff'>not fork, stall or error</strong> &mdash; "
+        + "coinbase amounts are not validated against the schedule, so it accepts the same blocks and "
+        + "reports <strong style='color:#fff'>WRONG BALANCES, silently and permanently</strong>. "
+        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span> <span style='color:#8FB8FF'>New in 10.0.0: <strong style=\'color:#fff\'>ANM Instant</strong> \u2014 an ANM-native L2 for near-instant payments (additive &amp; opt-in). Update your wallet to try it.</span>";
     }
     var msg = el("div", "flex:1 1 320px;font-size:14px;line-height:1.45", msgHtml);
 
@@ -230,8 +262,13 @@
       ready(function () { mount(null, true); });
       return;
     }
-    var left = (typeof height === "number" && height < DEADLINE) ? (DEADLINE - height) : null;
-    ready(function () { mount(left, false); });
+    // Count down to the NEXT pending activation, not always the last one. There are two
+    // mandatory heights in this campaign (70,000 and 75,000) and a countdown to 75,000
+    // while 70,000 is still ahead understates the urgency by ~2,000 blocks. Whichever is
+    // still in front is the one an operator has to act on.
+    var next = (typeof height === "number" && height < DEADLINE_FIRST) ? DEADLINE_FIRST : DEADLINE;
+    var left = (typeof height === "number" && height < next) ? (next - height) : null;
+    ready(function () { mount(left, false, next); });
   }
 
   // Try live height (CORS-enabled JSON {height:N}); render statically if it fails.

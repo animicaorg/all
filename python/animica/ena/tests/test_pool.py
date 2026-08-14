@@ -15,7 +15,6 @@ import pytest
 from animica.ena import ENA
 from animica.ena import payments
 from animica.ena import pool as poolmod
-from animica.ena.errors import PoolError
 from animica.ena.config import load_config
 from animica.ena.errors import PoolError
 
@@ -165,32 +164,22 @@ def test_submit_aggregate_promote_and_payout(funded_ena, tmp_path, monkeypatch):
     assert pytest.approx(sum(ck["weights"].values()), abs=1e-6) == 1.0
     assert e.pool.get(pid)["served_checkpoint"]["checkpoint_hash"] == ck["checkpoint_hash"]
 
-    # --- rewards: 10 ANM per BLOCK to trainers and servers by weight ---------
-    # The funder-budget payout is gone (it handed the whole pot to one round), so this
-    # asserts the emission contract instead: the first accrue only sets the watermark,
-    # then each block emits exactly 10 ANM split by weight. Funders earn no emission.
-    first = e.pool.accrue(pid, height=1000)
-    assert first["reason"] == "watermark_initialised"
-    assert first["paid_nano"] == 0, "a first call must never pay retroactively"
-
-    out = e.pool.accrue(pid, height=1001)          # exactly one block
-    assert out["blocks"] == 1
-    assert out["paid_nano"] == 10_000_000_000, "emission must be exactly 10 ANM/block"
+    # --- payout round 1: split 10 ANM by 2000/6000/2000 bps, then by weight ---
+    out = e.pool.payout(pid, round=1)
     by_role = {}
     for ent in out["entries"]:
         by_role.setdefault(ent["role"], {})[ent["address"]] = ent["nano"]
-    assert "funder" not in by_role, "funders do not earn block emission"
-    # No server has contributed, so the server share goes to trainers: the whole
-    # 10 ANM splits 3:1 on work weight (samples 30 vs 10).
-    assert by_role["trainer"]["anim1trainerA"] == 7_500_000_000
-    assert by_role["trainer"]["anim1trainerB"] == 2_500_000_000
-    # Same height again: no new blocks, nothing paid.
-    assert e.pool.accrue(pid, height=1001)["reason"] == "no_new_blocks"
-    # Height going backwards (reorg) must never pay.
-    assert e.pool.accrue(pid, height=999)["reason"] == "no_new_blocks"
-    # payout() is removed and says where to go.
-    with pytest.raises(PoolError, match="has been removed"):
-        e.pool.payout(pid, round=1)
+    # funders share = 20% of 10 ANM = 2 ANM, split 6:4 by contribution.
+    assert by_role["funder"]["anim1alice"] == 1_200_000_000
+    assert by_role["funder"]["anim1bob"] == 800_000_000
+    # trainers share = 60% = 6 ANM, split 3:1 by work weight (samples 30 vs 10).
+    assert by_role["trainer"]["anim1trainerA"] == 4_500_000_000
+    assert by_role["trainer"]["anim1trainerB"] == 1_500_000_000
+    # servers (none yet) → their 20% stays in the budget for later rounds.
+    assert out["paid_nano"] == 8_000_000_000
+    assert e.pool.get(pid)["budget_nano"] == 2_000_000_000
+    # paying out again finds nothing unpaid.
+    assert e.pool.payout(pid, round=1)["reason"] == "nothing_to_pay"
 
 
 def test_eval_gate_blocks_then_promotes(ena, tmp_path):

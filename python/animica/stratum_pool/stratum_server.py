@@ -38,17 +38,15 @@ class PoolShareValidator:
         *,
         pool_mode: str = "pps",
         logger: Optional[logging.Logger] = None,
-        is_rejected: Optional[Callable[[str], Optional[str]]] = None,
+        is_rejected: Optional[Callable[[str], bool]] = None,
     ) -> None:
         self._adapter = adapter
         self._pool_mode = str(pool_mode or "pps").strip().lower()
         if self._pool_mode not in {"pps", "solo", "both"}:
             self._pool_mode = "pps"
         self._log = logger or logging.getLogger("animica.stratum_pool.validator")
-        # Returns a REASON string for an address the pool has rejected, or None when
-        # it may mine. A bare boolean forced one message for every policy, so a miner
-        # rejected for serving no inference was told to update its version.
-        self._rejection_reason = is_rejected or (lambda _addr: None)
+        # Returns True for addresses the pool has rejected on version policy.
+        self._is_rejected = is_rejected or (lambda _addr: False)
 
     async def validate(self, job: StratumJob, submit_params):
         address = str(submit_params.get("_address") or "").strip()
@@ -56,9 +54,8 @@ class PoolShareValidator:
             return False, "missing miner payout address", False, 0
         if not address.startswith("anim1"):
             return False, "invalid miner payout address", False, 0
-        rejected = self._rejection_reason(address)
-        if rejected:
-            return False, str(rejected), False, 0
+        if self._is_rejected(address):
+            return False, "miner version too old — update required", False, 0
         raw_template = job.raw if isinstance(job.raw, dict) else {}
         source_job_id = str(raw_template.get("_sourceJobId") or job.job_id)
         if raw_template.get("_sourceJobId") != source_job_id:
@@ -114,17 +111,11 @@ class StratumPoolServer:
         # Populated at authorize time; consulted by the share validator so old
         # miners earn nothing until they update. Reversible via config.
         self._version_rejected: set[str] = set()
-        # Addresses rejected by the pool-level inference-serving policy. Same
-        # lifecycle as _version_rejected: set at authorize time, consulted by the
-        # share validator, cleared the moment the miner advertises a tier.
-        self._serving_rejected: set[str] = set()
-        # address -> (has_served, monotonic_ts); 5-minute TTL.
-        self._served_cache: dict[str, tuple[bool, float]] = {}
         self._validator = PoolShareValidator(
             adapter,
             pool_mode=config.pool_mode,
             logger=logger,
-            is_rejected=self._is_rejected,
+            is_rejected=self._is_version_rejected,
         )
         self._last_published_job_id: Optional[str] = None
         self._last_published_fingerprint: Optional[str] = None
@@ -164,10 +155,6 @@ class StratumPoolServer:
             # re-applies the wire-difficulty floor before every emission.
             session_vardiff_enabled=False,
         )
-        # Hand the server the sub-block ratio policy. It applies ONLY to
-        # sessions that advertised support on mining.subscribe, so xmrig/ASIC/
-        # older clients keep the floored block-target share they get today.
-        self._server.set_subblock_ratio_policy(self.subblock_ratio_for_theta)
         # XMR (Monero RandomX) dual-mining infrastructure. Initialised
         # lazily in start() once the pool config has been validated.
         # See python/animica/stratum_pool/xmr.py for the components.
@@ -190,20 +177,6 @@ class StratumPoolServer:
 
     def _is_version_rejected(self, address: str) -> bool:
         return str(address or "") in self._version_rejected
-
-    def _is_rejected(self, address: str) -> Optional[str]:
-        """Why this address may not mine here, or None if it may.
-
-        Returns the REASON so the miner is told the truth: being rejected for
-        serving no inference used to surface as "miner version too old".
-        """
-        a = str(address or "")
-        if a in self._version_rejected:
-            return "miner version too old — update required"
-        if a in self._serving_rejected:
-            return ("this pool requires inference serving — install torch+transformers "
-                    "so the miner advertises an AICF tier")
-        return None
 
     def _enforce_version(self, session: object, features: dict) -> bool:
         """Apply the pool-level miner-version policy at authorize time.
@@ -234,83 +207,6 @@ class StratumPoolServer:
             address or "?", verdict["reported"], verdict["minimum"])
         return False
 
-    async def _enforce_inference_serving(self, session: object, features: dict) -> bool:
-        """Apply the pool-level inference-serving requirement at authorize time.
-
-        The complaint this answers: a PoW miner can earn here while serving no
-        inference. It can, because mining and serving are separate subsystems — the
-        miner advertises serving as an extra capability (`features.aicf.tiers`) and
-        only does so when `transformers`+`torch` are importable, otherwise it
-        deliberately advertises nothing rather than serve echo stubs.
-
-        ADVERTISED TIERS ARE NOT THE TRUTH ABOUT WHO SERVES. Measured on the live
-        registry: the worker with 952 completed jobs advertises `tiers=[]`, because a
-        claim carries the tier from the CALLER's request, not from what the worker
-        announced on subscribe. Gating on the advertisement alone would have banned
-        one of the network's most productive servers. So a miner is admitted when it
-        either advertises a tier OR the node's registry shows it has actually
-        completed jobs — demonstrated service always beats a missing announcement.
-
-        POLICY, NOT CONSENSUS, and it cannot be otherwise: the registry is a
-        node-local SQLite file absent from execution/, core/ and consensus/, so no
-        reward or validity rule can read it without honest nodes disagreeing about
-        the same block. A pool can refuse to pay; a chain cannot verify.
-
-        Returns True when the miner may continue.
-        """
-        if not bool(getattr(self._config, "require_inference_serving", False)):
-            return True
-        address = str(getattr(session, "address", None)
-                      or getattr(session, "worker", None) or "")
-        aicf = (features or {}).get("aicf") or {}
-        tiers = aicf.get("tiers") if isinstance(aicf, dict) else None
-        if isinstance(tiers, list) and [t for t in tiers if str(t).strip()]:
-            if address:
-                self._serving_rejected.discard(address)
-            return True
-        # No advertisement. Before refusing, ask whether it has actually served.
-        if address and await self._has_served(address):
-            self._serving_rejected.discard(address)
-            self._log.info(
-                "admitting miner on DEMONSTRATED service despite tiers=%r: address=%s",
-                tiers, address)
-            return True
-        if address:
-            self._serving_rejected.add(address)
-        try:  # drop authorization so nothing else routes here
-            setattr(session, "authorized", False)
-        except Exception:  # noqa: BLE001
-            pass
-        self._log.warning(
-            "rejected miner on inference-serving policy: address=%s advertised_tiers=%r "
-            "(install torch+transformers, or unset ANIMICA_POOL_REQUIRE_INFERENCE_SERVING)",
-            address or "?", tiers)
-        return False
-
-    async def _has_served(self, address: str) -> bool:
-        """True if the node's AICF registry credits this address with completed jobs.
-
-        Best-effort and FAIL-OPEN: if the registry cannot be reached we admit the
-        miner rather than ban it on a failed lookup. Refusing to pay someone because
-        an RPC timed out is the worse error. Cached briefly so an authorize storm
-        does not hammer the node.
-        """
-        import time as _t
-        now = _t.monotonic()
-        hit = self._served_cache.get(address)
-        if hit and now - hit[1] < 300.0:
-            return bool(hit[0])
-        served = True  # fail-open default
-        try:
-            res = await self._adapter._rpc_call("aicf.workerStatus", {"address": address})
-            info = res if isinstance(res, dict) else {}
-            served = int(info.get("jobs_completed") or 0) > 0
-        except Exception:  # noqa: BLE001 — a failed probe must not ban a miner
-            self._log.debug("serving probe failed for %s; admitting", address, exc_info=True)
-            served = True
-        self._served_cache[address] = (served, now)
-        return served
-
     async def _register_aicf_worker(self, session: object, features: dict) -> None:
         """Auto-register the authorized miner as an AICF worker.
 
@@ -328,9 +224,6 @@ class StratumPoolServer:
         """
         # Pool-level version policy: reject old miners before anything routes.
         if not self._enforce_version(session, features):
-            return
-        # Pool-level serving policy: optionally refuse miners that serve no inference.
-        if not await self._enforce_inference_serving(session, features):
             return
         if not getattr(session, "authorized", False):
             return
@@ -448,34 +341,6 @@ class StratumPoolServer:
         if upper < lower:
             upper = lower
         return lower, upper
-
-    def subblock_ratio_for_theta(self, theta_micro: int) -> Optional[float]:
-        """Share ratio for sub-block-capable sessions, or None to leave them on
-        the normal (xmrig-floored) target.
-
-        Solves ``credit_fraction == 1/S`` for the ratio, where credit_fraction
-        is the probability a share also solves a block, ``exp(-θ(1-r)/MICRO)``:
-
-            r = 1 - MICRO·ln(S) / θ
-
-        so a share is worth 1/S of a block in expectation and the pool-wide
-        share rate is S/block_time regardless of hashrate. Returns None when θ
-        is too small to carve S shares out of a block without crossing
-        ``subblock_min_ratio`` — better to keep block-only shares for a job than
-        to hand out a target that floods.
-        """
-        cfg = self._config
-        if not getattr(cfg, "subblock_shares_enabled", False):
-            return None
-        theta = max(int(theta_micro or 0), 0)
-        if theta <= 0:
-            return None
-        shares_per_block = max(2, int(getattr(cfg, "shares_per_block", 64) or 64))
-        ratio = 1.0 - (MICRO * math.log(shares_per_block)) / float(theta)
-        floor_ratio = float(getattr(cfg, "subblock_min_ratio", 0.5) or 0.0)
-        if not (0.0 < ratio < 1.0) or ratio < floor_ratio:
-            return None
-        return ratio
 
     @staticmethod
     def _ratio_to_threshold_micro(theta_micro: int, ratio: float) -> int:
@@ -1087,15 +952,7 @@ class StratumPoolServer:
         tx_count: int,
     ) -> None:
         try:
-            # Sub-block sessions must NOT feed the pool-wide vardiff. That loop
-            # tunes the ONE global target every other client is given (including
-            # v1/xmrig, whose wire difficulty must stay >= the compat floor), and
-            # an opted-in session produces ~S times more accepted shares — it
-            # would dominate the sample window and steer the global target from
-            # a population it does not represent. Their target is set by policy,
-            # not by vardiff, so there is nothing to learn from their samples.
-            if not getattr(session, "supports_subblock", False):
-                await self._maybe_auto_adjust_share_target(job, ok=ok, reason=reason)
+            await self._maybe_auto_adjust_share_target(job, ok=ok, reason=reason)
         finally:
             if self._external_submit_hook is not None:
                 await self._external_submit_hook(

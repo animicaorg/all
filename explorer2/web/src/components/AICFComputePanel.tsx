@@ -149,7 +149,8 @@ export default function AICFComputePanel() {
   )
 }
 
-function shorten(s: string, n = 10) {
+function shorten(s: string | undefined | null, n = 10) {
+  if (!s) return '—'
   return s.length > n * 2 + 3 ? `${s.slice(0, n)}…${s.slice(-4)}` : s
 }
 

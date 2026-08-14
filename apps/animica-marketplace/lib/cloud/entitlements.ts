@@ -22,17 +22,12 @@ import {
 export type { Entitlements };
 export type EntitlementFeature = keyof Entitlements;
 
-// Ordered by PRICE, which is what "higher plan" has to mean when comparing what a
-// subscriber is owed. `starter` and `operator` were absent, so every comparison
-// involving them fell through to whatever the caller did with `undefined`.
 const RANK: Record<CloudPlanKey, number> = {
   free: 0,
-  starter: 1,          // $4.99
-  developer: 1,        // legacy name for the same rung
-  pro: 2,              // $14.99
-  operator: 3,         // $39.99
-  business: 4,         // $99.99
-  enterprise: 5,       // custom
+  developer: 1,
+  pro: 2,
+  business: 3,
+  enterprise: 4,
 };
 
 export function isCloudPlanKey(v: unknown): v is CloudPlanKey {

@@ -72,10 +72,6 @@ class TurnRequest:
     mode: Optional[str] = None
     stages: Optional[int] = None
     decode_mode: Optional[str] = None
-    # Called as on_retry(attempt, of, reason) when a provider re-submits the turn
-    # because the network declined it. Purely for telling the user what is
-    # happening during a wait that can run into minutes; never load-bearing.
-    on_retry: Optional["StreamFn"] = None
 
 
 StreamFn = "callable"      # type: ignore[assignment] — informational alias

@@ -1,0 +1,23 @@
+# Animica Workers — scheduler + executor oneshot (docs/subscriptions.md).
+# TEMPLATE ONLY — this repo file is NOT installed/enabled by the subscriptions change itself.
+# INSTALL (operator):
+#   cp deploy/systemd/animica-workers.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now animica-workers.timer
+# ARM (executes user Workers; default below is observe-only):
+#   set WORKERS_ENABLED=1 in .env.production (EnvironmentFile overrides Environment=).
+# Second kill switch: WorkerEngineState.paused (admin console) stops a tick even while armed.
+
+[Unit]
+Description=Animica Workers runner (due interval workers -> WorkerRun queue; claim via SKIP LOCKED + lease -> chat + tools; safety caps + auto-disable)
+Documentation=file:/root/animica/apps/animica-marketplace/scripts/worker-runner.ts
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/animica/apps/animica-marketplace
+# Conservative defaults — .env.production (EnvironmentFile) overrides these to arm.
+Environment=WORKERS_ENABLED=0
+EnvironmentFile=/root/animica/apps/animica-marketplace/.env.production
+ExecStart=/usr/bin/flock -n /run/lock/animica-workers.lock /root/animica/apps/animica-marketplace/node_modules/.bin/tsx scripts/worker-runner.ts
+NoNewPrivileges=true

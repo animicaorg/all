@@ -2530,14 +2530,40 @@ class MempoolService:
         )
 
         evicted = 0
+        evicted_reasons: dict[str, str] = {}
         for hash_hex, reason in selection.rejected_by_hash.items():
             if reason in {"exceeds_block_gas"}:
                 continue
             try:
+                # Leave a queryable tombstone BEFORE evicting: without it a
+                # selection-starved tx (e.g. insufficient_funds) vanishes to
+                # status=not_found and the sender never learns why. With it,
+                # tx.getStatus returns the rejection for the TTL window.
+                try:
+                    details = (
+                        (getattr(selection, "rejected_details_by_hash", None) or {})
+                        .get(hash_hex, {})
+                        .get("details")
+                    )
+                except Exception:
+                    details = None
+                self._record_rejection(
+                    hash_hex,
+                    reason,
+                    details,
+                    stage="block_selection_eviction",
+                )
                 self.pool.remove_included([_normalize_hash_bytes(hash_hex)])
                 evicted += 1
+                evicted_reasons[hash_hex] = reason
             except Exception:
                 continue
+        if evicted:
+            log.info(
+                "MempoolService.revalidate: evicted %d selection-rejected tx(s): %s",
+                evicted,
+                evicted_reasons,
+            )
         if evicted and not self._restoring:
             self._persist_snapshot()
         return {"evicted": evicted}

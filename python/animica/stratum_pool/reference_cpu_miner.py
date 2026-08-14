@@ -957,12 +957,6 @@ class StratumCpuMiner:
         features: dict = {"framing": "lines"}
         if aicf_features:
             features["aicf"] = aicf_features
-        # Sub-block share targets (9.1.0+): without this opt-in the pool sends
-        # shareTarget=1.0 (the block target) and only whole blocks are
-        # submittable, so PPS credits block finders only. This miner already
-        # thresholds on θµ·shareTarget, so nothing else changes.
-        if not os.environ.get("ANIMICA_MINER_NO_SUBBLOCK", "").strip():
-            features["subblockShares"] = {"version": 1}
         response = await self._call(
             "mining.subscribe",
             {

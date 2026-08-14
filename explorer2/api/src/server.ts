@@ -391,6 +391,115 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
     }
   })
 
+  // ── Animica 10.0.0 L2 ─────────────────────────────────────────────────────
+  // The l2_* methods live on the SAME node RPC endpoint the explorer already
+  // uses, so we proxy them through the existing RpcClient. Every handler
+  // degrades gracefully when L2 is not enabled on the node (returns a plain
+  // { enabled: false }) so the explorer's L2 section can show "not active"
+  // rather than erroring.
+
+  const l2Call = async <T = any>(method: string, params?: unknown[]): Promise<T | null> => {
+    if (!rpc) return null
+    try {
+      return await rpc.call<T>(method, params ?? [])
+    } catch {
+      return null
+    }
+  }
+
+  // Aggregated overview for the explorer's L2 landing section (spec §34).
+  app.get('/api/l2/overview', async (_req, res) => {
+    const status = await l2Call('l2_status')
+    if (!status) {
+      jsonSafe(res, { enabled: false })
+      return
+    }
+    const [tps, stateRoot, seqStatus, metrics] = await Promise.all([
+      l2Call('l2_getTPS'),
+      l2Call('l2_getStateRoot'),
+      l2Call('l2_getSequencerStatus'),
+      l2Call('l2_getMetrics'),
+    ])
+    const headBatch = (status as any).headBatch
+    const latestBatch = headBatch >= 0 ? await l2Call('l2_getBatch', [headBatch]) : null
+    const proofStatus = headBatch >= 0 ? await l2Call('l2_getProofStatus', [headBatch]) : null
+    const bridge = (status as any).bridge || {}
+    const m: any = metrics || {}
+    const rawBytes = Number(m.batch_bytes || 0)
+    const compBytes = Number(m.batch_compressed_bytes || 0)
+    jsonSafe(res, {
+      enabled: true,
+      settlementMode: (status as any).settlementMode,
+      headBatch,
+      latestStateRoot: (stateRoot as any)?.stateRoot ?? null,
+      latestBatch,
+      proofStatus,
+      tps,
+      sigBackend: (seqStatus as any)?.sigBackend ?? null,
+      pending: (seqStatus as any)?.pending ?? 0,
+      anmLocked: String(bridge.lockedOnL1 ?? '0'),
+      l2Supply: String(m.anm_l2_supply ?? '0'),
+      totalL2Transactions: Number(m.executed_total ?? 0),
+      softConfirmedTotal: Number(m.soft_confirmed_total ?? 0),
+      settledTotal: Number(m.settled_total ?? 0),
+      batchTransactions: Number(m.batch_transactions ?? 0),
+      compressionRatio: compBytes > 0 ? rawBytes / compBytes : null,
+      pendingProofs: Number(m.proof_queue_depth ?? 0),
+      deposits: bridge.deposits ?? 0,
+      withdrawals: bridge.withdrawals ?? 0,
+    })
+  })
+
+  app.get('/api/l2/status', async (_req, res) => {
+    jsonSafe(res, (await l2Call('l2_status')) ?? { enabled: false })
+  })
+
+  app.get('/api/l2/tps', async (_req, res) => {
+    jsonSafe(res, (await l2Call('l2_getTPS')) ?? { enabled: false })
+  })
+
+  app.get('/api/l2/batch/:number', async (req, res) => {
+    const n = Number(req.params.number)
+    if (!Number.isFinite(n) || n < 0) {
+      res.status(400).json({ error: 'bad_batch_number' })
+      return
+    }
+    const header = await l2Call('l2_getBatch', [n])
+    if (!header) {
+      res.status(404).json({ error: 'batch_not_found' })
+      return
+    }
+    const proof = await l2Call('l2_getProofStatus', [n])
+    jsonSafe(res, { ...header, proof })
+  })
+
+  // L2 transaction page data (spec §34): sender/recipient/amount/fee/nonce/type/
+  // batch/soft-confirm time/proof status/L1 settlement tx.
+  app.get('/api/l2/tx/:hash', async (req, res) => {
+    const tx = await l2Call('l2_getTransaction', [req.params.hash])
+    if (!tx || (tx as any).status === 'UNKNOWN') {
+      res.status(404).json({ error: 'l2_tx_not_found' })
+      return
+    }
+    const receipt = await l2Call('l2_getReceipt', [req.params.hash])
+    const batchNo = (tx as any).batch
+    const proof = batchNo >= 0 ? await l2Call('l2_getProofStatus', [batchNo]) : null
+    jsonSafe(res, { ...(tx as any), receipt, proof })
+  })
+
+  app.get('/api/l2/account/:address', async (req, res) => {
+    const bal = await l2Call('l2_getBalance', [req.params.address])
+    if (!bal) {
+      res.status(404).json({ error: 'l2_account_not_found_or_disabled' })
+      return
+    }
+    jsonSafe(res, bal)
+  })
+
+  app.get('/api/l2/stateRoot', async (_req, res) => {
+    jsonSafe(res, (await l2Call('l2_getStateRoot')) ?? { enabled: false })
+  })
+
   // ── RPC Inspector ───────────────────────────────────────────────────────────
 
   app.get('/api/rpc/discover', async (_req, res) => {
@@ -508,25 +617,63 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
       return
     }
     try {
-      const raw = await rpc.call('aicf.workerList', {}).catch(async (err) => {
-        if (isRpcMethodNotFound(err)) return null
-        throw err
-      })
+      const tryMethod = async (m: string, p: unknown) =>
+        rpc.call(m, p as any).catch(async (err) => {
+          if (isRpcMethodNotFound(err)) return null
+          throw err
+        })
+      // Legacy name first, then the method the node actually serves today
+      // (aicf.work.listWorkers) — probing only the legacy name made the panel
+      // report AICF unavailable while the work layer was live.
+      let raw = await tryMethod('aicf.workerList', {})
+      if (!raw) raw = await tryMethod('aicf.work.listWorkers', {})
       if (!raw) {
-        // Older nodes don't expose workerList yet — return empty rather than 500.
         jsonSafe(res, { available: false, reason: 'method_unavailable', workers: [], by_tier: {} })
         return
       }
-      const workers = Array.isArray((raw as any).workers) ? (raw as any).workers : []
+      const rawWorkers = Array.isArray((raw as any).workers) ? (raw as any).workers : []
+      // These workers have no "tiers" field; group by device_type (cpu/gpu),
+      // which is the meaningful capacity tier, and also count capabilities.
       const byTier: Record<string, number> = {}
-      for (const w of workers) {
-        for (const t of (w?.tiers ?? [])) {
-          byTier[String(t)] = (byTier[String(t)] ?? 0) + 1
-        }
+      const byCapability: Record<string, number> = {}
+      let active = 0
+      for (const w of rawWorkers) {
+        const tier = String(w?.device_type ?? w?.tier ?? 'unknown')
+        byTier[tier] = (byTier[tier] ?? 0) + 1
+        if (['idle', 'busy', 'online', 'active'].includes(String(w?.status ?? '').toLowerCase())) active++
+        for (const c of (w?.capabilities ?? [])) byCapability[String(c)] = (byCapability[String(c)] ?? 0) + 1
       }
-      jsonSafe(res, { available: true, workers, by_tier: byTier, total: workers.length })
+      // Normalize to the shape the explorer UI declares (address / tiers /
+      // hardware / jobs_completed). The node's live workers use different field
+      // names (wallet_address / capabilities / device_type / completed_jobs);
+      // returning the raw shape made the UI read w.address = undefined and
+      // crash the whole AICF page. Keep the raw fields too for completeness.
+      const workers = rawWorkers.map((w: any) => ({
+        address: w?.wallet_address ?? w?.address ?? '',
+        display_name: w?.display_name ?? null,
+        tiers: Array.isArray(w?.tiers)
+          ? w.tiers
+          : (Array.isArray(w?.capabilities) ? w.capabilities : []),
+        device_type: w?.device_type ?? null,
+        status: w?.status ?? null,
+        hardware: {
+          accelerator_preferred: w?.device_type ?? w?.hardware?.accelerator_preferred,
+          ram_gb: w?.hardware?.ram_gb,
+          summary: w?.hardware_summary ?? null,
+        },
+        jobs_completed: w?.completed_jobs ?? w?.jobs_completed ?? 0,
+        jobs_failed: w?.failed_jobs ?? 0,
+        reputation_score: w?.reputation_score ?? null,
+        total_earned_anm: w?.total_earned_anm ?? null,
+        last_seen: w?.last_seen_at ?? w?.last_seen,
+      }))
+      jsonSafe(res, {
+        available: workers.length > 0,
+        workers, by_tier: byTier, by_capability: byCapability,
+        total: workers.length, active,
+      })
     } catch (err) {
-      logger.warn({ err }, 'aicf.workerList unavailable')
+      logger.warn({ err }, 'aicf worker list unavailable')
       res.json({ available: false, workers: [], by_tier: {},
                 reason: err instanceof Error ? err.message : String(err) })
     }
@@ -544,22 +691,49 @@ export function createServer(service: ExplorerService, corsOrigin: string, logLe
       ? parseInt(req.query.window, 10) || 60
       : 60
     try {
-      const raw = await rpc.call('aicf.jobStats', { window_minutes: windowMinutes })
-        .catch(async (err) => {
+      const tryMethod = async (m: string, p: unknown) =>
+        rpc.call(m, p as any).catch(async (err) => {
           if (isRpcMethodNotFound(err)) return null
           throw err
         })
-      if (!raw) {
+      const raw = await tryMethod('aicf.jobStats', { window_minutes: windowMinutes })
+      if (raw) {
+        jsonSafe(res, { available: true, window_minutes: windowMinutes, ...(raw as object) })
+        return
+      }
+      // No dedicated stats method on this node — derive live totals from the
+      // work layer: per-worker completed/failed counts + current open jobs.
+      const [workersRaw, jobsRaw] = await Promise.all([
+        tryMethod('aicf.work.listWorkers', {}),
+        tryMethod('aicf.work.listJobs', {}),
+      ])
+      if (!workersRaw && !jobsRaw) {
         jsonSafe(res, {
           available: false, reason: 'method_unavailable',
           window_minutes: windowMinutes,
           jobs_completed: 0, jobs_failed: 0,
-          latency_p50_ms: null, latency_p95_ms: null,
-          by_tier: {},
+          latency_p50_ms: null, latency_p95_ms: null, by_tier: {},
         })
         return
       }
-      jsonSafe(res, { available: true, window_minutes: windowMinutes, ...(raw as object) })
+      const workers = Array.isArray((workersRaw as any)?.workers) ? (workersRaw as any).workers : []
+      const jobs = Array.isArray((jobsRaw as any)?.jobs) ? (jobsRaw as any).jobs : []
+      let completed = 0, failed = 0
+      const byTier: Record<string, number> = {}
+      for (const w of workers) {
+        completed += Number(w?.completed_jobs ?? 0)
+        failed += Number(w?.failed_jobs ?? 0)
+        const tier = String(w?.device_type ?? 'unknown')
+        byTier[tier] = (byTier[tier] ?? 0) + 1
+      }
+      const openJobs = jobs.filter((j: any) => String(j?.status ?? '').toLowerCase() === 'open').length
+      jsonSafe(res, {
+        available: true, window_minutes: windowMinutes,
+        source: 'work-layer-derived',
+        jobs_completed: completed, jobs_failed: failed,
+        jobs_open: openJobs, workers: workers.length,
+        latency_p50_ms: null, latency_p95_ms: null, by_tier: byTier,
+      })
     } catch (err) {
       logger.warn({ err }, 'aicf.jobStats unavailable')
       res.json({ available: false, window_minutes: windowMinutes,

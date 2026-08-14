@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import logging
 import math
 import os
 import sqlite3
@@ -15,13 +14,10 @@ from threading import Lock
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from core.utils.pow import MICRO
-from mining.pow_validation import derive_share_target_int as _derive_share_target_int
 from mining.stratum_server import StratumServer
 
 from .config import PoolConfig
 from .job_manager import JobManager
-
-logger = logging.getLogger("stratum_pool.metrics")
 
 ShareEvent = Dict[str, object]
 AccountingEvent = Dict[str, object]
@@ -80,29 +76,6 @@ class PoolMetrics:
         self._worker_balances_cache: Dict[tuple[str, str, str], Dict[str, object]] = {}
         self._payout_records: list[dict[str, object]] = []
         self._payout_record_seq: int = 0
-        # Credit denied by the cap since process start (nano). A persistently
-        # climbing value while cap headroom sits at 0 is the signature of the
-        # PPS-degenerates-to-finder-only failure; surfaced in accounting_summary.
-        self._credit_clamped_total: int = 0
-        # Credit-cap headroom cache. The cap sums the whole blocks table on
-        # EVERY accepted share (~12ms at 45k rows), which was fine at ~1 share
-        # per 6 minutes but not at the sub-block share rate (~2/s, and the table
-        # grows ~2900 rows/day). Correctness is preserved exactly, not
-        # approximated: credit issued since the snapshot is subtracted locally,
-        # and a newly mined block invalidates the snapshot immediately so fresh
-        # coinbase is never withheld from the miners it should back.
-        self._cap_cache_value: Optional[int] = None
-        self._cap_cache_at: float = 0.0
-        self._cap_cache_spent: int = 0
-        # How far back /api/miners/<id> looks when resolving a worker id. An
-        # unknown id used to LIKE-scan all history (~291ms) with the DB lock
-        # held; worker_balances is the fallback for anything older.
-        self._miner_lookup_window_s: float = max(
-            3600.0, float(os.environ.get("ANIMICA_POOL_MINER_LOOKUP_WINDOW_S", "604800"))
-        )
-        self._cap_cache_ttl: float = max(
-            0.0, float(os.environ.get("ANIMICA_POOL_CREDIT_CAP_CACHE_TTL", "30"))
-        )
         self._started = time.time()
         self._db_lock = Lock()
         self._db = self._init_db(config.db_url)
@@ -340,14 +313,6 @@ class PoolMetrics:
         # unlike the legacy `difficulty` column which is just the share ratio.
         self._ensure_column(conn, "shares", "work", "REAL")
         self._ensure_column(conn, "worker_balances", "paid_out", "INTEGER NOT NULL DEFAULT 0")
-        # Credit the cap could not back YET. Headroom arrives in block-sized
-        # lumps while credit is issued continuously, so without this a share
-        # that lands in the wrong moment is paid nothing and the loss is
-        # permanent — and it lands hardest on sub-block miners, who submit
-        # most often. Deferred amounts are flushed from later headroom.
-        self._ensure_column(
-            conn, "worker_balances", "deferred_credit", "INTEGER NOT NULL DEFAULT 0"
-        )
         self._ensure_column(conn, "payouts", "raw_tx", "TEXT")
         self._ensure_column(conn, "payouts", "nonce", "INTEGER")
         self._ensure_column(conn, "payouts", "retry_count", "INTEGER NOT NULL DEFAULT 0")
@@ -363,10 +328,6 @@ class PoolMetrics:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_status_ts ON shares(status, ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_address_ts ON shares(address, ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shares_worker_ts ON shares(worker, ts)")
-        # blocks-per-address is a lifetime stat rendered on every /api/miners
-        # call; without this it GROUP BYs a full scan of a table that grows
-        # ~2900 rows/day.
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_blocks_address ON blocks(address)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blocks_ts ON blocks(ts)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_worker_balances_mode_address ON worker_balances(mode, address)"
@@ -398,23 +359,6 @@ class PoolMetrics:
             target_int = int(getattr(job, "share_target_int", 0) or 0)
         except (TypeError, ValueError):
             target_int = 0
-        if target_int <= 0:
-            # StratumJob (what the stratum path actually passes here) has NO
-            # share_target_int, so this used to fall through to the Bitcoin-style
-            # difficulty*2**32 — a formula unrelated to Animica's targets, off by
-            # ~34x at the block target and misreporting every sub-block share.
-            # Derive the real target from θ and the ratio the session was
-            # assigned, exactly as validation does.
-            try:
-                theta_micro = int(getattr(job, "theta_micro", 0) or 0)
-            except (TypeError, ValueError):
-                theta_micro = 0
-            ratio = max(0.0, min(1.0, float(difficulty or 0.0)))
-            if theta_micro > 0 and ratio > 0.0:
-                try:
-                    target_int = int(_derive_share_target_int(theta_micro, ratio))
-                except Exception:
-                    target_int = 0
         if target_int > 0:
             return float(_TWO_POW_256) / float(target_int)
         return max(0.0, float(difficulty or 0.0)) * 4_294_967_296.0
@@ -976,7 +920,7 @@ class PoolMetrics:
             difficulty = max(1.0, difficulty)
         # Raw SHA3 hashes this share represents (2**256 / share_target_int).
         # Summed over a window this gives the true H/s — see _expected_share_work.
-        share_work = self._expected_share_work(job, assigned_ratio)
+        share_work = self._expected_share_work(job, difficulty)
         # PPS credit weight = the fraction of a block this share is worth in
         # expectation = P(a share also solves a block) = block_target/share_target
         # = exp(-θ·(1-ratio)/MICRO). Computed analytically from θ and the assigned
@@ -1097,10 +1041,6 @@ class PoolMetrics:
                 ),
             )
             if is_block:
-                # New coinbase => new backed headroom. Invalidate so the very
-                # next share can be credited against it (a stale snapshot would
-                # withhold this block's reward for up to the cache TTL).
-                self._cap_cache_invalidate()
                 statements += 1
                 self._db.execute(
                     """
@@ -1146,8 +1086,6 @@ class PoolMetrics:
                     (job_id,)
                 )
                 self._commit_db_now()
-        # Mined coinbase went DOWN — the headroom snapshot is now too generous.
-        self._cap_cache_invalidate()
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -1184,67 +1122,6 @@ class PoolMetrics:
 
     def _expected_reward(self, job: object) -> int:
         return self._reward_from_raw(getattr(job, "raw", None))
-
-    def service_carve_preview(self, height: int, miner_slice: int) -> Optional[Dict[str, Any]]:
-        """What FORK_SERVICE_CARVE will pay per block, for advance notice to miners.
-
-        Every percentage and the activation height are read from consensus
-        (`consensus.rewards` / `core.network_params`), never restated here, so this
-        panel cannot drift from the rule it describes — the failure mode for a
-        "coming soon" notice is quietly advertising a split the chain does not
-        implement.
-
-        The block subsidy is reconstructed from the miner slice we are currently
-        paying and the miner's current percentage, because the subsidy itself does not
-        change at the activation height — only its division does. Returns None rather
-        than guessing if either input is unusable.
-        """
-        try:
-            from consensus.rewards import foundation_split_pct, service_carve_pct
-            from core.network_params import FORK_SERVICE_CARVE, get_activation_height
-        except Exception:  # noqa: BLE001
-            return None
-
-        h = int(height or 0)
-        slice_now = int(miner_slice or 0)
-        if h <= 0 or slice_now <= 0:
-            return None
-        activation = get_activation_height(FORK_SERVICE_CARVE, chain_id=self._config.chain_id)
-        if activation is None:
-            return None
-
-        treasury_now = int(foundation_split_pct(h, chain_id=self._config.chain_id))
-        carve_now = int(service_carve_pct(h, chain_id=self._config.chain_id))
-        miner_pct_now = 100 - treasury_now - carve_now
-        if miner_pct_now <= 0:
-            return None
-        total = (slice_now * 100) // miner_pct_now
-
-        # The split once the fork is live, from the same consensus functions.
-        at = int(activation)
-        treasury_after = int(foundation_split_pct(at, chain_id=self._config.chain_id))
-        carve_after = int(service_carve_pct(at, chain_id=self._config.chain_id))
-        miner_after_pct = 100 - treasury_after - carve_after
-
-        return {
-            "activation_height": at,
-            "active": h >= at,
-            "blocks_remaining": max(0, at - h),
-            "block_subsidy": total,
-            "inference_per_block": (total * carve_after) // 100,
-            "inference_pct": carve_after,
-            "miner_per_block": (total * miner_after_pct) // 100,
-            "miner_pct": miner_after_pct,
-            "treasury_per_block": (total * treasury_after) // 100,
-            "treasury_pct": treasury_after,
-            # What miners are paid TODAY, so the change is a comparison and not a claim.
-            "miner_per_block_now": slice_now,
-            "miner_pct_now": miner_pct_now,
-            # Unclaimed slices go to the treasury, so on a block with no inference
-            # requests the treasury receives both shares. Stated so the panel is not
-            # read as "25% is already flowing to providers".
-            "unclaimed_goes_to": "treasury",
-        }
 
     @staticmethod
     def _parse_worker_identity(raw_worker: object) -> tuple[Optional[str], Optional[str]]:
@@ -1495,14 +1372,13 @@ class PoolMetrics:
                     """
                     SELECT address, worker
                     FROM shares
-                    WHERE ts >= ?
-                      AND address IS NOT NULL
+                    WHERE address IS NOT NULL
                       AND address != ''
                       AND (worker = ? OR worker LIKE ? OR worker LIKE ? OR worker LIKE ?)
                     ORDER BY ts DESC
                     LIMIT 20
                     """,
-                    (time.time() - self._miner_lookup_window_s, *patterns),
+                    patterns,
                 ).fetchall()
                 if not rows:
                     rows = self._db.execute(
@@ -1564,13 +1440,6 @@ class PoolMetrics:
         cfg = self._config
         mined_base = int(getattr(cfg, "credit_cap_mined_base", 0) or 0)
         credited_base = int(getattr(cfg, "credit_cap_credited_base", 0) or 0)
-        if (
-            self._cap_cache_value is not None
-            and self._cap_cache_ttl > 0.0
-            and (time.monotonic() - self._cap_cache_at) < self._cap_cache_ttl
-        ):
-            # Exact: the snapshot minus what has been credited against it since.
-            return max(0, self._cap_cache_value - self._cap_cache_spent)
         if self._db is not None:
             with self._db_lock:
                 mined_total = int(
@@ -1601,23 +1470,7 @@ class PoolMetrics:
                 int(r.get("total_credit") or 0)
                 for r in self._worker_balances_cache.values()
             )
-        remaining = max(0, (mined_total - mined_base) - (credited_total - credited_base))
-        self._cap_cache_value = remaining
-        self._cap_cache_at = time.monotonic()
-        self._cap_cache_spent = 0
-        return remaining
-
-    def _cap_cache_note_credit(self, amount: int) -> None:
-        """Account credit issued against the current headroom snapshot."""
-        if amount > 0 and self._cap_cache_value is not None:
-            self._cap_cache_spent += int(amount)
-
-    def _cap_cache_invalidate(self) -> None:
-        """Drop the headroom snapshot (called when mined coinbase changes, so a
-        fresh block's reward becomes spendable headroom immediately)."""
-        self._cap_cache_value = None
-        self._cap_cache_at = 0.0
-        self._cap_cache_spent = 0
+        return max(0, (mined_total - mined_base) - (credited_total - credited_base))
 
     def _ena_fee_split(
         self, miner_address: str, pps_credit: int, solo_credit: int
@@ -1675,65 +1528,6 @@ class PoolMetrics:
             defer_commit=defer_commit,
         )
 
-    def _deferred_credit(self, mode: str, worker: str, address: str) -> int:
-        """Credit the cap denied this worker earlier and still owes it."""
-        # The DB is authoritative here, NOT the balance cache: _apply_balance_delta
-        # creates a fresh cache row with deferred_credit=0, and it can run after a
-        # defer has already been persisted — a cache-first read would then shadow a
-        # real debt with zero and the miner would never be paid it.
-        if self._db is None:
-            row = self._worker_balances_cache.get((mode, worker, address))
-            return max(0, int((row or {}).get("deferred_credit") or 0))
-        with self._db_lock:
-            found = self._db.execute(
-                "SELECT deferred_credit FROM worker_balances "
-                "WHERE mode = ? AND worker = ? AND address = ?",
-                (mode, worker, address),
-            ).fetchone()
-        return max(0, int((found or [0])[0] or 0))
-
-    def _defer_credit(
-        self,
-        mode: str,
-        worker: str,
-        address: str,
-        delta: int,
-        ts: float,
-        *,
-        defer_commit: bool = False,
-    ) -> None:
-        """Move `delta` into (positive) or out of (negative) deferred credit.
-
-        Deferred credit is NOT paid out — payouts read total_credit — so it can
-        never let the pool owe more than it mined. It only records that a share
-        did real work the cap could not back yet, so the next headroom pays it
-        instead of it being silently destroyed.
-        """
-        delta = int(delta)
-        if delta == 0:
-            return
-        row = self._worker_balances_cache.get((mode, worker, address))
-        if row is not None:
-            row["deferred_credit"] = max(0, int(row.get("deferred_credit") or 0) + delta)
-            row["updated_ts"] = ts
-        if self._db is None:
-            return
-        with self._db_lock:
-            self._db.execute(
-                """
-                INSERT INTO worker_balances (
-                    mode, worker, address, deferred_credit, updated_ts
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(mode, worker, address) DO UPDATE SET
-                    deferred_credit = MAX(
-                        0, worker_balances.deferred_credit + excluded.deferred_credit
-                    ),
-                    updated_ts = excluded.updated_ts
-                """,
-                (mode, worker, address, max(0, delta) if delta > 0 else delta, ts),
-            )
-            self._record_db_write(defer_commit=defer_commit, now_ts=ts)
-
     def _apply_balance_delta(
         self,
         *,
@@ -1764,7 +1558,6 @@ class PoolMetrics:
                 "accepted_shares": 0,
                 "accepted_blocks": 0,
                 "rejected_shares": 0,
-                "deferred_credit": 0,
                 "updated_ts": ts,
                 "last_share_ts": 0.0,
             }
@@ -1929,71 +1722,11 @@ class PoolMetrics:
             # No-op unless credit_cap_enabled.
             if getattr(self._config, "credit_cap_enabled", False):
                 cap_remaining = self._credit_cap_remaining()
-                allowed = cap_remaining
-                if accounting_mode == "pps" and is_block:
-                    # The block row was persisted just before this credit, so
-                    # cap_remaining now contains the reward this share minted.
-                    # A dominant miner's winning share (assigned ratio ~1.0 →
-                    # priced at ~full reward) would drain it all, leaving 0
-                    # headroom for every non-winning share until the next block
-                    # — PPS then only ever pays block finders. Hold back a
-                    # slice for the between-block shares; leftovers stay in
-                    # cap_remaining and return to future winners.
-                    reserve_bps = int(
-                        getattr(self._config, "pps_block_reserve_bps", 0) or 0
-                    )
-                    if reserve_bps > 0:
-                        allowed = max(
-                            0, cap_remaining - (cap_remaining * reserve_bps) // 10_000
-                        )
-                # Pay back what the cap denied this worker EARLIER, before
-                # granting anything new — otherwise a share that arrived just
-                # before a block is robbed permanently while one arriving just
-                # after is paid in full, purely on timing.
-                flushed = 0
-                owed = self._deferred_credit(accounting_mode, worker, address)
-                if owed > 0 and allowed > 0:
-                    flushed = min(owed, allowed)
-                    allowed -= flushed
-                    cap_remaining = max(0, cap_remaining - flushed)
-                    logger.debug(
-                        "flushing deferred credit %d for worker=%s", flushed, worker
-                    )
-                if pps_credit > allowed:
-                    shortfall = pps_credit - max(0, allowed)
-                    logger.debug(  # noqa: E501 - message below
-                        "credit cap deferred pps share credit %d -> %d (worker=%s remaining=%d)",
-                        pps_credit,
-                        max(0, allowed),
-                        worker,
-                        cap_remaining,
-                    )
-                    self._credit_clamped_total += shortfall
-                    self._defer_credit(
-                        accounting_mode, worker, address, shortfall, ts,
-                        defer_commit=defer_commit,
-                    )
-                    pps_credit = max(0, allowed)
+                if pps_credit > cap_remaining:
+                    pps_credit = max(0, cap_remaining)
                 cap_remaining = max(0, cap_remaining - pps_credit)
                 if solo_credit > cap_remaining:
-                    shortfall = solo_credit - max(0, cap_remaining)
-                    self._credit_clamped_total += shortfall
-                    self._defer_credit(
-                        accounting_mode, worker, address, shortfall, ts,
-                        defer_commit=defer_commit,
-                    )
                     solo_credit = max(0, cap_remaining)
-                if flushed > 0:
-                    # Settle the flush: it becomes real credit for this worker
-                    # and leaves the deferred column.
-                    pps_credit += flushed
-                    self._defer_credit(
-                        accounting_mode, worker, address, -flushed, ts,
-                        defer_commit=defer_commit,
-                    )
-                # Spend against the headroom snapshot so the cached value stays
-                # exact between refreshes.
-                self._cap_cache_note_credit(pps_credit + solo_credit)
 
             if (
                 accounting_mode == "pps"
@@ -2124,7 +1857,6 @@ class PoolMetrics:
             "rejected_shares": int(rejected_shares or 0),
             "workers_with_balance": int(workers_with_balance or 0),
             "ledger_entries": int((ledger_count or [0])[0] or 0),
-            "credit_clamped_since_start": str(int(self._credit_clamped_total)),
             "updated_at": (
                 datetime.fromtimestamp(float(updated_ts), tz=timezone.utc).isoformat()
                 if updated_ts
@@ -2155,7 +1887,6 @@ class PoolMetrics:
             "rejected_shares": int(rejected_shares),
             "workers_with_balance": len(rows),
             "ledger_entries": len(self._accounting_events),
-            "credit_clamped_since_start": str(int(self._credit_clamped_total)),
             "updated_at": (
                 datetime.fromtimestamp(updated_ts, tz=timezone.utc).isoformat()
                 if updated_ts > 0
@@ -2188,123 +1919,6 @@ class PoolMetrics:
             ).fetchone()
         total = float(row[0] or 0.0) if row else 0.0
         return total / window_seconds if window_seconds > 0 else 0.0
-
-    # How far back an address's accepted share still proves it is a real miner.
-    # A miner on the FULL block target only submits when it finds a block, so at a
-    # small share of pool hashrate its accepted shares are hours apart — far longer
-    # than the 15-minute display window. See _miner_presence().
-    MINER_PROOF_LOOKBACK_SECS = 86_400.0
-
-    # Inbound-byte silence after which a session is not a live client. Must be
-    # compared against `last_inbound`, NEVER `last_seen`: our own outbound keepalives
-    # touch last_seen every ~45s, so a last_seen check calls dead sockets alive.
-    LIVE_SESSION_IDLE_SECS = 900.0
-
-    def _accepted_share_addresses(self, window_seconds: float) -> Dict[str, float]:
-        """{address: most recent accepted-share timestamp} within the window."""
-        out: Dict[str, float] = {}
-        cutoff = time.time() - window_seconds
-        if self._db is not None:
-            with self._db_lock:
-                rows = self._db.execute(
-                    "SELECT address, MAX(ts) FROM shares "
-                    "WHERE status = 'accepted' AND ts >= ? "
-                    "AND address IS NOT NULL AND address != '' "
-                    "AND address != 'unknown-address' "
-                    "GROUP BY address",
-                    (cutoff,),
-                ).fetchall()
-            for r in rows:
-                if r and r[0]:
-                    out[str(r[0]).strip()] = float(r[1] or 0.0)
-        else:
-            for ev in self._share_events:
-                ts = float(ev.get("timestamp") or 0.0)
-                if ts >= cutoff and ev.get("status") == "accepted":
-                    addr = str(ev.get("address") or "").strip()
-                    if addr and addr != "unknown-address":
-                        if ts > out.get(addr, 0.0):
-                            out[addr] = ts
-        return out
-
-    def _miner_presence(self, window_seconds: float = 900.0) -> Dict[str, Any]:
-        """Who is actually mining here right now, and how well we can prove it.
-
-        The number this replaces required an accepted share inside a 15-minute
-        window. That silently erased most real miners: only sessions that opted into
-        sub-block shares (9.1.0) get a target they hit often — every other client
-        (xmrig, ASIC, cryptonote, pre-9.1.0) mines the FULL block target, so for it
-        "an accepted share" means "found a block". A miner with 1% of pool hashrate
-        finds one about every 100 blocks, so it appeared for a few minutes and then
-        vanished for an hour and a half while mining continuously the whole time.
-        Reporting that as "active miners" understates the pool to its own operator
-        and to every miner deciding whether to point hashrate here.
-
-        Widening the window alone is not enough, and counting authorized sessions is
-        not safe: `mining.authorize` accepts any well-formed address with no proof,
-        so an abuser could mint unlimited fake `anim1…` strings, and one client once
-        held 835 idle sockets. So presence and proof are tracked separately:
-
-          proven    — an accepted share in the window, OR a live authorized session
-                      that has either produced a share itself or whose address has
-                      an accepted share within MINER_PROOF_LOOKBACK_SECS. Real work
-                      is required, so this cannot be fabricated; it just no longer
-                      forgets a miner between blocks.
-          connected — every live authorized session address, proof or not. Includes
-                      genuine newcomers who have not landed a first share yet, and
-                      is therefore inflatable by design. Reported separately and
-                      never folded into the headline count.
-
-        Both dedupe by address, so one machine with many sockets stays one miner.
-        """
-        recent = self._accepted_share_addresses(window_seconds)
-        known = (
-            recent
-            if self.MINER_PROOF_LOOKBACK_SECS <= window_seconds
-            else self._accepted_share_addresses(self.MINER_PROOF_LOOKBACK_SECS)
-        )
-
-        proven: set = set(recent)
-        connected: set = set()
-        live_sessions = 0
-        now = time.time()
-        try:
-            for snap in self._server.session_snapshots():
-                if not snap.get("authorized"):
-                    continue
-                addr = str(snap.get("address") or "").strip()
-                if not addr or addr == "unknown-address":
-                    continue
-                # Liveness from INBOUND bytes only (see LIVE_SESSION_IDLE_SECS).
-                # If the snapshot carries no timestamp at all we cannot judge, so the
-                # session is treated as live: an older server that has not restarted
-                # yet, or a caller passing partial snapshots, must not have every
-                # miner silently dropped. Only a timestamp we HAVE and that is stale
-                # excludes a session.
-                last_in = snap.get("last_inbound")
-                if last_in is None:
-                    last_in = snap.get("last_seen")
-                if last_in is None:
-                    last_in = snap.get("connected_since")
-                if last_in is not None and now - float(last_in or 0.0) > self.LIVE_SESSION_IDLE_SECS:
-                    continue
-                live_sessions += 1
-                connected.add(addr)
-                if int(snap.get("shares_accepted") or 0) > 0 or addr in known:
-                    proven.add(addr)
-        except Exception:
-            pass
-
-        return {
-            "proven": len(proven),
-            "connected": len(connected | proven),
-            "unproven": len((connected - proven)),
-            "live_sessions": live_sessions,
-        }
-
-    def _active_miner_count(self, window_seconds: float = 900.0) -> int:
-        """Distinct miners with proven work who are present now. See _miner_presence."""
-        return int(self._miner_presence(window_seconds)["proven"])
 
     # --- ACCURATE raw hashrate (H/s) --------------------------------------
     # Sum the per-share `work` (expected raw SHA3 hashes = 2**256/share_target)
@@ -3644,14 +3258,7 @@ class PoolMetrics:
         current_reward = str(self._reward_from_raw(getattr(job, "raw", None)))
         accounting = self.accounting_summary()
         payout = self.payout_status()
-        presence = self._miner_presence(900.0)
-        active_miners = presence["proven"]
-        carve_preview = self.service_carve_preview(
-            (job.height if job else 0) or 0,
-            self._reward_from_raw(getattr(job, "raw", None)),
-        )
         result = {
-            "service_carve": carve_preview,
             "pool_name": "Animica Stratum Pool",
             "network": self._config.network or f"chain-{self._config.chain_id}",
             "pool_mode": self._pool_mode,
@@ -3675,31 +3282,8 @@ class PoolMetrics:
             or self._hashrate_from_events(share_events, 900),
             "hashrate_1h": self._hashrate_from_db(3600)
             or self._hashrate_from_events(share_events, 3600),
-            # Real miners (unique addresses with a recent accepted share or an
-            # authorized session) — NOT open sockets. One client held 835 idle
-            # sockets on 2026-08-06 and the old clients-based count showed
-            # "838 miners"; raw sessions now live in num_connections.
-            "num_miners": active_miners,
-            "num_workers": active_miners,
-            # Distinct live authorized addresses INCLUDING those with no accepted
-            # share yet, so a genuine newcomer is visible instead of reading as
-            # absent. Inflatable by fabricated addresses (mining.authorize proves
-            # nothing), which is exactly why it is reported beside num_miners rather
-            # than as it: >= num_miners always, and the gap is unverified miners.
-            "connected_miners": presence["connected"],
-            "unproven_miners": presence["unproven"],
-            "live_sessions": presence["live_sessions"],
-            "num_connections": stats.get("clients", 0),
-            "authorized_sessions": stats.get("authorized_sessions", 0),
-            # Sessions mining a sub-block target (i.e. earning PPS credit
-            # without finding blocks). 0 while every connected miner predates
-            # the 9.1.0 opt-in.
-            "subblock_sessions": stats.get("subblock_sessions", 0),
-            "shares_per_block": int(
-                getattr(self._config, "shares_per_block", 0) or 0
-            )
-            if getattr(self._config, "subblock_shares_enabled", False)
-            else 0,
+            "num_miners": stats.get("clients", 0),
+            "num_workers": stats.get("clients", 0),
             "round_duration_seconds": self._config.poll_interval,
             "round_shares": len(share_events),
             "round_estimated_reward": current_reward,
@@ -3902,11 +3486,6 @@ class PoolMetrics:
                     GROUP BY address
                     """
                 ).fetchall()
-                # Bounded to the SAME window as the stats query above. Unbounded,
-                # this self-join scanned the entire shares table twice (measured
-                # ~291ms) inside _db_lock on every /api/miners call — untenable
-                # once sub-block shares raise the row rate ~100x. Rows outside the
-                # window are not rendered anyway.
                 mode_rows = self._db.execute(
                     """
                     SELECT s.address, s.mode, s.ts
@@ -3914,15 +3493,14 @@ class PoolMetrics:
                     JOIN (
                         SELECT address, MAX(ts) AS max_ts
                         FROM shares
-                        WHERE ts >= ? AND address IS NOT NULL AND address != ''
+                        WHERE address IS NOT NULL AND address != ''
                         GROUP BY address
                     ) AS latest
                       ON latest.address = s.address
                      AND latest.max_ts = s.ts
-                    WHERE s.ts >= ? AND s.address IS NOT NULL AND s.address != ''
+                    WHERE s.address IS NOT NULL AND s.address != ''
                     ORDER BY s.ts DESC
-                    """,
-                    (cutoff_max, cutoff_max),
+                    """
                 ).fetchall()
             for row in rows:
                 (

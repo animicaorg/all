@@ -39,9 +39,6 @@ export async function generateMetadata({ params }: { params: { handle: string } 
     description: desc,
     alternates: { canonical: url },
     openGraph: {
-    // Next replaces the parent's whole `openGraph` object when a page declares its
-    // own, so the layout's default image does NOT survive here — it has to be named.
-    images: ['/og.png'],
       title: `${name} — Animica developer`,
       description: desc,
       url,

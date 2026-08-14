@@ -563,10 +563,10 @@ def test_compute_block_reward_mainnet_split_halving():
     }
     
     # Test at height 1_350_001 (first block of epoch 1, after first halving).
-    # This height is ABOVE FORK_FOUNDATION_SPLIT (mainnet 42_001), so the 85/15
-    # foundation split applies to the halved 150 ANM subsidy: 127.5 ANM miner /
-    # 22.5 ANM foundation treasury. Halving still works (total == 150 ANM); the split
-    # only redistributes it. (For the pre-fork 100%-miner path see the dedicated
+    # This height is ABOVE FORK_TREASURY_25 (mainnet 75_000), so the 75/25 foundation
+    # split applies to the halved 150 ANM subsidy: 112.5 ANM miner / 37.5 ANM
+    # foundation treasury. Halving still works (total == 150 ANM); the split only
+    # redistributes it. (For the pre-fork 100%-miner path see the dedicated
     # test_foundation_split.py grandfather tests.)
     from consensus.rewards import FOUNDATION_TREASURY_ADDRESS
 
@@ -577,19 +577,13 @@ def test_compute_block_reward_mainnet_split_halving():
     total = sum(amt for _, amt in rewards)
     assert total == 150000000000, f"Expected 150 ANM total after halving, got {total}"
 
+    # Height 1,350,001 is above FORK_TREASURY_25 (mainnet 75,000), so the treasury
+    # share is 25% of the halved 150 ANM subsidy: 112.5 ANM miner / 37.5 ANM treasury.
     outs = dict(rewards)
     foundation_amt = outs[FOUNDATION_TREASURY_ADDRESS]
     miner_amt = total - foundation_amt
-    # Height 1,350,001 is ABOVE FORK_TREASURY_25 (70,000), so the share is 25%, not
-    # 15%. Asserted through foundation_split_pct so this test tracks the fork instead
-    # of pinning a number that the next share change would silently invalidate.
-    from consensus.rewards import foundation_split_pct
-    expected_foundation = (total * foundation_split_pct(1350001, chain_id=1)) // 100
-    assert foundation_amt == expected_foundation, (
-        f"Expected {expected_foundation} foundation "
-        f"({foundation_split_pct(1350001, chain_id=1)}%), got {foundation_amt}")
-    assert miner_amt == total - expected_foundation, f"miner should be total - treasury, got {miner_amt}"
-    assert miner_amt == total * (100 - foundation_split_pct(1350001, chain_id=1)) // 100
+    assert foundation_amt == 37500000000, f"Expected 37.5 ANM foundation (25%), got {foundation_amt}"
+    assert miner_amt == 112500000000, f"Expected 112.5 ANM miner (75%), got {miner_amt}"
 
 
 def test_instant_block_always_returns_zero_rewards():

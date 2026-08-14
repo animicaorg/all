@@ -50,8 +50,6 @@ tmp/
 # Chain data directories
 chain-*/
 .animica/chain-*/
-# chain-*/ accidentally matches apps/chain-stats-api (public stats service) — re-include it
-!apps/chain-stats-api/
 
 # Logs
 *.log
@@ -158,6 +156,3 @@ python/_build_vendor/
 /.claude/
 /skills-lock.json
 /success.txt
-
-# real deploy secrets — never commit (repo is PUBLIC)
-apps/animica-marketplace/.env.production
