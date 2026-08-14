@@ -1,0 +1,289 @@
+# Animica.dev — full developer reference (for humans and AI agents)
+
+Current release: Animica 10.1.0. This file verified against the live services on 2026-08-14.
+Everything below was checked with real requests before being written down.
+
+animica.dev is the developer platform of the Animica proof-of-work L1 (chain id 1,
+post-quantum ML-DSA-65 signatures, bech32m `anim1…` addresses, 1 ANM = 10^9 base units).
+It hosts four things:
+
+1. A free, keyless, OpenAI-compatible AI API at `https://animica.dev/v1`.
+2. Generative-media endpoints dispatched to GPU miners (images / video / audio / Blender).
+3. The Animica Python Cloud — deploy Python functions, earn ANM per call (`/api/cloud/v1`).
+4. A free GitHub-connected coding agent (`/agent/*`).
+
+No signup or API key is needed for 1, 2 and 4. Machine-readable manifests:
+`https://animica.dev/openapi.json` (OpenAPI 3.1), `https://animica.dev/.well-known/agents.json`,
+`https://animica.dev/llms.txt` (short index).
+
+---
+
+## 1. Free AI API — https://animica.dev/v1
+
+OpenAI-compatible. Keyless: you may omit the Authorization header entirely, or send any
+placeholder key — both work. CORS is open (`Access-Control-Allow-Origin: *`), so browsers
+and bots can call it directly.
+
+### Endpoints
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET  | `/v1/models` | model list; each entry has `id`, `description`, `chain_tier`, and boolean `serving` |
+| POST | `/v1/chat/completions` | chat; `"stream": true` for SSE |
+| GET  | `/v1/tiers` | model tiers with live `available` flags |
+| GET  | `/v1/miner_stats` | gateway latency EWMAs (`latency_ewma_ms`, `ttft_ewma_ms`, `warm`) |
+| POST | `/v1/images/generations` | text-to-image → 202 queued job (see §2) |
+| POST | `/v1/videos/generations` | text-to-video → 202 queued job (see §2) |
+| POST | `/v1/audio/generations` | text-to-audio → 202 queued job (see §2) |
+
+Not available: `/v1/embeddings` currently returns 404 (`{"detail":"Not Found"}`).
+Older documents listed it; do not rely on it.
+
+### Models (live list: GET /v1/models)
+
+- `kimi-k3` — Kimi K3, flagship coding & chat. **Default choice.**
+- `animica-chat` — standard tier, general chat.
+- `animica-chat-small` — small tier, faster and lighter.
+- `animica-chat-flagship` — flagship tier, highest quality (premium chain tier).
+- `animica-knowledge` — ENA: collaboratively trained by the network (LoRA head over
+  Qwen2.5-1.5B), served by nodes running `animica up`. ENA job stats:
+  `GET https://animica.dev/api/ena/stats`, models: `GET https://animica.dev/api/ena/models`.
+
+### The `serving` flag — read this before sending work
+
+Inference is served by community GPU workers on the Animica AICF network, not by the
+gateway box. Each model in `GET /v1/models` carries `"serving": true|false` — whether a
+worker is live for that model *right now*.
+
+- `serving: true` — expect a completion; typical end-to-end latency is 1–3 minutes
+  (recent gateway EWMA ≈ 120 s). Use `"stream": true` and a client timeout ≥ 300 s;
+  the gateway holds the connection (up to 600 s) and emits SSE keepalives while a miner
+  works.
+- `serving: false` — the request will wait in queue for a worker and may eventually
+  fail or time out. Check the flag first; retry later or pick a serving model.
+
+### Rate limits and errors
+
+- Rate limit: **30 requests/minute per IP, burst 12** on all of `/v1/*`.
+  Media-generation paths (`/v1/images|videos|audio/…`) use a stricter 12/min, burst 6.
+- `429 Too Many Requests` — over the per-IP limit. The 429 body is an HTML error page,
+  not JSON. Back off and retry.
+- `404` from the API is FastAPI-shaped JSON: `{"detail":"Not Found"}`.
+- `503` on media paths is JSON:
+  `{"error":{"code":"no_media_miner","type":"unavailable","message":"…"},"animica":{"dispatch":"miner","status":"queue_unreachable"}}`
+  — the dispatcher itself was unreachable, so the submission did NOT enqueue; resubmit.
+  (When the dispatcher is reachable but no miner is online, media submissions return
+  202 `{status:"queued", …}` and wait in queue instead.)
+
+### Working examples
+
+curl (verified):
+
+```bash
+# list models + serving flags
+curl -s https://animica.dev/v1/models
+
+# chat completion (be patient; stream to see progress)
+curl -N https://animica.dev/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"kimi-k3","stream":true,
+       "messages":[{"role":"user","content":"Write a haiku about proof of work"}]}'
+```
+
+Python, official `openai` SDK (any version with `base_url` support):
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="https://animica.dev/v1", api_key="none")  # keyless; any placeholder works
+
+# check what is actually serving before you send work
+models = client.models.list()
+serving = [m.id for m in models.data if getattr(m, "serving", False)]
+print("serving now:", serving)
+
+resp = client.chat.completions.create(
+    model="kimi-k3",
+    messages=[{"role": "user", "content": "Say hello in five words."}],
+    stream=True,
+    timeout=600,  # miner-network latency: minutes, not seconds
+)
+for chunk in resp:
+    delta = chunk.choices[0].delta.content or ""
+    print(delta, end="", flush=True)
+```
+
+---
+
+## 2. Generative media — dispatched to GPU miners
+
+No generative model runs on the gateway. Media jobs are queued and rendered by GPU
+miners; accepted (202) jobs persist in queue until a miner is online. A 503
+`no_media_miner` means the dispatcher was unreachable and the submission did NOT
+enqueue — resubmit (see §1). Check availability first:
+
+```bash
+curl -s https://animica.dev/api/mkt/v1/media/capabilities
+# {"kinds":{"image":0,"video_t2v":0,...,"render_blender":0},"anyOnline":false,"ts":...}
+# a count of 0 means jobs will queue until a miner connects
+```
+
+### OpenAI-style generation facade (verified)
+
+```bash
+curl -s -X POST https://animica.dev/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a red square on white, flat vector"}'
+# 202 {"status":"queued","job_id":"…","poll_url":"/api/mkt/v1/media/jobs/…",
+#      "position":1,"miners_online":0,"animica":{"kind":"image","dispatch":"miner"}}
+
+# poll it
+curl -s https://animica.dev/api/mkt/v1/media/jobs/<job_id>
+# {"id":"…","kind":"image","status":"PENDING","position":1,"minersOnline":0,"result":null}
+```
+
+`/v1/videos/generations` (kind `video_t2v`) and `/v1/audio/generations` (kind `audio`)
+behave identically.
+
+### Media jobs API (GPU Studios)
+
+- `POST /api/mkt/v1/media/uploads` — raw binary body + headers `content-type` and
+  `x-anm-purpose: video|audio|blend|reference` → `{upload_id, bytes, sha3}`.
+  Caps 512 MB video/blend, 200 MB audio/reference; unconsumed uploads expire in 4 h.
+- `POST /api/mkt/v1/media/jobs` — `{kind, params, upload_ids}` → 202 `{job_id}`.
+  Kinds: `image`, `video_t2v`, `video_i2v`, `video_multiscene`, `audio`,
+  `video_upscale`, `video_interpolate`, `video_subtitles`, `video_bgremove`,
+  `video_shorts`, `audio_stems`, `audio_isolate`, `audio_enhance`, `audio_master`,
+  `render_blender`.
+- `GET /api/mkt/v1/media/jobs/{id}` — status / progressPct; small results inline as
+  `result.b64`, large results at `result_url`.
+- `GET /api/mkt/v1/media/artifacts/{id}` — streams the finished file; artifacts expire
+  on a TTL.
+
+Studio front-ends: https://animica.dev/video (upscale, 60fps interpolation, subtitles,
+background removal, auto-shorts), https://animica.dev/audio/ (stems, vocal isolation,
+enhance, mastering), https://animica.dev/render/ (distributed Blender Cycles).
+
+---
+
+## 3. Animica Python Cloud — /api/cloud/v1
+
+Deploy a Python function to a public HTTPS endpoint; callers are metered in ANM and you
+keep 80% (platform fee 20%). Deployments are anchored on-chain (source hash + DA blob in
+a signed DEPLOY tx) and executed off-chain in a hardened container.
+
+- Web: https://animica.dev/cloud · Docs: https://animica.dev/docs/cloud
+  (examples: https://animica.dev/docs/cloud/examples, pricing: https://animica.dev/docs/cloud/pricing)
+- Auth: `Authorization: Bearer anm_mkt_…` — create keys in the Developer Center
+  https://animica.dev/dev. Unauthenticated control-plane calls get
+  `401 {"error":{"code":"unauthorized","message":"auth required"}}`.
+- Public stats (no auth, verified): `GET https://animica.dev/api/cloud/v1/stats`
+
+### Quickstart (three calls)
+
+```bash
+# 1. create the function shell
+curl -s https://animica.dev/api/cloud/v1/functions \
+  -H "authorization: Bearer $ANM_KEY" -H 'content-type: application/json' \
+  -d '{"slug":"hello","name":"Hello","timeoutMs":10000,"memoryMb":128}'
+# -> {"function":{"id":"…","slug":"hello","status":"DRAFT",…}}
+
+# 2. push source = deploy version 1 (validated, DA-anchored, activated)
+curl -s https://animica.dev/api/cloud/v1/functions/$FUNCTION_ID/versions \
+  -H "authorization: Bearer $ANM_KEY" -H 'content-type: application/json' \
+  -d '{"source":"def main(request):\n    return {\"greeting\": \"hello\", \"echo\": request}","entrypoint":"main"}'
+
+# 3. anyone can invoke it
+curl -s https://animica.dev/api/cloud/v1/fn/<owner>/hello \
+  -H 'content-type: application/json' -d '{"name":"Ada"}'
+# response headers: x-animica-request-id, x-animica-cost-nanm, x-animica-status
+```
+
+Function contract: one module-level entrypoint `main(request)`; `request` is the parsed
+JSON body (POST) or query params (GET); return value must be JSON-serializable.
+
+Limits (live defaults): source ≤ 256 KB; timeout 1–300 s (default 30 s); memory
+64–1024 MB (default 256 MB); request ≤ 512 KB; response ≤ 1 MB; 500 log lines/run;
+nested calls depth ≤ 4, ≤ 16/run; AI ≤ 8 calls and ≤ 8192 tokens/run. Public functions
+with no surcharge get a free tier of 50 executions/day per caller. Edge rate limits:
+control plane 120 req/min/IP, invocation endpoint 60 req/min/IP (429 over limit).
+
+---
+
+## 4. Free GitHub coding agent — /agent/*
+
+A treasury-funded coding agent that runs on the Animica miner network. You supply a
+GitHub token per-request; it is never stored. UI: https://animica.dev/#agent.
+Health (verified): `GET https://animica.dev/agent/health` →
+`{"status":"ok","model":"kimi-k3",…}`.
+
+Endpoints (base `https://animica.dev`):
+
+- `POST /agent/github/repos` — body `{token}` → list your repos.
+- `POST /agent/run` — body `{token, repo, instruction, model?, base_branch?}` — the
+  agent reads the repo, applies the instruction and opens a pull request. Slow (up to
+  ~10 min); keep the connection open.
+- `POST /agent/swarm/start` — body `{prompt, model?, files?}` → `{job_id}` — starts a
+  from-scratch multi-agent build. Rate-limited hard (12/min, burst 4).
+  - `GET /agent/swarm/status/{job_id}` — poll.
+  - `GET /agent/swarm/events/{job_id}` — SSE progress stream.
+- `POST /agent/publish` — body `{token, repo, project, files}` — push generated files
+  to a GitHub repo.
+- `POST /agent/zip` — body `{files}` → downloadable zip of generated files.
+
+```bash
+curl -s -X POST https://animica.dev/agent/swarm/start \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a single-page pomodoro timer, vanilla JS"}'
+# -> {"job_id":"…"}  then poll /agent/swarm/status/<job_id>
+```
+
+---
+
+## 5. CLI, MCP, plans
+
+- **CLI**: `curl -fsSL https://animica.dev/install.sh | sh` (POSIX sh, installs into
+  `~/.animica/venv`, no sudo) or `pip install animica`. `animica chat` is an agentic
+  coding assistant with a free keyless tier; the CLI also covers node, wallet, quantum
+  and MCP. Docs: https://animica.dev/cli · PyPI: https://pypi.org/project/animica/
+- **MCP server**: `pip install animica-mcp` → run `animica-mcp` (or `uvx animica-mcp`);
+  equivalently `animica mcp serve` from the main package. Stdio transport by default
+  (also streamable-http/SSE). 15 read-only tools: chain head/blocks/accounts, AI
+  ask/models, quantum beacon, pool stats, network hashrate. No private keys.
+- **Plans**: https://animica.dev/pricing — Free ($0: AI chat/inference, media, agent,
+  1 public deployment, CLI 10 agentic tasks/day) · Starter $4.99 · Pro $14.99 ·
+  Operator $39.99 · Business $99.99 per month (PayPal): autonomous Workers, scheduled
+  executions, more `.anm` deployments, production API keys, marketplace monetization,
+  teams.
+
+---
+
+## 6. The wider Animica network
+
+- Node JSON-RPC: `POST https://rpc.animica.org/rpc` (JSON-RPC 2.0). Always use the
+  `/rpc` path — the bare domain 301s and breaks naive POST clients.
+  Example: `{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}`.
+  Namespaces: `chain.*`, `state.*`, `tx.*`/`tx2.*`, `mempool.*`, `net.*`, `aicf.*`
+  (59 AI-compute methods), `l2_*` (24 rollup methods). Enumerate every method live:
+  `GET https://explorer.animica.org/api/rpc/discover`.
+- Explorer REST (free, no auth): base `https://explorer.animica.org/api` — `/head`,
+  `/blocks`, `/block/:hashOrHeight`, `/tx/:hash`, `/address/:bech32`, `/richlist`,
+  `/circulating-supply`, `/mining/info`, `/network/status`, `/aicf/*`, `/l2/*`,
+  `/quantum/info`, `/health`. Web UI: https://explorer.animica.org
+- Payments: https://pay.animica.dev — merchant REST (`POST /api/v1/payment-intents`,
+  Bearer key + Idempotency-Key), hosted checkout, invoices, POS, widget.js,
+  WooCommerce plugin; 2.00% fee; amounts in base units (10^9 = 1 ANM).
+- Mining: https://pool.animica.org — stratum `pool.animica.org:3333` (PPS with
+  sub-block shares), `:3334` (solo 95/5). Free stats REST + Swagger at
+  https://pool.animica.org/api/docs
+- Wallets: https://wallet.animica.org (web, non-custodial) · https://animica.org/wallet/
+  (Android APK + desktop Qt).
+- Source: https://github.com/animicaorg/all (Apache-2.0).
+- Live height: https://animica.dev/net-height · traffic: https://animica.dev/ai-stats.json
+
+### Getting ANM
+
+Mine via pool.animica.org, trade ANM/USDT at https://nonkyc.io/market/ANM_USDT, or
+accept ANM payments via https://pay.animica.dev. There is no mainnet faucet.
+
+Contact: ai@3vdc.com

@@ -21,19 +21,19 @@ export const faqData: FAQCategory[] = [
     items: [
       {
         question: "What is Animica?",
-        answer: "Animica is a live post-quantum layer-1 blockchain. It combines post-quantum signatures (Dilithium3, SPHINCS+), a deterministic Python-based smart contract VM, and PoIES (Proof-of-Integrated-External-Services) consensus that rewards useful computational work alongside traditional mining. Mainnet is running today with a public explorer, wallets, RPC, and a mining pool."
+        answer: "Animica is a live post-quantum layer-1 blockchain. It combines post-quantum signatures (ML-DSA-65, FIPS 204), a deterministic Python-based smart contract VM, and PoIES (Proof-of-Integrated-External-Services) consensus that rewards useful computational work alongside traditional mining. Mainnet is running today with a public explorer, wallets, RPC, and a mining pool."
       },
       {
         question: "What is ANM and how do I get it today?",
-        answer: "ANM is Animica's native coin, used for transaction fees, contract execution, and compute settlement. Today you can earn it by mining through the pool at pool.animica.org, or trade it on the marketplace at animica.xyz. Buying with a card is temporarily unavailable while the buy desk is relaunched."
+        answer: "ANM is Animica's native coin, used for transaction fees, contract execution, and compute settlement. Today you can earn it by mining through the pool at pool.animica.org, trade ANM/USDT on NonKYC (nonkyc.io/market/ANM_USDT), or accept ANM payments via pay.animica.dev. There is no mainnet faucet."
       },
       {
         question: "What does an anim1... address mean?",
-        answer: "Animica addresses use bech32m encoding with the 'anim1' prefix — the same modern, checksummed format family used by Bitcoin taproot addresses. Addresses are derived from post-quantum public keys (Dilithium3 or SPHINCS+), so a typo is caught by the checksum before any funds move."
+        answer: "Animica addresses use bech32m encoding with the 'anim1' prefix — the same modern, checksummed format family used by Bitcoin taproot addresses. Addresses are derived from post-quantum public keys (ML-DSA-65), so a typo is caught by the checksum before any funds move."
       },
       {
         question: "Why post-quantum cryptography?",
-        answer: "Classical signatures (ECDSA, Ed25519) can be broken by a sufficiently large quantum computer, and adversaries can record transactions now to attack them later — the 'harvest now, decrypt later' problem. Animica avoids this entirely by signing with Dilithium3 (ML-DSA-65) and SPHINCS+, both NIST-standardized post-quantum algorithms, from day one."
+        answer: "Classical signatures (ECDSA, Ed25519) can be broken by a sufficiently large quantum computer, and adversaries can record transactions now to attack them later — the 'harvest now, decrypt later' problem. Animica avoids this entirely by signing with ML-DSA-65 (FIPS 204, the successor of Dilithium3), a NIST-standardized post-quantum algorithm, from day one."
       },
       {
         question: "What are Python smart contracts?",

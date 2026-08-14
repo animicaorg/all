@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Post-quantum blockchain API (ML-DSA-65)</title>
+<meta name="description" content="Animica is a live post-quantum proof-of-work blockchain with free, keyless APIs: JSON-RPC 2.0 at rpc.animica.org/rpc and REST at explorer.animica.org/api. All transactions are signed with ML-DSA-65 (FIPS 204). Code examples, address and amount formats, L2 rollup methods.">
+<link rel="canonical" href="https://animica.org/post-quantum-blockchain-api/">
+<meta property="og:title" content="Post-quantum blockchain API (ML-DSA-65)">
+<meta property="og:description" content="Free JSON-RPC and REST access to a live post-quantum L1: chain id 1, bech32m anim1 addresses, ML-DSA-65 signatures, ANM-native L2 rollup.">
+<meta property="og:url" content="https://animica.org/post-quantum-blockchain-api/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Animica">
+<meta property="og:image" content="https://animica.org/logo.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What signature scheme does the Animica blockchain use?",
+      "acceptedAnswer": {"@type": "Answer", "text": "ML-DSA-65 (FIPS 204, the standardized successor of Dilithium3), scheme id 0x1003. It is the only current signature scheme on the chain. SPHINCS+ signatures exist on-chain historically but are legacy and cannot be used for new transactions."}
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need an API key to query the Animica blockchain?",
+      "acceptedAnswer": {"@type": "Answer", "text": "No. Both the node JSON-RPC (POST https://rpc.animica.org/rpc) and the explorer REST API (https://explorer.animica.org/api/...) are free and keyless. They are shared public infrastructure with no published rate limit — keep request rates reasonable."}
+    },
+    {
+      "@type": "Question",
+      "name": "What are Animica's address and amount formats?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Addresses are bech32m with the prefix anim1. Amounts are base units where 1 ANM = 10^9 base units (nano-ANM); balance queries return hex strings of base units, e.g. state.getBalance returns \"0x8eb47f0599e9be\". The chain id is 1."}
+    },
+    {
+      "@type": "Question",
+      "name": "Is there an Ethereum-compatible (EVM) endpoint?",
+      "acceptedAnswer": {"@type": "Answer", "text": "evm.animica.org is an experimental Ethereum-JSON-RPC compatibility facade. The canonical interface is Animica's native JSON-RPC at https://rpc.animica.org/rpc — use it for anything that matters."}
+    },
+    {
+      "@type": "Question",
+      "name": "Is there a faucet? How do I get ANM?",
+      "acceptedAnswer": {"@type": "Answer", "text": "There is no faucet on mainnet (faucet.request exists on devnet only). Get ANM by mining via pool.animica.org, trading the ANM/USDT market on NonKYC (nonkyc.io/market/ANM_USDT), or accepting ANM payments via pay.animica.dev."}
+    },
+    {
+      "@type": "Question",
+      "name": "Does Animica have a Layer-2?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Yes — an ANM-native rollup with validity proofs by re-execution, shipped in the 10.x releases. It is exposed as 24 l2_* JSON-RPC methods on rpc.animica.org (l2_status, l2_getBalance, l2_getTPS, l2_sendRawTransaction, ...) and as /api/l2/* on the explorer. l2_status reports l2ChainId 1001 and settlementMode VALIDITY."}
+    }
+  ]
+}
+</script>
+<style>
+:root{
+  --bg:#fbfdfc;--surface:#f1f6f3;--text:#152420;--muted:#4b5f58;--border:#d8e3de;
+  --action:#2E63FF;--link:#2453d6;--truth:#14C79B;--truth-ink:#0b7a5e;
+  --code-bg:#11201a;--code-text:#d9ece4;--code-border:#1e332b;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0c1310;--surface:#121b17;--text:#e5efeb;--muted:#9db3ab;--border:#25332d;
+  --action:#7f9fff;--link:#8fabff;--truth-ink:#14C79B;--code-bg:#0a110e;--code-text:#d5e8e0;--code-border:#1d2c25}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--link)}
+header{border-bottom:1px solid var(--border);background:var(--surface)}
+.wrap{max-width:52rem;margin:0 auto;padding:0 1.25rem}
+header .wrap{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;padding-top:.8rem;padding-bottom:.8rem}
+.brand{font-weight:700;letter-spacing:.06em;text-decoration:none;color:var(--text)}
+.brand span{color:var(--truth-ink)}
+header nav{margin-left:auto;display:flex;gap:.9rem;flex-wrap:wrap;font-size:.9rem}
+header nav a{text-decoration:none;color:var(--muted)}
+header nav a:hover{color:var(--link)}
+main{padding:2rem 0 3rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.2rem 0 .8rem}
+h2{font-size:1.35rem;margin:2.2rem 0 .6rem;padding-top:1.2rem;border-top:1px solid var(--border)}
+h3{font-size:1.05rem;margin:1.4rem 0 .4rem}
+.kicker{color:var(--truth-ink);font-size:.8rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0}
+.lede{font-size:1.06rem}
+pre{background:var(--code-bg);color:var(--code-text);border:1px solid var(--code-border);border-radius:8px;padding:.9rem 1rem;overflow-x:auto;font-size:.86rem;line-height:1.5}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+:not(pre)>code{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:.08em .35em;font-size:.88em}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{border:1px solid var(--border);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--surface)}
+.note{border-left:4px solid var(--action);background:var(--surface);border-radius:6px;padding:.7rem 1rem;margin:1rem 0;font-size:.95rem}
+footer{border-top:1px solid var(--border);background:var(--surface);padding:1.6rem 0 2.4rem;font-size:.9rem;color:var(--muted)}
+footer h2{border:0;margin:0 0 .5rem;font-size:1rem;padding:0;color:var(--text)}
+footer ul{margin:.3rem 0 1rem;padding-left:1.2rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="https://animica.org/">ANIMICA<span>/reference</span></a>
+    <nav aria-label="Site">
+      <a href="https://animica.org/agents/">Agents hub</a>
+      <a href="https://explorer.animica.org/">Explorer</a>
+      <a href="https://animica.org/developers/">Developers</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <p class="kicker">Reference · verified 2026-08-14</p>
+    <h1>Post-quantum blockchain API (ML-DSA-65)</h1>
+    <p class="lede">Animica is a live post-quantum proof-of-work Layer-1 whose APIs are free and keyless: JSON-RPC 2.0 at <code>POST https://rpc.animica.org/rpc</code> and REST at <code>https://explorer.animica.org/api/…</code>. Every transaction on the chain is signed with <strong>ML-DSA-65</strong> (FIPS 204, the standardized successor of Dilithium3) — the only current signature scheme, id <code>0x1003</code>. Chain id 1, native coin ANM, height ~73,191 on 2026-08-14, plus an ANM-native L2 rollup exposed through <code>l2_*</code> methods.</p>
+
+    <h2 id="rpc">JSON-RPC 2.0</h2>
+    <div class="note">Always POST to the <code>/rpc</code> path. The bare root <code>https://rpc.animica.org</code> answers with a 301 redirect that naive POST clients will not follow.</div>
+<pre><code>curl -s -X POST https://rpc.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}'
+# {"jsonrpc":"2.0","id":1,"result":{"height":73191,"chainId":1,
+#   "hash":"0x00000000013b4e8b8a60f3b4185a4cd5415e487562ca346931324be95b8cab56",
+#   "thetaMicro":26716830,…}}</code></pre>
+<pre><code>curl -s -X POST https://rpc.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"state.getBalance",
+       "params":{"address":"anim1zqp6f9gm4esjjqfhrwh0x9yv6mmjnaj3ql49vjdkcns6u8xkj8xpwgcm6zscx"}}'
+# {"jsonrpc":"2.0","id":1,"result":"0x8eb47f0599e9be"}   # hex, base units (1 ANM = 10^9)</code></pre>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Namespace</th><th>Examples</th></tr></thead>
+      <tbody>
+        <tr><td><code>chain.*</code></td><td><code>getHead</code>, <code>getParams</code>, <code>getChainId</code>, <code>getBlockByHeight</code>, <code>getBlockByHash</code>, <code>getForks</code>, <code>getNetworkHashrate</code>. There is no <code>chain.getHeight</code> — use <code>chain.getHead</code>.</td></tr>
+        <tr><td><code>state.*</code></td><td><code>getBalance</code>, <code>getAccount</code>, <code>getNextNonce</code>, <code>getRichList</code>, <code>getTotalSupply</code>, <code>call</code>, <code>simulateCall</code></td></tr>
+        <tr><td><code>tx.*</code> / <code>tx2.*</code></td><td><code>sendRawTransaction</code>, <code>getStatus</code>, <code>getTransaction</code>, <code>getSupportedSignatureSchemes</code></td></tr>
+        <tr><td><code>mempool.*</code>, <code>net.*</code></td><td>mempool contents, peer info</td></tr>
+        <tr><td><code>aicf.*</code></td><td>59 AI-compute methods: <code>submitInferenceJob</code>, <code>jobStatus</code>, <code>estimateJobCost</code>, <code>listProviders</code></td></tr>
+        <tr><td><code>l2_*</code></td><td>24 rollup methods: <code>l2_status</code>, <code>l2_getBalance</code>, <code>l2_getTPS</code>, <code>l2_sendRawTransaction</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Machine-readable specs: <a href="https://rpc.animica.org/openrpc.json">openrpc.json</a> (141 documented methods with schemas) and the live <a href="https://explorer.animica.org/api/rpc/discover">method discovery endpoint</a> listing all 540 served methods. Mirror: <code>mainnet.animica.org</code> (direct node, same <code>POST /rpc</code> usage).</p>
+
+    <h2 id="rest">Explorer REST API</h2>
+    <p>Free, no auth, JSON responses:</p>
+<pre><code>curl -s https://explorer.animica.org/api/head
+curl -s https://explorer.animica.org/api/block/73191
+curl -s https://explorer.animica.org/api/address/anim1zqp6f9gm4esjjqfhrwh0x9yv6mmjnaj3ql49vjdkcns6u8xkj8xpwgcm6zscx
+curl -s https://explorer.animica.org/api/circulating-supply   # plain number, e.g. 108384832.6…</code></pre>
+    <p>Routes: <code>/head</code>, <code>/blocks</code>, <code>/block/:hashOrHeight</code>, <code>/tx/:hash</code>, <code>/address/:bech32</code>, <code>/mempool</code>, <code>/search</code>, <code>/richlist</code>, <code>/circulating-supply</code>, <code>/mining/info</code>, <code>/network/status</code>, <code>/aicf/*</code>, <code>/contracts/*</code>, <code>/da/*</code>, <code>/ena/*</code>, <code>/quantum/info</code>, <code>/tokens</code>, <code>/l2/*</code>, <code>/rpc/discover</code>, <code>/meta</code>, <code>/health</code>. Address lookups accept both the bech32m form and the 0x account digest.</p>
+
+    <h2 id="pq">The post-quantum part, precisely</h2>
+    <ul>
+      <li><strong>Signatures:</strong> ML-DSA-65 (FIPS 204), scheme id <code>0x1003</code> — the only current scheme. Lattice-based, standardized by NIST in 2024; the successor of Dilithium3.</li>
+      <li><strong>Addresses:</strong> bech32m, prefix <code>anim1…</code> (bech32m, not classic bech32 — checksum differs).</li>
+      <li><strong>Legacy:</strong> SPHINCS+ signatures exist on-chain historically but are legacy and cannot be used for new transactions.</li>
+      <li><strong>Consensus:</strong> proof-of-work L1 (PoIES — Proof of Integrated Extended Sacrifice, PoW plus useful-work AI/quantum credits). Chain id 1.</li>
+      <li><strong>Verify live:</strong> <code>tx.getSupportedSignatureSchemes</code> returns the scheme table the node currently enforces.</li>
+    </ul>
+
+    <h2 id="l2">L2 rollup</h2>
+<pre><code>curl -s -X POST https://rpc.animica.org/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"l2_status","params":{}}'
+# {"…","result":{"enabled":true,"l2ChainId":1001,"settlementMode":"VALIDITY",
+#   "headBatch":2,"stateRoot":"0x7012d7a0…",…}}</code></pre>
+    <p>ANM-native rollup shipped in the 10.x releases: deterministic parallel executor, validity proofs by re-execution, bridged from L1. Explorer mirror at <code>/api/l2/{overview,status,stateRoot,tps,batch/:number,tx/:hash,account/:address}</code>.</p>
+
+    <h2 id="limits">Honest limits</h2>
+    <ul>
+      <li>No API keys and no published rate limit — this is shared public infrastructure; keep request rates reasonable.</li>
+      <li>Sending transactions requires ML-DSA-65 signing; use <code>pip install animica</code> (wallet + SDK) rather than hand-rolling signatures. Read-only queries need no tooling at all.</li>
+      <li>No mainnet faucet. Get ANM by <a href="https://pool.animica.org/">mining</a>, <a href="https://nonkyc.io/market/ANM_USDT">trading on NonKYC</a>, or <a href="https://pay.animica.dev/">accepting payments</a>.</li>
+      <li><code>evm.animica.org</code> is an experimental Ethereum-JSON-RPC compatibility facade; the native JSON-RPC above is canonical.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>What signature scheme does the Animica blockchain use?</h3>
+    <p>ML-DSA-65 (FIPS 204, the standardized successor of Dilithium3), scheme id <code>0x1003</code>. It is the only current signature scheme on the chain. SPHINCS+ signatures exist on-chain historically but are legacy and cannot be used for new transactions.</p>
+    <h3>Do I need an API key to query the Animica blockchain?</h3>
+    <p>No. Both the node JSON-RPC (<code>POST https://rpc.animica.org/rpc</code>) and the explorer REST API (<code>https://explorer.animica.org/api/…</code>) are free and keyless. They are shared public infrastructure with no published rate limit — keep request rates reasonable.</p>
+    <h3>What are Animica's address and amount formats?</h3>
+    <p>Addresses are bech32m with the prefix <code>anim1</code>. Amounts are base units where 1 ANM = 10<sup>9</sup> base units (nano-ANM); balance queries return hex strings of base units, e.g. <code>state.getBalance</code> returns <code>"0x8eb47f0599e9be"</code>. The chain id is 1.</p>
+    <h3>Is there an Ethereum-compatible (EVM) endpoint?</h3>
+    <p><code>evm.animica.org</code> is an experimental Ethereum-JSON-RPC compatibility facade. The canonical interface is Animica's native JSON-RPC at <code>https://rpc.animica.org/rpc</code> — use it for anything that matters.</p>
+    <h3>Is there a faucet? How do I get ANM?</h3>
+    <p>There is no faucet on mainnet (<code>faucet.request</code> exists on devnet only). Get ANM by mining via <a href="https://pool.animica.org/">pool.animica.org</a>, trading the ANM/USDT market on <a href="https://nonkyc.io/market/ANM_USDT">NonKYC</a>, or accepting ANM payments via <a href="https://pay.animica.dev/">pay.animica.dev</a>.</p>
+    <h3>Does Animica have a Layer-2?</h3>
+    <p>Yes — an ANM-native rollup with validity proofs by re-execution, shipped in the 10.x releases. It is exposed as 24 <code>l2_*</code> JSON-RPC methods on rpc.animica.org (<code>l2_status</code>, <code>l2_getBalance</code>, <code>l2_getTPS</code>, <code>l2_sendRawTransaction</code>, …) and as <code>/api/l2/*</code> on the explorer. <code>l2_status</code> reports <code>l2ChainId</code> 1001 and <code>settlementMode</code> VALIDITY.</p>
+
+    <h2 id="docs">Canonical docs</h2>
+    <ul>
+      <li><a href="https://animica.org/developers/">Developer hub</a> · <a href="https://animica.org/docs/">docs index</a> · <a href="https://animica.org/technology/">technology overview</a></li>
+      <li><a href="https://animica.org/llms.txt">animica.org/llms.txt</a> — agent-oriented project map</li>
+      <li><a href="https://explorer.animica.org/llms.txt">explorer.animica.org/llms.txt</a> — REST API map</li>
+      <li><a href="https://animica.org/agents/">Agents hub</a> — all quickstarts in one page</li>
+      <li><a href="https://github.com/animicaorg/all">github.com/animicaorg/all</a> (Apache-2.0) · <a href="https://pypi.org/project/animica/">PyPI: animica</a></li>
+    </ul>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <h2>Machine-readable discovery</h2>
+    <ul>
+      <li><a href="https://animica.org/llms.txt">llms.txt</a> · <a href="https://animica.org/llms-full.txt">llms-full.txt</a> · <a href="https://animica.org/.well-known/agents.json">agents.json</a> · <a href="https://explorer.animica.org/llms.txt">explorer llms.txt</a></li>
+      <li><a href="https://rpc.animica.org/openrpc.json">RPC openrpc.json</a> · <a href="https://explorer.animica.org/api/openapi.json">explorer openapi.json</a> · <a href="https://explorer.animica.org/api/rpc/discover">RPC method discovery</a> · <a href="https://pool.animica.org/api/openapi.json">pool openapi.json</a> · <a href="https://pay.animica.dev/openapi.json">pay openapi.json</a></li>
+      <li><a href="https://animica.org/agents/">Agents hub</a> · <a href="https://animica.org/free-ai-inference-api/">Free AI inference API</a> · <a href="https://animica.org/blockchain-mcp-server/">Animica MCP server</a></li>
+    </ul>
+    <p>Animica · Apache-2.0 · <a href="https://github.com/animicaorg/all">GitHub</a> · Contact: <a href="mailto:ai@3vdc.com">ai@3vdc.com</a></p>
+  </div>
+</footer>
+</body>
+</html>

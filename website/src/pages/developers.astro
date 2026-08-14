@@ -34,7 +34,7 @@ const description =
       <h2 class="aicf-heading" style="font-size:1.6rem;">Deterministic Python Contracts on a Post-Quantum L1</h2>
       <p class="aicf-subheading">
         Animica contracts are plain Python modules executed in a deterministic, gas-metered VM. Accounts use post-quantum
-        signatures (Dilithium3 + SPHINCS+) and bech32m addresses (anim1...). The CLI ships with the pip package.
+        signatures (ML-DSA-65, FIPS 204) and bech32m addresses (anim1...). The CLI ships with the pip package.
       </p>
       <div class="aicf-grid-2" style="margin-top:0.95rem;">
         <article class="aicf-card">
@@ -46,7 +46,7 @@ pip install animica
 # ...or pull in every optional extra (quote the brackets for zsh/macOS)
 pip install "animica[all]"
 
-# Create a post-quantum wallet (ML-DSA / Dilithium)
+# Create a post-quantum wallet (ML-DSA-65)
 animica wallet create --label dev
 
 # Compile, deploy, and call a Python contract

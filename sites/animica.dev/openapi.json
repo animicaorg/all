@@ -2,60 +2,438 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Animica Free AI API",
-    "version": "1.0.0",
-    "description": "Free, OpenAI-compatible inference. No API key required. Every response includes a post-quantum-signed proof-of-inference receipt. Funded by the Animica foundation treasury.",
-    "contact": { "name": "Animica", "url": "https://animica.dev/" },
-    "license": { "name": "Free to use" }
+    "version": "10.1.0",
+    "description": "Free, keyless, OpenAI-compatible inference plus GPU-miner media dispatch on animica.dev. No API key required (any placeholder Authorization header is also accepted). Inference is served by community GPU workers on the Animica network: check the per-model boolean `serving` flag in GET /v1/models before sending work \u2014 requests to a non-serving model may queue for a long time or fail. When a worker is serving, completions typically take 1-3 minutes; use stream:true and a client timeout of at least 300s. Rate limit: 30 requests/minute per IP (burst 12) on /v1/*; media generation paths are limited to 12/minute (burst 6).",
+    "contact": {
+      "name": "Animica",
+      "url": "https://animica.dev/"
+    },
+    "license": {
+      "name": "Free to use"
+    }
   },
-  "servers": [ { "url": "https://animica.dev/v1", "description": "Free public endpoint (no auth)" } ],
+  "servers": [
+    {
+      "url": "https://animica.dev",
+      "description": "Free public endpoint (no auth); all paths below are absolute"
+    }
+  ],
   "paths": {
-    "/models": {
+    "/v1/models": {
       "get": {
         "operationId": "listModels",
-        "summary": "List available models",
-        "responses": { "200": { "description": "Model list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ModelList" } } } } }
+        "summary": "List available models (with live serving flags)",
+        "responses": {
+          "200": {
+            "description": "Model list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelList"
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns the live model list: kimi-k3 (default, flagship coding & chat), animica-chat, animica-chat-small, animica-chat-flagship, and animica-knowledge (ENA, network-trained). Each entry carries a boolean `serving` flag: whether a community GPU worker is live for that model right now. serving=false means requests may queue for a long time or fail - check this flag before POSTing to /v1/chat/completions, and prefer a model with serving=true."
       }
     },
-    "/chat/completions": {
+    "/v1/chat/completions": {
       "post": {
         "operationId": "createChatCompletion",
         "summary": "Create a chat completion (OpenAI-compatible)",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChatRequest" } } } },
-        "responses": { "200": { "description": "Completion (or SSE stream if stream=true)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChatResponse" } } } }, "429": { "description": "Rate limited (30 req/min per IP) — back off and retry" } }
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completion (or SSE stream if stream=true)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (30 req/min per IP, burst 12). The 429 body is an HTML error page, not JSON - back off and retry."
+          }
+        },
+        "description": "OpenAI-compatible chat completions, keyless. Served by the Animica miner network - expect 1-3 minute latency when a worker is serving (see the serving flag in /v1/models); set stream:true for SSE with keepalives and use a client timeout >= 300s (the gateway holds the request up to 600s)."
       }
     },
-    "/embeddings": {
+    "/api/mkt/v1/media/uploads": {
       "post": {
-        "operationId": "createEmbedding",
-        "summary": "Create embeddings",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmbeddingRequest" } } } },
-        "responses": { "200": { "description": "Embedding vectors" } }
+        "summary": "Upload a binary input for a GPU Studios media job",
+        "description": "Raw binary body (no multipart). Caps: video/blend 512 MB, audio/reference 200 MB. Unconsumed uploads expire after 4 h; inputs are wiped when the owning job delivers or expires.",
+        "parameters": [
+          {
+            "name": "content-type",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-anm-purpose",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "video",
+                "audio",
+                "blend",
+                "reference"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Stored"
+          },
+          "413": {
+            "description": "File exceeds the size cap"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "507": {
+            "description": "Gateway storage full"
+          }
+        }
+      }
+    },
+    "/api/mkt/v1/media/jobs": {
+      "post": {
+        "summary": "Submit a media job to the GPU-miner queue",
+        "description": "GPU Studios kinds (9.0.0): video_upscale, video_interpolate, video_subtitles, video_bgremove, video_shorts, audio_stems, audio_isolate, audio_enhance, audio_master, render_blender. Plus existing prompt kinds (image, video_t2v, video_multiscene, video_i2v, audio). Upload-consuming jobs reference inputs via upload_ids.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  },
+                  "upload_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Queued"
+          }
+        }
+      }
+    },
+    "/api/mkt/v1/media/jobs/{id}": {
+      "get": {
+        "summary": "Poll a media job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job state; small results inline as result.b64, large results at result_url; render_blender parents report chunks_done/chunks_total"
+          }
+        }
+      }
+    },
+    "/api/mkt/v1/media/artifacts/{id}": {
+      "get": {
+        "summary": "Download a finished job's artifact",
+        "description": "Streams the result (mime + Content-Disposition). Addressed by job id (from result_url). Wiped on TTL (6 h private / 24 h public).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact bytes"
+          },
+          "404": {
+            "description": "Unknown job or artifact wiped"
+          }
+        }
+      }
+    },
+    "/api/mkt/v1/media/capabilities": {
+      "get": {
+        "summary": "Live per-kind GPU-miner availability",
+        "responses": {
+          "200": {
+            "description": "Counts of online miners per job kind"
+          }
+        }
+      }
+    },
+    "/v1/tiers": {
+      "get": {
+        "operationId": "listTiers",
+        "summary": "List model tiers with live availability",
+        "responses": {
+          "200": {
+            "description": "Tier list; each entry has code, label, description, chain_tier, requires_pro and a live boolean `available` flag"
+          }
+        }
+      }
+    },
+    "/v1/{media_type}/generations": {
+      "post": {
+        "operationId": "createMediaGeneration",
+        "summary": "Generate an image, video or audio clip (queued to GPU miners)",
+        "description": "OpenAI-style media facade. media_type is images, videos or audio. Returns 202 with a job id immediately: media on Animica is dispatch-only - jobs are rendered by GPU miners and accepted (202) jobs persist in queue until one is online. A 503 no_media_miner means the dispatcher was unreachable and the submission did NOT enqueue - resubmit. Poll the returned poll_url (GET /api/mkt/v1/media/jobs/{id}) for status and the result. Check live miner availability first at GET /api/mkt/v1/media/capabilities (a kind count of 0 means the job will wait). Rate limit 12 req/min per IP, burst 6.",
+        "parameters": [
+          {
+            "name": "media_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "images",
+                "videos",
+                "audio"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "string",
+                    "description": "images only, e.g. 512x512"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Queued for a GPU miner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "queued"
+                    },
+                    "job_id": {
+                      "type": "string"
+                    },
+                    "poll_url": {
+                      "type": "string",
+                      "description": "GET this path for job status/result"
+                    },
+                    "position": {
+                      "type": "integer"
+                    },
+                    "miners_online": {
+                      "type": "integer"
+                    },
+                    "animica": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (12 req/min per IP, burst 6)"
+          },
+          "503": {
+            "description": "Media dispatcher unreachable. JSON body: {\"error\":{\"code\":\"no_media_miner\",\"type\":\"unavailable\",...},\"animica\":{\"dispatch\":\"miner\",\"status\":\"queue_unreachable\"}} - resubmit shortly."
+          }
+        }
       }
     }
   },
   "components": {
     "schemas": {
-      "ModelList": { "type": "object", "properties": { "object": { "type": "string" }, "data": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" } } } } } },
-      "ChatRequest": {
-        "type": "object", "required": ["model", "messages"],
+      "ModelList": {
+        "type": "object",
         "properties": {
-          "model": { "type": "string", "default": "qwen2.5:7b", "description": "e.g. qwen2.5:7b, qwen2.5-coder:14b, deepseek-coder:6.7b" },
-          "messages": { "type": "array", "items": { "type": "object", "properties": { "role": { "type": "string", "enum": ["system", "user", "assistant"] }, "content": { "type": "string" } }, "required": ["role", "content"] } },
-          "stream": { "type": "boolean", "default": false },
-          "temperature": { "type": "number", "default": 0.7 },
-          "max_tokens": { "type": "integer" }
+          "object": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "object": {
+                  "type": "string"
+                },
+                "owned_by": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "chain_tier": {
+                  "type": "string"
+                },
+                "serving": {
+                  "type": "boolean",
+                  "description": "true if a community GPU worker is live for this model right now; if false, requests may queue for a long time or fail"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ChatRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "default": "kimi-k3",
+            "description": "e.g. kimi-k3 (default), animica-chat, animica-chat-small, animica-chat-flagship, animica-knowledge (see GET /v1/models and its per-model serving flag)"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "role",
+                "content"
+              ]
+            }
+          },
+          "stream": {
+            "type": "boolean",
+            "default": false
+          },
+          "temperature": {
+            "type": "number",
+            "default": 0.7
+          },
+          "max_tokens": {
+            "type": "integer"
+          }
         }
       },
       "ChatResponse": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "choices": { "type": "array", "items": { "type": "object", "properties": { "message": { "type": "object", "properties": { "role": { "type": "string" }, "content": { "type": "string" } } }, "finish_reason": { "type": "string" } } } },
-          "usage": { "type": "object" },
-          "animica_receipt": { "type": "object", "description": "Post-quantum (ML-DSA-65) signed proof-of-inference receipt" }
+          "id": {
+            "type": "string"
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "finish_reason": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "usage": {
+            "type": "object"
+          }
         }
-      },
-      "EmbeddingRequest": { "type": "object", "required": ["model", "input"], "properties": { "model": { "type": "string", "default": "nomic-embed-text" }, "input": { "oneOf": [ { "type": "string" }, { "type": "array", "items": { "type": "string" } } ] } } }
+      }
     }
   }
 }

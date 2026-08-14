@@ -1,0 +1,73 @@
+{
+  "schema_version": "0.1",
+  "name": "Animica",
+  "description": "Animica is a live post-quantum proof-of-work Layer-1 blockchain (chain id 1, native coin ANM, ML-DSA-65 signatures, deterministic Python smart contracts, PoIES useful-work consensus) with an ANM-native L2 rollup, free chain APIs (JSON-RPC + explorer REST), a free keyless OpenAI-compatible AI API, a mining pool, merchant ANM payments, and an official MCP server. Everything listed here is publicly callable by agents.",
+  "url": "https://animica.org/",
+  "animica_release": "10.1.0",
+  "updated": "2026-08-14",
+  "provider": {
+    "name": "Animica",
+    "url": "https://animica.org/",
+    "contact": "ai@3vdc.com"
+  },
+  "protocol_facts": {
+    "chain_id": 1,
+    "address_format": "bech32m, prefix anim1...",
+    "base_unit": "1 ANM = 10^9 base units (nano-ANM); API amounts are base units unless stated",
+    "signatures": "ML-DSA-65 (FIPS 204), scheme id 0x1003 - the only current signature scheme",
+    "faucet": "none on mainnet",
+    "getting_anm": "mine via pool.animica.org, trade ANM/USDT on NonKYC (https://nonkyc.io/market/ANM_USDT), or accept payments via pay.animica.dev"
+  },
+  "manifests": {
+    "llms_txt": "https://animica.org/llms.txt",
+    "llms_full_txt": "https://animica.org/llms-full.txt",
+    "agents_hub": "https://animica.org/agents/"
+  },
+  "endpoints": {
+    "node_json_rpc": {
+      "url": "https://rpc.animica.org/rpc",
+      "protocol": "JSON-RPC 2.0 over POST",
+      "openrpc": "https://rpc.animica.org/openrpc.json",
+      "example": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"chain.getHead\",\"params\":{}}",
+      "note": "Always POST to the /rpc path; the bare domain 301-redirects and breaks naive POST clients. Namespaces: chain.*, state.*, tx.*/tx2.*, mempool.*, net.*, aicf.* (59 methods), ena.* (17 methods), l2_* (24 methods), quantum.*, da.*. Enumerate all methods via https://explorer.animica.org/api/rpc/discover."
+    },
+    "explorer_api": {
+      "base": "https://explorer.animica.org/api",
+      "openapi": "https://explorer.animica.org/api/openapi.json",
+      "example": "https://explorer.animica.org/api/head",
+      "note": "Free REST, no auth: /head, /blocks, /block/:hashOrHeight, /tx/:hash, /address/:bech32, /richlist, /circulating-supply, /mining/info, /aicf/*, /l2/*, /quantum/info, /rpc/discover. The bare /api base itself is not an endpoint."
+    },
+    "site_stats": {
+      "stats": "https://animica.org/api/stats",
+      "circulating_supply": "https://animica.org/api/supply/circulating",
+      "note": "Chain stats JSON (height, hashrate, supply) and circulating supply as a plain number - aggregator-friendly."
+    },
+    "free_ai": {
+      "openai_base_url": "https://animica.dev/v1",
+      "note": "Free, keyless, OpenAI-compatible inference served by the Animica miner network. Check each model's boolean `serving` flag in GET /v1/models before sending work. Details: https://animica.dev/llms.txt and https://animica.dev/.well-known/agents.json."
+    },
+    "payments": {
+      "url": "https://pay.animica.dev",
+      "note": "Merchant ANM payments: payment-intents REST API (Bearer key + Idempotency-Key), hosted checkout, invoices, POS, widget, WooCommerce plugin; 2.00% fee; amounts in base units (1 ANM = 10^9)."
+    },
+    "mining_pool": "https://pool.animica.org (stratum :3333 PPS with sub-block shares, :3334 solo; free stats REST + Swagger at /api/docs)"
+  },
+  "tools_for_agents": {
+    "mcp_server": {
+      "install": "pip install animica-mcp",
+      "run": "animica-mcp (or: uvx animica-mcp; or: animica mcp serve from the main `animica` package)",
+      "transport": "stdio (default), streamable-http, sse",
+      "tools": "15 read-only tools: chain head/blocks/accounts, AI ask/models, quantum beacon, pool stats, network hashrate. No private keys."
+    },
+    "cli": {
+      "install": "pip install animica  (or: curl -fsSL https://animica.dev/install.sh | sh)",
+      "note": "The `animica` CLI covers node, wallet, miner (`animica up`), agentic coding (`animica chat`), quantum, and MCP."
+    },
+    "agents_hub": "https://animica.org/agents/"
+  },
+  "source": {
+    "github": "https://github.com/animicaorg/all",
+    "pypi": "https://pypi.org/project/animica/",
+    "license": "Apache-2.0"
+  }
+}

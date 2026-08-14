@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Free AI inference API — no key required</title>
+<meta name="description" content="Animica runs a free OpenAI-compatible AI inference API at animica.dev/v1: no API key, no signup, 30 requests/minute per IP. Models, code examples, rate limits, and honest capacity caveats.">
+<link rel="canonical" href="https://animica.org/free-ai-inference-api/">
+<meta property="og:title" content="Free AI inference API — no key required">
+<meta property="og:description" content="Keyless OpenAI-compatible chat completions at https://animica.dev/v1 — 30 req/min/IP, community-GPU capacity, honest limits documented.">
+<meta property="og:url" content="https://animica.org/free-ai-inference-api/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Animica">
+<meta property="og:image" content="https://animica.org/logo.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Do I need an API key to use Animica's free AI inference API?",
+      "acceptedAnswer": {"@type": "Answer", "text": "No. The API at https://animica.dev/v1 is keyless: there is no signup, no billing, and no Authorization header required. OpenAI SDKs demand a non-empty key string, so pass any placeholder such as \"not-needed\"."}
+    },
+    {
+      "@type": "Question",
+      "name": "What models are available on the free API?",
+      "acceptedAnswer": {"@type": "Answer", "text": "GET https://animica.dev/v1/models lists them live: kimi-k3 (default, flagship coding and chat), animica-chat, animica-chat-small, animica-chat-flagship, and animica-knowledge (ENA, trained collaboratively by the network). Each entry carries a boolean serving flag telling you whether a worker is currently serving that model."}
+    },
+    {
+      "@type": "Question",
+      "name": "What are the rate limits?",
+      "acceptedAnswer": {"@type": "Answer", "text": "30 requests per minute per IP address, with a burst allowance of 12. Exceeding the limit returns HTTP 429. There is no paid tier on this endpoint and no published daily quota."}
+    },
+    {
+      "@type": "Question",
+      "name": "Why do requests sometimes hang or return 503?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Capacity is provided by community GPU workers on the Animica network, not a fixed server fleet. When a model's serving flag in /v1/models is false, requests may queue for a long time or fail instead of completing promptly — at the 2026-08-14 audit all models showed serving: false and a test request hung past 60 seconds. Check the flag first and set a generous client timeout. Media endpoints (/v1/images, /v1/videos, /v1/audio) return 202 {status:queued, job_id, poll_url} when no GPU miner is online - queued jobs persist until a miner connects; a 503 no_media_miner means the dispatcher itself was unreachable and the submission did not enqueue - resubmit."}
+    },
+    {
+      "@type": "Question",
+      "name": "Can I use the official OpenAI SDK?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Yes. Any OpenAI-compatible client works: set base_url to https://animica.dev/v1 and pass a placeholder api_key. Chat completions, model listing, and streaming via \"stream\": true (Server-Sent Events) follow the OpenAI wire format."}
+    },
+    {
+      "@type": "Question",
+      "name": "Who pays for the compute, and is there an SLA?",
+      "acceptedAnswer": {"@type": "Answer", "text": "Inference is served by community GPU workers on the Animica network, which earn ANM (the chain's native coin), with usage funded so that end users pay nothing. There is no SLA on the free endpoint: it is best-effort capacity, suitable for agents and development rather than latency-critical production."}
+    }
+  ]
+}
+</script>
+<style>
+:root{
+  --bg:#fbfdfc;--surface:#f1f6f3;--text:#152420;--muted:#4b5f58;--border:#d8e3de;
+  --action:#2E63FF;--link:#2453d6;--truth:#14C79B;--truth-ink:#0b7a5e;
+  --code-bg:#11201a;--code-text:#d9ece4;--code-border:#1e332b;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0c1310;--surface:#121b17;--text:#e5efeb;--muted:#9db3ab;--border:#25332d;
+  --action:#7f9fff;--link:#8fabff;--truth-ink:#14C79B;--code-bg:#0a110e;--code-text:#d5e8e0;--code-border:#1d2c25}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--link)}
+header{border-bottom:1px solid var(--border);background:var(--surface)}
+.wrap{max-width:52rem;margin:0 auto;padding:0 1.25rem}
+header .wrap{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;padding-top:.8rem;padding-bottom:.8rem}
+.brand{font-weight:700;letter-spacing:.06em;text-decoration:none;color:var(--text)}
+.brand span{color:var(--truth-ink)}
+header nav{margin-left:auto;display:flex;gap:.9rem;flex-wrap:wrap;font-size:.9rem}
+header nav a{text-decoration:none;color:var(--muted)}
+header nav a:hover{color:var(--link)}
+main{padding:2rem 0 3rem}
+h1{font-size:1.9rem;line-height:1.25;margin:.2rem 0 .8rem}
+h2{font-size:1.35rem;margin:2.2rem 0 .6rem;padding-top:1.2rem;border-top:1px solid var(--border)}
+h3{font-size:1.05rem;margin:1.4rem 0 .4rem}
+.kicker{color:var(--truth-ink);font-size:.8rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0}
+.lede{font-size:1.06rem}
+pre{background:var(--code-bg);color:var(--code-text);border:1px solid var(--code-border);border-radius:8px;padding:.9rem 1rem;overflow-x:auto;font-size:.86rem;line-height:1.5}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+:not(pre)>code{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:.08em .35em;font-size:.88em}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{border:1px solid var(--border);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:var(--surface)}
+.note{border-left:4px solid var(--action);background:var(--surface);border-radius:6px;padding:.7rem 1rem;margin:1rem 0;font-size:.95rem}
+footer{border-top:1px solid var(--border);background:var(--surface);padding:1.6rem 0 2.4rem;font-size:.9rem;color:var(--muted)}
+footer h2{border:0;margin:0 0 .5rem;font-size:1rem;padding:0;color:var(--text)}
+footer ul{margin:.3rem 0 1rem;padding-left:1.2rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="https://animica.org/">ANIMICA<span>/reference</span></a>
+    <nav aria-label="Site">
+      <a href="https://animica.org/agents/">Agents hub</a>
+      <a href="https://animica.dev/">animica.dev</a>
+      <a href="https://animica.org/developers/">Developers</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <div class="wrap">
+    <p class="kicker">Reference · verified 2026-08-14</p>
+    <h1>Free AI inference API — no key required</h1>
+    <p class="lede">Animica runs a free, OpenAI-compatible AI inference API at <code>https://animica.dev/v1</code>. There is no API key, no signup, and no billing: send a standard chat-completions request and you get a response, rate-limited to 30 requests/minute per IP. Compute comes from community GPU workers on the Animica network, so capacity is best-effort — this page documents exactly how to call it and what its real limits are.</p>
+
+    <h2 id="quickstart">Quickstart</h2>
+<pre><code>curl -s https://animica.dev/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"kimi-k3","messages":[{"role":"user","content":"Hello"}]}'</code></pre>
+<pre><code>from openai import OpenAI
+
+client = OpenAI(base_url="https://animica.dev/v1", api_key="not-needed")
+resp = client.chat.completions.create(
+    model="kimi-k3",
+    messages=[{"role": "user", "content": "Hello"}],
+    timeout=600,   # completions typically take 1–3 minutes; prefer "stream": true
+)
+print(resp.choices[0].message.content)</code></pre>
+    <p>Streaming uses the standard OpenAI wire format — add <code>"stream": true</code> and read Server-Sent Events.</p>
+
+    <h2 id="models">Models</h2>
+    <p><code>GET https://animica.dev/v1/models</code> returns the live list. As of 2026-08-14:</p>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Model id</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>kimi-k3</code></td><td>Default. Flagship coding &amp; chat, served by the Animica miner network. May emit <code>&lt;think&gt;…&lt;/think&gt;</code> reasoning blocks — strip them if you need clean output.</td></tr>
+        <tr><td><code>animica-chat</code></td><td>Standard-tier chat routed through registered miners.</td></tr>
+        <tr><td><code>animica-chat-small</code></td><td>Small tier — lighter, faster when serving.</td></tr>
+        <tr><td><code>animica-chat-flagship</code></td><td>Flagship tier — highest quality when serving.</td></tr>
+        <tr><td><code>animica-knowledge</code></td><td>ENA — collaboratively trained by the network (LoRA head over Qwen2.5-1.5B).</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Each model entry includes a boolean <code>"serving"</code> flag: whether a worker is live for that model <em>right now</em>. Treat it as the source of truth before sending work.</p>
+
+    <h2 id="limits">Honest limits</h2>
+    <ul>
+      <li><strong>Rate limit:</strong> 30 requests/minute per IP (burst 12). Exceeding it returns HTTP 429.</li>
+      <li><strong>Capacity:</strong> community-GPU-provided, not a fixed fleet. When a model shows <code>"serving": false</code> — as <em>all</em> models did at the 2026-08-14 audit — requests may queue for a long time or fail instead of completing; a test request hung past 60 seconds. Always check <code>/v1/models</code> first and set a generous timeout.</li>
+      <li><strong>No SLA, no paid tier</strong> on this endpoint. Best-effort capacity, suited to agents and development rather than latency-critical production.</li>
+      <li><strong>Media endpoints</strong> (<code>/v1/images</code>, <code>/v1/videos</code>, <code>/v1/audio</code>) dispatch to GPU miners: submissions return 202 <code>{status:"queued", job_id, poll_url}</code> and queued jobs persist until a miner is online. A 503 <code>no_media_miner</code> means the dispatcher itself was unreachable and the submission did <em>not</em> enqueue &mdash; resubmit.</li>
+      <li><strong>Chat completions and model listing</strong> are the supported surfaces; don't assume other OpenAI routes exist without probing.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Do I need an API key to use Animica's free AI inference API?</h3>
+    <p>No. The API at <code>https://animica.dev/v1</code> is keyless: there is no signup, no billing, and no <code>Authorization</code> header required. OpenAI SDKs demand a non-empty key string, so pass any placeholder such as <code>"not-needed"</code>.</p>
+    <h3>What models are available on the free API?</h3>
+    <p><code>GET https://animica.dev/v1/models</code> lists them live: <code>kimi-k3</code> (default, flagship coding and chat), <code>animica-chat</code>, <code>animica-chat-small</code>, <code>animica-chat-flagship</code>, and <code>animica-knowledge</code> (ENA, trained collaboratively by the network). Each entry carries a boolean <code>serving</code> flag telling you whether a worker is currently serving that model.</p>
+    <h3>What are the rate limits?</h3>
+    <p>30 requests per minute per IP address, with a burst allowance of 12. Exceeding the limit returns HTTP 429. There is no paid tier on this endpoint and no published daily quota.</p>
+    <h3>Why do requests sometimes hang or return 503?</h3>
+    <p>Capacity is provided by community GPU workers on the Animica network, not a fixed server fleet. When a model's <code>serving</code> flag in <code>/v1/models</code> is <code>false</code>, requests may queue for a long time or fail instead of completing promptly — at the 2026-08-14 audit all models showed <code>serving: false</code> and a test request hung past 60 seconds. Check the flag first and set a generous client timeout. Media endpoints (<code>/v1/images</code>, <code>/v1/videos</code>, <code>/v1/audio</code>) return 202 <code>{status:"queued", job_id, poll_url}</code> when no GPU miner is online &mdash; queued jobs persist until a miner connects; a 503 <code>no_media_miner</code> means the dispatcher itself was unreachable and the submission did not enqueue &mdash; resubmit.</p>
+    <h3>Can I use the official OpenAI SDK?</h3>
+    <p>Yes. Any OpenAI-compatible client works: set <code>base_url</code> to <code>https://animica.dev/v1</code> and pass a placeholder <code>api_key</code>. Chat completions, model listing, and streaming via <code>"stream": true</code> (Server-Sent Events) follow the OpenAI wire format.</p>
+    <h3>Who pays for the compute, and is there an SLA?</h3>
+    <p>Inference is served by community GPU workers on the Animica network, which earn ANM (the chain's native coin), with usage funded so that end users pay nothing. There is no SLA on the free endpoint: it is best-effort capacity, suitable for agents and development rather than latency-critical production.</p>
+
+    <h2 id="docs">Canonical docs</h2>
+    <ul>
+      <li><a href="https://animica.dev/llms.txt">animica.dev/llms.txt</a> — the agent-oriented reference for this API</li>
+      <li><a href="https://animica.dev/">animica.dev</a> — the free-AI site itself</li>
+      <li><a href="https://animica.org/agents/">animica.org/agents</a> — all agent quickstarts (chain, MCP, payments)</li>
+      <li><a href="https://animica.org/blockchain-mcp-server/">Animica MCP server</a> — the same inference as an MCP tool (<code>animica_ai_ask</code>)</li>
+      <li><a href="https://animica.org/developers/">Developer hub</a></li>
+    </ul>
+  </div>
+</main>
+<footer>
+  <div class="wrap">
+    <h2>Machine-readable discovery</h2>
+    <ul>
+      <li><a href="https://animica.org/llms.txt">llms.txt</a> · <a href="https://animica.org/llms-full.txt">llms-full.txt</a> · <a href="https://animica.org/.well-known/agents.json">agents.json</a> · <a href="https://animica.dev/llms.txt">animica.dev/llms.txt</a></li>
+      <li><a href="https://rpc.animica.org/openrpc.json">RPC openrpc.json</a> · <a href="https://explorer.animica.org/api/openapi.json">explorer openapi.json</a> · <a href="https://explorer.animica.org/api/rpc/discover">RPC method discovery</a> · <a href="https://pool.animica.org/api/openapi.json">pool openapi.json</a> · <a href="https://pay.animica.dev/openapi.json">pay openapi.json</a></li>
+      <li><a href="https://animica.org/agents/">Agents hub</a> · <a href="https://animica.org/post-quantum-blockchain-api/">Post-quantum blockchain API</a> · <a href="https://animica.org/blockchain-mcp-server/">Animica MCP server</a></li>
+    </ul>
+    <p>Animica · Apache-2.0 · <a href="https://github.com/animicaorg/all">GitHub</a> · Contact: <a href="mailto:ai@3vdc.com">ai@3vdc.com</a></p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,34 +1,120 @@
 {
   "schema_version": "0.1",
   "name": "Animica Free AI",
-  "description": "Free, treasury-funded, OpenAI-compatible inference with post-quantum proof-of-inference receipts. Open for autonomous agent use.",
+  "description": "Free, keyless, OpenAI-compatible inference served by the Animica miner network, plus GPU media generation, a Python function cloud that pays deployers in ANM, and a free GitHub coding agent. Open for autonomous agent use.",
   "url": "https://animica.dev/",
-  "provider": { "name": "Animica", "url": "https://animica.dev/" },
-  "authentication": { "type": "none", "note": "No API key required." },
-  "pricing": { "model": "free", "funded_by": "Animica foundation treasury" },
-  "rate_limit": { "requests_per_minute": 30, "burst": 12, "scope": "per-ip", "on_limit": "HTTP 429, back off and retry" },
+  "animica_release": "10.1.0",
+  "updated": "2026-08-14",
+  "provider": {
+    "name": "Animica",
+    "url": "https://animica.dev/",
+    "contact": "ai@3vdc.com"
+  },
+  "authentication": {
+    "type": "none",
+    "note": "No API key for /v1, media and /agent endpoints; omit the Authorization header or send any placeholder. The Python Cloud control plane (/api/cloud/v1) uses Bearer anm_mkt_ keys from https://animica.dev/dev."
+  },
+  "pricing": {
+    "model": "free",
+    "funded_by": "Animica foundation treasury",
+    "paid_plans": "https://animica.dev/pricing",
+    "paid_plans_note": "Free tier covers AI, media and agent use. Paid plans (Starter $4.99 / Pro $14.99 / Operator $39.99 / Business $99.99 per month, PayPal) add autonomous Workers, scheduled executions, more deployments, production API keys, marketplace monetization and teams."
+  },
+  "rate_limit": {
+    "requests_per_minute": 30,
+    "burst": 12,
+    "scope": "per-ip",
+    "on_limit": "HTTP 429 (HTML body, not JSON) - back off and retry",
+    "media_generation": "12 requests/minute per IP, burst 6"
+  },
   "endpoints": {
     "openai_base_url": "https://animica.dev/v1",
     "chat_completions": "https://animica.dev/v1/chat/completions",
     "models": "https://animica.dev/v1/models",
-    "embeddings": "https://animica.dev/v1/embeddings"
+    "tiers": "https://animica.dev/v1/tiers",
+    "media_generations": "https://animica.dev/v1/{images|videos|audio}/generations",
+    "media_capabilities": "https://animica.dev/api/mkt/v1/media/capabilities",
+    "media_jobs": "https://animica.dev/api/mkt/v1/media/jobs/{id}",
+    "network_height": "https://animica.dev/net-height",
+    "note": "/v1/embeddings is not currently deployed (404)."
   },
-  "openapi": "https://animica.dev/openapi.json",
-  "llms_txt": "https://animica.dev/llms.txt",
+  "capacity": {
+    "serving_flag": "Each model in GET /v1/models carries a boolean `serving` flag - whether a community GPU worker is live for it right now. If serving=false, requests may queue for a long time or fail; check before sending work.",
+    "latency": "1-3 minutes typical when serving; use stream:true and a client timeout >= 300s (gateway holds requests up to 600s with SSE keepalives).",
+    "media": "Media is dispatch-only: submissions return 202 {status:queued, job_id, poll_url} and queued jobs persist until a GPU miner is online. A 503 no_media_miner means the dispatcher was unreachable and the submission did NOT enqueue - resubmit."
+  },
+  "manifests": {
+    "llms_txt": "https://animica.dev/llms.txt",
+    "llms_full_txt": "https://animica.dev/llms-full.txt",
+    "openapi": "https://animica.dev/openapi.json"
+  },
   "recommended_models": {
-    "code": "deepseek-coder:6.7b",
-    "general": "qwen2.5:7b",
-    "fast": "qwen2.5:0.5b",
-    "embeddings": "nomic-embed-text"
+    "default": "kimi-k3",
+    "coding": "kimi-k3",
+    "general": "animica-chat",
+    "fast": "animica-chat-small",
+    "quality": "animica-chat-flagship",
+    "network_trained": "animica-knowledge",
+    "note": "Prefer whichever model currently reports serving=true in GET /v1/models."
   },
-  "capabilities": ["chat", "code", "embeddings", "streaming"],
-  "verifiable": {
-    "proof_of_inference": true,
-    "signature_scheme": "ML-DSA-65 (FIPS-204, post-quantum)",
-    "description": "Every response is bound to a content-addressed, offline-verifiable, replayable receipt."
-  },
+  "capabilities": [
+    "chat",
+    "code",
+    "streaming",
+    "image-generation",
+    "video-generation",
+    "audio-generation",
+    "python-function-hosting",
+    "github-coding-agent"
+  ],
   "tools_for_agents": {
-    "github_coding_agent": "https://animica.dev/#agent",
-    "note": "A free GitHub-connected coding agent that can read and edit repositories and open pull requests."
+    "github_coding_agent": {
+      "ui": "https://animica.dev/#agent",
+      "health": "https://animica.dev/agent/health",
+      "run": "POST https://animica.dev/agent/run {token, repo, instruction} - reads the repo, applies the instruction, opens a pull request; GitHub token supplied per-request, never stored",
+      "swarm_start": "POST https://animica.dev/agent/swarm/start {prompt} -> {job_id}; poll /agent/swarm/status/{job_id} or stream /agent/swarm/events/{job_id}"
+    },
+    "python_cloud": {
+      "docs": "https://animica.dev/docs/cloud",
+      "api_base": "https://animica.dev/api/cloud/v1",
+      "stats": "https://animica.dev/api/cloud/v1/stats",
+      "invoke": "GET/POST https://animica.dev/api/cloud/v1/fn/{owner}/{slug} - public functions are callable without a key (free tier 50 executions/day per caller)",
+      "note": "Deploy Python functions and earn 80% of metered ANM revenue per call."
+    },
+    "mcp_server": {
+      "install": "pip install animica-mcp",
+      "run": "animica-mcp (or: uvx animica-mcp; or: animica mcp serve from the main `animica` package)",
+      "transport": "stdio (default), streamable-http, sse",
+      "tools": "15 read-only tools: chain head/blocks/accounts, AI ask/models, quantum beacon, pool stats, network hashrate. No private keys."
+    },
+    "cli": {
+      "install": "curl -fsSL https://animica.dev/install.sh | sh  (or: pip install animica)",
+      "docs": "https://animica.dev/cli"
+    }
+  },
+  "animica_network": {
+    "node_json_rpc": {
+      "url": "https://rpc.animica.org/rpc",
+      "protocol": "JSON-RPC 2.0 over POST",
+      "example": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"chain.getHead\",\"params\":{}}",
+      "note": "Always POST to the /rpc path; the bare domain 301-redirects and breaks naive POST clients. Namespaces: chain.*, state.*, tx.*, mempool.*, net.*, aicf.*, l2_*."
+    },
+    "explorer_api": {
+      "base": "https://explorer.animica.org/api",
+      "example": "https://explorer.animica.org/api/head",
+      "note": "Free REST, no auth: /head, /blocks, /block/:hashOrHeight, /tx/:hash, /address/:bech32, /richlist, /circulating-supply, /mining/info, /aicf/*, /l2/*, /quantum/info. The bare /api base itself is not an endpoint."
+    },
+    "payments": {
+      "url": "https://pay.animica.dev",
+      "note": "Merchant ANM payments: payment-intents REST API (Bearer key + Idempotency-Key), hosted checkout, invoices, POS, widget, WooCommerce plugin; 2.00% fee; amounts in base units (1 ANM = 10^9)."
+    },
+    "mining_pool": "https://pool.animica.org (stratum :3333 PPS, :3334 solo; free stats REST + Swagger at /api/docs)",
+    "source": "https://github.com/animicaorg/all"
+  },
+  "support": {
+    "how": "Get or support ANM: mine via pool.animica.org, trade ANM/USDT on NonKYC, or accept ANM payments via pay.animica.dev",
+    "trade_url": "https://nonkyc.io/market/ANM_USDT",
+    "token": "ANM",
+    "note": "This free service is funded by the Animica foundation treasury; holding or transacting in ANM sustains it."
   }
 }
