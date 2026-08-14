@@ -6,11 +6,13 @@
     "description": "Free, keyless, OpenAI-compatible inference plus GPU-miner media dispatch on animica.dev. No API key required (any placeholder Authorization header is also accepted). Inference is served by community GPU workers on the Animica network: check the per-model boolean `serving` flag in GET /v1/models before sending work \u2014 requests to a non-serving model may queue for a long time or fail. When a worker is serving, completions typically take 1-3 minutes; use stream:true and a client timeout of at least 300s. Rate limit: 30 requests/minute per IP (burst 12) on /v1/*; media generation paths are limited to 12/minute (burst 6).",
     "contact": {
       "name": "Animica",
-      "url": "https://animica.dev/"
+      "url": "https://animica.dev/",
+      "email": "ai@3vdc.com"
     },
     "license": {
       "name": "Free to use"
-    }
+    },
+    "x-guidance": "Free keyless OpenAI-compatible inference: POST /v1/chat/completions (30 req/min/IP; check each model's 'serving' flag via GET /v1/models first). Paid x402 demo endpoint: GET /x402/paid/echo returns HTTP 402 with payment requirements (USDC on Base, exact scheme); pay via any x402 client. Chain data is free at https://rpc.animica.org/rpc and https://explorer.animica.org/api."
   },
   "servers": [
     {
@@ -313,6 +315,46 @@
             "description": "Media dispatcher unreachable. JSON body: {\"error\":{\"code\":\"no_media_miner\",\"type\":\"unavailable\",...},\"animica\":{\"dispatch\":\"miner\",\"status\":\"queue_unreachable\"}} - resubmit shortly."
           }
         }
+      }
+    },
+    "/x402/paid/echo": {
+      "get": {
+        "operationId": "x402PaidEcho",
+        "summary": "x402-gated echo \u2014 pay $0.005 in USDC on Base per call",
+        "tags": [
+          "x402"
+        ],
+        "x-payment-info": {
+          "price": {
+            "mode": "fixed",
+            "currency": "USD",
+            "amount": "0.005000"
+          },
+          "protocols": [
+            {
+              "x402": {}
+            }
+          ]
+        },
+        "responses": {
+          "402": {
+            "description": "Payment required \u2014 body and PAYMENT-REQUIRED header carry x402 payment requirements (exact scheme, Base USDC)"
+          },
+          "200": {
+            "description": "Echo response after verified x402 payment; settlement receipt in the PAYMENT-RESPONSE header"
+          }
+        },
+        "parameters": [
+          {
+            "name": "msg",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Any text to echo back; all query parameters are echoed in the JSON response"
+          }
+        ]
       }
     }
   },

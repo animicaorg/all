@@ -95,6 +95,11 @@ function buildPaymentRequiredForRoute(route, cfg, error) {
       serviceName: cfg.serviceName,
     },
     accepts: buildAccepts(route, cfg),
+    // Bazaar discovery extension (v2): indexers (x402scan, CDP Bazaar) read
+    // extensions.bazaar.info.{input,output} to learn what the endpoint takes.
+    extensions: route.outputSchema
+      ? { bazaar: { info: { input: route.outputSchema.input, output: route.outputSchema.output } } }
+      : undefined,
     error,
   });
 }
@@ -120,7 +125,7 @@ function createX402Gate(options = {}) {
     // v2 reads the PAYMENT-REQUIRED header; v1 reads the JSON body. Send the
     // v2 object through the header and the v1 rendering through the body so
     // each client generation sees its own dialect on its own channel.
-    const body = JSON.stringify(protocol.toV1Body(paymentRequired), null, 2);
+    const body = JSON.stringify(protocol.toV1Body(paymentRequired, route.outputSchema || null), null, 2);
     send(res, 402, {
       'content-type': 'application/json',
       'payment-required': protocol.encodeHeader(paymentRequired),

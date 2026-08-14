@@ -30,7 +30,17 @@ function main() {
   const x402 = createX402Gate();
 
   const paidEcho = x402.gate(
-    { path: '/paid/echo', priceUsd: '0.005', description: 'Echo service (demo)', mimeType: 'application/json' },
+    {
+      path: '/paid/echo', priceUsd: '0.005', description: 'Echo service (demo)', mimeType: 'application/json',
+      outputSchema: {
+        input: {
+          type: 'http',
+          method: 'GET',
+          queryParams: { msg: { type: 'string', description: 'any text; echoed back along with all query parameters' } },
+        },
+        output: { type: 'json', description: 'JSON object echoing the request method and query parameters' },
+      },
+    },
     async (req) => {
       const url = new URL(req.url, 'http://localhost');
       return {

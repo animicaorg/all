@@ -40,7 +40,7 @@ function decodeHeader(value) {
  * accepts[]: PaymentRequirements { scheme, network (CAIP-2), amount (atomic
  * string), asset, payTo, maxTimeoutSeconds, extra? }
  */
-function buildPaymentRequired({ resource, accepts, error }) {
+function buildPaymentRequired({ resource, accepts, error, extensions }) {
   if (!resource || typeof resource.url !== 'string') throw new Error('resource.url is required');
   if (resource.serviceName && !/^[\x20-\x7e]{1,32}$/.test(resource.serviceName)) {
     throw new Error('serviceName must be <=32 printable ascii chars');
@@ -48,6 +48,7 @@ function buildPaymentRequired({ resource, accepts, error }) {
   if (!Array.isArray(accepts) || accepts.length === 0) throw new Error('accepts must be non-empty');
   for (const a of accepts) validatePaymentRequirements(a);
   const out = { x402Version: 2, resource, accepts };
+  if (extensions && typeof extensions === 'object') out.extensions = extensions;
   if (error) out.error = String(error);
   return out;
 }
@@ -73,7 +74,7 @@ function validatePaymentRequirements(a) {
  * top-level resource object -> per-accepts `resource` string URL, and carries
  * description/mimeType per entry.
  */
-function toV1Body(paymentRequired) {
+function toV1Body(paymentRequired, outputSchema) {
   return {
     x402Version: 1,
     error: paymentRequired.error || 'Payment required',
@@ -86,7 +87,9 @@ function toV1Body(paymentRequired) {
       resource: paymentRequired.resource.url,
       description: paymentRequired.resource.description || '',
       mimeType: paymentRequired.resource.mimeType || 'application/json',
-      outputSchema: null,
+      // Bazaar-style discovery schema ({input:{type:'http',method,...},output})
+      // — indexers (x402scan, CDP Bazaar) require it to know what to send.
+      outputSchema: outputSchema || null,
       maxTimeoutSeconds: a.maxTimeoutSeconds,
       extra: a.extra || undefined,
     })),
