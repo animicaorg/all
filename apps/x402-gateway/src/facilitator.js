@@ -9,7 +9,7 @@
  *   POST /settle  same request -> {success, errorReason?, payer?,
  *                 transaction, network, amount?}
  *   GET  /supported -> {kinds:[{x402Version:2, scheme, network, extra}],
- *                 extensions:[], signers:{"solana:*":[feePayer]}}
+ *                 extensions:[], signers:{"<caip2 network>":[feePayer]}}
  *
  * Scheme mechanics: the server's accepts entry advertises asset=mint,
  * payTo=merchant owner wallet, extra.feePayer=this facilitator's sponsor
@@ -57,6 +57,17 @@ class ReplayStore {
   mark(key) {
     this.gc();
     this.seen.set(key, this.now() + this.ttlMs);
+  }
+  /**
+   * Atomic check-and-mark: returns false if the key was already marked.
+   * Single-threaded JS makes has+set in one synchronous block race-free —
+   * which mark() called after a separate has() (across an await) is NOT.
+   */
+  checkAndMark(key) {
+    this.gc();
+    if (this.seen.has(key)) return false;
+    this.seen.set(key, this.now() + this.ttlMs);
+    return true;
   }
   gc() {
     const t = this.now();
@@ -128,9 +139,10 @@ function createFacilitator({
     }
 
     // Instruction whitelist per the spec's static-layout check: 1..7 of
-    // SetComputeUnitLimit / SetComputeUnitPrice / Memo / exactly one
-    // spl-token or token-2022 TransferChecked. Anything else is rejected —
-    // an unknown program in a tx we fee-pay is an open cheque.
+    // SetComputeUnitLimit / SetComputeUnitPrice / Memo / Lighthouse guards
+    // (wallet-injected, spec says MUST be allowed) / exactly one spl-token or
+    // token-2022 TransferChecked. Anything else is rejected — an unknown
+    // program in a tx we fee-pay is an open cheque.
     if (tx.instructions.length < 1 || tx.instructions.length > 7) {
       throw new VerifyReject('invalid_exact_svm_payload_instructions', `instruction count ${tx.instructions.length}`);
     }
@@ -139,6 +151,14 @@ function createFacilitator({
     let memoData = null;
     for (const ix of tx.instructions) {
       const program = tx.accountKeys[ix.programIdIndex];
+      // Spec §2.1.1 fee-payer isolation: the sponsor must appear NOWHERE but
+      // the fee slot — not as a program, not in any instruction's accounts
+      // (closes the multisig-signer and memo-signer edges; the runtime can
+      // then never authorize the sponsor for anything but the network fee).
+      if (program === signer.publicKey ||
+          ix.accounts.some((ai) => tx.accountKeys[ai] === signer.publicKey)) {
+        throw new VerifyReject('invalid_exact_svm_payload_fee_payer', 'sponsor may only occupy the fee-payer slot');
+      }
       if (program === sol.TOKEN_PROGRAM_ID || program === sol.TOKEN_2022_PROGRAM_ID) {
         if (ix.data[0] !== 12) throw new VerifyReject('invalid_exact_svm_payload_instructions', 'token instruction is not TransferChecked');
         if (transfer) throw new VerifyReject('invalid_exact_svm_payload_instructions', 'multiple transfers');
@@ -158,6 +178,9 @@ function createFacilitator({
         }
       } else if (program === sol.MEMO_PROGRAM_ID) {
         memoData = Buffer.from(ix.data).toString('utf8');
+      } else if (program === sol.LIGHTHOUSE_PROGRAM_ID) {
+        // Read-only assertion guards injected by Phantom/Solflare; inert for
+        // us (they can only make the tx fail, never move funds).
       } else {
         throw new VerifyReject('invalid_exact_svm_payload_instructions', `disallowed program ${program}`);
       }
@@ -270,8 +293,13 @@ function createFacilitator({
 
       const { tx, payer, amount, replayKey } = facts;
       // Mark BEFORE broadcast — see file header for why the mark stays on
-      // failure.
-      replay.mark(replayKey);
+      // failure. Atomic check-and-mark, not mark(): inspect()'s replay check
+      // ran before awaits resolved, so two CONCURRENT settles of the same tx
+      // could both pass it (the spec's "duplicate settlement" race). Whoever
+      // reaches this line first wins; the loser never broadcasts.
+      if (!replay.checkAndMark(replayKey)) {
+        return { success: false, errorReason: 'invalid_transaction_state', transaction: '', network, payer };
+      }
 
       const feeSig = signer.sign(tx.messageBytes);
       const signatures = tx.signatures.slice();

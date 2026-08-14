@@ -122,6 +122,38 @@ test('reject: unknown program instruction (open-cheque prevention)', async () =>
   assert.equal(v.invalidReason, 'invalid_exact_svm_payload_instructions');
 });
 
+test('allow: wallet-injected Lighthouse guard instruction (spec Path 1 MUST)', async () => {
+  const s = scene();
+  const fac = facFor(s);
+  const v = await fac.verify(body(s, s.tx({ extraProgram: sol.LIGHTHOUSE_PROGRAM_ID })));
+  assert.equal(v.isValid, true, v.invalidDetail);
+});
+
+test('reject: sponsor appears in an instruction\'s accounts (isolation, spec 2.1.1)', async () => {
+  const s = scene();
+  const fac = facFor(s);
+  // A memo instruction listing the fee payer (account index 0) as an account:
+  // the sponsor's signature would then be usable beyond the fee slot.
+  const v = await fac.verify(body(s, s.tx({ extraProgram: sol.MEMO_PROGRAM_ID, extraProgramAccounts: [0] })));
+  assert.equal(v.isValid, false);
+  assert.equal(v.invalidReason, 'invalid_exact_svm_payload_fee_payer');
+});
+
+test('concurrent settles of the same tx: exactly one succeeds, one broadcast', async () => {
+  const s = scene();
+  const fac = facFor(s);
+  const b = body(s, s.tx());
+  // Both inspections interleave their RPC awaits, so both pass the replay
+  // read; the atomic check-and-mark must still let only one through (the
+  // spec's "duplicate settlement" race).
+  const [a, c] = await Promise.all([fac.settle(b), fac.settle(b)]);
+  const succeeded = [a, c].filter((r) => r.success);
+  const rejected = [a, c].filter((r) => !r.success);
+  assert.equal(succeeded.length, 1, 'exactly one settle may succeed');
+  assert.equal(rejected[0].errorReason, 'invalid_transaction_state');
+  assert.equal(s.rpc.sent.length, 1, 'the duplicate must never broadcast');
+});
+
 test('reject: token instruction that is not TransferChecked', async () => {
   const s = scene();
   const fac = facFor(s);

@@ -129,6 +129,9 @@ test('v1 X-PAYMENT payment: legacy wire works and gets X-PAYMENT-RESPONSE', asyn
   assert.equal(res.status, 200);
   const receipt = protocol.decodeHeader(res.headers.get('x-payment-response'));
   assert.equal(receipt.success, true);
+  assert.equal(receipt.network, 'solana-devnet', 'v1 channel speaks v1 slugs, not CAIP-2');
+  // The v2 header rides along for mixed SDKs and stays CAIP-2.
+  assert.equal(protocol.decodeHeader(res.headers.get('payment-response')).network, s.network);
 });
 
 test('tampered accepted terms are refused before any facilitator call', async (t) => {

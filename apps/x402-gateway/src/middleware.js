@@ -205,6 +205,11 @@ function createX402Gate(options = {}) {
       }
       const settlementResponse = protocol.buildSettlementResponse(settlement);
       const settlementHeaderValue = protocol.encodeHeader(settlementResponse);
+      // The v1 wire names networks by slug, not CAIP-2 — the X-PAYMENT-
+      // RESPONSE header must speak that dialect (transports-v1/http.md).
+      const v1SettlementHeaderValue = protocol.encodeHeader(Object.assign({}, settlementResponse, {
+        network: cfgMod.V1_NETWORK_SLUGS[settlementResponse.network] || settlementResponse.network,
+      }));
 
       if (!settlement.success) {
         const headers = {
@@ -213,7 +218,7 @@ function createX402Gate(options = {}) {
             buildPaymentRequiredForRoute(route, cfg, settlement.errorReason || 'settlement failed')),
         };
         headers[wireVersion === 1 ? protocol.HEADER_X_PAYMENT_RESPONSE : protocol.HEADER_PAYMENT_RESPONSE] =
-          settlementHeaderValue;
+          wireVersion === 1 ? v1SettlementHeaderValue : settlementHeaderValue;
         return send(res, 402, headers,
           JSON.stringify({ x402Version: wireVersion, error: settlement.errorReason || 'settlement failed' }));
       }
@@ -222,7 +227,7 @@ function createX402Gate(options = {}) {
       // Settlement proof on the version's own channel; v2 name also sent to
       // v1 clients costs nothing and helps mixed SDKs.
       headers[protocol.HEADER_PAYMENT_RESPONSE] = settlementHeaderValue;
-      if (wireVersion === 1) headers[protocol.HEADER_X_PAYMENT_RESPONSE] = settlementHeaderValue;
+      if (wireVersion === 1) headers[protocol.HEADER_X_PAYMENT_RESPONSE] = v1SettlementHeaderValue;
       return send(res, out.status || 200, headers, out.body);
     };
   }

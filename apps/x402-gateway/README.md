@@ -67,13 +67,15 @@ middleware ──POST /verify──► facilitator
   `extra.feePayer` = our sponsor pubkey; the client submits a partially
   signed `TransferChecked` with our sponsor as fee payer; `/verify` does the
   spec's static-layout check (1–7 instructions, only compute-budget ≤5
-  lamports/CU, memo, and exactly one `TransferChecked`; authority signature
-  cryptographically verified; fee-payer isolation) plus RPC checks
-  (destination token account owned by `payTo` with the right mint; source
-  funded); `/settle` signs as fee payer, broadcasts, and polls for
-  confirmation. Replay protection keys on `sha256(messageBytes)` and marks
-  before broadcast (in-memory — a real deployment needs a persistent store,
-  noted in the source).
+  lamports/CU, memo, wallet-injected Lighthouse guards, and exactly one
+  `TransferChecked`; authority signature cryptographically verified;
+  fee-payer isolation — the sponsor may appear nowhere but the fee slot)
+  plus RPC checks (destination token account owned by `payTo` with the right
+  mint; source funded); `/settle` signs as fee payer, broadcasts, and polls
+  for confirmation. Replay protection keys on `sha256(messageBytes)` with an
+  atomic check-and-mark before broadcast, closing the spec's
+  duplicate-settlement race (in-memory — a real deployment needs a
+  persistent store, noted in the source).
 * Zero npm dependencies (house rule, same as animica-pay): base58, compact-
   u16, transaction parsing and ed25519 are done with `node:crypto` and
   BigInt. SPL program ids are cross-checked against the bridge's sources.
@@ -129,14 +131,16 @@ curl -i http://127.0.0.1:4656/paid/echo     # 402 + PAYMENT-REQUIRED offer
 node --test test/
 ```
 
-30 tests, no network: the Solana RPC is mocked and the facilitator/middleware
+33 tests, no network: the Solana RPC is mocked and the facilitator/middleware
 servers run on loopback. Covered: 402 shape against the v2 spec fields (and
 v1 body rendering), verify/settle happy path including a check that the
-broadcast transaction carries a valid fee-payer signature, and rejection
-paths — wrong amount, wrong mint, replayed transaction, missing authority
-signature, foreign fee payer, unknown program instruction, non-TransferChecked
-token instruction, wrong destination owner, insufficient funds, tampered
-offer terms, and the kill switch.
+broadcast transaction carries a valid fee-payer signature, concurrent
+settles of the same transaction (exactly one may win), Lighthouse guard
+allowance, and rejection paths — wrong amount, wrong mint, replayed
+transaction, missing authority signature, foreign fee payer, sponsor
+appearing outside the fee slot, unknown program instruction,
+non-TransferChecked token instruction, wrong destination owner, insufficient
+funds, tampered offer terms, and the kill switch.
 
 ## Two-lane strategy (why both)
 

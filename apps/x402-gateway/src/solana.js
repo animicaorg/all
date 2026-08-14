@@ -17,6 +17,9 @@ const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 const COMPUTE_BUDGET_PROGRAM_ID = 'ComputeBudget111111111111111111111111111111';
+// Wallet-injected guard assertions (Phantom injects up to 3, Solflare 2);
+// spec scheme_exact_svm.md Path 1 says these MUST be allowed. Id from the spec.
+const LIGHTHOUSE_PROGRAM_ID = 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95';
 
 /* --------------------------------------------------------------- base58 -- */
 
@@ -280,6 +283,7 @@ module.exports = {
   TOKEN_2022_PROGRAM_ID,
   MEMO_PROGRAM_ID,
   COMPUTE_BUDGET_PROGRAM_ID,
+  LIGHTHOUSE_PROGRAM_ID,
   base58Encode,
   base58Decode,
   decodePubkey,

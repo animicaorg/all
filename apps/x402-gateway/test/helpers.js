@@ -44,6 +44,7 @@ function buildTransferTx({
   computeBudget = true,
   memo = null,
   extraProgram = null, // base58 program id to add a bogus instruction for
+  extraProgramAccounts = [], // account indices for that instruction
   signAuthority = true,
   transferTag = 12,
 }) {
@@ -80,7 +81,7 @@ function buildTransferTx({
   }
   if (extraProgram) {
     const exIdx = push(extraProgram);
-    ixs.push({ programIdIndex: exIdx, accounts: [], data: Buffer.from([9, 9, 9]) });
+    ixs.push({ programIdIndex: exIdx, accounts: extraProgramAccounts, data: Buffer.from([9, 9, 9]) });
   }
 
   const numRequiredSignatures = 2;
