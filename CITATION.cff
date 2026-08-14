@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use Animica in your work, please cite it as below."
+type: software
+title: "Animica"
+authors:
+  - name: "Animica project (Alexander Lehman)"
+url: "https://animica.org"
+repository-code: "https://github.com/animicaorg/all"
+license: Apache-2.0
+version: "10.1.0"
+date-released: "2026-08-13"
+keywords:
+  - blockchain
+  - layer-1
+  - post-quantum-cryptography
+  - ml-dsa
+  - smart-contracts
+  - python
+abstract: "Animica is a proof-of-work Layer-1 blockchain with post-quantum ML-DSA-65 signatures, deterministic Python-VM smart contracts, an ANM-native Layer-2 rollup, and useful-work AI/quantum integration (PoIES consensus)."

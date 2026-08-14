@@ -1,11 +1,13 @@
 # Animica L1 Blockchain
 
+> **Canonical repo:** `main` of [animicaorg/all](https://github.com/animicaorg/all) is the canonical source tree. Current release: **10.1.0** (`pip install animica`).
+
 **Animica** is a fully decentralized layer-1 blockchain platform for verifiable AI and quantum-secure execution. This repository houses the complete blockchain node implementation, consensus engine, execution layer, cryptographic infrastructure, wallets, SDKs, developer tooling, and supporting services for running and extending the network.
 
 ## 🌟 Key Features
 
 - **Fully Decentralized P2P Network**: Gossip-based peer discovery and communication with no central authority
-- **Post-Quantum Cryptography**: Dilithium3 (ML-DSA-65) and SPHINCS+ signatures for quantum-resistant security
+- **Post-Quantum Cryptography**: ML-DSA-65 (FIPS 204, the successor of Dilithium3) signatures — scheme id `0x1003`, the only current signature scheme. SPHINCS+ appears in older code/docs but is legacy; do not build on it. Enumerate live schemes via the `tx.getSupportedSignatureSchemes` RPC.
 - **PoIES Consensus**: Proof-of-Integrated-External-Services combining hash-share work with AI/Quantum/Storage proofs
 - **Multiple Transport Protocols**: TCP, QUIC, and WebSocket with end-to-end encryption
 - **Python-VM Execution**: Deterministic Python-based smart contracts with gas metering
@@ -58,9 +60,28 @@ The production website lives in `website/`. See `website/README.md` for local de
 - ✅ **Peer Discovery**: Automatic discovery via DNS seeds, mDNS, and Kademlia DHT
 - ✅ **Gossip Protocol**: Efficient block/transaction/proof propagation
 - ✅ **Consensus**: Deterministic PoIES validation by all nodes
-- ✅ **No Central Authority**: Public RPC nodes like `127.0.0.1` provide public discovery/sync helpers; run your own node for day-to-day queries and mining.
+- ✅ **No Central Authority**: Public RPC nodes (e.g. `https://rpc.animica.org/rpc`) are convenience helpers for discovery and sync; run your own node for day-to-day queries and mining.
 
 **Run your own node** to strengthen the network and maintain decentralization. See [P2P Networking Guide](docs/P2P_NETWORKING_GUIDE.md) for details.
+
+## 🌐 Live Endpoints (Mainnet)
+
+| Service | Endpoint | Notes |
+|---|---|---|
+| Node JSON-RPC | `POST https://rpc.animica.org/rpc` | JSON-RPC 2.0. The `/rpc` path is required — the bare domain 301-redirects and breaks naive POST clients |
+| Explorer REST API | `https://explorer.animica.org/api/…` | Free, no auth: `/head`, `/blocks`, `/tx/:hash`, `/address/:bech32`, `/richlist`, `/circulating-supply`, `/mining/info`, `/l2/*`, `/aicf/*` |
+| Block explorer | `https://explorer.animica.org` | Web UI |
+| Free AI inference | `https://animica.dev/v1` | OpenAI-compatible, keyless, 30 req/min/IP. Community-GPU capacity: check each model's `serving` flag in `/v1/models` |
+| Mining pool | `stratum+tcp://pool.animica.org:3333` | PPS + sub-block shares; `:3334` = solo (95/5). Stats/Swagger: `https://pool.animica.org/api/docs` |
+| Payments | `https://pay.animica.dev` | Merchant REST, hosted checkout, 2.00% fee, amounts in base units (1 ANM = 10^9) |
+| PyPI | `https://pypi.org/project/animica/` | `pip install animica` |
+
+Example:
+
+```bash
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}'
+```
 
 ## 📋 Prerequisites
 
@@ -343,7 +364,7 @@ Each network uses its own data directory to prevent state contamination:
 
 ## 🌐 Decentralized P2P Network
 
-**Animica is fully decentralized** - nodes connect directly to each other via P2P without any central authority. The public RPC at `127.0.0.1` is provided only for bootstrapping; wallets, miners, and explorers should use a locally run node after syncing.
+**Animica is fully decentralized** - nodes connect directly to each other via P2P without any central authority. The public RPC at `https://rpc.animica.org/rpc` is provided for convenience and bootstrapping; wallets, miners, and explorers should prefer a locally run node after syncing.
 
 ### P2P Features
 
@@ -1282,6 +1303,23 @@ pip install -e ".[dev]"
 # Reinstall all
 ./setup.sh --fresh
 ```
+
+## 🤖 MCP / AI Agents
+
+Animica ships a Model Context Protocol (MCP) server so AI agents (Claude, Cursor, and any MCP-capable client) can query the chain directly:
+
+```bash
+pip install animica-mcp     # standalone wrapper (uvx animica-mcp also works)
+animica-mcp                 # stdio transport (default)
+
+# or, with the main package installed:
+animica mcp serve           # --transport streamable-http | sse also supported
+```
+
+- **15 read+compute tools**: chain head/block/account lookups, AI ask/models, quantum beacon + verify, pool stats, network hashrate, Studio estimate/functions, and `animica_info`. No private keys — read-only chain access by design.
+- **MCP registry name**: `org.animica/animica`.
+- **Agent-readable site index**: <https://animica.org/llms.txt> — plus the in-repo agent guide [`AGENTS.md`](AGENTS.md).
+- **Keyless inference for agents**: `https://animica.dev/v1` is OpenAI-compatible with no API key (30 req/min/IP). Check each model's boolean `serving` flag in `/v1/models`; requests to non-serving models may 503 or queue.
 
 ## 📚 Documentation Links
 
