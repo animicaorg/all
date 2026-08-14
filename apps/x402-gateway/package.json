@@ -1,0 +1,16 @@
+{
+  "name": "animica-x402-gateway",
+  "private": true,
+  "version": "0.1.0",
+  "description": "x402 agent-payments scaffold for Animica: gating middleware + self-facilitated wANM (SPL) lane. Reviewed scaffold — NOT deployed, gated behind ANM_X402_ENABLED.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test test/",
+    "start:demo": "node src/demo-server.js",
+    "start:facilitator": "node src/facilitator.js",
+    "check:syntax": "for f in src/*.js test/*.js; do node --check \"$f\" || exit 1; done; echo all js ok"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
