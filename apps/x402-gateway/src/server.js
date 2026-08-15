@@ -242,6 +242,27 @@ function createGateway({
         res.writeHead(out.status || 200, headers);
         return res.end(out.bodyObj !== undefined ? JSON.stringify(out.bodyObj) : (out.body || ''));
       }
+      // RETIRED routes get 410 with a forwarding pointer, not a bare 404.
+      // The demo echo was registered with an x402 indexer before the real
+      // products existed, so uptime monitors and cached agent configs still
+      // probe it — and a 404 tells them nothing except "broken", which is what
+      // a trust monitor then publishes about the whole origin. 410 is the
+      // status that means "deliberately gone", and the body hands the caller
+      // the live catalog so a machine can re-target itself without a human.
+      const RETIRED = {
+        '/x402/paid/echo': 'the echo route was a settlement smoke test, never a product',
+      };
+      const retiredReason = RETIRED[path] || RETIRED[`/x402${path}`];
+      if (retiredReason) {
+        res.writeHead(410, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({
+          error: 'gone',
+          detail: retiredReason,
+          catalog: '/.well-known/x402',
+          openapi: '/x402/openapi.json',
+          suggested: '/x402/qrng/draw',
+        }));
+      }
       res.writeHead(404, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({
         error: 'not_found',

@@ -68,13 +68,16 @@ test('catalog: /x402 and /.well-known/x402 list products with live availability'
   }
 });
 
-test('catalog: production disables echo (route 404, not listed) unless X402_ENABLE_ECHO=1', async () => {
+test('catalog: production disables echo (route 410 gone, not listed) unless X402_ENABLE_ECHO=1', async () => {
   const t = await buildTestGateway({ overrides: { env: 'production', echoEnabled: false } });
   try {
     const cat = await request(t.baseUrl, '/x402');
     assert.ok(!cat.json.products.some((p) => p.id === 'echo'));
     const echo = await request(t.baseUrl, '/x402/paid/echo');
-    assert.equal(echo.status, 404);
+    // 410 (retired), not 404 (missing): it was listed with an indexer
+    // before the real products existed, so probes must be forwarded.
+    assert.equal(echo.status, 410);
+    assert.equal(echo.json.catalog, '/.well-known/x402');
   } finally {
     await t.close();
   }

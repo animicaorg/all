@@ -162,7 +162,9 @@ test('production: the development echo is invisible on every surface', async () 
     assert.ok(!Object.keys(doc.paths).some((p) => /echo/.test(p)));
     assert.doesNotMatch(JSON.stringify(doc), /echo/i);
 
-    assert.equal((await request(t.baseUrl, '/x402/paid/echo')).status, 404);
+    // 410, not 404: the route was listed with an indexer before the real
+    // products existed, so monitors still probe it and must be forwarded.
+    assert.equal((await request(t.baseUrl, '/x402/paid/echo')).status, 410);
   } finally {
     await t.close();
   }
@@ -628,4 +630,21 @@ test('stats: resource paths are normalised before the product lookup', () => {
   assert.equal(pathOfResource('/x402/qrng/draw/'), '/x402/qrng/draw');
   assert.equal(pathOfResource(''), '');
   assert.equal(pathOfResource(null), '');
+});
+
+// A route we retired after it was already listed with an indexer must not
+// answer a bare 404: uptime monitors publish that as "origin broken", and a
+// cached agent config has no way to find the replacement. 410 + a pointer lets
+// a machine re-target itself.
+test('retired echo answers 410 with a forwarding pointer, not 404', async () => {
+  const t = await buildTestGateway({ overrides: { env: 'production', echoEnabled: false } });
+  try {
+    const res = await request(t.baseUrl, '/x402/paid/echo', { method: 'POST' });
+    assert.equal(res.status, 410, 'deliberately gone, not merely missing');
+    assert.equal(res.json.error, 'gone');
+    assert.equal(res.json.catalog, '/.well-known/x402');
+    assert.ok(res.json.suggested, 'points at a live product');
+  } finally {
+    await t.close();
+  }
 });
