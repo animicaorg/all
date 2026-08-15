@@ -484,8 +484,31 @@ test('402: every paid route carries descriptive metadata + a documentation URL',
       });
       assert.equal(meta.price, t.gw.registry.products.find((x) => x.id === id).priceUsd);
 
-      // The open-spec bazaar discovery extension is untouched by all this.
+      // The open discovery extension is untouched by all this, under BOTH the
+      // vendor-neutral name and the compatibility alias.
+      assert.ok(required.extensions.discovery.info.input, `${p} lost its discovery schema`);
       assert.ok(required.extensions.bazaar.info.input, `${p} lost its bazaar schema`);
+    }
+  } finally {
+    await t.close();
+  }
+});
+
+// `discovery` is the name to build against; `bazaar` exists only because
+// x402scan and other deployed indexers key on it. They must never drift — an
+// indexer reading either one has to learn the same thing about the endpoint.
+test('402: discovery and bazaar extensions carry byte-identical content', async () => {
+  const t = await buildTestGateway();
+  try {
+    for (const p of ['/x402/qrng/draw', '/x402/random/int', '/x402/chain/export']) {
+      const res = await request(t.baseUrl, p);
+      assert.equal(res.status, 402, p);
+      const required = protocol.decodeHeader(res.headers.get(protocol.HEADER_PAYMENT_REQUIRED));
+      const neutral = required.extensions.discovery;
+      const alias = required.extensions.bazaar;
+      assert.ok(neutral, `${p}: missing the vendor-neutral discovery extension`);
+      assert.ok(alias, `${p}: missing the bazaar compatibility alias`);
+      assert.deepEqual(neutral, alias, `${p}: the two discovery keys have drifted`);
     }
   } finally {
     await t.close();

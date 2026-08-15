@@ -156,7 +156,7 @@ function baseSchemas() {
         accepts: { type: 'array', items: { $ref: '#/components/schemas/PaymentRequirements' } },
         extensions: {
           type: 'object',
-          description: 'Open discovery metadata. `bazaar.info` carries the input/output schema indexers read; `animica` carries the descriptive product facts (id, name, price, documentation URL).',
+          description: 'Open discovery metadata. `discovery.info` carries the input/output schema indexers read, and is the key to build against; `bazaar` is a byte-identical compatibility alias for indexers that still key on that name. `animica` carries the descriptive product facts (id, name, price, documentation URL).',
           additionalProperties: true,
         },
         error: { type: 'string' },

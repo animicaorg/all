@@ -146,18 +146,25 @@ function describeRoute(route, cfg, accepts) {
 function buildPaymentRequiredForRoute(route, cfg, error) {
   const accepts = buildAccepts(route, cfg);
   const extensions = {};
-  // Bazaar-format discovery extension (v2): x402 discovery indexers (e.g.
-  // x402scan) read extensions.bazaar.info.{input,output} to learn what the
-  // endpoint takes. `bazaarExtra` carries per-product facts a buyer needs
+  // Discovery extension (v2): indexers read info.{input,output} to learn what
+  // the endpoint takes. `bazaarExtra` carries per-product facts a buyer needs
   // BEFORE paying — today the randomness family's live `entropy` block
   // (source, is_quantum, attested), so the trust model is in the offer.
+  //
+  // Emitted under TWO keys with identical content. `discovery` is the
+  // vendor-neutral name and is the one to build against. `bazaar` is a
+  // compatibility alias: that is the key x402scan and other existing indexers
+  // parse today, and dropping it would make our input/output schemas invisible
+  // to them. It names a JSON shape, not a service — this gateway calls no
+  // third-party discovery API and self-hosts its facilitator. Retire the alias
+  // once the indexers that matter read `discovery`.
   if (route.outputSchema || route.bazaarExtra) {
-    extensions.bazaar = {
-      info: Object.assign(
-        route.outputSchema ? { input: route.outputSchema.input, output: route.outputSchema.output } : {},
-        route.bazaarExtra || {}
-      ),
-    };
+    const info = Object.assign(
+      route.outputSchema ? { input: route.outputSchema.input, output: route.outputSchema.output } : {},
+      route.bazaarExtra || {}
+    );
+    extensions.discovery = { info };
+    extensions.bazaar = { info };
   }
   const described = describeRoute(route, cfg, accepts);
   if (described) extensions.animica = described;
