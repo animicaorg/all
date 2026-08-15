@@ -23,6 +23,12 @@ const REPO = 'https://github.com/animicaorg/all';
 // own `verification.verifier` field, not a landing page for one.
 const VERIFIER_URL = 'https://github.com/animicaorg/all/blob/main/randomness/beacon_api/static/verify.js';
 const CONTACT = 'ai@3vdc.com';
+// Operator disclosure: legal entity, address, payment/refund terms and data
+// handling. Published because a trust/compliance crawler probed /impressum,
+// /imprint, /legal and /legal-notice and got four 404s — an indexer cannot
+// find a page it has to guess the URL of, so the catalog names it.
+const LEGAL = 'https://animica.dev/legal';
+const OPERATOR = 'Alienbeing LLC dba Animica';
 const LICENSE = 'Apache-2.0';
 const CATALOG_NAME = 'Animica x402';
 
@@ -106,6 +112,9 @@ function identity(cfg) {
     documentation: l.landing,
     repository: REPO,
     contact: CONTACT,
+    operator: OPERATOR,
+    legal: LEGAL,
+    terms_of_service: LEGAL,
     license: LICENSE,
     discovery: {
       catalog: l.catalog,
@@ -117,6 +126,6 @@ function identity(cfg) {
 }
 
 module.exports = {
-  PROVIDER, HOMEPAGE, REPO, CONTACT, LICENSE, CATALOG_NAME,
+  PROVIDER, HOMEPAGE, REPO, CONTACT, LEGAL, OPERATOR, LICENSE, CATALOG_NAME,
   chainIdOf, networkFacts, networkDisplayName, anchorFor, links, identity,
 };

@@ -214,6 +214,79 @@ def up(ctx: typer.Context,
     Supervisor(components).run()
 
 
+def _ensure_aicf_bundle(console) -> None:
+    """Install a servable model bundle so this node can actually serve inference.
+
+    THE PROBLEM THIS SOLVES. ``AICFWorker`` qualifies every tier through
+    ``_has_servable_bundle()`` before advertising, and a tier with no bundle in
+    ``$ANIMICA_DATA_DIR/models/<tier>/*/{manifest,inference}.json`` is dropped.
+    A machine that has never installed one therefore registers with
+    ``tiers: []`` — it heartbeats forever and can never be given work. That is
+    not a bug in the gate: advertising a tier we cannot load just forces the
+    node to grace-fallback to the stub on every claim. It is a bug in setup,
+    and until now ``up`` only PRINTED the fix ("run aicf-worker pull") without
+    ever performing it, which is why the live network has zero serving workers.
+
+    WHY NOT ``aicf-worker pull``. That command takes an IPFS CID and a tier;
+    ``up`` has no CID to pass. ``bootstrap_bundle_from_hf`` is the CID-free
+    equivalent: it reads the tier's ``base_model`` from ai/configs/
+    model_catalog.yaml, fetches it, and writes the manifest.json +
+    inference.json pair that ``_has_servable_bundle`` looks for. Same outcome,
+    no operator-supplied hash.
+
+    COST, STATED PLAINLY. This downloads a model. We deliberately take the
+    SMALLEST catalog tier (``tiny`` — Qwen2.5-Coder-1.5B, a few GB) rather than
+    the largest the hardware could serve: the goal is to make a node servable at
+    all, and an operator who wants a bigger tier can pull it explicitly. It runs
+    on a background thread so it never blocks startup, and it is skipped
+    entirely once any tier has a bundle.
+
+    Opt out with ANIMICA_AICF_NO_AUTOPULL=1 (or any of the AICF opt-outs, which
+    are checked by the caller before this runs).
+    """
+    import os
+    import threading
+
+    if os.environ.get("ANIMICA_AICF_NO_AUTOPULL", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    # Pipeline / bare-capacity modes serve without a local bundle, so a download
+    # would be pure waste.
+    if (os.environ.get("ANIMICA_AICF_PIPELINE_MODEL_ID", "").strip()
+            or os.environ.get("ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE", "").strip().lower()
+            in {"1", "true", "yes", "on"}):
+        return
+
+    try:
+        from agent_runtime.aicf_worker import _has_servable_bundle, bootstrap_bundle_from_hf
+    except Exception:  # noqa: BLE001 — agent_runtime absent; nothing to do
+        return
+
+    # Already servable? Then this is a no-op on every subsequent `up`.
+    try:
+        if any(_has_servable_bundle(t) for t in ("tiny", "small", "flagship", "large")):
+            return
+    except Exception:  # noqa: BLE001
+        return
+
+    tier = (os.environ.get("ANIMICA_AICF_AUTOPULL_TIER", "").strip() or "tiny")
+
+    console.print(
+        f"[dim]inference: no model bundle installed — fetching the '{tier}' tier in the "
+        f"background so this node can serve (set ANIMICA_AICF_NO_AUTOPULL=1 to skip)[/dim]"
+    )
+
+    def _fetch() -> None:
+        try:
+            path = bootstrap_bundle_from_hf(tier)
+            console.print(f"[dim]inference: '{tier}' bundle ready at {path} — "
+                          f"restart `animica up` to advertise it[/dim]")
+        except Exception as exc:  # noqa: BLE001 — must never break `up`
+            console.print(f"[dim]inference: bundle fetch failed ({exc}); "
+                          f"run 'animica miner aicf-worker pull --tier {tier} <cid>' manually[/dim]")
+
+    threading.Thread(target=_fetch, name="animica.aicf_bundle_bootstrap", daemon=True).start()
+
+
 def _ensure_inference_worker(components, console, address) -> None:
     """Direct this node's LLM/AICF inference at animica.dev's shared queue by default.
 
@@ -256,6 +329,12 @@ def _ensure_inference_worker(components, console, address) -> None:
         os.environ["ANIMICA_AICF_ENDPOINT"] = default_gw
     endpoint = (os.environ.get("ANIMICA_AICF_ENDPOINT")
                 or os.environ.get("AICF_URL") or "127.0.0.1:8545 (local node)")
+
+    # Make this node SERVABLE before anything advertises it. Must run on both
+    # branches below: the miner subprocess starts its own --aicf worker and
+    # qualifies tiers exactly the same way, so a missing bundle strands that
+    # path too. Best-effort and non-blocking.
+    _ensure_aicf_bundle(console)
 
     enabled = {getattr(c, "name", "") for c in components if getattr(c, "enabled", True)}
     if "miner" in enabled:
