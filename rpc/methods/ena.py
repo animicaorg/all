@@ -43,7 +43,7 @@ def _get_ena_state(ctx: Any):
 
 
 def _get_chain_state(ctx: Any):
-    state = getattr(ctx, "state", None)
+    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
     return state
 
 

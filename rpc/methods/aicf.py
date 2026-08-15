@@ -56,7 +56,7 @@ def _get_current_epoch(ctx: Any) -> int:
         return 0
     
     # Get current height
-    state = getattr(ctx, "state", None)
+    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
     if state is None:
         return 0
     
@@ -150,7 +150,7 @@ async def getStatus(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     except ImportError:
         raise InternalError("AICF state module not available")
     
-    state = getattr(ctx, "state", None)
+    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
     if state is None:
         raise InternalError("State not available")
     
@@ -207,7 +207,7 @@ async def getClaimable(address: str, ctx: Any = None, up_to_epoch: Optional[int]
     except ImportError:
         raise InternalError("AICF state module not available")
 
-    state = getattr(ctx, "state", None)
+    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
     if state is None:
         raise InternalError("State not available")
 
@@ -284,7 +284,7 @@ async def buildClaimTx(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     
     # Get current nonce if not provided
     if nonce is None:
-        state = getattr(ctx, "state", None)
+        state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
         if state is not None:
             try:
                 from execution.state.balances import get_nonce
@@ -477,7 +477,7 @@ async def aicf_status_endpoint(ctx: Any, params: Any = None) -> Dict[str, Any]:
             "details": {},
         }
 
-    state = getattr(ctx, "state", None)
+    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
     if state is None:
         return {
             "enabled": False,
