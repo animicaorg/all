@@ -270,11 +270,35 @@ function createPaywall({
 
     // 1. Param validation: caps and shape problems answer 400 BEFORE any
     //    payment is requested — never sell a request we know is invalid.
+    //
+    //    EXCEPTION for discovery: a request carrying NO payment is a probe,
+    //    and the 402 IS the advertisement. x402 indexers (and any agent
+    //    meeting the endpoint for the first time) probe blind — no body, or a
+    //    bare GET — and a 400 there makes the product invisible: it never
+    //    learns the price, asset or schema because it never sees the offer.
+    //    So an unpaid request always gets the 402; validation still runs
+    //    before settlement for anything that actually carries payment, which
+    //    is what keeps "never charge for a request we will refuse" true.
+    //    A BARE PROBE is the exception, and only a bare one: no payment, no
+    //    body, no query. That is what an indexer or a first-contact agent
+    //    sends, and answering it 400 makes the product invisible — it never
+    //    learns the price, asset or input schema, because it never sees the
+    //    offer. A request that DID supply input and got it wrong still gets
+    //    the 400, which is the more useful answer for a caller that is
+    //    genuinely trying.
+    const carriesPayment = Boolean(
+      req.headers[protocol.HEADER_PAYMENT_SIGNATURE] || req.headers[protocol.HEADER_X_PAYMENT]);
+    const bareProbe = !carriesPayment
+      && !(ctx.rawBody && ctx.rawBody.length)
+      && Array.from(url.searchParams.keys()).length === 0;
     try {
       ctx.params = product.validate ? product.validate(ctx) : {};
     } catch (e) {
-      if (e instanceof ProductError) return sendJson(res, e.status, e.body || { error: 'invalid_request', detail: e.message });
-      throw e;
+      if (!(e instanceof ProductError)) throw e;
+      if (!bareProbe) {
+        return sendJson(res, e.status, e.body || { error: 'invalid_request', detail: e.message });
+      }
+      ctx.params = {}; // advertise instead: fall through to the 402
     }
 
     // 2. Availability hook: an unavailable product NEVER emits a 402.

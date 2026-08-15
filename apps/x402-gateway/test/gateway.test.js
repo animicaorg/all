@@ -326,3 +326,53 @@ test('receipts: sign/verify round-trip, tamper detection, required fields, ephem
   assert.throws(() => signer.sign({ resource: '/x', error: 'e' }), /payment_id/);
   assert.equal(createReceiptSigner({}).ephemeral, true);
 });
+
+// -------------------------------------------------- discovery probes
+// x402 indexers (and any agent meeting an endpoint for the first time) probe
+// blind: a bare GET, or a POST with no body. Answering those 404/400 makes a
+// product invisible to the discovery ecosystem — it never sees the price,
+// asset or input schema. Both must yield the 402 advertisement. Registering
+// the live products on x402scan is what surfaced this: every POST product was
+// rejected with "Endpoint did not return a 402 payment challenge".
+test('discovery: a bare GET on a POST-only product returns the 402 offer, not 404', async () => {
+  const t = await buildTestGateway();
+  try {
+    const res = await request(t.baseUrl, '/x402/random/int');   // GET, no query
+    assert.equal(res.status, 402, 'blind GET probe must see the offer');
+    assert.ok(res.headers.get('payment-required'), 'and it carries the v2 requirements header');
+  } finally {
+    await t.close();
+  }
+});
+
+test('discovery: a POST with no body returns the 402 offer; wrong params still 400', async () => {
+  const t = await buildTestGateway();
+  try {
+    const probe = await request(t.baseUrl, '/x402/random/int', { method: 'POST' });
+    assert.equal(probe.status, 402, 'bare POST probe advertises');
+
+    // A caller that DID supply input and got it wrong gets the useful answer.
+    const wrong = await request(t.baseUrl, '/x402/random/int', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ min: 5 }),   // missing max
+    });
+    assert.equal(wrong.status, 400, 'supplied-but-invalid input still answers 400, not a 402');
+  } finally {
+    await t.close();
+  }
+});
+
+test('discovery: a payment sent over the probe method is refused, never settled', async () => {
+  const t = await buildTestGateway();
+  try {
+    const first = await request(t.baseUrl, '/x402/random/int');
+    const res = await request(t.baseUrl, '/x402/random/int', {
+      headers: { 'payment-signature': paymentHeaderFrom(first) },   // GET + payment
+    });
+    assert.equal(res.status, 405, 'buying over the wrong method is refused');
+    assert.equal(t.fac.settled(), 0, 'and nothing settled');
+  } finally {
+    await t.close();
+  }
+});

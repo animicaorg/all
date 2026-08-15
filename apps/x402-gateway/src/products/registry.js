@@ -128,12 +128,21 @@ function createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferen
   }
 
   function find(method, pathname) {
-    return (
+    const hit = (
       routeIndex.get(`${method} ${pathname}`) ||
       // nginx may strip the /x402 prefix when proxying — accept both forms.
       routeIndex.get(`${method} /x402${pathname}`) ||
       null
     );
+    if (hit || method !== 'GET') return hit;
+    // Discovery probe: x402 indexers and first-contact agents GET a resource
+    // to read its 402 offer. A POST-only product answering 404 to that probe
+    // is invisible to the whole discovery ecosystem — it never learns the
+    // price, asset or input schema. Resolve a GET onto the POST route so the
+    // paywall can advertise; delivery still requires the real method, because
+    // an unpaid GET can only ever reach the 402 branch.
+    const post = routeIndex.get(`POST ${pathname}`) || routeIndex.get(`POST /x402${pathname}`);
+    return post ? Object.assign({}, post, { probeOnly: true }) : null;
   }
 
   /**

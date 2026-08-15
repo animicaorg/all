@@ -141,6 +141,17 @@ function createGateway({
       }
       const match = registry.find(req.method, path);
       if (match) {
+        // A GET resolved onto a POST-only product is a discovery probe: it may
+        // read the 402 offer, never buy. Paying over the wrong method would
+        // settle against a request the handler cannot serve.
+        if (match.probeOnly
+            && (req.headers['payment-signature'] || req.headers['x-payment'])) {
+          res.writeHead(405, { 'content-type': 'application/json', allow: 'POST' });
+          return res.end(JSON.stringify({
+            error: 'method_not_allowed',
+            detail: `${path} is POST-only; GET returns the payment offer for discovery`,
+          }));
+        }
         return await paywall.handleProduct(req, res, match.product, match.route, url);
       }
       // FREE product routes (commit-reveal disclosure): no paywall, no 402,
