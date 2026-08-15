@@ -214,8 +214,37 @@ def up(ctx: typer.Context,
     Supervisor(components).run()
 
 
+def _aicf_autopull_tiers(catalog: dict) -> list[str]:
+    """Every catalog tier THIS machine can actually serve, smallest first.
+
+    Hardware-gated on purpose. ``eligible_tiers`` requires RAM >= min_ram_gb and
+    a GPU with vram_gb >= min_vram_gb (0 meaning CPU-runnable), which is the
+    same rule ``AICFWorker`` uses to decide what to advertise. Pulling a tier
+    past that gate would burn the disk on weights the worker will never load —
+    ``large`` is DeepSeek-Coder-V2-Instruct at 236B parameters and wants 80 GB
+    of VRAM, so on anything smaller it is hundreds of gigabytes of dead files.
+
+    ANIMICA_AICF_AUTOPULL_TIERS pins the list explicitly (comma-separated) and
+    skips the hardware check, for an operator who knows better than the probe.
+    """
+    import os
+
+    override = os.environ.get("ANIMICA_AICF_AUTOPULL_TIERS", "").strip()
+    if override:
+        return [t.strip() for t in override.split(",") if t.strip()]
+
+    order = [str(t.get("id")) for t in (catalog.get("tiers") or []) if isinstance(t, dict)]
+    try:
+        from agent_runtime.hardware import detect_hardware, eligible_tiers
+        want = list(eligible_tiers(detect_hardware(), catalog))
+    except Exception:  # noqa: BLE001 — probe unavailable; the CPU-runnable floor still applies
+        want = [str(t.get("id")) for t in (catalog.get("tiers") or [])
+                if isinstance(t, dict) and float(t.get("min_vram_gb", 0) or 0) == 0]
+    return [t for t in order if t in set(want)]
+
+
 def _ensure_aicf_bundle(console) -> None:
-    """Install a servable model bundle so this node can actually serve inference.
+    """Install every model bundle this machine can serve, so it actually serves.
 
     THE PROBLEM THIS SOLVES. ``AICFWorker`` qualifies every tier through
     ``_has_servable_bundle()`` before advertising, and a tier with no bundle in
@@ -234,17 +263,23 @@ def _ensure_aicf_bundle(console) -> None:
     inference.json pair that ``_has_servable_bundle`` looks for. Same outcome,
     no operator-supplied hash.
 
-    COST, STATED PLAINLY. This downloads a model. We deliberately take the
-    SMALLEST catalog tier (``tiny`` — Qwen2.5-Coder-1.5B, a few GB) rather than
-    the largest the hardware could serve: the goal is to make a node servable at
-    all, and an operator who wants a bigger tier can pull it explicitly. It runs
-    on a background thread so it never blocks startup, and it is skipped
-    entirely once any tier has a bundle.
+    SCOPE. Every tier the hardware can serve, not just the smallest — a rig that
+    can run flagship should be earning on flagship. Ordered smallest-first so
+    the node becomes servable at the first completed tier instead of after the
+    whole queue, and each tier is skipped individually if it already has a
+    bundle (so an interrupted run resumes where it stopped).
+
+    COST, STATED PLAINLY. These are multi-gigabyte downloads and on an 80 GB
+    GPU the eligible set runs to hundreds of gigabytes. It therefore runs on a
+    background thread (never blocks startup), stops early when free disk falls
+    below ANIMICA_AICF_AUTOPULL_MIN_FREE_GB (default 20), and reports every
+    decision rather than silently doing either more or less than asked.
 
     Opt out with ANIMICA_AICF_NO_AUTOPULL=1 (or any of the AICF opt-outs, which
     are checked by the caller before this runs).
     """
     import os
+    import shutil
     import threading
 
     if os.environ.get("ANIMICA_AICF_NO_AUTOPULL", "").strip().lower() in {"1", "true", "yes", "on"}:
@@ -258,31 +293,62 @@ def _ensure_aicf_bundle(console) -> None:
 
     try:
         from agent_runtime.aicf_worker import _has_servable_bundle, bootstrap_bundle_from_hf
+        from agent_runtime.config import load_config
     except Exception:  # noqa: BLE001 — agent_runtime absent; nothing to do
         return
 
-    # Already servable? Then this is a no-op on every subsequent `up`.
     try:
-        if any(_has_servable_bundle(t) for t in ("tiny", "small", "flagship", "large")):
-            return
+        catalog = dict(load_config().model_catalog)
+        tiers = _aicf_autopull_tiers(catalog)
+        missing = [t for t in tiers if not _has_servable_bundle(t)]
     except Exception:  # noqa: BLE001
         return
+    if not missing:
+        return
 
-    tier = (os.environ.get("ANIMICA_AICF_AUTOPULL_TIER", "").strip() or "tiny")
+    try:
+        min_free_gb = float(os.environ.get("ANIMICA_AICF_AUTOPULL_MIN_FREE_GB", "20") or 20)
+    except ValueError:
+        min_free_gb = 20.0
+    cache_root = os.path.expanduser(
+        os.environ.get("ANIMICA_DATA_DIR", "~/.animica"))
 
+    have = [t for t in tiers if t not in missing]
     console.print(
-        f"[dim]inference: no model bundle installed — fetching the '{tier}' tier in the "
-        f"background so this node can serve (set ANIMICA_AICF_NO_AUTOPULL=1 to skip)[/dim]"
+        f"[dim]inference: fetching model bundles for tier(s) {', '.join(missing)} in the "
+        f"background so this node can serve"
+        + (f" (already installed: {', '.join(have)})" if have else "")
+        + " — set ANIMICA_AICF_NO_AUTOPULL=1 to skip[/dim]"
     )
 
+    def _free_gb() -> float:
+        probe = cache_root
+        while probe and not os.path.isdir(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
+        return shutil.disk_usage(probe or "/").free / (1024 ** 3)
+
     def _fetch() -> None:
-        try:
-            path = bootstrap_bundle_from_hf(tier)
-            console.print(f"[dim]inference: '{tier}' bundle ready at {path} — "
-                          f"restart `animica up` to advertise it[/dim]")
-        except Exception as exc:  # noqa: BLE001 — must never break `up`
-            console.print(f"[dim]inference: bundle fetch failed ({exc}); "
-                          f"run 'animica miner aicf-worker pull --tier {tier} <cid>' manually[/dim]")
+        for tier in missing:
+            try:
+                free = _free_gb()
+            except Exception:  # noqa: BLE001 — unreadable filesystem; just try
+                free = float("inf")
+            if free < min_free_gb:
+                console.print(
+                    f"[dim]inference: stopping before '{tier}' — only {free:.1f} GB free "
+                    f"(need {min_free_gb:.0f} GB). Remaining tiers: {', '.join(missing[missing.index(tier):])}[/dim]")
+                return
+            try:
+                path = bootstrap_bundle_from_hf(tier)
+                console.print(f"[dim]inference: '{tier}' bundle ready at {path}[/dim]")
+            except Exception as exc:  # noqa: BLE001 — must never break `up`
+                console.print(f"[dim]inference: '{tier}' bundle fetch failed ({exc}) — "
+                              f"continuing with the remaining tiers[/dim]")
+        console.print("[dim]inference: bundle install finished — "
+                      "restart `animica up` to advertise the new tiers[/dim]")
 
     threading.Thread(target=_fetch, name="animica.aicf_bundle_bootstrap", daemon=True).start()
 
