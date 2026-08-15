@@ -67,6 +67,7 @@ async function buildE2E({ rpcOpts = {}, gatewayOverrides = {}, handlers, availab
     evmFacilitatorUrl: facUrl,
     resourceBaseUrl: 'http://127.0.0.1:0',
     wanmMint: '', wanmTreasury: '', wanmFeePayerPubkey: '', wanmUsdPrice: '',
+  allowRetiredWanmLane: true, // exercise multi-lane rendering; the lane is retired in production
   }, gatewayOverrides));
 
   const gw = createGateway({

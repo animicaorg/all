@@ -92,13 +92,47 @@ async function estimateGasLimit(rpc, { from, to, data, maxGasPerSettlement }) {
  * Daily budget circuit breaker. Returns null when within budget, or a
  * GasPolicyError to throw. Budget 0n/undefined disables the breaker.
  */
-function checkDailyBudget(store, dailyBudgetWei) {
+/**
+ * Daily circuit breaker.
+ *
+ * `reserveWei` is the worst-case cost of the settlement about to be signed.
+ * Recorded spend alone is NOT a safe basis: gas lands in gas_spend only after
+ * the receipt, tens of seconds later, so N concurrent settles would each see
+ * the same stale total and collectively blow through the cap. Counting
+ * in-flight reservations (+ this one) closes that race, which is why the
+ * authoritative call happens inside the submit lock.
+ */
+function checkDailyBudget(store, dailyBudgetWei, { reserveWei = 0n } = {}) {
   if (!dailyBudgetWei || dailyBudgetWei <= 0n) return null;
   const spent = store.gasSpentSince(Math.floor(Date.now() / 1000) - 86_400);
-  if (spent >= dailyBudgetWei) {
+  const reservedInFlight = typeof store.gasReservedInFlight === 'function'
+    ? store.gasReservedInFlight() : 0n;
+  const projected = spent + reservedInFlight + BigInt(reserveWei || 0n);
+  if (projected >= dailyBudgetWei) {
     return new GasPolicyError(
       'gas_budget_exhausted',
-      `trailing-24h gas spend ${spent} wei >= X402_DAILY_GAS_BUDGET_WEI ${dailyBudgetWei}`
+      `projected trailing-24h gas ${projected} wei (spent ${spent} + in-flight ${reservedInFlight}` +
+      `${reserveWei ? ` + this ${reserveWei}` : ''}) >= X402_DAILY_GAS_BUDGET_WEI ${dailyBudgetWei}`
+    );
+  }
+  return null;
+}
+
+/**
+ * Economic floor: refuse to sponsor gas that costs more than the payment is
+ * worth. Optional — only enforced when the operator sets an ETH/USD price,
+ * because comparing wei to USDC atomic units needs one. USDC has 6 decimals.
+ */
+function checkEconomicFloor({ usdcAtomic, reserveWei, ethUsdPrice, safetyMultiple = 2 }) {
+  if (!ethUsdPrice || ethUsdPrice <= 0n) return null;
+  const value = BigInt(usdcAtomic || 0n);
+  if (value <= 0n) return null;
+  // gas cost in USDC atomic units = reserveWei * ethUsdPrice * 1e6 / 1e18
+  const gasCostUsdcAtomic = (BigInt(reserveWei || 0n) * BigInt(ethUsdPrice)) / 1_000_000_000_000n;
+  if (gasCostUsdcAtomic * BigInt(safetyMultiple) > value) {
+    return new GasPolicyError(
+      'gas_exceeds_payment_value',
+      `sponsored gas ~${gasCostUsdcAtomic} USDC atomic x${safetyMultiple} exceeds the ${value} collected`
     );
   }
   return null;
@@ -124,5 +158,6 @@ module.exports = {
   estimateFees,
   estimateGasLimit,
   checkDailyBudget,
+  checkEconomicFloor,
   receiptGasSpentWei,
 };

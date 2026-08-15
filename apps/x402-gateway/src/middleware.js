@@ -77,7 +77,14 @@ function buildAccepts(route, cfg) {
       maxTimeoutSeconds: cfg.maxTimeoutSeconds,
     });
   }
-  if (cfg.wanmMint && cfg.wanmTreasury && cfg.wanmFeePayerPubkey && cfg.wanmUsdPrice) {
+  // The wANM/SVM lane is RETIRED (the bridge was abandoned 2026-08-15) and its
+  // self-facilitator keeps replay marks in memory only — a restart would forget
+  // them, leaving a cross-restart double-settle window. Offering it would be
+  // offering an unsafe rail, so it is refused outright rather than merely
+  // left unconfigured. Re-enabling requires porting it to the persistent
+  // store used by the EVM facilitator.
+  if (cfg.wanmMint && cfg.wanmTreasury && cfg.wanmFeePayerPubkey && cfg.wanmUsdPrice
+      && cfg.allowRetiredWanmLane) {
     accepts.push({
       scheme: 'exact',
       network: cfg.networkSvm,

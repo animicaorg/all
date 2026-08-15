@@ -40,6 +40,7 @@ async function boot(t, s, { enabled = true } = {}) {
     // wANM lane only — the EVM lane needs an external facilitator.
     basePayTo: '',
     usdcAsset: '',
+    allowRetiredWanmLane: true, // legacy SVM-lane coverage; retired in production
     wanmMint: s.mint,
     wanmTreasury: s.treasury,
     wanmDecimals: 9,

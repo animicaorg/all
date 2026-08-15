@@ -53,10 +53,12 @@ CREATE TABLE IF NOT EXISTS incidents (
   kind                TEXT NOT NULL,
   error               TEXT NOT NULL,
   receipt_json        TEXT,
+  auth_nonce          TEXT,
   status              TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','refunded','resolved')),
   created_at          INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+CREATE INDEX IF NOT EXISTS idx_incidents_auth_nonce ON incidents(auth_nonce);
 `;
 
 function nowSec() {
@@ -73,6 +75,15 @@ function createGatewayStore(dbPath, { Database, maxBodyBytes = 4_000_000 } = {})
   db.pragma('synchronous = NORMAL');
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
+  // Migration for DB files created before the cross-ledger join key existed:
+  // auth_nonce (the EIP-3009 authorization nonce) lets an incident be joined
+  // deterministically to the facilitator's payments row and to the on-chain
+  // AuthorizationUsed event (see bin/animica-x402 reconcile --incidents).
+  const incidentCols = db.prepare('PRAGMA table_info(incidents)').all().map((c) => c.name);
+  if (!incidentCols.includes('auth_nonce')) {
+    db.exec('ALTER TABLE incidents ADD COLUMN auth_nonce TEXT;' +
+      'CREATE INDEX IF NOT EXISTS idx_incidents_auth_nonce ON incidents(auth_nonce);');
+  }
 
   const stmts = {
     putIdem: db.prepare(`INSERT OR IGNORE INTO idempotency
@@ -81,8 +92,8 @@ function createGatewayStore(dbPath, { Database, maxBodyBytes = 4_000_000 } = {})
     getIdem: db.prepare('SELECT * FROM idempotency WHERE idem_key = ? AND payment_fingerprint = ?'),
     pruneIdem: db.prepare('DELETE FROM idempotency WHERE created_at < ?'),
     addIncident: db.prepare(`INSERT INTO incidents
-      (incident_id, payment_id, payment_fingerprint, settlement_tx, payer, resource, amount, network, kind, error, receipt_json, status, created_at)
-      VALUES (@incident_id, @payment_id, @payment_fingerprint, @settlement_tx, @payer, @resource, @amount, @network, @kind, @error, @receipt_json, 'open', @created_at)`),
+      (incident_id, payment_id, payment_fingerprint, settlement_tx, payer, resource, amount, network, kind, error, receipt_json, auth_nonce, status, created_at)
+      VALUES (@incident_id, @payment_id, @payment_fingerprint, @settlement_tx, @payer, @resource, @amount, @network, @kind, @error, @receipt_json, @auth_nonce, 'open', @created_at)`),
     listIncidents: db.prepare('SELECT * FROM incidents WHERE status = ? ORDER BY created_at DESC LIMIT ?'),
     listAllIncidents: db.prepare('SELECT * FROM incidents ORDER BY created_at DESC LIMIT ?'),
     getIncident: db.prepare('SELECT * FROM incidents WHERE incident_id = ?'),
@@ -123,7 +134,7 @@ function createGatewayStore(dbPath, { Database, maxBodyBytes = 4_000_000 } = {})
       return stmts.pruneIdem.run(nowSec() - Number(ttlSeconds)).changes;
     },
 
-    addIncident({ paymentId, paymentFingerprint, settlementTx, payer, resource, amount, network, kind, error, receipt }) {
+    addIncident({ paymentId, paymentFingerprint, settlementTx, payer, resource, amount, network, kind, error, receipt, authNonce }) {
       const incidentId = 'inc_' + crypto.randomBytes(8).toString('hex');
       stmts.addIncident.run({
         incident_id: incidentId,
@@ -137,6 +148,7 @@ function createGatewayStore(dbPath, { Database, maxBodyBytes = 4_000_000 } = {})
         kind: String(kind || 'downstream_failed'),
         error: String(error || 'unknown'),
         receipt_json: receipt ? JSON.stringify(receipt) : null,
+        auth_nonce: authNonce ? String(authNonce).toLowerCase() : null,
         created_at: nowSec(),
       });
       return incidentId;

@@ -24,6 +24,7 @@ const CFG = {
   wanmDecimals: 9,
   wanmUsdPrice: '0.05',
   wanmFeePayerPubkey: addr(),
+  allowRetiredWanmLane: true, // exercise multi-lane rendering; the lane is retired in production
   maxTimeoutSeconds: 60,
 };
 const ROUTE = { path: '/paid/echo', priceUsd: '0.005', description: 'Echo', mimeType: 'application/json' };

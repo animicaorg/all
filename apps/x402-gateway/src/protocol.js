@@ -34,11 +34,33 @@ function decodeHeader(value) {
 }
 
 /**
+ * Maximum nesting depth accepted from a client payload. Legitimate x402
+ * payment payloads are ~4 levels deep; 32 is generous. Anything deeper is a
+ * DoS attempt on the recursive canonicalizer (a ~11 KB header nesting ~4000
+ * arrays overflows the JS stack), so it is rejected as malformed BEFORE any
+ * recursive walk touches it.
+ */
+const MAX_CLIENT_DEPTH = 32;
+
+/** Iterative (heap-stack) depth measure — safe on hostile deep structures. */
+function exceedsDepth(value, maxDepth) {
+  let stack = [{ v: value, d: 1 }];
+  while (stack.length) {
+    const { v, d } = stack.pop();
+    if (v === null || typeof v !== 'object') continue;
+    if (d > maxDepth) return true;
+    for (const k of Object.keys(v)) stack.push({ v: v[k], d: d + 1 });
+  }
+  return false;
+}
+
+/**
  * decodeHeader for CLIENT-SUPPLIED headers. Garbage base64 / garbage JSON is
  * a malformed payment, not a server fault: it must produce a structured 402
  * re-offer, never an unhandled exception (which the HTTP layer would answer
  * 500). Kept separate from decodeHeader so our own encode/decode round-trips
- * still fail loudly on a real bug.
+ * still fail loudly on a real bug. Depth-capped so a pathologically nested
+ * payload cannot reach the recursive canonicalizer (stack-overflow DoS).
  */
 function decodeClientHeader(value, what) {
   let obj;
@@ -49,6 +71,9 @@ function decodeClientHeader(value, what) {
   }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     throw new PaymentParseError(`${what} must decode to a JSON object`);
+  }
+  if (exceedsDepth(obj, MAX_CLIENT_DEPTH)) {
+    throw new PaymentParseError(`${what} exceeds the maximum nesting depth (${MAX_CLIENT_DEPTH})`);
   }
   return obj;
 }
@@ -155,12 +180,22 @@ function parsePaymentHeaders(headers, acceptsForMatch) {
 
 class PaymentParseError extends Error {}
 
-/** Stable stringify (sorted keys) so requirements can be compared verbatim. */
-function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+/**
+ * Stable stringify (sorted keys) so requirements can be compared verbatim.
+ * Depth-limited defense in depth: client input is already capped at
+ * MAX_CLIENT_DEPTH by decodeClientHeader, so hitting this limit on our own
+ * data is a bug — but a controlled Error beats a stack-overflow RangeError.
+ */
+const CANONICAL_MAX_DEPTH = 128;
+
+function canonicalJson(value, depth = 0) {
+  if (depth > CANONICAL_MAX_DEPTH) {
+    throw new Error(`canonicalJson: nesting exceeds ${CANONICAL_MAX_DEPTH} levels`);
+  }
+  if (Array.isArray(value)) return `[${value.map((v) => canonicalJson(v, depth + 1)).join(',')}]`;
   if (value && typeof value === 'object') {
     const keys = Object.keys(value).filter((k) => value[k] !== undefined).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(',')}}`;
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k], depth + 1)}`).join(',')}}`;
   }
   return JSON.stringify(value);
 }
@@ -184,6 +219,7 @@ module.exports = {
   HEADER_PAYMENT_RESPONSE,
   HEADER_X_PAYMENT,
   HEADER_X_PAYMENT_RESPONSE,
+  MAX_CLIENT_DEPTH,
   encodeHeader,
   decodeHeader,
   decodeClientHeader,

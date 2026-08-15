@@ -121,8 +121,18 @@ function cmdPaymentGet(args) {
     'SELECT * FROM payments WHERE payment_id = ? OR authorization_hash = ? OR settlement_tx_hash = ?'
   ).get(id, id.toLowerCase(), id.toLowerCase());
   if (!row) fail(`no payment found for ${id}`);
-  if (args.flags.json) return console.log(JSON.stringify(row, null, 2));
-  for (const [k, v] of Object.entries(row)) {
+  // raw_tx is a fully signed, rebroadcastable settlement transaction whose
+  // calldata embeds the payer's EIP-3009 signature. Printing it puts a
+  // replayable payment authorization into terminal scrollback, logs and
+  // screenshots, so it is summarised unless explicitly demanded.
+  const safe = { ...row };
+  if (safe.raw_tx) {
+    safe.raw_tx = args.flags['unsafe-show-raw']
+      ? safe.raw_tx
+      : `<redacted: ${String(safe.raw_tx).length} chars; --unsafe-show-raw to reveal>`;
+  }
+  if (args.flags.json) return console.log(JSON.stringify(safe, null, 2));
+  for (const [k, v] of Object.entries(safe)) {
     const shown = k === 'amount' ? `${v} (= ${atomicToDecimalString(BigInt(v), 6)} USDC)` :
       (k === 'created_at' || k === 'settled_at' || k === 'expires_at') ? `${v} (${fmtTs(v)})` : v;
     console.log(`${k.padEnd(20)} ${shown ?? '-'}`);

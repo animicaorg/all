@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS payments (
   tx_nonce           INTEGER,                -- facilitator account nonce used
   raw_tx             TEXT,                   -- signed raw tx (rebroadcastable as-is)
   gas_spent_wei      TEXT,                   -- gasUsed*effectiveGasPrice + l1Fee
+  -- Worst-case cost (gasLimit*maxFeePerGas) reserved the moment a tx is signed.
+  -- Settled spend lands in gas_spend tens of seconds later, so the daily budget
+  -- must count in-flight reservations too or concurrent settles race past it.
+  gas_reserved_wei   TEXT,
   error_reason       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
@@ -74,6 +78,11 @@ function createStore(dbPath, { Database } = {}) {
   db.pragma('synchronous = NORMAL'); // WAL + NORMAL: durable at checkpoint, atomic always
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
+  // Migration for DB files created before in-flight gas reservations existed.
+  const paymentCols = db.prepare('PRAGMA table_info(payments)').all().map((c) => c.name);
+  if (!paymentCols.includes('gas_reserved_wei')) {
+    db.exec('ALTER TABLE payments ADD COLUMN gas_reserved_wei TEXT;');
+  }
 
   const stmts = {
     claim: db.prepare(`INSERT INTO payments
@@ -82,7 +91,8 @@ function createStore(dbPath, { Database } = {}) {
     byAuthHash: db.prepare('SELECT * FROM payments WHERE authorization_hash = ?'),
     byId: db.prepare('SELECT * FROM payments WHERE payment_id = ?'),
     markSubmitting: db.prepare(`UPDATE payments SET status='submitting', settlement_tx_hash=@tx_hash,
-      tx_nonce=@tx_nonce, raw_tx=@raw_tx WHERE payment_id=@payment_id AND status IN ('pending','submitting')`),
+      tx_nonce=@tx_nonce, raw_tx=@raw_tx, gas_reserved_wei=@gas_reserved_wei
+      WHERE payment_id=@payment_id AND status IN ('pending','submitting')`),
     markSettled: db.prepare(`UPDATE payments SET status='settled', settlement_tx_hash=@tx_hash,
       settled_at=@settled_at, gas_spent_wei=@gas_spent_wei, error_reason=NULL
       WHERE payment_id=@payment_id AND status IN ('pending','submitting')`),
@@ -97,6 +107,9 @@ function createStore(dbPath, { Database } = {}) {
     addGas: db.prepare(`INSERT INTO gas_spend (payment_id, tx_hash, spent_wei, created_at)
       VALUES (@payment_id, @tx_hash, @spent_wei, @created_at)`),
     gasSince: db.prepare('SELECT spent_wei FROM gas_spend WHERE created_at >= ?'),
+    gasReservedInFlight: db.prepare(
+      `SELECT gas_reserved_wei FROM payments
+       WHERE status IN ('pending','submitting') AND gas_reserved_wei IS NOT NULL`),
     revenueByStatus: db.prepare(`SELECT amount FROM payments WHERE status='settled'`),
   };
 
@@ -148,9 +161,26 @@ function createStore(dbPath, { Database } = {}) {
     },
 
     /** Persist the signed tx BEFORE broadcasting it. */
-    markSubmitting(paymentId, { txHash, txNonce, rawTx }) {
-      const r = stmts.markSubmitting.run({ payment_id: paymentId, tx_hash: txHash, tx_nonce: txNonce, raw_tx: rawTx });
+    markSubmitting(paymentId, { txHash, txNonce, rawTx, gasReservedWei }) {
+      const r = stmts.markSubmitting.run({
+        payment_id: paymentId, tx_hash: txHash, tx_nonce: txNonce, raw_tx: rawTx,
+        gas_reserved_wei: gasReservedWei === undefined || gasReservedWei === null
+          ? null : String(gasReservedWei),
+      });
       if (r.changes !== 1) throw new Error(`markSubmitting: payment ${paymentId} not in a claimable state`);
+    },
+
+    /**
+     * Worst-case gas already committed by settlements that are signed/broadcast
+     * but whose receipts have not landed. The daily budget must include this or
+     * a burst of concurrent settles all pass a check that sees only past spend.
+     */
+    gasReservedInFlight() {
+      let total = 0n;
+      for (const row of stmts.gasReservedInFlight.all()) {
+        try { total += BigInt(row.gas_reserved_wei); } catch { /* ignore malformed */ }
+      }
+      return total;
     },
 
     markSettled(paymentId, { txHash, gasSpentWei }) {

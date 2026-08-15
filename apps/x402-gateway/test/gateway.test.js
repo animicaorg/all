@@ -171,7 +171,9 @@ test('settle transport failure: resource withheld, settle_unknown incident recor
   try {
     t.fac.behavior.settleThrow = true;
     const { paid } = await paidRequest(t.baseUrl, '/x402/qrng/draw');
-    assert.equal(paid.status, 402);
+    // 502, not 402: the settle outcome is UNKNOWN (the tx may have landed), so
+    // the answer must not read as "you were not charged, try again".
+    assert.equal(paid.status, 502);
     assert.equal(paid.json.randomness, undefined);
     const incidents = t.gw.gatewayStore.listIncidents('open');
     assert.equal(incidents.length, 1);

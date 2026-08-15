@@ -207,7 +207,7 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
     try {
       const result = await withSubmitLock(async () => {
         // Fees + gas (estimateGas == authoritative simulation).
-        let fees, gasLimit;
+        let fees, gasLimit, gasReservedWei = null;
         try {
           fees = await gasMod.estimateFees(rpc, { maxFeePerGasCap: cfg.maxFeePerGasWei });
           const est = await gasMod.estimateGasLimit(rpc, {
@@ -217,6 +217,25 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
             maxGasPerSettlement: cfg.maxGasPerSettlement,
           });
           gasLimit = est.gasLimit;
+
+          // Authoritative budget re-check, INSIDE the lock and with the real
+          // worst-case cost of this tx. The pre-claim check above is only an
+          // early-out; concurrent settles all clear it against the same stale
+          // recorded spend, so this is the one that actually bounds the day.
+          const reserveWei = gasLimit * fees.maxFeePerGas;
+          const lateBudgetErr = gasMod.checkDailyBudget(store, cfg.dailyGasBudgetWei, { reserveWei });
+          if (lateBudgetErr) throw lateBudgetErr;
+
+          // Refuse to sponsor gas worth more than the payment collects
+          // (no-op unless the operator configured an ETH/USD price).
+          const floorErr = gasMod.checkEconomicFloor({
+            usdcAtomic: facts.authorization.value,
+            reserveWei,
+            ethUsdPrice: cfg.ethUsdPrice,
+            safetyMultiple: cfg.gasSafetyMultiple,
+          });
+          if (floorErr) throw floorErr;
+          gasReservedWei = reserveWei;
         } catch (e) {
           const reason = e instanceof gasMod.GasPolicyError
             ? (e.reason === 'simulation_reverted' ? 'invalid_transaction_state' : 'unexpected_settle_error')
@@ -248,7 +267,7 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
 
         // Persist BEFORE broadcast: whatever happens next, recovery knows
         // exactly which signed bytes may be in flight.
-        store.markSubmitting(activePaymentId, { txHash: signed.hash, txNonce, rawTx: signed.rawTx });
+        store.markSubmitting(activePaymentId, { txHash: signed.hash, txNonce, rawTx: signed.rawTx, gasReservedWei });
         logger.info('settlement_submitting', {
           payment_id: activePaymentId,
           settlement_tx: signed.hash,

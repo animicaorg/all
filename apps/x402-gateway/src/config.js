@@ -160,6 +160,12 @@ function load(overrides = {}) {
     wanmUsdPrice: env('WANM_USD_PRICE', ''), // USD per 1 wANM, decimal string
     wanmFeePayerPubkey: env('WANM_FEEPAYER_PUBKEY', ''), // sponsor pubkey advertised in extra.feePayer
     wanmFeePayerSecret: env('WANM_FEEPAYER_SECRET', ''), // hex/base58 32-byte ed25519 seed (facilitator only)
+    // The wANM/SVM lane is RETIRED (bridge abandoned 2026-08-15) and its
+    // facilitator keeps replay marks in memory only, so a restart would forget
+    // them. Even fully configured it is not offered unless this is set — the
+    // escape hatch exists for protocol-level tests and any future port to the
+    // persistent store, not for production use.
+    allowRetiredWanmLane: env('X402_ALLOW_RETIRED_WANM_LANE', '') === '1',
     svmFacilitatorUrl: env('X402_SVM_FACILITATOR_URL', 'http://127.0.0.1:4655'),
 
     // Solana JSON-RPC used by the self-facilitator. Env-injected; the repo's
@@ -293,8 +299,21 @@ function loadEvmFacilitatorConfig(source = process.env) {
       port: parseIntEnv(source, 'X402_EVM_FACILITATOR_PORT', 8743, { min: 1, max: 65535 }),
       maxGasPerSettlement: parseBigIntEnv(source, 'X402_MAX_GAS_PER_SETTLEMENT', 150000n),
       maxFeePerGasWei: parseBigIntEnv(source, 'X402_MAX_FEE_PER_GAS_WEI', 1000000000n),
-      dailyGasBudgetWei: parseBigIntEnv(source, 'X402_DAILY_GAS_BUDGET_WEI', 0n),
-      minGasBalanceWei: parseBigIntEnv(source, 'X402_MIN_GAS_BALANCE_WEI', 2000000000000000n),
+      // Circuit breaker ON by default. 0.0004 ETH/day is ~600 settlements at
+      // Base's typical 0.006 gwei — generous for real traffic, but it caps a
+      // gas-drain attack at cents/day instead of draining the whole float.
+      // Set to 0 to disable (not recommended).
+      dailyGasBudgetWei: parseBigIntEnv(source, 'X402_DAILY_GAS_BUDGET_WEI', 400000000000000n),
+      // Readiness floor: below this the facilitator reports not-ready and stops
+      // accepting settlements rather than stranding a paid-but-unsettleable
+      // request. 0.0001 ETH ~ 150 settlements of headroom at typical Base gas;
+      // deliberately small so a bootstrap float (a few dollars) can run.
+      minGasBalanceWei: parseBigIntEnv(source, 'X402_MIN_GAS_BALANCE_WEI', 100000000000000n),
+      // Optional economic floor: when set (integer USD per ETH, e.g. 3000),
+      // a settlement is refused when its sponsored gas would cost more than
+      // the USDC it collects divided by this safety multiple. Unset = skip.
+      ethUsdPrice: parseBigIntEnv(source, 'X402_ETH_USD_PRICE', 0n),
+      gasSafetyMultiple: parseIntEnv(source, 'X402_GAS_SAFETY_MULTIPLE', 2, { min: 1, max: 100 }),
       confirmations: parseIntEnv(source, 'X402_CONFIRMATIONS', 2, { min: 0, max: 500 }),
       dbPath: envFrom(source, 'X402_DB_PATH', './state/x402.db'),
       rpcTimeoutMs: parseIntEnv(source, 'X402_RPC_TIMEOUT_MS', 10000, { min: 100, max: 120000 }),

@@ -108,6 +108,18 @@ function createPriorityInferenceProduct({ cfg, capacity, fetchImpl = fetch }) {
      * costs the payer nothing (their authorization was never consumed).
      */
     async preSettle() {
+      // Force a SYNCHRONOUS probe here rather than trusting the background
+      // one: the cached count may be up to maxProbeAgeMs old, and every
+      // serving worker can vanish inside that window. This is the last moment
+      // before the payer's USDC moves, so it has to reflect now, not a minute
+      // ago. A probe failure is treated as unavailable (fail closed).
+      try {
+        await capacity.probeOnce();
+      } catch (e) {
+        const err = new ProductError('capacity probe failed', { status: 503, body: gateBody() });
+        err.unavailable = true;
+        throw err;
+      }
       if (!capacity.available()) {
         const err = new ProductError('capacity dropped', { status: 503, body: gateBody() });
         err.unavailable = true;

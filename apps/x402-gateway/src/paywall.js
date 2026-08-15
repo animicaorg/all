@@ -272,21 +272,51 @@ function createPaywall({
     if (!parsed) return send402(res, gateRoute);
     const { wireVersion, paymentPayload } = parsed;
 
-    // 4. The client must have accepted terms WE offered, verbatim.
-    const matched = accepts.find((a) => protocol.requirementsEqual(a, paymentPayload.accepted));
+    // 4. The client must have accepted terms WE offered, verbatim. The
+    //    canonicalizer is depth-guarded (protocol.js) and client input is
+    //    depth-capped at parse time, but a malformed payment must NEVER
+    //    escape as a 500 — canonicalization failures are a 402 re-offer.
+    let matched;
+    let fingerprint;
+    try {
+      matched = accepts.find((a) => protocol.requirementsEqual(a, paymentPayload.accepted));
+      fingerprint = sha256Hex(protocol.canonicalJson(paymentPayload));
+    } catch (e) {
+      return send402(res, gateRoute, 'malformed payment payload');
+    }
     if (!matched) return send402(res, gateRoute, "accepted requirements do not match this server's offer");
+
+    // The EIP-3009 authorization nonce is the deterministic cross-ledger
+    // join key: incidents carry it so an operator can join a gateway
+    // incident to the facilitator payments row (auth_nonce column) and to
+    // the on-chain AuthorizationUsed(payer, nonce) event.
+    const authNonceRaw = paymentPayload
+      && paymentPayload.payload
+      && paymentPayload.payload.authorization
+      && paymentPayload.payload.authorization.nonce;
+    const authNonce = typeof authNonceRaw === 'string' ? authNonceRaw.toLowerCase() : null;
 
     // 5. Idempotency-Key replay: same payment + same key that already
     //    produced a delivered outcome -> stored result, zero new charges.
+    //    The stored row is bound to its resource: replaying at a DIFFERENT
+    //    endpoint (possible when two products share a price and therefore
+    //    byte-identical accepts) is a 409, never another product's body.
     const idemKeyRaw = req.headers['idempotency-key'];
     const idemKey = idemKeyRaw === undefined ? null : String(idemKeyRaw);
     if (idemKey !== null && (idemKey.length === 0 || idemKey.length > MAX_IDEM_KEY_LEN)) {
       return sendJson(res, 400, { error: 'bad_idempotency_key', detail: `Idempotency-Key must be 1..${MAX_IDEM_KEY_LEN} chars` });
     }
-    const fingerprint = sha256Hex(protocol.canonicalJson(paymentPayload));
     if (idemKey) {
       const row = gatewayStore.getIdempotent(idemKey, fingerprint);
       if (row) {
+        if (row.resource !== route.path) {
+          log.warn && log.warn('idempotency_resource_conflict', { payment_fingerprint: fingerprint, stored_resource: row.resource, requested: route.path });
+          return sendJson(res, 409, {
+            error: 'idempotency_key_conflict',
+            detail: 'this Idempotency-Key + payment was already used for a different resource; a payment is bound to the product it first paid for',
+            resource: row.resource,
+          });
+        }
         log.info && log.info('idempotent_replay', { payment_fingerprint: fingerprint, status: row.response_status });
         return replay(res, product, row);
       }
@@ -324,31 +354,113 @@ function createPaywall({
         return await fc.settle(paymentPayload, matched);
       } catch (e) {
         // Transport failure mid-settle: the outcome is UNKNOWN (the tx may
-        // land). Withhold the resource, tell the client, and open an
-        // incident so the operator reconciles against the chain/DB.
+        // land). settleFailed() below treats this exactly like a
+        // returned-unknown settlement: incident + signed receipt, never a
+        // bare "settlement failed" that reads as "you were not charged".
         log.error && log.error('facilitator_settle_unreachable', { error: e.message });
-        gatewayStore.addIncident({
-          paymentFingerprint: fingerprint,
-          payer,
-          resource: route.path,
-          amount: matched.amount,
+        return {
+          success: false,
+          errorReason: 'unexpected_settle_error',
+          transaction: '',
           network: matched.network,
-          kind: 'settle_unknown',
-          error: e.message,
-        });
-        extra.incidents.inc({ product: product.id, kind: 'settle_unknown' });
-        return { success: false, errorReason: 'unexpected_settle_error', transaction: '', network: matched.network };
+          unknown: true,
+          errorDetail: e.message,
+        };
       }
+    }
+
+    /**
+     * A failed settlement is only a clean "you were not charged" when the
+     * facilitator's answer is DEFINITIVE. Two classes are NOT definitive:
+     *   - the settle call threw (transport ambiguity — flagged `unknown`);
+     *   - the response names a broadcast tx hash without a definitive
+     *     on-chain verdict (receipt/confirmation timeout: the facilitator's
+     *     own detail says "recoverable, not final" — the transfer may land,
+     *     recovery may later mark it settled and count revenue).
+     * `invalid_transaction_state` with a tx hash IS definitive: the receipt
+     * was read and the tx reverted — no USDC moved.
+     */
+    function settlementOutcomeUnknown(settlement) {
+      if (settlement.unknown === true) return true;
+      return Boolean(settlement.transaction) && settlement.errorReason !== 'invalid_transaction_state';
     }
 
     function settleFailed(settlement) {
       metrics.settlementFailuresTotal.inc({ product: product.id, reason: settlement.errorReason || 'unknown' });
+      if (settlementOutcomeUnknown(settlement)) return settleUnknown(settlement);
       const { headers } = settlementHeaders(settlement, wireVersion);
       headers['payment-required'] = protocol.encodeHeader(
         buildPaymentRequiredForRoute(gateRoute, cfg, settlement.errorReason || 'settlement failed'));
       headers['content-type'] = 'application/json';
       return send(res, 402, headers,
         JSON.stringify({ x402Version: wireVersion, error: settlement.errorReason || 'settlement failed' }));
+    }
+
+    /**
+     * Unknown-state settlement: the payer's USDC MAY have moved (or will).
+     * Never a bare 402 — that reads as "not charged" while the transfer can
+     * still confirm. Instead: open a reconciliation incident (carrying the
+     * tx hash when the facilitator returned one, plus the EIP-3009 nonce as
+     * the cross-ledger join key), issue a SIGNED machine-readable receipt,
+     * store an idempotency reference so a same-key retry gets this pending
+     * status back instead of re-running against an in-flight authorization,
+     * and answer 502 telling the client to retry with the SAME payment (a
+     * re-signed authorization would risk paying twice).
+     */
+    function settleUnknown(settlement) {
+      const errText = String(settlement.errorDetail || settlement.errorReason || 'settlement outcome unknown');
+      const receipt = receiptSigner.sign({
+        payment_id: settlement.transaction || fingerprint,
+        payment_fingerprint: fingerprint,
+        resource: route.path,
+        product: product.id,
+        error: `settlement outcome unknown: ${errText}`,
+        payer: payer || null,
+        amount_atomic: matched.amount,
+        asset: matched.asset,
+        network: matched.network,
+        settlement_tx: settlement.transaction || null,
+        auth_nonce: authNonce,
+      });
+      const incidentId = gatewayStore.addIncident({
+        paymentId: settlement.transaction || null,
+        paymentFingerprint: fingerprint,
+        settlementTx: settlement.transaction || null,
+        payer,
+        resource: route.path,
+        amount: matched.amount,
+        network: matched.network,
+        kind: 'settle_unknown',
+        error: errText,
+        receipt,
+        authNonce,
+      });
+      extra.incidents.inc({ product: product.id, kind: 'settle_unknown' });
+      log.error && log.error('settlement_outcome_unknown', {
+        incident_id: incidentId,
+        settlement_tx: settlement.transaction || null,
+        auth_nonce: authNonce,
+        payer,
+        amount: matched.amount,
+        error: errText,
+      });
+      const { headers: sHeaders, v2 } = settlementHeaders(settlement, wireVersion);
+      const bodyObj = {
+        error: 'settlement_unknown',
+        detail: 'the settlement outcome could not be confirmed; the payment MAY have settled on-chain. Do NOT sign a new authorization (that could pay twice) — retry with the SAME payment and Idempotency-Key, or reconcile with this signed receipt.',
+        incident_id: incidentId,
+        settlement_tx: settlement.transaction || null,
+        receipt,
+      };
+      const body = JSON.stringify(bodyObj);
+      if (idemKey) {
+        gatewayStore.putIdempotent({
+          idemKey, paymentFingerprint: fingerprint, resource: route.path,
+          status: 502, contentType: 'application/json', body,
+          settlementHeader: v2, settlementTx: settlement.transaction || null,
+        });
+      }
+      return send(res, 502, Object.assign({ 'content-type': 'application/json' }, sHeaders), body);
     }
 
     if (product.mode === 'execute-then-settle') {
