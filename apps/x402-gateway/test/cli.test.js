@@ -188,6 +188,58 @@ test('incidents: list and resolve workflow', () => {
   assert.equal(refunded[0].incident_id, incidentId);
 });
 
+test('commitments: list/get/prune, and a sealed secret is never printed', () => {
+  const gstore = createGatewayStore(path.join(dir, 'x402-gateway.db'));
+  const nowSec = Math.floor(Date.now() / 1000);
+  const draw = { bytes_hex: 'aa'.repeat(32), n: 32, source: { name: 'software-fallback' }, attestation: { digest_hex: 'bb'.repeat(32), attested: false } };
+  gstore.putCommitment({
+    commitId: 'rc_' + '11'.repeat(16), commitment: 'cc'.repeat(32), algorithm: 'sha3_256(secret||salt)',
+    kind: 'commit', requestId: 'open-one', memo: 'openable', secretHex: 'de'.repeat(32), saltHex: 'ad'.repeat(32),
+    draw, revealAfter: nowSec - 10, createdAt: nowSec - 60,
+  });
+  gstore.putCommitment({
+    commitId: 'rc_' + '22'.repeat(16), commitment: 'dd'.repeat(32), algorithm: 'sha3_256(secret||salt)',
+    kind: 'commit', requestId: 'sealed-one', memo: 'sealed', secretHex: 'be'.repeat(32), saltHex: 'ef'.repeat(32),
+    draw, revealAfter: nowSec + 3600, createdAt: nowSec,
+  });
+  gstore.close();
+
+  const list = runCli(['commitments', 'list', '--json']);
+  assert.equal(list.code, 0, list.stderr);
+  const rows = JSON.parse(list.stdout);
+  assert.equal(rows.length, 2);
+  const states = Object.fromEntries(rows.map((r) => [r.request_id, r.state]));
+  assert.equal(states['open-one'], 'open');
+  assert.equal(states['sealed-one'], 'sealed');
+  // list never carries secret material at all
+  assert.doesNotMatch(list.stdout, /de{10}|be{10}/);
+  const sealedOnly = JSON.parse(runCli(['commitments', 'list', '--state', 'sealed', '--json']).stdout);
+  assert.equal(sealedOnly.length, 1);
+  assert.equal(sealedOnly[0].request_id, 'sealed-one');
+
+  // get: the sealed one withholds, the open one (already public at the free
+  // reveal route) discloses
+  const sealed = JSON.parse(runCli(['commitments', 'get', 'rc_' + '22'.repeat(16), '--json']).stdout);
+  assert.equal(sealed.state, 'sealed');
+  assert.equal(sealed.secret, '<sealed>');
+  assert.equal(sealed.salt, '<sealed>');
+  assert.equal(sealed.randomness, '<sealed>');
+  assert.equal(sealed.attestation_digest, 'bb'.repeat(32));
+  const open = JSON.parse(runCli(['commitments', 'get', 'rc_' + '11'.repeat(16), '--json']).stdout);
+  assert.equal(open.state, 'open');
+  assert.equal(open.secret, 'de'.repeat(32));
+  assert.equal(open.randomness, 'aa'.repeat(32));
+  assert.equal(runCli(['commitments', 'get', 'rc_nope']).code, 1);
+
+  // prune by age: only the older row goes
+  const pruned = runCli(['commitments', 'prune', '--older-than', '30s']);
+  assert.equal(pruned.code, 0, pruned.stderr);
+  assert.match(pruned.stdout, /pruned 1 commitment/);
+  const left = JSON.parse(runCli(['commitments', 'list', '--json']).stdout);
+  assert.equal(left.length, 1);
+  assert.equal(left[0].request_id, 'sealed-one');
+});
+
 test('usage on unknown command exits non-zero', () => {
   const r = runCli(['frobnicate']);
   assert.equal(r.code, 1);

@@ -13,6 +13,11 @@
  *   animica-x402 incidents list [--status open|refunded|resolved]
  *   animica-x402 incidents resolve <incident_id> --status refunded|resolved
  *   animica-x402 index status               address-index backfill/lag
+ *   animica-x402 commitments list|get <id>|prune [--older-than 90d]
+ *
+ * One exception to "the DBs hold none": random_commitments holds sealed
+ * commit-reveal secrets. `commitments` never prints material the FREE public
+ * reveal route would still be withholding — see cmdCommitments.
  *
  * Env: X402_DB_PATH (default ./state/x402.db), X402_GATEWAY_DB_PATH
  * (default ./state/x402-gateway.db), X402_CHAIN_INDEX_DB_PATH
@@ -317,6 +322,82 @@ function cmdIndex(args) {
   ]);
 }
 
+/**
+ * Commit-reveal commitments (random_commit). The rows hold the only secrets
+ * in any of these DBs, so this command has ONE rule: it never discloses
+ * material the free public reveal route would not. While `now <
+ * reveal_after` the commitment is sealed and `secret`/`salt` print as
+ * `<sealed>`; once the reveal window is open the same bytes are already
+ * world-readable at GET /x402/random/reveal/{id}, so printing them here
+ * reveals nothing new. `list` never prints them at all.
+ */
+function cmdCommitments(args) {
+  const sub = args._[0];
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  if (sub === 'prune') {
+    const cutoff = parseSince(args.flags['older-than'], nowSec - 90 * 24 * 3600);
+    const db = openDb(GATEWAY_DB_PATH, { writable: true });
+    const r = db.prepare('DELETE FROM random_commitments WHERE created_at < ?').run(cutoff);
+    return console.log(`pruned ${r.changes} commitment(s) created before ${fmtTs(cutoff)}`);
+  }
+
+  const db = openDb(GATEWAY_DB_PATH);
+  const stateOf = (r) => (r.revealed_at !== null ? 'revealed' : (nowSec < r.reveal_after ? 'sealed' : 'open'));
+
+  if (sub === 'get') {
+    const id = args._[1];
+    if (!id) fail('usage: animica-x402 commitments get <commit_id>');
+    const r = db.prepare('SELECT * FROM random_commitments WHERE commit_id = ?').get(id);
+    if (!r) fail(`commitment ${id} not found`);
+    const state = stateOf(r);
+    const sealed = state === 'sealed';
+    const draw = JSON.parse(r.draw_json || '{}');
+    const row = {
+      commit_id: r.commit_id,
+      state,
+      commitment: r.commitment,
+      algorithm: r.algorithm,
+      kind: r.kind,
+      request_id: r.request_id || '',
+      memo: r.memo || '',
+      created: fmtTs(r.created_at),
+      reveal_after: fmtTs(r.reveal_after),
+      revealed: r.revealed_at ? fmtTs(r.revealed_at) : '-',
+      // Withheld while sealed — the CLI must never break a seal early.
+      secret: sealed ? '<sealed>' : r.secret_hex,
+      salt: sealed ? '<sealed>' : r.salt_hex,
+      randomness: sealed ? '<sealed>' : (draw.bytes_hex || '-'),
+      attestation_digest: (draw.attestation && draw.attestation.digest_hex) || '-',
+      attested: draw.attestation ? Boolean(draw.attestation.attested) : '-',
+      entropy_source: (draw.source && draw.source.name) || '-',
+    };
+    if (args.flags.json) return console.log(JSON.stringify(row, null, 2));
+    for (const [k, v] of Object.entries(row)) console.log(`${k.padEnd(20)} ${v}`);
+    return undefined;
+  }
+
+  if (sub !== undefined && sub !== 'list') fail('usage: animica-x402 commitments list|get <id>|prune [--older-than 90d]');
+  const limit = Number(args.flags.limit || 100);
+  const want = args.flags.state;
+  if (want !== undefined && !['sealed', 'open', 'revealed'].includes(want)) {
+    fail('--state must be sealed|open|revealed');
+  }
+  const rows = db.prepare('SELECT * FROM random_commitments ORDER BY created_at DESC LIMIT ?').all(limit)
+    .map((r) => ({
+      commit_id: r.commit_id,
+      state: stateOf(r),
+      commitment: r.commitment.slice(0, 16) + '…',
+      request_id: r.request_id || '-',
+      memo: (r.memo || '-').slice(0, 32),
+      created: fmtTs(r.created_at),
+      reveal_after: fmtTs(r.reveal_after),
+      revealed: r.revealed_at ? fmtTs(r.revealed_at) : '-',
+    }))
+    .filter((r) => want === undefined || r.state === want);
+  return out(args, rows, ['commit_id', 'state', 'commitment', 'request_id', 'memo', 'created', 'reveal_after', 'revealed']);
+}
+
 function usage() {
   console.log(`animica-x402 — x402 operator CLI (local DBs only)
 
@@ -328,6 +409,9 @@ function usage() {
   incidents list [--status open]              paid-but-failed ledger (gateway DB)
   incidents resolve <id> --status refunded|resolved
   index status                                address-index backfill/lag (chain_address_history)
+  commitments list [--state sealed|open|revealed]   commit-reveal ledger (random_commit)
+  commitments get <commit_id>                 one commitment (secret withheld while sealed)
+  commitments prune [--older-than 90d]        drop old commitments
   --json on any command for machine output`);
 }
 
@@ -340,6 +424,7 @@ async function main() {
   if (cmd === 'gas') return cmdGasReport(parseArgs(rest));
   if (cmd === 'incidents') return cmdIncidents(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   if (cmd === 'index') return cmdIndex(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
+  if (cmd === 'commitments') return cmdCommitments(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   usage();
   if (cmd !== undefined && cmd !== 'help' && cmd !== '--help') process.exit(1);
 }

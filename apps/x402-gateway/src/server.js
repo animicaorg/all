@@ -99,9 +99,15 @@ function createGateway({
   const indexHeightGauge = new Gauge('x402_chain_index_height', 'Highest fully indexed block height in the gateway address index (-1 = empty)');
   const indexLagGauge = new Gauge('x402_chain_index_lag_blocks', 'Blocks between the head the index walker last saw and the indexed height');
   const indexTickAgeGauge = new Gauge('x402_chain_index_last_tick_age_seconds', 'Seconds since the address-index walker last completed a pass');
+  // The commit-reveal product is the only one that GROWS the gateway DB, so
+  // its row count is an ops number (retention is X402_RANDOM_COMMIT_TTL_SECONDS).
+  const commitmentsGauge = new Gauge('x402_random_commitments_stored', 'Commit-reveal commitments currently stored in the gateway DB');
 
   function renderMetrics() {
     servingWorkersGauge.set({}, capacity.count);
+    try {
+      commitmentsGauge.set({}, gatewayStore.countCommitments());
+    } catch { /* an older DB file without the table must not break /metrics */ }
     let indexMetrics = '';
     if (chainIndex) {
       const st = chainIndex.getState();
@@ -111,7 +117,8 @@ function createGateway({
       // Gauge.render() has no trailing newline — join explicitly.
       indexMetrics = '\n' + [indexHeightGauge.render(), indexLagGauge.render(), indexTickAgeGauge.render()].join('\n');
     }
-    return metrics.render() + paywall.extraMetricsRender() + servingWorkersGauge.render() + indexMetrics + '\n';
+    return metrics.render() + paywall.extraMetricsRender() + servingWorkersGauge.render()
+      + '\n' + commitmentsGauge.render() + indexMetrics + '\n';
   }
 
   async function requestHandler(req, res) {

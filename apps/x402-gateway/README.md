@@ -261,9 +261,15 @@ bin/animica-x402 gas report [--since 7d]      # incl. OP-stack L1 data fees
 bin/animica-x402 incidents list [--status open]
 bin/animica-x402 incidents resolve <id> --status refunded|resolved
 bin/animica-x402 index status                 # address-index backfill / lag
+bin/animica-x402 commitments list [--state sealed|open|revealed]
+bin/animica-x402 commitments get <commit_id>  # secret withheld while sealed
+bin/animica-x402 commitments prune [--older-than 90d]
 ```
 
-Local DBs only, `--json` everywhere. `reconcile` exits 1 if any settled row
+Local DBs only, `--json` everywhere. `commitments` is the one command that
+touches secret material, and it never discloses what the FREE public reveal
+route would still be withholding: while `now < reveal_after` the secret and
+salt print as `<sealed>`; `list` never prints them at all. `reconcile` exits 1 if any settled row
 lacks a matching on-chain receipt (status + `AuthorizationUsed` +
 `Transfer` log check) — run it after every deploy and on a cron.
 
@@ -336,6 +342,7 @@ exposes either):
 | `x402_idempotent_replays_total` | counter | gateway | answers served from the Idempotency-Key store |
 | `x402_incidents_total` | counter | gateway, by `kind` | settled-but-failed payments (signed receipt issued) |
 | `x402_inference_serving_workers` | gauge | gateway | live capacity-gate worker count |
+| `x402_random_commitments_stored` | gauge | gateway | commit-reveal commitments held in the gateway DB (retention `X402_RANDOM_COMMIT_TTL_SECONDS`) |
 
 Money metrics accumulate BigInt atomic units internally and render as exact
 decimal strings — no floats anywhere near amounts.
