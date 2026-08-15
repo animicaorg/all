@@ -20,6 +20,12 @@
  * Nothing here hardcodes a price, an asset or a product list: every expectation is read
  * from the live catalog, which the gateway generates from its product registry.
  *
+ * Every probe hits BASE_URL. The catalog advertises absolute production URLs, so those are
+ * rebased onto BASE_URL's origin before they are fetched — otherwise pointing the check at
+ * a local build would grade the public deployment instead. The advertised origin is still
+ * asserted (one origin for all product/discovery URLs; on a public target it must be the
+ * target itself).
+ *
  * Usage:
  *   node scripts/check-x402-discovery.mjs                 # BASE_URL=https://animica.dev
  *   BASE_URL=http://127.0.0.1:8742 node scripts/check-x402-discovery.mjs
@@ -123,6 +129,51 @@ function catalogAssetAddress(cat) {
 }
 const sameAddr = (a, b) =>
   typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+
+/**
+ * The catalog advertises ABSOLUTE URLs built from X402_RESOURCE_BASE_URL — in production
+ * that is https://animica.dev, whatever host the check is pointed at. Probing those URLs
+ * verbatim would silently grade the PUBLIC deployment during a local/CI run: a broken
+ * build passes because production is fine, and a fixed build fails because production is
+ * stale. So every advertised URL is rebased onto BASE_URL's origin (path + query kept)
+ * before it is fetched. When BASE_URL already is the advertised origin — the production
+ * monitoring case — this is the identity function and nothing changes.
+ * The advertised origin itself is not ignored; checkAdvertisedOrigins() asserts it.
+ */
+const rebasedOrigins = new Set();
+function probeUrl(advertised, fallbackPath) {
+  const fallback = fallbackPath ? `${BASE_URL}${fallbackPath}` : null;
+  if (typeof advertised !== 'string' || !/^https?:\/\//i.test(advertised)) return fallback;
+  let u;
+  let target;
+  try {
+    u = new URL(advertised);
+    target = new URL(BASE_URL);
+  } catch {
+    return fallback;
+  }
+  if (u.origin === target.origin) return advertised;
+  rebasedOrigins.add(u.origin);
+  return `${BASE_URL}${u.pathname}${u.search}`;
+}
+
+/** Absolute URLs the catalog publishes (products, free routes, discovery links). */
+function advertisedUrls(cat) {
+  const out = [];
+  const push = (v) => {
+    if (typeof v === 'string' && /^https?:\/\//i.test(v)) out.push(v);
+  };
+  // NOT homepage/repository: those legitimately name other hosts (animica.org, github.com).
+  push(cat.gateway);
+  push(cat.documentation);
+  for (const v of Object.values(cat.discovery || {})) push(v);
+  for (const p of cat.products || []) {
+    push(p.url);
+    push(p.documentation);
+    for (const f of p.free_endpoints || []) push(f.url);
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------- 1. landing + catalog
 
@@ -282,14 +333,55 @@ function checkCatalogInvariants(cat) {
   }
 }
 
+// ------------------------------------------- 2b. the advertised origin is one public host
+
+function checkAdvertisedOrigins(cat) {
+  const urls = advertisedUrls(cat);
+  if (!urls.length) {
+    return fail('advertised URLs share one origin', 'the catalog advertises no absolute product/discovery URLs');
+  }
+  const origins = [
+    ...new Set(
+      urls.map((u) => {
+        try {
+          return new URL(u).origin;
+        } catch {
+          return `invalid:${u}`;
+        }
+      })
+    ),
+  ];
+  if (origins.length > 1) {
+    return fail('advertised URLs share one origin', `mixed origins: ${origins.join(', ')}`);
+  }
+  const origin = origins[0];
+  if (origin.startsWith('invalid:')) {
+    return fail('advertised URLs share one origin', `unparseable advertised URL: ${origin.slice(8)}`);
+  }
+  const self = new URL(BASE_URL).origin;
+  if (origin === self) return pass('advertised URLs share one origin', origin);
+  if (IS_PUBLIC) {
+    // A public deployment that advertises a DIFFERENT host is misconfigured
+    // (X402_RESOURCE_BASE_URL) — agents would be sent somewhere else.
+    return fail(
+      'advertised URLs share one origin',
+      `catalog advertises ${origin} but this deployment answers at ${self} (X402_RESOURCE_BASE_URL mismatch)`
+    );
+  }
+  if (!/^https:/i.test(origin)) {
+    return warn('advertised URLs share one origin', `${origin} is not https (dev target)`);
+  }
+  pass('advertised URLs share one origin', `${origin} — probes below are rebased onto ${self}`);
+}
+
 // -------------------------------------------------------- 3. every product URL resolves
 
 async function checkProductUrls(cat) {
   const problems = [];
   const checked = [];
   for (const p of cat.products) {
-    const url = p.url || `${BASE_URL}${p.path}`;
-    if (url.includes('{')) continue; // templated (free reveal route) — nothing to fetch
+    const url = probeUrl(p.url, p.path);
+    if (!url || url.includes('{')) continue; // templated (free reveal route) — nothing to fetch
     const res = await req(url);
     await sleep(REQUEST_GAP_MS);
     if (!res.ok) {
@@ -311,8 +403,9 @@ async function checkProductUrls(cat) {
   // Free endpoints advertised as costing nothing must never answer 402.
   for (const p of cat.products) {
     for (const f of p.free_endpoints || []) {
-      if (!f.url || f.url.includes('{')) continue;
-      const res = await req(f.url);
+      const furl = probeUrl(f.url, null);
+      if (!furl || furl.includes('{')) continue;
+      const res = await req(furl);
       await sleep(REQUEST_GAP_MS);
       if (res.ok && res.status === 402) fail('free endpoints are free', `${f.endpoint} answered 402`);
     }
@@ -322,7 +415,7 @@ async function checkProductUrls(cat) {
 // ------------------------------------------------------------------------ 4. OpenAPI
 
 async function checkOpenApi(cat) {
-  const url = (cat.discovery && cat.discovery.openapi) || `${BASE_URL}/x402/openapi.json`;
+  const url = probeUrl(cat.discovery && cat.discovery.openapi, '/x402/openapi.json');
   const res = await req(url);
   if (!res.ok) return fail('GET /x402/openapi.json', `request failed: ${res.error}`);
   if (res.status !== 200) {
@@ -353,7 +446,7 @@ async function checkOpenApi(cat) {
 // -------------------------------------------------------------------------- 5. stats
 
 async function checkStats(cat) {
-  const url = (cat.discovery && cat.discovery.stats) || `${BASE_URL}/x402/stats`;
+  const url = probeUrl(cat.discovery && cat.discovery.stats, '/x402/stats');
   const res = await req(url);
   if (!res.ok) return fail('GET /x402/stats', `request failed: ${res.error}`);
   if (res.status !== 200) return fail('GET /x402/stats', `expected 200, got ${res.status}`);
@@ -380,7 +473,11 @@ async function check402(cat) {
     cat.products.find((p) => p.id === 'qrng') ||
     cat.products.find((p) => p.available !== false);
   if (!product) return fail('402 challenge', 'no available product to probe');
-  const url = product.url || `${BASE_URL}${product.path}`;
+  // `advertised` is what the catalog publishes (and therefore what the 402's resource must
+  // name); `url` is where THIS deployment is actually probed. They differ only when the
+  // check runs against a non-public target — see probeUrl().
+  const advertised = product.url || `${BASE_URL}${product.path}`;
+  const url = probeUrl(product.url, product.path);
   const res = await req(url);
   if (!res.ok) return fail(`402 on ${product.id}`, `request failed: ${res.error}`);
   if (res.status !== 402) {
@@ -410,7 +507,7 @@ async function check402(cat) {
       }
       if (expectedAsset && !sameAddr(a.asset, expectedAsset)) problems.push(`asset ${a.asset} != ${expectedAsset}`);
       if (expectedPayTo && !sameAddr(a.payTo, expectedPayTo)) problems.push(`payTo ${a.payTo} != catalog pay_to`);
-      if (a.resource && a.resource !== url) problems.push(`resource ${a.resource} != ${url}`);
+      if (a.resource && a.resource !== advertised) problems.push(`resource ${a.resource} != ${advertised}`);
     }
   }
 
@@ -431,7 +528,9 @@ async function check402(cat) {
       if (expectedCaip2 && a.network !== expectedCaip2) problems.push(`v2 network ${a.network} != ${expectedCaip2}`);
       if (expectedAtomic && a.amount !== expectedAtomic) problems.push(`v2 amount ${a.amount} != ${expectedAtomic}`);
       if (expectedAsset && !sameAddr(a.asset, expectedAsset)) problems.push(`v2 asset ${a.asset} != ${expectedAsset}`);
-      if (!v2.resource || v2.resource.url !== url) problems.push('v2 resource.url does not name the requested URL');
+      if (!v2.resource || v2.resource.url !== advertised) {
+        problems.push('v2 resource.url does not name the advertised resource URL');
+      }
     }
   }
 
@@ -473,11 +572,14 @@ function checkMcp(cat) {
   if (!existsSync(py)) {
     return skip('MCP catalog tool', `no interpreter at ${py} (set ANIMICA_PY to check it)`);
   }
+  // Point the tool at the target under test. Without this the tool reads its own default
+  // host (animica.dev) and the check would compare the PUBLIC catalog with a local build —
+  // green for the wrong reason. ANIMICA_X402_URL is the tool's documented override.
   const run = spawnSync(py, ['-c', MCP_PROBE], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     timeout: 60000,
-    env: { ...process.env, PYTHONWARNINGS: 'ignore' },
+    env: { ...process.env, PYTHONWARNINGS: 'ignore', ANIMICA_X402_URL: BASE_URL },
   });
   if (run.error) return skip('MCP catalog tool', `could not run ${py}: ${run.error.message}`);
   if (run.status !== 0) {
@@ -503,13 +605,12 @@ function checkMcp(cat) {
   }
   for (const id of theirs.keys()) if (!mine.has(id)) problems.push(`extra ${id}`);
 
-  const sameHost = BASE_URL === DEFAULT_BASE;
+  // The tool was pointed at BASE_URL above, so any difference is a real mismatch between
+  // the MCP catalog surface and the gateway catalog — never a host artefact.
   if (!problems.length) {
     pass('MCP catalog tool', `${parsed.value.tool}: ${theirs.size} products, prices match`);
-  } else if (sameHost) {
-    fail('MCP catalog tool matches gateway catalog', problems.join('; '));
   } else {
-    warn('MCP catalog tool', `${problems.join('; ')} (the tool reads its own default host, not ${BASE_URL})`);
+    fail('MCP catalog tool matches gateway catalog', problems.join('; '));
   }
 }
 
@@ -549,6 +650,11 @@ function render() {
   const lines = [];
   lines.push('');
   lines.push(`x402 discovery health check — ${BASE_URL}   (${new Date().toISOString()})`);
+  if (rebasedOrigins.size) {
+    lines.push(
+      `advertised origin ${[...rebasedOrigins].join(', ')} rebased onto ${BASE_URL} — every probe hit THIS target`
+    );
+  }
   lines.push('');
   lines.push(`${w('STATUS', 7)} ${w('CHECK', nameW)}  DETAIL`);
   lines.push(`${'-'.repeat(7)} ${'-'.repeat(nameW)}  ${'-'.repeat(40)}`);
@@ -570,6 +676,7 @@ async function main() {
   const cat = await checkWellKnown(landing);
   if (cat) {
     checkCatalogInvariants(cat);
+    checkAdvertisedOrigins(cat);
     await checkProductUrls(cat);
     await checkOpenApi(cat);
     await checkStats(cat);
@@ -583,7 +690,17 @@ async function main() {
   const failed = results.filter((r) => r.status === 'FAIL');
   if (JSON_OUTPUT) {
     process.stdout.write(
-      `${JSON.stringify({ base_url: BASE_URL, checked_at: new Date().toISOString(), ok: failed.length === 0, results }, null, 2)}\n`
+      `${JSON.stringify(
+        {
+          base_url: BASE_URL,
+          rebased_from: [...rebasedOrigins],
+          checked_at: new Date().toISOString(),
+          ok: failed.length === 0,
+          results,
+        },
+        null,
+        2
+      )}\n`
     );
   } else {
     process.stdout.write(render());

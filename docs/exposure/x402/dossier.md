@@ -125,7 +125,17 @@ Read `/.well-known/x402` for the authoritative list; this snapshot is 2026-08-15
 | `bulk_chain` | Block/tx range exports (NDJSON/JSON, gzip, cursor) | `GET https://animica.dev/x402/chain/export` · `/chain/blocks` · `/chain/transactions` | 0.05 | available |
 | `chain_address_history` | Account history from a gateway-built index | `POST https://animica.dev/x402/chain/address-history` | 0.05 | available |
 | `chain_batch_balances` | Balances for ≤500 accounts, head-pinned | `POST https://animica.dev/x402/chain/balances` | 0.02 | available |
-| `priority_inference` | OpenAI-compatible priority chat completions | `POST https://animica.dev/x402/v1/chat/completions` | 0.10 | **unavailable** — `priority_inference_unavailable` (insufficient serving capacity) |
+| `priority_inference` | OpenAI-compatible priority chat completions | `POST https://animica.dev/x402/v1/chat/completions` | 0.10 | **unavailable** — catalog `unavailable_reason: priority_inference_disabled`; 503 body `{"error":"priority_inference_unavailable",…}` |
+
+Two machine strings, two different fields, do not conflate them in a listing: the CATALOG
+reason is `priority_inference_disabled` while the operator gate is off and
+`insufficient_serving_capacity` once the gate is on but live serving workers are below the
+floor (today both are true — the gate is off *and* no worker is serving); the 503 body keeps
+the single stable code `priority_inference_unavailable`. `chain_address_history` likewise
+publishes a live flag: it reports `available: false` (`chain_index_never_ran`,
+`chain_index_backfilling`, `chain_index_stale`, `chain_index_walker_stalled`,
+`chain_index_node_unreachable` or `chain_index_disabled`) whenever the gateway's own address
+index is not caught up, and asks for no payment while it is.
 
 Caps worth quoting in listings: ≤1000 blocks or ≤10000 tx records (≤16 MB) per export;
 ≤500 addresses per balance batch; 1–1024 bytes per randomness draw. Oversized requests are
@@ -203,7 +213,15 @@ listing.
    the differentiated listing), with the description:
    > Animica provides x402-paid machine APIs on Base, including verifiable quantum
    > randomness, bulk post-quantum L1 chain data, and priority AI inference.
-   (Pair it with the trust-model sentence from §3 wherever the form allows a second field.)
+
+   **Only when the form has a second field for the trust model**, which must then carry
+   the §3 sentence (`source.is_quantum: false`, `attestation.attested: false`, software
+   CSPRNG fallback today). If the listing offers exactly ONE free-text field, use this
+   variant instead — "quantum randomness" left unqualified in a lone public field reads as
+   a hardware claim, and no hardware QRNG is connected:
+   > Animica provides x402-paid machine APIs on Base: verifiable randomness ($0.01/draw —
+   > signed and recomputable, software CSPRNG entropy today, not hardware-attested), bulk
+   > post-quantum L1 chain data, and capacity-gated priority AI inference.
 4. **Retire / replace resource `c9a2a915-2a9d-42c4-9201-6f014258ae0f`** (`/x402/paid/echo`).
    If the directory cannot delete a resource, point the listing at the QRNG URL and mark
    echo as development-only so no agent tries to buy it.
