@@ -45,7 +45,9 @@ curl -si http://127.0.0.1:8742/x402/qrng/draw | head -5       # 402 offer
                               │                       per-product locations, rate
                               ▼                       limits, request-id forwarding)
              ┌─ x402 GATEWAY  127.0.0.1:8742 ── src/server.js ──────────────┐
-             │  discovery /x402 + /.well-known/x402 (free, live availability)│
+             │  discovery: /x402 (catalog or landing page), /.well-known/    │
+             │  x402, /x402/openapi.json, /x402/stats — free, generated from │
+             │  the registry, live availability                              │
              │  paywall (src/paywall.js): validate → availability (503, no   │
              │  402 when down) → 402 offer → tamper-proof match → idempotency│
              │  replay → verify → [preSettle readiness] → settle → execute   │
@@ -178,6 +180,51 @@ refuses to load otherwise, because the gate could never open. A `parentHash`
 break rewinds `X402_CHAIN_INDEX_REORG_REWIND` blocks and re-indexes instead
 of stitching two histories together. Watch it with
 `animica-x402 index status`.
+
+## Discovery surfaces
+
+Everything an agent, an x402 indexer, a crawler or a human needs to find
+and understand these products, all **generated from the live product
+registry** at request time — there is no second copy of a price, a path or
+an availability flag anywhere in this app (`test/discovery.test.js` proves
+it by moving a price and asserting every surface moves with it).
+
+| route | what it is |
+|---|---|
+| `GET /x402` | content-negotiated: `Accept: text/html` → the landing page, anything else → the JSON catalog. `?format=json\|html` forces either (monitoring). A `*/*` client is NOT treated as wanting a web page |
+| `GET /.well-known/x402` | the same catalog, **always JSON**, at the ecosystem-conventional location |
+| `GET /x402/openapi.json` | OpenAPI 3.1 (`src/discovery/openapi.js`): every product route with its real input schema, the **402 challenge documented as a first-class response**, `x-payment-protocol: x402` and a per-route `x-payment-info` (price, atomic amount, network, chain id, asset, payTo, availability, documentation URL). No `securitySchemes`: there is no API key to document |
+| `GET /x402/stats` | aggregate settlement counts from the facilitator's ledger, opened **read-only** (`src/discovery/stats.js`): settled total, last 24 h, per-product counts, network, asset. No payer addresses, no transaction hashes, no amounts. An unrecognised `resource` is bucketed as `other`, never echoed. Absent ledger (or `mode=remote`) reports `available:false` with a reason instead of a confident zero |
+| `GET /x402/healthz`, `GET /metrics` | liveness and Prometheus text (loopback bind) |
+
+The **catalog** (`src/products/registry.js::catalog`) carries the discovery
+spec's identity block (`name`, `provider`, `homepage`, `gateway`,
+`payment_protocol`, `network` slug + `network_caip2`, `chain_id`, `asset`
+symbol + `asset_address`, `discovery.{catalog,well_known,openapi,stats}`)
+and, per product, `{id, name, method, url, documentation, price,
+price_atomic, currency, description, available (+ `unavailable_reason` /
+`unavailable_detail`), endpoints, free_endpoints, outputSchema}` plus the
+live `entropy` disclosure for the randomness family.
+
+The **landing page** (`src/discovery/landing.js`) is self-contained: inline
+CSS, no scripts beyond two JSON-LD blocks (`WebAPI` + `FAQPage`), no
+external requests, served with a `default-src 'none'` CSP, light/dark
+aware. Its prices, availability, endpoints and entropy disclosure come from
+the catalog; its response examples are REAL captured responses
+(`src/discovery/samples.js`, captured against the live node with a mocked
+facilitator — the `payment` block is stripped rather than shown with a fake
+Base transaction hash). The development `echo` marker is filtered out of
+the landing page and the OpenAPI document in **every** environment, and out
+of the catalog entirely when `X402_ENV=production`.
+
+Every **402** additionally carries optional descriptive metadata under
+`extensions.animica` (product id, name, description, price, currency,
+content type, documentation URL, catalog + OpenAPI URLs, and a `terms`
+block copied from the accepts entry being offered, so the descriptive price
+can never disagree with the one being charged). The open-spec
+`extensions.bazaar.info` discovery block that indexers read is untouched.
+None of this is a mandatory protocol field: a client that ignores
+`extensions` pays exactly as before.
 
 ## Environment
 

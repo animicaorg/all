@@ -109,6 +109,11 @@ function createPaywall({
       description: product.description,
       mimeType: product.mimeType || 'application/json',
       outputSchema: product.outputSchema,
+      // Identity for the 402's optional descriptive metadata (spec §2): the
+      // product id/name and, through them, the documentation anchor on the
+      // landing page. Purely descriptive — nothing a payer must parse.
+      productId: product.id,
+      productName: product.title || product.id,
     };
     // Pre-purchase honesty in the offer itself: the randomness products
     // publish the entropy source they last observed (software-fallback /

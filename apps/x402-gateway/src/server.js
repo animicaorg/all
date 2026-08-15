@@ -6,8 +6,13 @@
  * 127.0.0.1:8742 — loopback; nginx fronts it as a later runbook step).
  *
  * Routes:
- *   GET /x402                    public discovery catalog (unpaid)
- *   GET /.well-known/x402        same catalog (ecosystem convention)
+ *   GET /x402                    content-negotiated discovery (unpaid):
+ *                                Accept: text/html -> the landing page,
+ *                                anything else -> the JSON catalog
+ *                                (?format=json|html forces either)
+ *   GET /.well-known/x402        the catalog, always JSON
+ *   GET /x402/openapi.json       OpenAPI 3.1, generated from the registry
+ *   GET /x402/stats              aggregate settlement counts (no payers)
  *   GET /x402/healthz            process liveness
  *   GET /metrics                 Prometheus text (loopback bind only)
  *   *   <product routes>         from src/products/registry.js via the
@@ -34,6 +39,39 @@ const { createGatewayStore } = require('./store/gateway');
 const { createChainIndexStore, createChainIndexer } = require('./chain-index');
 const { createReceiptSigner } = require('./receipts');
 const { createPaywall } = require('./paywall');
+const { renderLanding } = require('./discovery/landing');
+const { buildOpenApi } = require('./discovery/openapi');
+const { createSettlementStats } = require('./discovery/stats');
+
+/**
+ * Content negotiation for GET /x402. HTML only when the client actually
+ * prefers it: a browser sends `text/html,...;q=0.9,*\/*;q=0.8`, while agents
+ * and curl send `application/json` or `*\/*` and must keep getting the
+ * catalog (a wildcard is NOT a request for a web page). `?format=json|html`
+ * overrides everything — that is what monitoring scripts use.
+ */
+function prefersHtml(req, url) {
+  const forced = url.searchParams.get('format');
+  if (forced === 'json') return false;
+  if (forced === 'html') return true;
+  const accept = String(req.headers.accept || '');
+  if (!accept) return false;
+  let html = -1;
+  let json = -1;
+  for (const part of accept.split(',')) {
+    const [typeRaw, ...paramsRaw] = part.split(';');
+    const type = typeRaw.trim().toLowerCase();
+    let q = 1;
+    for (const p of paramsRaw) {
+      const m = /^\s*q\s*=\s*([0-9.]+)\s*$/i.exec(p);
+      if (m) q = Number(m[1]);
+    }
+    if (!Number.isFinite(q)) q = 0;
+    if (type === 'text/html' || type === 'application/xhtml+xml') html = Math.max(html, q);
+    else if (type === 'application/json' || type === 'application/*') json = Math.max(json, q);
+  }
+  return html > 0 && html >= json;
+}
 
 /**
  * Compose the gateway from resolved pieces; everything injectable so tests
@@ -49,6 +87,7 @@ function createGateway({
   chainIndex,
   chainIndexer,
   receiptSigner,
+  settlementStats,
   fetchImpl = fetch,
   inferenceFetch,
   facilitatorClientFactory,
@@ -92,6 +131,10 @@ function createGateway({
 
   const registry = createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferenceFetch: inferenceFetch || fetchImpl, sleep, now, availabilityTtlMs });
   const paywall = createPaywall({ cfg, registry, gatewayStore, receiptSigner, metrics, logger, fetchImpl, facilitatorClientFactory, now });
+  // Read-only view of the facilitator's settlement ledger for GET /x402/stats.
+  // Opened lazily on first use, so a gateway on a host where the facilitator
+  // has never run starts fine and reports the ledger as unavailable.
+  const stats = settlementStats || createSettlementStats({ cfg, registry, now });
 
   const servingWorkersGauge = new Gauge('x402_inference_serving_workers', 'Live serving-worker count feeding the priority-inference capacity gate');
   // The address index gates a paid product closed when it falls behind, so
@@ -126,8 +169,36 @@ function createGateway({
     const path = url.pathname.replace(/\/+$/, '') || '/';
     try {
       if (req.method === 'GET' && (path === '/x402' || path === '/.well-known/x402' || path === '/')) {
-        const body = JSON.stringify(await registry.catalog(), null, 2);
+        const catalog = await registry.catalog();
+        // /.well-known/ is a machine location by definition — it never
+        // negotiates. /x402 does: a browser (Accept: text/html) gets the
+        // landing page, an agent or curl gets the catalog. ?format= wins over
+        // both, which is what the health-check script and humans use.
+        const wantHtml = path !== '/.well-known/x402' && prefersHtml(req, url);
+        if (wantHtml) {
+          const html = renderLanding({ cfg, catalog, products: registry.products, now });
+          res.writeHead(200, {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'public, max-age=60',
+            // The page is self-contained: no scripts, no external requests.
+            'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
+            'x-content-type-options': 'nosniff',
+          });
+          return res.end(html);
+        }
+        const body = JSON.stringify(catalog, null, 2);
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=15' });
+        return res.end(body);
+      }
+      if (req.method === 'GET' && (path === '/x402/openapi.json' || path === '/openapi.json')) {
+        const catalog = await registry.catalog();
+        const doc = buildOpenApi({ cfg, catalog, products: registry.products });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60' });
+        return res.end(JSON.stringify(doc, null, 2));
+      }
+      if (req.method === 'GET' && (path === '/x402/stats' || path === '/stats')) {
+        const body = JSON.stringify(stats.snapshot(), null, 2);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30' });
         return res.end(body);
       }
       if (req.method === 'GET' && (path === '/x402/healthz' || path === '/healthz')) {
@@ -172,7 +243,10 @@ function createGateway({
         return res.end(out.bodyObj !== undefined ? JSON.stringify(out.bodyObj) : (out.body || ''));
       }
       res.writeHead(404, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'not_found', discovery: ['/x402', '/.well-known/x402'] }));
+      return res.end(JSON.stringify({
+        error: 'not_found',
+        discovery: ['/x402', '/.well-known/x402', '/x402/openapi.json', '/x402/stats'],
+      }));
     } catch (e) {
       logger.error('request_failed', { request_id: String(req.headers['x-request-id'] || newRequestId()), path, error: e.message });
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
@@ -186,7 +260,7 @@ function createGateway({
 
   return {
     cfg, server, registry, paywall, capacity, node, gatewayStore, chainIndex, chainIndexer,
-    receiptSigner, metrics, renderMetrics, logger,
+    receiptSigner, metrics, renderMetrics, logger, stats,
   };
 }
 

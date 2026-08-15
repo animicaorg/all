@@ -29,6 +29,7 @@
 
 const cfgMod = require('./config');
 const protocol = require('./protocol');
+const { links, networkFacts, PROVIDER } = require('./discovery/links');
 
 /** POST to a facilitator, x402 v2 §7 contract. */
 function facilitatorClient(baseUrl, { fetchImpl = fetch, timeoutMs = 20_000, settleTimeoutMs } = {}) {
@@ -100,7 +101,66 @@ function buildAccepts(route, cfg) {
   return accepts;
 }
 
+/**
+ * OPTIONAL descriptive metadata for a 402 (discovery spec §2): who is
+ * selling, what, for how much, and where the human documentation is. It
+ * rides in `extensions.animica`, i.e. in the part of the wire format that
+ * exists for exactly this — no client is required to read it, and nothing
+ * here is a protocol field a payer must understand to pay.
+ *
+ * Every payment-critical value is copied from the accepts entry BUILT IN THE
+ * SAME CALL, so the descriptive copy of the price can never disagree with the
+ * terms actually being offered.
+ */
+function describeRoute(route, cfg, accepts) {
+  if (!route.productId) return null; // legacy/demo routes describe nothing
+  const l = links(cfg);
+  const facts = networkFacts(cfg);
+  const terms = accepts[0] || null;
+  const out = {
+    product: route.productId,
+    name: route.productName || route.productId,
+    description: route.description || '',
+    price: route.priceUsd,
+    currency: facts.asset || undefined,
+    content_type: route.mimeType || 'application/json',
+    documentation: l.docFor(route.productId),
+    catalog: l.wellKnown,
+    openapi: l.openapi,
+    provider: PROVIDER,
+    x402_version: 2,
+  };
+  if (terms) {
+    out.terms = {
+      scheme: terms.scheme,
+      network: terms.network,
+      chain_id: facts.chain_id,
+      amount_atomic: terms.amount,
+      asset: terms.asset,
+      pay_to: terms.payTo,
+    };
+  }
+  return out;
+}
+
 function buildPaymentRequiredForRoute(route, cfg, error) {
+  const accepts = buildAccepts(route, cfg);
+  const extensions = {};
+  // Bazaar-format discovery extension (v2): x402 discovery indexers (e.g.
+  // x402scan) read extensions.bazaar.info.{input,output} to learn what the
+  // endpoint takes. `bazaarExtra` carries per-product facts a buyer needs
+  // BEFORE paying — today the randomness family's live `entropy` block
+  // (source, is_quantum, attested), so the trust model is in the offer.
+  if (route.outputSchema || route.bazaarExtra) {
+    extensions.bazaar = {
+      info: Object.assign(
+        route.outputSchema ? { input: route.outputSchema.input, output: route.outputSchema.output } : {},
+        route.bazaarExtra || {}
+      ),
+    };
+  }
+  const described = describeRoute(route, cfg, accepts);
+  if (described) extensions.animica = described;
   return protocol.buildPaymentRequired({
     resource: {
       url: cfg.resourceBaseUrl.replace(/\/$/, '') + route.path,
@@ -108,22 +168,8 @@ function buildPaymentRequiredForRoute(route, cfg, error) {
       mimeType: route.mimeType || 'application/json',
       serviceName: cfg.serviceName,
     },
-    accepts: buildAccepts(route, cfg),
-    // Bazaar-format discovery extension (v2): x402 discovery indexers (e.g.
-    // x402scan) read extensions.bazaar.info.{input,output} to learn what the
-    // endpoint takes. `bazaarExtra` carries per-product facts a buyer needs
-    // BEFORE paying — today the randomness family's live `entropy` block
-    // (source, is_quantum, attested), so the trust model is in the offer.
-    extensions: (route.outputSchema || route.bazaarExtra)
-      ? {
-        bazaar: {
-          info: Object.assign(
-            route.outputSchema ? { input: route.outputSchema.input, output: route.outputSchema.output } : {},
-            route.bazaarExtra || {}
-          ),
-        },
-      }
-      : undefined,
+    accepts,
+    extensions: Object.keys(extensions).length ? extensions : undefined,
     error,
   });
 }

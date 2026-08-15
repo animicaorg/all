@@ -236,9 +236,10 @@ test('random family: catalog lists all five at spec prices with the free reveal 
       assert.equal(e.min_entropy_per_byte, 7.8078);
       assert.ok(e.observed_at, `${id} entropy disclosure must be timestamped`);
     }
-    // the free reveal is discoverable
+    // the free reveal is discoverable, with an absolute URL an indexer can follow
     assert.deepEqual(byId.random_commit.free_endpoints, [{
       endpoint: 'GET /x402/random/reveal/{commit_id}',
+      url: `${t.gw.cfg.resourceBaseUrl}/x402/random/reveal/{commit_id}`,
       price: '0',
       description: 'FREE public reveal: secret, salt, raw draw and attestation for a commitment. No payment, ever. Idempotent.',
     }]);

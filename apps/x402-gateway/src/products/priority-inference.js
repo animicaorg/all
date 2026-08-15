@@ -84,7 +84,17 @@ function createPriorityInferenceProduct({ cfg, capacity, fetchImpl = fetch }) {
         return { available: true, serving_workers: snap.serving_workers, required: snap.required };
       }
       const body = gateBody();
-      return { available: false, reason: 'priority_inference_unavailable', detail: body.detail, body };
+      // Two distinct machine reasons in the CATALOG, because an agent
+      // deciding whether to come back later needs to tell "the operator has
+      // this switched off" from "the network is short of serving workers
+      // right now". The 503 body keeps its single stable error code
+      // (priority_inference_unavailable) for callers that already match on it.
+      return {
+        available: false,
+        reason: body.enabled ? 'insufficient_serving_capacity' : 'priority_inference_disabled',
+        detail: body.detail,
+        body,
+      };
     },
 
     validate(ctx) {

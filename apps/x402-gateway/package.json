@@ -13,7 +13,7 @@
     "start:demo": "node src/demo-server.js",
     "start:facilitator": "node src/facilitator.js",
     "start:facilitator-evm": "node src/facilitator-evm/server.js",
-    "check:syntax": "for f in src/*.js src/facilitator-evm/*.js src/products/*.js src/store/*.js src/chain-index/*.js test/*.js bin/animica-x402; do node --check \"$f\" || exit 1; done; echo all js ok"
+    "check:syntax": "for f in src/*.js src/facilitator-evm/*.js src/products/*.js src/store/*.js src/chain-index/*.js src/discovery/*.js test/*.js bin/animica-x402; do node --check \"$f\" || exit 1; done; echo all js ok"
   },
   "engines": {
     "node": ">=20.0.0"

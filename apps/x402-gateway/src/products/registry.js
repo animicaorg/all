@@ -17,6 +17,7 @@
  */
 
 const cfgMod = require('../config');
+const { identity, networkFacts, links } = require('../discovery/links');
 const { createQrngProduct, createRandomnessSource } = require('./qrng');
 const { createRandomProducts } = require('./random');
 const { createBulkChainProduct } = require('./bulk-chain');
@@ -55,6 +56,11 @@ function createEchoProduct({ cfg }) {
     ],
     priceUsd: '0.005',
     enabled: cfg.echoEnabled,
+    // NOT a product. Every human-facing / indexer-facing surface built from
+    // this registry (landing page, OpenAPI) filters devOnly out, and
+    // X402_ENV=production disables it outright — the spec is explicit that
+    // no surface may advertise the smoke-test echo as something to buy.
+    devOnly: true,
     mode: 'execute-then-settle',
     mimeType: 'application/json',
     maxBodyBytes: 4 * 1024,
@@ -171,20 +177,27 @@ function createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferen
 
   /**
    * Public discovery catalog (GET /x402 and /.well-known/x402):
-   * {name, network, asset, products: [{id, path, price, description,
-   * available}]} per spec, plus schema/endpoint extras indexers use.
-   * `available` is LIVE from each product's availability hook.
+   * {name, provider, homepage, gateway, network, chain_id, asset,
+   * payment_protocol, products: [{id, name, description, method, url, price,
+   * currency, available}]} per the discovery spec §1, plus the
+   * schema/endpoint/entropy extras indexers and buyers use.
+   *
+   * Everything here is GENERATED: prices come from the product objects (one
+   * source), availability from each product's live hook, network/asset from
+   * the same config that builds the accepts array of every 402. There is no
+   * second copy of any of it to drift.
    */
   async function catalog() {
-    const out = {
-      x402Version: 2,
-      name: cfg.serviceName,
-      network: cfg.networkEvm,
-      asset: cfg.usdcAsset,
-      scheme: 'exact',
-      products: [],
-      updated_at: new Date(now()).toISOString(),
-    };
+    const l = links(cfg);
+    const out = Object.assign(
+      { x402Version: 2 },
+      identity(cfg),
+      networkFacts(cfg),
+      {
+        products: [],
+        updated_at: new Date(now()).toISOString(),
+      }
+    );
     for (const p of products) {
       if (!p.enabled && !p.listedEvenWhenUnavailable) continue;
       let avail;
@@ -193,9 +206,14 @@ function createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferen
       } catch (e) {
         avail = { available: false, reason: 'availability_check_failed', detail: e.message };
       }
+      const primary = p.routes[0] || { method: 'GET', path: p.path };
       const entry = {
         id: p.id,
+        name: p.title || p.id,
         path: p.path,
+        method: primary.method,
+        url: l.urlFor(p.path),
+        documentation: l.docFor(p.id),
         price: p.priceUsd,
         price_atomic: p.priceAtomic,
         currency: 'USDC',
@@ -204,7 +222,15 @@ function createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferen
         endpoints: p.routes.map((r) => `${r.method} ${r.path}`),
         mimeType: p.mimeType || 'application/json',
       };
+      // Development-only surfaces (the settlement smoke echo) say so in the
+      // machine catalog too, so nothing downstream can mistake one for a
+      // product on offer.
+      if (p.devOnly) entry.development_only = true;
       if (!avail.available && avail.reason) entry.unavailable_reason = avail.reason;
+      // The reason is the machine code an agent branches on; the detail is
+      // the human sentence (e.g. how many workers are serving vs required),
+      // so a caller can decide whether to retry without paying to find out.
+      if (!avail.available && avail.detail) entry.unavailable_detail = avail.detail;
       // Pre-purchase honesty: the randomness products publish the entropy
       // source the gateway's own readiness draw last observed. The catalog is
       // free, so nobody has to pay to discover that the source is a software
@@ -222,6 +248,7 @@ function createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferen
         // product costs nothing — e.g. the commit-reveal disclosure.
         entry.free_endpoints = p.freeRoutes.map((r) => ({
           endpoint: `${r.method} ${r.path}`,
+          url: l.urlFor(r.path),
           price: '0',
           description: r.description || '',
         }));

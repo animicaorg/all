@@ -422,6 +422,10 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
       gatewayBind: envFrom(source, 'X402_GATEWAY_BIND', '127.0.0.1'),
       gatewayPort: parseIntEnv(source, 'X402_GATEWAY_PORT', 8742, { min: 1, max: 65535 }),
       gatewayDbPath: envFrom(source, 'X402_GATEWAY_DB_PATH', './state/x402-gateway.db'),
+      // The FACILITATOR's payments ledger (same name the facilitator config
+      // reads). The gateway opens it READ-ONLY for GET /x402/stats and for
+      // nothing else — settlements are written by the facilitator process.
+      settlementDbPath: envFrom(source, 'X402_DB_PATH', './state/x402.db'),
 
       // Animica node JSON-RPC (loopback ONLY in production — never the
       // public vhosts; see the chain-data recon).

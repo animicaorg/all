@@ -25,9 +25,22 @@ test('catalog: /x402 and /.well-known/x402 list products with live availability'
     const a = await request(t.baseUrl, '/x402');
     const b = await request(t.baseUrl, '/.well-known/x402');
     assert.equal(a.status, 200);
-    assert.equal(a.json.name, t.gw.cfg.serviceName);
-    assert.equal(a.json.network, 'eip155:8453');
-    assert.equal(a.json.asset, t.gw.cfg.usdcAsset);
+    // Discovery-spec §1 identity: the catalog names itself, its provider and
+    // the lane it settles on in the human-readable forms a directory quotes.
+    assert.equal(a.json.name, 'Animica x402');
+    assert.equal(a.json.provider, 'Animica');
+    assert.equal(a.json.service_name, t.gw.cfg.serviceName);
+    assert.equal(a.json.payment_protocol, 'x402');
+    assert.equal(a.json.network, 'base');
+    assert.equal(a.json.chain_id, 8453);
+    assert.equal(a.json.asset, 'USDC');
+    // ...and the machine-exact forms a payer needs, from the same config that
+    // builds every 402's accepts entry.
+    assert.equal(a.json.network_caip2, 'eip155:8453');
+    assert.equal(a.json.asset_address, t.gw.cfg.usdcAsset);
+    assert.equal(a.json.pay_to, t.gw.cfg.basePayTo);
+    assert.equal(a.json.discovery.well_known, `${t.gw.cfg.resourceBaseUrl}/.well-known/x402`);
+    assert.equal(a.json.discovery.openapi, `${t.gw.cfg.resourceBaseUrl}/x402/openapi.json`);
     const ids = a.json.products.map((p) => p.id).sort();
     assert.deepEqual(ids, [
       'bulk_chain', 'chain_address_history', 'chain_batch_balances', 'echo', 'priority_inference', 'qrng',

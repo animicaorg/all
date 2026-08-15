@@ -6,6 +6,8 @@
  */
 
 const crypto = require('node:crypto');
+const os = require('node:os');
+const path = require('node:path');
 
 const cfgMod = require('../src/config');
 const protocol = require('../src/protocol');
@@ -173,7 +175,7 @@ const BASE = cfgMod.NETWORKS.BASE_MAINNET;
  * A full gateway over loopback HTTP with everything mocked. Returns
  * { gw, baseUrl, fac, events, close() }.
  */
-async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chainIndex, receiptSecret = 'test-receipt-secret' } = {}) {
+async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chainIndex, settlementStats, receiptSecret = 'test-receipt-secret' } = {}) {
   const events = [];
   const fac = mockFacilitator({ events });
   const nodeFetch = fakeNodeFetch(handlers || chainHandlers(), { events });
@@ -183,6 +185,11 @@ async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chai
     usdcAsset: cfgMod.USDC_DEFAULTS[BASE],
     basePayTo: '0x' + '77'.repeat(20),
     resourceBaseUrl: 'http://127.0.0.1:0',
+    // GET /x402/stats reads the facilitator's settlement ledger read-only.
+    // Point it at a path that does not exist so no test can ever open (or
+    // report numbers from) the repo's real ./state/x402.db; the stats tests
+    // override it with their own temporary ledger.
+    settlementDbPath: path.join(os.tmpdir(), 'x402-tests-no-such-ledger.db'),
     // never offer the SVM lane in these tests
     wanmMint: '', wanmTreasury: '', wanmFeePayerPubkey: '', wanmUsdPrice: '',
   }, overrides));
@@ -199,6 +206,7 @@ async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chai
     gatewayStore: createGatewayStore(':memory:'),
     chainIndex: index,
     chainIndexer: null,
+    settlementStats,
     receiptSigner: createReceiptSigner({ secret: receiptSecret }),
     sleep: async () => {},
     availabilityTtlMs: 0,
