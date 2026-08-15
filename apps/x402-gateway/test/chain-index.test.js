@@ -3,8 +3,8 @@
  * Chain family additions: the gateway-owned address index (store + walker)
  * and the two products it enables —
  *
- *   chain_address_history  POST /x402/chain/address-history  $0.02
- *   chain_batch_balances   POST /x402/chain/balances         $0.02
+ *   chain_address_history  POST /x402/chain/address-history  $0.15
+ *   chain_batch_balances   POST /x402/chain/balances         $0.10
  *
  * What these tests pin down, in the order the money flows:
  *   1. the derivation (digest join, direction rule, ordering) is exactly what
@@ -334,7 +334,7 @@ test('history: a backfilling index is 503 with progress — never a 402', async 
     const entry = cat.json.products.find((p) => p.id === 'chain_address_history');
     assert.equal(entry.available, false);
     assert.equal(entry.unavailable_reason, 'chain_index_never_ran');
-    assert.equal(entry.price, '0.02');
+    assert.equal(entry.price, '0.15');
 
     const res = await request(t.baseUrl, '/x402/chain/address-history', {
       method: 'POST',
@@ -436,7 +436,7 @@ test('history: 402 then a paid page with the documented derivation and exact big
     });
     assert.equal(first.status, 402);
     const offer = JSON.parse(first.text);
-    assert.equal(offer.accepts[0].maxAmountRequired, '20000'); // $0.02 in USDC atomic units
+    assert.equal(offer.accepts[0].maxAmountRequired, '150000'); // $0.15 in USDC atomic units
     assert.equal(paid.status, 200);
 
     const b = paid.json;
@@ -466,7 +466,7 @@ test('history: 402 then a paid page with the documented derivation and exact big
     assert.match(b.derivation.direction, /'self'/);
     assert.match(b.derivation.cursor, /strictly after/);
     // Payment metadata rides along, exactly one settlement.
-    assert.equal(b.payment.price_usd, '0.02');
+    assert.equal(b.payment.price_usd, '0.15');
     assert.equal(t.fac.settled(), 1);
   } finally {
     await t.close();
@@ -621,7 +621,7 @@ test('balances: one batched RPC, deduped, BigInt-exact decimal strings', async (
       body: JSON.stringify({ addresses: [ADDR_A, ADDR_B, ADDR_A] }),
     });
     assert.equal(first.status, 402);
-    assert.equal(JSON.parse(first.text).accepts[0].maxAmountRequired, '10000'); // $0.01
+    assert.equal(JSON.parse(first.text).accepts[0].maxAmountRequired, '100000'); // $0.10
     assert.equal(paid.status, 200);
 
     const b = paid.json;
@@ -643,7 +643,7 @@ test('balances: one batched RPC, deduped, BigInt-exact decimal strings', async (
     assert.ok(BigInt(b.total_balance) > 2n ** 53n, 'the fixture must exercise the >2^53 path');
     assert.equal(b.as_of.head_height, 200);
     assert.equal(b.as_of.consistent, true);
-    assert.equal(b.payment.price_usd, '0.01');
+    assert.equal(b.payment.price_usd, '0.10');
     assert.equal(t.fac.settled(), 1);
     // settle-then-execute: the head was pinned before the payer's USDC moved
     const pinIdx = t.events.indexOf('node:chain.getHead');
@@ -656,7 +656,7 @@ test('balances: one batched RPC, deduped, BigInt-exact decimal strings', async (
   }
 });
 
-test('balances: a single rejected account is DATA, not a poisoned $0.02 batch', async () => {
+test('balances: a single rejected account is DATA, not a poisoned $0.10 batch', async () => {
   const handlers = indexHandlers();
   const t = await buildTestGateway({ handlers });
   try {
@@ -743,8 +743,8 @@ test('catalog: both chain products publish price, caps and an input schema', asy
     const byId = Object.fromEntries(cat.json.products.map((p) => [p.id, p]));
 
     const hist = byId.chain_address_history;
-    assert.equal(hist.price, '0.02');
-    assert.equal(hist.price_atomic, '20000');
+    assert.equal(hist.price, '0.15');
+    assert.equal(hist.price_atomic, '150000');
     assert.equal(hist.available, true);
     assert.deepEqual(hist.endpoints, ['POST /x402/chain/address-history']);
     assert.equal(hist.outputSchema.input.bodyType, 'json');
@@ -752,8 +752,8 @@ test('catalog: both chain products publish price, caps and an input schema', asy
     assert.match(hist.description, /free/i, 'the listing must say the free lookups stay free');
 
     const bal = byId.chain_batch_balances;
-    assert.equal(bal.price, '0.01');
-    assert.equal(bal.price_atomic, '10000');
+    assert.equal(bal.price, '0.10');
+    assert.equal(bal.price_atomic, '100000');
     assert.equal(bal.available, true);
     assert.ok(bal.outputSchema.input.bodyFields.addresses);
     assert.match(bal.description, /500/);

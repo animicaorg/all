@@ -48,13 +48,13 @@ test('catalog: /x402 and /.well-known/x402 list products with live availability'
     ]);
     const byId = Object.fromEntries(a.json.products.map((p) => [p.id, p]));
     assert.equal(byId.qrng.available, true);
-    assert.equal(byId.qrng.price, '0.01');
-    assert.equal(byId.qrng.price_atomic, '10000');
+    assert.equal(byId.qrng.price, '0.05');
+    assert.equal(byId.qrng.price_atomic, '50000');
     assert.equal(byId.bulk_chain.available, true);
-    assert.equal(byId.bulk_chain.price, '0.02');
+    assert.equal(byId.bulk_chain.price, '0.25');
     // priority inference: disabled by default => catalog says available:false
     assert.equal(byId.priority_inference.available, false);
-    assert.equal(byId.priority_inference.price, '0.02');
+    assert.equal(byId.priority_inference.price, '0.30');
     // per-product discovery schema for indexers
     assert.equal(byId.qrng.outputSchema.input.type, 'http');
     assert.ok(byId.bulk_chain.outputSchema.input.queryParams.from);
@@ -102,19 +102,19 @@ test('catalog: qrng shows available:false when the node is down', async () => {
 
 // ------------------------------------------------------------------ QRNG
 
-test('qrng: unpaid request gets a spec 402 with $0.01 terms and v1 outputSchema', async () => {
+test('qrng: unpaid request gets a spec 402 with $0.05 terms and v1 outputSchema', async () => {
   const t = await buildTestGateway();
   try {
     const res = await request(t.baseUrl, '/x402/qrng/draw');
     assert.equal(res.status, 402);
     const required = protocol.decodeHeader(res.headers.get('payment-required'));
     assert.equal(required.x402Version, 2);
-    assert.equal(required.accepts[0].amount, '10000'); // $0.01 at 6 decimals
+    assert.equal(required.accepts[0].amount, '50000'); // $0.05 at 6 decimals
     assert.equal(required.accepts[0].network, 'eip155:8453');
     // v1 body carries outputSchema for x402scan-class indexers
     assert.equal(res.json.x402Version, 1);
     assert.equal(res.json.accepts[0].outputSchema.input.type, 'http');
-    assert.equal(res.json.accepts[0].maxAmountRequired, '10000');
+    assert.equal(res.json.accepts[0].maxAmountRequired, '50000');
   } finally {
     await t.close();
   }
@@ -152,8 +152,8 @@ test('qrng: paid draw returns the REAL RPC fields verbatim + payment metadata + 
     assert.ok(body.verification.rules.length >= 2);
     assert.match(body.verification.verifier, /verify\.js/);
     // payment metadata
-    assert.equal(body.payment.amount_atomic, '10000');
-    assert.equal(body.payment.price_usd, '0.01');
+    assert.equal(body.payment.amount_atomic, '50000');
+    assert.equal(body.payment.price_usd, '0.05');
     assert.match(body.payment.settlement_tx, /^0x0+1$/);
     // settlement receipt header present
     const settlement = protocol.decodeHeader(paid.headers.get('payment-response'));
@@ -288,7 +288,7 @@ test('bulk: paid NDJSON block export — meta/summary lines, stripped duplicatio
     const { first, paid } = await paidRequest(t.baseUrl, '/x402/chain/blocks?from=10&to=13');
     assert.equal(first.status, 402);
     const required = protocol.decodeHeader(first.headers.get('payment-required'));
-    assert.equal(required.accepts[0].amount, '20000'); // $0.02
+    assert.equal(required.accepts[0].amount, '250000'); // $0.25
     assert.equal(paid.status, 200);
     assert.match(paid.headers.get('content-type'), /application\/x-ndjson/);
     const lines = paid.text.trim().split('\n').map((l) => JSON.parse(l));
@@ -298,7 +298,7 @@ test('bulk: paid NDJSON block export — meta/summary lines, stripped duplicatio
     assert.equal(meta.unit, 'nANM');
     assert.equal(meta.chain_id, 1);
     assert.equal(meta.head_height, 50);
-    assert.equal(meta.payment.amount_atomic, '20000');
+    assert.equal(meta.payment.amount_atomic, '250000');
     assert.ok(meta.payment.settlement_tx);
     assert.equal(summary.type, 'summary');
     assert.equal(summary.blocks, 4);
@@ -602,7 +602,7 @@ test('inference: activates at the threshold and proxies with priority headers', 
     });
     assert.equal(first.status, 402);
     const required = protocol.decodeHeader(first.headers.get('payment-required'));
-    assert.equal(required.accepts[0].amount, '20000'); // $0.02
+    assert.equal(required.accepts[0].amount, '300000'); // $0.30
     assert.equal(paid.status, 200);
     assert.equal(paid.json.choices[0].message.content, 'pong');
     // OpenAI shape stays pure (no injected payment field); proof in header

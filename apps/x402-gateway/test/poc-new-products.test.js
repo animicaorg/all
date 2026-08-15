@@ -131,7 +131,7 @@ test('F2b: a throw AFTER settlement pays out a signed receipt + incident, never 
 
     // The settlement is real and is counted exactly once...
     assert.equal(t.fac.settled(), 1);
-    assert.match(t.gw.renderMetrics(), /x402_revenue_usdc\{product="random_int"\}\s+0\.01/);
+    assert.match(t.gw.renderMetrics(), /x402_revenue_usdc\{product="random_int"\}\s+0\.05/);
     // ...and the operator has the row needed to refund it.
     const incidents = t.gw.gatewayStore.listIncidents(null, 100);
     assert.equal(incidents.length, 1);
@@ -245,8 +245,15 @@ test('F4: nothing prunes commitments while the process runs', async () => {
 //      is never compared to the route being served.
 // ---------------------------------------------------------------------------
 
-test('F5: a payment signed for random_shuffle unlocks chain_batch_balances (same $0.02)', async () => {
-  const t = await buildTestGateway();
+test('F5: a payment signed for random_shuffle unlocks chain_batch_balances (same price)', async () => {
+  // Both prices are pinned HERE, not taken from the live table: the flaw is
+  // that equal terms make an authorization interchangeable between products,
+  // and that must stay under test no matter what the catalog charges. When
+  // the shipped prices diverged this test started passing on a 402 — green
+  // for the wrong reason, which is worse than red.
+  const t = await buildTestGateway({
+    overrides: { randomShufflePriceUsd: '0.05', chainBalancesPriceUsd: '0.05' },
+  });
   try {
     const shuffle402 = await request(t.baseUrl, '/x402/random/shuffle', {
       method: 'POST',
@@ -284,7 +291,7 @@ test('F5: a payment signed for random_shuffle unlocks chain_batch_balances (same
 test('F6: random_bulk can no longer settle a premium under a "discount" label', async () => {
   const t = await buildTestGateway();
   try {
-    // The old PoC: draws=1 for $0.03 against $0.01 for the same thing.
+    // The old PoC: draws=1 for $0.20 against $0.05 for the same thing.
     const res = await request(t.baseUrl, '/x402/qrng/bulk', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -313,7 +320,7 @@ test('F6: random_bulk can no longer settle a premium under a "discount" label', 
     const bulk = cat.json.products.find((x) => x.id === 'random_bulk');
     assert.doesNotMatch(bulk.description, /real per-unit discount/);
     assert.match(bulk.description, /INDEPENDENT/);
-    assert.match(bulk.description, /4\.\.10/);
+    assert.match(bulk.description, /5\.\.10/);
     // ...and the response says plainly which product is cheaper per byte.
     assert.equal(p.per_byte.cheaper_per_byte, 'single_max_draw');
   } finally {
@@ -444,7 +451,7 @@ test('F8: balances settles on a stale head cache and bills a 100%-failed batch a
     assert.equal(t.gw.gatewayStore.listIncidents(null, 100).length, 0);
     assert.equal(paid.json.receipt, undefined);
     const metrics = t.gw.renderMetrics();
-    assert.match(metrics, /x402_revenue_usdc\{product="chain_batch_balances"\}\s+0\.01/,
+    assert.match(metrics, /x402_revenue_usdc\{product="chain_batch_balances"\}\s+0\.1(?!\d)/,
       'revenue is counted for a request that delivered nothing');
   } finally {
     await t.close();
@@ -455,7 +462,7 @@ test('F8: balances settles on a stale head cache and bills a 100%-failed batch a
 // F9 — chain_address_history happily sells a window it can prove is empty.
 // ---------------------------------------------------------------------------
 
-test('F9: history charges $0.02 for a window that provably cannot contain a row', async () => {
+test('F9: history charges $0.15 for a window that provably cannot contain a row', async () => {
   const store = createChainIndexStore(':memory:');
   store.applyBlocks([{ number: 0, hash: '0x0', parentHash: null, timestamp: 1, chainId: 1, transactions: [] }]);
   store.recordTick({ headHeight: 5, atMs: Date.now(), maxLagBlocks: 12 });

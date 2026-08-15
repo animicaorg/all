@@ -183,14 +183,14 @@ test('protocol e2e: an unpaid request is answered 402 with signable Base USDC te
     assert.deepEqual(offer.accepts[0], {
       scheme: 'exact',
       network: 'eip155:8453',
-      amount: '10000', // $0.01 USDC, 6 decimals, integer atomic units
+      amount: '50000', // $0.05 USDC, 6 decimals, integer atomic units
       asset: e2e.sc.cfg.asset,
       payTo: e2e.sc.cfg.settlementAddress,
       maxTimeoutSeconds: 60,
     });
     // the v1 body rides along for legacy clients
     assert.equal(res.json.x402Version, 1);
-    assert.equal(res.json.accepts[0].maxAmountRequired, '10000');
+    assert.equal(res.json.accepts[0].maxAmountRequired, '50000');
     assert.equal(res.json.accepts[0].network, 'base');
 
     // nothing was sold and nothing was asked of the chain
@@ -220,10 +220,10 @@ test('protocol e2e: a valid EIP-3009 payment unlocks the product and settles on 
     assert.equal(receipt.network, 'eip155:8453');
     assert.equal(receipt.payer, e2e.sc.payer.address, 'payer recovered from the real signature');
     assert.match(receipt.transaction, /^0x[0-9a-f]{64}$/);
-    assert.equal(receipt.amount, '10000');
+    assert.equal(receipt.amount, '50000');
 
     // ...and inside the JSON body as payment metadata
-    assert.equal(paid.json.payment.amount_atomic, '10000');
+    assert.equal(paid.json.payment.amount_atomic, '50000');
     assert.equal(paid.json.payment.asset, e2e.sc.cfg.asset);
     assert.equal(paid.json.payment.settlement_tx, receipt.transaction);
 
@@ -232,13 +232,13 @@ test('protocol e2e: a valid EIP-3009 payment unlocks the product and settles on 
     const rows = e2e.rows();
     assert.equal(rows.length, 1);
     assert.equal(rows[0].status, 'settled');
-    assert.equal(rows[0].amount, '10000');
+    assert.equal(rows[0].amount, '50000');
     assert.equal(rows[0].payer, e2e.sc.payer.address);
     assert.equal(rows[0].asset, e2e.sc.cfg.asset);
     assert.equal(rows[0].network, 'eip155:8453');
     assert.equal(rows[0].settlement_tx_hash, receipt.transaction);
-    assert.equal(e2e.sc.store.settledRevenueAtomic(), 10_000n);
-    assert.match(e2e.gw.renderMetrics(), /x402_revenue_usdc\{product="qrng"\} 0\.01/);
+    assert.equal(e2e.sc.store.settledRevenueAtomic(), 50_000n);
+    assert.match(e2e.gw.renderMetrics(), /x402_revenue_usdc\{product="qrng"\} 0\.05/);
   } finally {
     await e2e.close();
   }
@@ -487,7 +487,7 @@ test('replay e2e: a settled authorization cannot buy a second draw', async () =>
     const rows = e2e.rows();
     assert.equal(rows.length, 1, 'exactly one settlement row');
     assert.equal(rows[0].status, 'settled');
-    assert.equal(e2e.sc.store.settledRevenueAtomic(), 10_000n, 'a replay never adds revenue');
+    assert.equal(e2e.sc.store.settledRevenueAtomic(), 50_000n, 'a replay never adds revenue');
   } finally {
     await e2e.close();
   }
@@ -518,7 +518,7 @@ test('concurrency e2e: two simultaneous requests sharing ONE authorization deliv
     const rows = e2e.rows();
     assert.equal(rows.length, 1, 'exactly one settlement row');
     assert.equal(rows[0].status, 'settled');
-    assert.equal(e2e.sc.store.settledRevenueAtomic(), 10_000n, 'charged exactly once');
+    assert.equal(e2e.sc.store.settledRevenueAtomic(), 50_000n, 'charged exactly once');
     assert.match(e2e.gw.renderMetrics(), /x402_settlements_total\{product="qrng"\} 1/);
   } finally {
     await e2e.close();

@@ -639,8 +639,18 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
   //
   // Hence $0.01 is the FLOOR for anything that settles per call, not a chosen
   // price, and the way to go cheaper per unit is to amortise one settlement over
-  // many units (see qrng/bulk: 10 independent draws, one settlement) — not to
+  // many units (see qrng/bulk: independent draws, one settlement) — not to
   // shade the per-call number down.
+  //
+  // The prices below sit well above that floor (2026-08-15). They were briefly
+  // cut to the floor on the theory that price was why nothing sold; the traffic
+  // said otherwise — every visitor was an indexer or an uptime monitor, none
+  // ever presented a payment, and published x402 adoption data puts the average
+  // paid call near $0.30. We were 10-30x UNDER market, not over it. Sitting on
+  // the floor also made settlement fragile: at $0.01 the reserve-based
+  // gas_exceeds_payment_value check clears by ~1.2x, so a rise in ETH toward
+  // ~$4,500 would have started REFUSING settlements outright. The headroom here
+  // is a correctness property, not greed.
   const priceOf = (name, fallback) => {
     const v = envFrom(source, name, fallback);
     try {
@@ -716,7 +726,7 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
 
       // P1 QRNG.
       qrngEnabled: envFrom(source, 'X402_QRNG_ENABLED', '1') === '1',
-      qrngPriceUsd: priceOf('X402_QRNG_PRICE_USDC', '0.01'),
+      qrngPriceUsd: priceOf('X402_QRNG_PRICE_USDC', '0.05'),
       qrngMaxBytes: parseIntEnv(source, 'X402_QRNG_MAX_BYTES', 1024, { min: 1, max: 1048576 }),
       qrngTimeoutMs: parseIntEnv(source, 'X402_QRNG_TIMEOUT_MS', 5000, { min: 100, max: 60000 }),
 
@@ -724,11 +734,11 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
       // Every one of them derives from a single qrng draw, so they share the
       // qrng timeout/health gate; only the caps and prices live here.
       randomEnabled: envFrom(source, 'X402_RANDOM_ENABLED', '1') === '1',
-      randomIntPriceUsd: priceOf('X402_RANDOM_INT_PRICE_USDC', '0.01'),
-      randomShufflePriceUsd: priceOf('X402_RANDOM_SHUFFLE_PRICE_USDC', '0.01'),
-      randomPickPriceUsd: priceOf('X402_RANDOM_PICK_PRICE_USDC', '0.01'),
-      randomBulkPriceUsd: priceOf('X402_RANDOM_BULK_PRICE_USDC', '0.03'),
-      randomCommitPriceUsd: priceOf('X402_RANDOM_COMMIT_PRICE_USDC', '0.01'),
+      randomIntPriceUsd: priceOf('X402_RANDOM_INT_PRICE_USDC', '0.05'),
+      randomShufflePriceUsd: priceOf('X402_RANDOM_SHUFFLE_PRICE_USDC', '0.05'),
+      randomPickPriceUsd: priceOf('X402_RANDOM_PICK_PRICE_USDC', '0.05'),
+      randomBulkPriceUsd: priceOf('X402_RANDOM_BULK_PRICE_USDC', '0.20'),
+      randomCommitPriceUsd: priceOf('X402_RANDOM_COMMIT_PRICE_USDC', '0.10'),
       // Bytes drawn from the node for a DERIVED product. 32 is a full DRNG
       // seed: the SHA3 counter-mode stream expands it without bound, so a
       // bigger draw would buy nothing and only bloat the published bytes the
@@ -755,7 +765,7 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
 
       // P2 bulk chain data.
       bulkChainEnabled: envFrom(source, 'X402_BULK_CHAIN_ENABLED', '1') === '1',
-      bulkChainPriceUsd: priceOf('X402_BULK_CHAIN_PRICE_USDC', '0.02'),
+      bulkChainPriceUsd: priceOf('X402_BULK_CHAIN_PRICE_USDC', '0.25'),
       bulkMaxBlocks: parseIntEnv(source, 'X402_BULK_MAX_BLOCKS', 1000, { min: 1, max: 10000 }),
       bulkMaxTxRecords: parseIntEnv(source, 'X402_BULK_MAX_TX_RECORDS', 10000, { min: 1, max: 1000000 }),
       bulkMaxResponseBytes: parseIntEnv(source, 'X402_BULK_MAX_RESPONSE_BYTES', 16_000_000, { min: 10_000 }),
@@ -785,13 +795,13 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
       chainIndexMaxTickAgeMs: parseIntEnv(source, 'X402_CHAIN_INDEX_MAX_TICK_AGE_MS', 300000, { min: 1000, max: 86400000 }),
 
       chainHistoryEnabled: envFrom(source, 'X402_CHAIN_HISTORY_ENABLED', '1') === '1',
-      chainHistoryPriceUsd: priceOf('X402_CHAIN_HISTORY_PRICE_USDC', '0.02'),
+      chainHistoryPriceUsd: priceOf('X402_CHAIN_HISTORY_PRICE_USDC', '0.15'),
       chainHistoryMaxLimit: parseIntEnv(source, 'X402_CHAIN_HISTORY_MAX_LIMIT', 500, { min: 1, max: 10000 }),
       chainHistoryDefaultLimit: parseIntEnv(source, 'X402_CHAIN_HISTORY_DEFAULT_LIMIT', 100, { min: 1, max: 10000 }),
 
       // P5 bulk balances — measured ~5 ms/address batched, so 500/request.
       chainBalancesEnabled: envFrom(source, 'X402_CHAIN_BALANCES_ENABLED', '1') === '1',
-      chainBalancesPriceUsd: priceOf('X402_CHAIN_BALANCES_PRICE_USDC', '0.01'),
+      chainBalancesPriceUsd: priceOf('X402_CHAIN_BALANCES_PRICE_USDC', '0.10'),
       chainBalancesMaxAddresses: parseIntEnv(source, 'X402_CHAIN_BALANCES_MAX_ADDRESSES', 500, { min: 1, max: 5000 }),
       chainBalancesTimeoutMs: parseIntEnv(source, 'X402_CHAIN_BALANCES_TIMEOUT_MS', 20000, { min: 1000, max: 120000 }),
 
@@ -799,7 +809,7 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
       // additionally gated on live serving capacity (see src/capacity.js).
       priorityInferenceEnabled: envFrom(source, 'PRIORITY_INFERENCE_ENABLED', '0') === '1',
       priorityInferenceMinServingWorkers: parseIntEnv(source, 'PRIORITY_INFERENCE_MIN_SERVING_WORKERS', 2, { min: 1, max: 1000 }),
-      inferencePriceUsd: priceOf('X402_INFERENCE_PRICE_USDC', '0.02'),
+      inferencePriceUsd: priceOf('X402_INFERENCE_PRICE_USDC', '0.30'),
       inferenceWorkerWallets,
       inferenceTier: envFrom(source, 'X402_INFERENCE_TIER', 'standard'),
       inferenceUpstreamUrl: envFrom(source, 'X402_INFERENCE_UPSTREAM_URL', 'http://127.0.0.1:4600/v1/chat/completions'),

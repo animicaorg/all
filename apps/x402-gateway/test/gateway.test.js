@@ -111,7 +111,7 @@ test('failure receipt: downstream dies after settlement -> bounded retry -> sign
     assert.equal(receipt.alg, 'HMAC-SHA256');
     assert.equal(receipt.resource, '/x402/chain/blocks');
     assert.equal(receipt.product, 'bulk_chain');
-    assert.equal(receipt.amount_atomic, '20000');
+    assert.equal(receipt.amount_atomic, '250000');
     assert.match(receipt.payment_id, /^0x0+1$/); // the settlement tx
     const signer = createReceiptSigner({ secret: 'test-receipt-secret' });
     assert.equal(signer.verify(receipt), true);
@@ -130,7 +130,7 @@ test('failure receipt: downstream dies after settlement -> bounded retry -> sign
     const incidents = t.gw.gatewayStore.listIncidents('open');
     assert.equal(incidents.length, 1);
     assert.equal(incidents[0].kind, 'downstream_failed');
-    assert.equal(incidents[0].amount, '20000');
+    assert.equal(incidents[0].amount, '250000');
     assert.equal(JSON.parse(incidents[0].receipt_json).payment_id, receipt.payment_id);
 
     // the delivered outcome (the receipt) was stored for idempotent replay
@@ -220,7 +220,7 @@ test('accounting: one delivered success == one settlement; revenue == settled am
     assert.equal(settles, 5, '4 successful + 1 failed settle attempt');
     assert.equal(t.fac.settled(), 4, 'exactly the 4 delivered successes settled');
     const revenue = t.gw.metrics.revenueUsdc.get({ product: 'qrng' });
-    assert.equal(revenue, 4n * 10000n, 'revenue counts settled amounts only');
+    assert.equal(revenue, 4n * 50000n, 'revenue counts settled amounts only');
     // the failed settle and invalid payment moved nothing
     const rendered = t.gw.renderMetrics();
     assert.match(rendered, /x402_settlements_total\{product="qrng"\} 4/);
