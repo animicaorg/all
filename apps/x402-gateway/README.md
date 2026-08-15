@@ -1,7 +1,9 @@
 # x402 gateway + self-hosted facilitator
 
-> **Status (2026-08-15): Base-USDC x402 stack, facilitator SELF-HOSTED —
-> no third-party settlement dependency, no Coinbase services anywhere.
+> **Status (2026-08-15): Base-USDC x402 stack, facilitator SELF-HOSTED by
+> default (`X402_FACILITATOR_MODE` defaults to `self`; `remote` requires an
+> explicit URL and has no fallback) — no third-party settlement dependency,
+> no Coinbase services anywhere.
 > The wANM/Solana lane is RETIRED** (code kept in-tree as legacy, never
 > configured; see "Retired wANM lane" below). Deployment is a separate
 > human-approved runbook step: the live `animica-x402.service` still runs
@@ -21,7 +23,7 @@ never send us a key.
 
 ```sh
 cd apps/x402-gateway
-node --test test/                       # 138 tests, no network anywhere
+node --test test/                       # the full suite, no network anywhere
 
 # dev demo (what the live unit runs): /free/ping + /paid/echo on :4656
 ANM_X402_ENABLED=1 node src/demo-server.js
@@ -71,20 +73,27 @@ curl -si http://127.0.0.1:8742/x402/qrng/draw | head -5       # 402 offer
 
 Two separable layers: the **gateway** (products, paywall, discovery) speaks
 to any x402-v2-§7 facilitator; the **facilitator** is ours by default
-(`X402_FACILITATOR_MODE=self`) and swappable for a remote one
-(`remote` + `X402_FACILITATOR_URL`, e.g. PayAI) with zero product changes.
+(`X402_FACILITATOR_MODE=self` — the default with nothing configured, and
+set explicitly in `systemd/animica-x402.service`) and swappable for a
+remote one (`remote` + `X402_FACILITATOR_URL`, e.g. PayAI) with zero
+product changes. There is **no default remote URL**: `mode=remote` without
+an explicit URL refuses to start, because a fallback endpoint would route
+real payments through whoever it named. `X402_NETWORK_EVM` likewise
+defaults to Base **mainnet** (`eip155:8453`) and must agree with the
+facilitator's `X402_NETWORK` in self mode. `test/honesty-guards.test.js`
+asserts these claims against the code that has to make them true.
 
 ## Products
 
 | id | route(s) | price (default) | mode | notes |
 |---|---|---|---|---|
-| `qrng` | `GET /x402/qrng/draw`, `POST /x402/qrng` | $0.01 `X402_QRNG_PRICE_USDC` | execute-then-settle | wraps the node's real `rand.quantumRandomBytes`; health-gated readiness probe BEFORE any 402; attestation fields pass through verbatim (`attested:false` today — honesty enforced) |
+| `qrng` | `GET /x402/qrng/draw`, `POST /x402/qrng` | $0.01 `X402_QRNG_PRICE_USDC` | execute-then-settle | wraps the node's real `rand.quantumRandomBytes`; health-gated readiness probe BEFORE any 402; attestation fields pass through verbatim (`attested:false` today — honesty enforced, and published UNPAID in the catalog + 402 offer); the POST form reads its JSON body (a body parameter is never silently discarded) |
 | `random_int` | `POST /x402/random/int` | $0.01 `X402_RANDOM_INT_PRICE_USDC` | execute-then-settle | uniform ints in `[min,max]`, ≤1,000 per call, **rejection sampling** (documented, no modulo bias); one draw per request, derived |
 | `random_shuffle` | `POST /x402/random/shuffle` | $0.02 `X402_RANDOM_SHUFFLE_PRICE_USDC` | execute-then-settle | Fisher-Yates permutation of your list or of `1..N`, ≤10,000 items; returns the index permutation + the shuffled items |
-| `random_pick` | `POST /x402/random/pick` | $0.02 `X402_RANDOM_PICK_PRICE_USDC` | execute-then-settle | k picks with/without replacement, optional **integer** weights (cumulative-weight search over one uniform draw) — raffles, sortition, A/B splits |
-| `random_bulk` | `POST /x402/qrng/bulk` | $0.05 `X402_RANDOM_BULK_PRICE_USDC` | execute-then-settle | ≤10 segments × ≤1,024 bytes in ONE settlement (5,000 atomic/draw vs 10,000 single = real discount); segments are slices of one attested draw and say so |
-| `random_commit` | `POST /x402/random/commit` + **free** `GET /x402/random/reveal/{id}` | $0.02 `X402_RANDOM_COMMIT_PRICE_USDC` | execute-then-settle | commit-reveal for provably-fair games: `sha3_256(secret‖salt)` now, free public idempotent reveal later (425 while sealed) |
-| `bulk_chain` | `GET /x402/chain/export\|blocks\|transactions` | $0.05 `X402_BULK_CHAIN_PRICE_USDC` | settle-then-execute | ≤1,000 blocks / ≤10,000 tx rows / byte+time budgets, cursor pagination, NDJSON/JSON, gzip; amounts = decimal strings (nANM); loopback node only, chunked + single-flight |
+| `random_pick` | `POST /x402/random/pick` | $0.02 `X402_RANDOM_PICK_PRICE_USDC` | execute-then-settle | k picks with/without replacement, optional **integer** weights (cumulative-weight search over one uniform draw) — raffles, sortition, A/B splits; the estimated RESPONSE size is capped pre-settlement (`X402_RANDOM_MAX_RESPONSE_BYTES`), with `indices_only` for large items |
+| `random_bulk` | `POST /x402/qrng/bulk` | $0.05 `X402_RANDOM_BULK_PRICE_USDC` | execute-then-settle | 6–10 **INDEPENDENT** draws (one node call + one attestation each) × ≤1,024 bytes in ONE settlement. The minimum draw count is derived from the price table so the batch always beats the same number of single draws; below it a 400 names the cheaper endpoint, and a price that can never be a discount makes the product `available:false` |
+| `random_commit` | `POST /x402/random/commit` + **free** `GET /x402/random/reveal/{id}` | $0.02 `X402_RANDOM_COMMIT_PRICE_USDC` | execute-then-settle | commit-reveal: `sha3_256(secret‖salt)` now, free public idempotent reveal later (425 while sealed). Ships its own trust model — the commitment binds from publication; it does NOT prove the operator discarded no draws |
+| `bulk_chain` | `GET /x402/chain/export\|blocks\|transactions` | $0.05 `X402_BULK_CHAIN_PRICE_USDC` | settle-then-execute | ≤1,000 blocks / ≤10,000 tx rows / byte+time budgets, cursor pagination, NDJSON/JSON, gzip; amounts = decimal strings (nANM); loopback node only, chunked + single-flight; a window above `head − margin` is refused pre-settlement (`window_not_yet_final`) instead of sold empty |
 | `chain_address_history` | `POST /x402/chain/address-history` | $0.05 `X402_CHAIN_HISTORY_PRICE_USDC` | execute-then-settle | full account history from the gateway's OWN head-following sqlite index (`src/chain-index/`); ≤500 rows/call, stable `<as_of>:<height>:<tx_index>` cursor, published direction/ordering/digest derivation; **fails closed (503, no 402) while the index is backfilling, stalled or lagging** |
 | `chain_batch_balances` | `POST /x402/chain/balances` | $0.02 `X402_CHAIN_BALANCES_PRICE_USDC` | settle-then-execute | ≤500 addresses in ONE batched RPC (~5 ms/address), deduped, BigInt-exact nANM decimal strings, per-entry errors instead of a poisoned batch; single lookups stay free |
 | `priority_inference` | `POST /x402/v1/chat/completions` | $0.10 `X402_INFERENCE_PRICE_USDC` | settle-then-execute | **DISABLED by default** (`PRIORITY_INFERENCE_ENABLED=0`) AND capacity-gated on live `aicf.workerStatus` polling; below the worker floor: catalog `available:false`, clear 503, **never a 402** |
@@ -93,8 +102,12 @@ to any x402-v2-§7 facilitator; the **facilitator** is ours by default
 Cross-product guarantees (all in `src/paywall.js`, tested in
 `test/gateway.test.js`): an unavailable product never requests payment;
 settle-first products re-check readiness immediately before settlement;
-after a settled payment a downstream failure produces an **HMAC-signed
-error receipt** + an incident row (never silently kept money);
+after a settled payment **anything** that fails — the downstream service,
+the response serialization, the idempotency write — produces an HMAC-signed
+error receipt + an incident row and a 502 (`downstream_failed`,
+`delivery_failed`, `settle_unknown`), never a bare 500 that reads as "you
+were not charged"; execute-then-settle products serialize the response
+BEFORE settling, so an unserializable answer charges nobody;
 `Idempotency-Key` + same payment replays the stored result with no second
 charge; one delivered success == exactly one settlement; failed/replayed
 payments never count as revenue.
@@ -119,7 +132,14 @@ this with golden vectors *and* a live cross-check against that file.
 Honesty, unchanged from `qrng`: the source is `software-fallback`
 (os.urandom) with a software signer, so `attested:false` and
 `is_quantum:false` — no description, example or doc here implies hardware
-or quantum attestation.
+or quantum attestation, and `test/honesty-guards.test.js` enforces it.
+Crucially the trust model is knowable **before paying**: the readiness
+probe's observation is published unpaid as `entropy {source, is_hardware,
+is_quantum, attested, health_passed, min_entropy_per_byte, observed_at}` on
+every randomness entry in `GET /x402` and inside every 402 offer's
+`extensions.bazaar.info`. `random_bulk` is the one product that makes N
+node calls instead of one — independence is what it sells, and its
+break-even minimum is enforced rather than claimed.
 
 ### The address index (`src/chain-index/`)
 
@@ -175,7 +195,7 @@ non-allowlisted asset, malformed key, garbage price) refuse to boot.
 | self-hosted facilitator | `X402_NETWORK` (`base`\|`base-sepolia` allowlist), `X402_CHAIN_ID` (must agree), `X402_ASSET` (`USDC` or the exact allowlisted address), `X402_RPC_URL` (+`_FALLBACK_URL`), `X402_SETTLEMENT_ADDRESS` (payTo — server config, never client input), `X402_FACILITATOR_PRIVATE_KEY`, `X402_FACILITATOR_BIND`/`X402_EVM_FACILITATOR_PORT` (127.0.0.1:8743), `X402_DB_PATH` |
 | gas policy | `X402_MAX_GAS_PER_SETTLEMENT` (150k), `X402_MAX_FEE_PER_GAS_WEI` (1 gwei), `X402_DAILY_GAS_BUDGET_WEI` (0=off breaker), `X402_MIN_GAS_BALANCE_WEI` (readyz floor) |
 | confirmation | `X402_CONFIRMATIONS` (2), `X402_RECEIPT_TIMEOUT_MS`, `X402_RECEIPT_POLL_MS`, `X402_EXPIRY_MARGIN_SECONDS` |
-| products | `X402_QRNG_*`, `X402_RANDOM_*` (`ENABLED`, the five `*_PRICE_USDC`, `SEED_BYTES`, `MAX_INTS`/`MAX_ITEMS`/`MAX_PICKS`/`MAX_BODY_BYTES`, `BULK_MAX_DRAWS`, `MAX_DRAW_BYTES`, `COMMIT_MAX_DELAY_SECONDS`, `COMMIT_TTL_SECONDS`), `X402_BULK_*`, `PRIORITY_INFERENCE_ENABLED`, `PRIORITY_INFERENCE_MIN_SERVING_WORKERS`, `X402_INFERENCE_*`, `X402_CAPACITY_*` |
+| products | `X402_QRNG_*`, `X402_RANDOM_*` (`ENABLED`, the five `*_PRICE_USDC`, `SEED_BYTES`, `MAX_INTS`/`MAX_ITEMS`/`MAX_PICKS`/`MAX_BODY_BYTES`/`MAX_RESPONSE_BYTES`, `BULK_MAX_DRAWS`, `MAX_DRAW_BYTES`, `COMMIT_MAX_DELAY_SECONDS`, `COMMIT_TTL_SECONDS`), `X402_BULK_*`, `PRIORITY_INFERENCE_ENABLED`, `PRIORITY_INFERENCE_MIN_SERVING_WORKERS`, `X402_INFERENCE_*`, `X402_CAPACITY_*` |
 | logging/rpc | `X402_LOG_LEVEL`, `X402_LOG_FORMAT`, `X402_RPC_TIMEOUT_MS`, `X402_RPC_RETRIES` |
 
 ## Ops / runbook
@@ -233,6 +253,25 @@ change it in the env file and restart BOTH units; authorizations signed
 against the old payTo will (correctly) stop verifying, so expect a brief
 window of client re-402s.
 
+### Upgrade note: the facilitator default changed to `self`
+
+`X402_FACILITATOR_MODE` used to default to `remote`, which meant an env file
+that only set `X402_EVM_FACILITATOR_URL` (the legacy alias) silently sent
+`/verify` and `/settle` to whatever that URL named. It now defaults to
+`self` — the loopback facilitator on `127.0.0.1:8743`. **On the next restart
+of an existing deployment**, an env file with a remote URL but no explicit
+mode will switch to the self-hosted facilitator. Decide deliberately:
+
+* keep it self-hosted (recommended, and what the docs claim): make sure
+  `animica-x402-facilitator.service` is running and `/readyz` is all-true
+  before restarting the gateway. The shipped unit sets
+  `Environment=X402_FACILITATOR_MODE=self` explicitly, and the legacy
+  `X402_EVM_FACILITATOR_URL` line can then be deleted;
+* or keep the remote facilitator: set **both**
+  `X402_FACILITATOR_MODE=remote` and `X402_FACILITATOR_URL=<url>` (the mode
+  now fails closed without an explicit URL — no endpoint is ever chosen for
+  you).
+
 ### Deployment files (in this repo; installing them is the runbook step)
 
 * `systemd/animica-x402.service` + `systemd/animica-x402-facilitator.service`
@@ -246,6 +285,12 @@ window of client re-402s.
   caps, three `limit_req` zones, request-id forwarding, no buffering on the
   inference route). **Installing it replaces the current simple `/x402/`
   location that fronts the demo server** — read `nginx/INSTALL.md`.
+  `test/nginx-conf.test.js` walks the live registry against this file with
+  nginx's own location-selection rules and fails if any product route falls
+  into the catch-all, if a body cap sits below the gateway's own (nginx
+  would 413 a request the catalog advertises as valid), or if a paid route's
+  read timeout is under 120 s (a settlement running past it is charged and
+  the response discarded). Add a product, add its location.
 * Order: Sepolia manual pass (`test/manual/base-sepolia.md`) → mainnet env
   file → facilitator unit → `readyz` all-true → gateway unit → nginx cutover
   → `smoke-pay.mjs` against production → `animica-x402 reconcile`.
@@ -275,9 +320,10 @@ lacks a matching on-chain receipt (status + `AuthorizationUsed` +
 
 ## Test matrix
 
-`node --test test/` — 138 tests, no network, every key throwaway and
-in-process. The spec's minimum list maps line by line onto named tests, so a
-missing guarantee shows up as a missing test rather than as prose:
+`node --test test/` — 266 tests at this commit, no network, every key
+throwaway and in-process. The spec's minimum list maps line by line onto
+named tests, so a missing guarantee shows up as a missing test rather than
+as prose:
 
 | spec line | where it is proved |
 |---|---|
@@ -312,6 +358,15 @@ missing guarantee shows up as a missing test rather than as prose:
 | one draw per request | `random` — 500 integers come from exactly ONE `rand.quantumRandomBytes` call, taken before settlement |
 | honesty fields present | `random` — `source`/`health`/`attestation`/`verification` on every response; `is_quantum:false`, `attested:false` |
 | reveal is free and opens the commitment | `random` — no payment/402/facilitator call, idempotent, `sha3_256(secret‖salt) == commitment`, secret re-derived from the signed draw, 425 while sealed |
+| the volume product is really a discount | `random` + `poc-new-products` F6 — below the derived break-even it 400s with the cheaper endpoint; at/above it the call is cheaper than the same number of single draws; a price that can never win makes the product unavailable |
+| bulk draws are genuinely independent | `random` + `poc` F15 — one node call and one attestation per draw, distinct bytes, digest over each draw's own bytes, no concatenation published |
+| response size is capped BEFORE settlement | `poc` F1a/F2a — the `replace:true` amplifier is a 400 with `caps`, zero facilitator calls; `indices_only` is the bounded path |
+| money never sticks on a delivery failure | `poc` F2b — a throw after settlement yields 502 + verifying signed receipt + `delivery_failed` incident + metric, not a bare 500; F2c — an unserializable body is caught pre-settlement and charges nobody |
+| the entropy trust model is free to read | `honesty-guards` — `entropy{source,is_quantum,attested,…}` in the free catalog AND in the 402's bazaar extension; no description promises hardware/quantum |
+| no third-party settlement dependency | `honesty-guards` — no Coinbase name, no third-party facilitator URL and no legacy provider abbreviation anywhere in src, nginx, systemd, bin, env template or docs; `mode` defaults to `self`; `remote` without an explicit URL fails closed (`evm`) |
+| nginx cannot strand a paid route | `nginx-conf` — every registry route (paid and free) resolves to a non-catch-all location whose body cap ≥ the gateway's own and whose read timeout ≥ 120 s (> the 75 s settle budget) |
+| a window that cannot pay off is not sold | `products` — `bulk_chain` refuses `from > head − margin` pre-settlement and never emits a backward `next_cursor` |
+| a POST body is never silently ignored | `products` — `POST /x402/qrng {"bytes":256}` returns 256 bytes; unknown/conflicting fields are 400s |
 | free APIs unaffected | `gateway` free surfaces, `protocol-e2e` free surfaces (unowned paths 404, unpaid traffic shares one cached readiness probe, paid work stays read-only) |
 | inference refuses payment w/o capacity | `products` disabled / below floor / capacity dropped between 402 and retry |
 | inference activates at threshold | `products` — catalog flips `available:true`, proxies with priority headers |
@@ -365,6 +420,27 @@ decimal strings — no floats anywhere near amounts.
 | unit fails under systemd with EROFS/EACCES | `state/` doesn't exist — `ReadWritePaths` needs it created before first start (`mkdir -p …/state`, see unit comments) |
 | `paid_service_failed` (502) responses | payment settled, downstream kept failing: the body carries a signed receipt + `incident_id`; reconcile with `bin/animica-x402 incidents list` and refund per docs/x402.md |
 
+## Known limitations (open, documented, tested)
+
+Everything here is asserted by a test in `test/poc-new-products.test.js`, so
+the behaviour is pinned rather than remembered. These are open findings from
+the adversarial review that were NOT fixed in the products pass:
+
+| # | limitation | today's behaviour | why it is survivable / what fixes it |
+|---|---|---|---|
+| F3 | a commit-reveal row is written during the execute phase, i.e. **before** settlement | a payer whose settlement then fails leaves one sealed row behind (id never disclosed to anyone) | rows are small and pruned by TTL; a real fix moves the write after settlement or reference-counts orphans |
+| F4 | commitments are pruned once, in `main()` | a gateway that never restarts never prunes, so rows can outlive `X402_RANDOM_COMMIT_TTL_SECONDS` and the reveal-404 text is optimistic | `bin/animica-x402 commitments prune --older-than 90d` on a cron until the walker does it |
+| F5 | payments are **fungible across products that share a price** | a payment signed for `random_shuffle` also unlocks `chain_batch_balances` ($0.02 each) — the payer is never overcharged, but per-product accounting can be attributed to the wrong SKU | bind `resource` into the accepts entry and compare it at verify time |
+| F7 | the index walker only checks parent continuity at chunk boundaries | a reorg landing mid-chunk is committed silently (boundary reorgs ARE caught and rewound) | check `parentHash` for every block in the chunk, not just the first |
+| F8 | `chain_batch_balances` treats per-address RPC failures as data | a batch where every lookup failed is still a settled HTTP 200 with `failed_lookups == count` and no incident | refuse (or receipt) when `failed_lookups == count`; the readiness re-check also reads a 5 s head cache |
+| F9 | `chain_address_history` accepts a `from_height`/`to_height` window the index cannot answer | it settles and returns `count: 0` with a clamped window | apply the same pre-settlement finality guard `bulk_chain` now has |
+
+Also deliberate, not defects: `random_bulk` is priced per *independent
+draw*, so it is usually **more expensive per byte** than a single
+1,024-byte `qrng` draw — the response says which is cheaper for the call
+you made; and `priority_inference` ships disabled because the capacity to
+back it does not exist.
+
 ## Retired wANM lane
 
 The original scaffold shipped a second lane — wANM (SPL token) settled by a
@@ -409,7 +485,9 @@ bin/animica-x402         operator CLI (settlements, revenue, reconcile, gas, inc
                          index status)
 systemd/                 hardened example units (NOT installed from here)
 nginx/                   animica.dev location set + INSTALL.md (NOT installed from here)
-test/                    node --test suite — 138 tests, all RPC mocked, loopback only
+test/                    node --test suite (266 tests), all RPC mocked, loopback only
+test/nginx-conf.test.js    walks the registry against nginx/animica-dev-x402.conf
+test/honesty-guards.test.js claims in README/docs asserted against the code
 test/protocol-e2e.test.js  real gateway → real facilitator over HTTP, real EIP-3009 signatures
 test/manual/             base-sepolia.md (real-chain manual pass) + smoke-pay.mjs (payer client)
 ```

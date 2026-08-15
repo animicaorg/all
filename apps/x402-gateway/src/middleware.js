@@ -6,9 +6,11 @@
  *
  * Two lanes are offered in every 402:
  *
- *   A. USDC on Base ("exact" EVM scheme) via an EXTERNAL CDP-compatible
- *      facilitator (X402_EVM_FACILITATOR_URL). This is the lane that makes
- *      endpoints indexable by the Bazaar / x402scan ecosystem.
+ *   A. USDC on Base ("exact" EVM scheme) via the configured facilitator —
+ *      our own by default (X402_FACILITATOR_MODE=self, loopback :8743), or
+ *      any external x402 v2 §7-compatible facilitator the operator names in
+ *      X402_FACILITATOR_URL. This is the lane that makes endpoints indexable
+ *      by the x402 discovery ecosystem (e.g. x402scan).
  *   B. wANM — the SPL token minted by the solana.animica.org bridge — via
  *      the LOCAL self-facilitator (src/facilitator.js). This is the ANM
  *      utility lane; no third party sits between payer and treasury.
@@ -107,10 +109,20 @@ function buildPaymentRequiredForRoute(route, cfg, error) {
       serviceName: cfg.serviceName,
     },
     accepts: buildAccepts(route, cfg),
-    // Bazaar discovery extension (v2): indexers (x402scan, CDP Bazaar) read
-    // extensions.bazaar.info.{input,output} to learn what the endpoint takes.
-    extensions: route.outputSchema
-      ? { bazaar: { info: { input: route.outputSchema.input, output: route.outputSchema.output } } }
+    // Bazaar-format discovery extension (v2): x402 discovery indexers (e.g.
+    // x402scan) read extensions.bazaar.info.{input,output} to learn what the
+    // endpoint takes. `bazaarExtra` carries per-product facts a buyer needs
+    // BEFORE paying — today the randomness family's live `entropy` block
+    // (source, is_quantum, attested), so the trust model is in the offer.
+    extensions: (route.outputSchema || route.bazaarExtra)
+      ? {
+        bazaar: {
+          info: Object.assign(
+            route.outputSchema ? { input: route.outputSchema.input, output: route.outputSchema.output } : {},
+            route.bazaarExtra || {}
+          ),
+        },
+      }
       : undefined,
     error,
   });

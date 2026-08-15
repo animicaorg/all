@@ -103,13 +103,23 @@ function createPaywall({
   }
 
   function gateRouteOf(product, requestPath) {
-    return {
+    const route = {
       path: requestPath || product.path,
       priceUsd: product.priceUsd,
       description: product.description,
       mimeType: product.mimeType || 'application/json',
       outputSchema: product.outputSchema,
     };
+    // Pre-purchase honesty in the offer itself: the randomness products
+    // publish the entropy source they last observed (software-fallback /
+    // is_quantum:false / attested:false today) so a buyer or an indexer
+    // learns the trust model from the 402, not from the paid response.
+    if (typeof product.entropyDisclosure === 'function') {
+      try {
+        route.bazaarExtra = { entropy: product.entropyDisclosure() };
+      } catch { /* a disclosure hook must never break an offer */ }
+    }
+    return route;
   }
 
   function send402(res, gateRoute, error, extraHeaders) {
@@ -151,11 +161,17 @@ function createPaywall({
   }
 
   /**
-   * Deliver a final product response: settlement headers on the wire's own
-   * channel, optional payment metadata injected into JSON bodies, and the
-   * outcome stored for Idempotency-Key replay.
+   * Serialize a final product response: settlement headers on the wire's own
+   * channel plus optional payment metadata injected into JSON bodies. Split
+   * out from deliver() because it is the step that can THROW (a RangeError
+   * over V8's max string length, a TypeError on an unserializable value) and
+   * both callers need to control what a throw costs:
+   *   - execute-then-settle runs it once as a PRE-FLIGHT, before settling, so
+   *     an unserializable answer charges nobody;
+   *   - both modes run it inside the post-settlement guard, where a throw
+   *     becomes a signed receipt + incident instead of a bare 500.
    */
-  function deliver(res, { product, out, settlement, wireVersion, paymentMeta, idemKey, fingerprint, requestPath }) {
+  function buildDelivery({ product, out, settlement, wireVersion, paymentMeta }) {
     const { headers: sHeaders, v2 } = settlementHeaders(settlement, wireVersion);
     let body = out.body;
     let contentType = (out.headers && out.headers['content-type']) || product.mimeType || 'application/json';
@@ -167,20 +183,39 @@ function createPaywall({
     }
     const headers = Object.assign({}, out.headers, sHeaders, { 'content-type': contentType });
     if (out.headers && out.headers['content-encoding']) headers['content-encoding'] = out.headers['content-encoding'];
+    return { status: out.status || 200, headers, body, v2 };
+  }
+
+  /**
+   * A settlement-shaped placeholder for the pre-flight serialization. Same
+   * field types and lengths as a real one, so the rehearsal exercises the
+   * same JSON.stringify work the real delivery will do.
+   */
+  function placeholderSettlement(network, payer) {
+    return { success: true, transaction: '0x' + '0'.repeat(64), network, payer: payer || '0x' + '0'.repeat(40) };
+  }
+
+  /**
+   * Deliver a final product response and store the outcome for
+   * Idempotency-Key replay. Anything that throws here happens AFTER money
+   * moved, so every caller runs it inside the compensation guard.
+   */
+  function deliver(res, { product, out, settlement, wireVersion, paymentMeta, idemKey, fingerprint, requestPath }) {
+    const d = buildDelivery({ product, out, settlement, wireVersion, paymentMeta });
     if (idemKey) {
       gatewayStore.putIdempotent({
         idemKey,
         paymentFingerprint: fingerprint,
         resource: requestPath,
-        status: out.status || 200,
-        contentType,
-        contentEncoding: headers['content-encoding'] || null,
-        body,
-        settlementHeader: v2,
+        status: d.status,
+        contentType: d.headers['content-type'],
+        contentEncoding: d.headers['content-encoding'] || null,
+        body: d.body,
+        settlementHeader: d.v2,
         settlementTx: settlement.transaction || null,
       });
     }
-    return send(res, out.status || 200, headers, body);
+    return send(res, d.status, d.headers, d.body);
   }
 
   function countSettled(product, matched, started) {
@@ -463,6 +498,87 @@ function createPaywall({
       return send(res, 502, Object.assign({ 'content-type': 'application/json' }, sHeaders), body);
     }
 
+    /**
+     * The money moved and then something after it threw — a serialization
+     * failure, a full/locked DB in putIdempotent, anything. Never a bare 500:
+     * that reads as "you were not charged" while the USDC is gone. Same
+     * compensation as a post-settlement downstream failure: SIGNED receipt +
+     * incident row for reconciliation, and a 502 that hands both to the payer.
+     */
+    function deliveryFailed(settlement, err) {
+      const errText = String((err && err.message) || 'delivery failed after settlement');
+      let receipt = null;
+      let incidentId = null;
+      try {
+        receipt = receiptSigner.sign({
+          payment_id: settlement.transaction || fingerprint,
+          payment_fingerprint: fingerprint,
+          resource: route.path,
+          product: product.id,
+          error: `delivery failed after settlement: ${errText}`,
+          payer: payer || null,
+          amount_atomic: matched.amount,
+          asset: matched.asset,
+          network: matched.network,
+          settlement_tx: settlement.transaction || null,
+          auth_nonce: authNonce,
+        });
+        incidentId = gatewayStore.addIncident({
+          paymentId: settlement.transaction || null,
+          paymentFingerprint: fingerprint,
+          settlementTx: settlement.transaction || null,
+          payer,
+          resource: route.path,
+          amount: matched.amount,
+          network: matched.network,
+          kind: 'delivery_failed',
+          error: errText,
+          receipt,
+          authNonce,
+        });
+        extra.incidents.inc({ product: product.id, kind: 'delivery_failed' });
+      } catch (e2) {
+        // Even the compensation store can fail; the payer still gets the
+        // signed receipt (pure crypto) and a truthful status code.
+        log.error && log.error('incident_store_failed', { error: e2.message });
+      }
+      log.error && log.error('delivery_failed_after_settlement', {
+        incident_id: incidentId,
+        settlement_tx: settlement.transaction || null,
+        auth_nonce: authNonce,
+        payer,
+        amount: matched.amount,
+        error: errText,
+      });
+      const { headers: sHeaders, v2 } = settlementHeaders(settlement, wireVersion);
+      if (res.headersSent) {
+        // The failure happened mid-write: the status line is already gone, so
+        // the receipt cannot reach the payer on this response. The incident
+        // row above is the reconciliation path; just close the socket.
+        return res.end();
+      }
+      const bodyObj = {
+        error: 'delivery_failed',
+        detail: 'your payment settled but the response could not be delivered; keep this signed receipt — it references the settled payment and entitles reconciliation/refund',
+        incident_id: incidentId,
+        settlement_tx: settlement.transaction || null,
+        receipt,
+      };
+      const body = JSON.stringify(bodyObj);
+      if (idemKey) {
+        try {
+          gatewayStore.putIdempotent({
+            idemKey, paymentFingerprint: fingerprint, resource: route.path,
+            status: 502, contentType: 'application/json', body,
+            settlementHeader: v2, settlementTx: settlement.transaction || null,
+          });
+        } catch (e3) {
+          log.error && log.error('idempotency_store_failed', { error: e3.message });
+        }
+      }
+      return send(res, 502, Object.assign({ 'content-type': 'application/json' }, sHeaders), body);
+    }
+
     if (product.mode === 'execute-then-settle') {
       // Obtain the resource FIRST (nothing charged on failure), settle,
       // deliver the already-obtained result.
@@ -477,13 +593,36 @@ function createPaywall({
         log.error && log.error('handler_failed_pre_settle', { error: e.message });
         return sendJson(res, 500, { error: 'internal_error' });
       }
+      // PRE-FLIGHT: the resource is fully produced, so serialize it BEFORE
+      // settling. A body that cannot be serialized (too large for V8's
+      // string limit, unserializable value) must be a pre-payment failure
+      // that charges nobody — not a settled payment with a bare 500.
+      try {
+        buildDelivery({
+          product,
+          out,
+          settlement: placeholderSettlement(matched.network, payer),
+          wireVersion,
+          paymentMeta: Object.assign({}, paymentBase, { settlement_tx: '0x' + '0'.repeat(64), payer: payer || undefined }),
+        });
+      } catch (e) {
+        log.error && log.error('response_unserializable_pre_settle', { error: e.message });
+        return sendJson(res, 500, {
+          error: 'response_serialization_failed',
+          detail: `the response for this request could not be serialized (${e.message}); NOTHING WAS CHARGED — this check runs before settlement. If the request was very large, ask for less.`,
+        });
+      }
       const settlement = await settleNow();
       if (!settlement.success) return settleFailed(settlement);
       countSettled(product, matched, started);
       ctx.settlement = settlement;
       const paymentMeta = Object.assign({}, paymentBase, { settlement_tx: settlement.transaction, payer: settlement.payer || payer || undefined });
       log.info && log.info('paid_request_served', { payer, amount: matched.amount, settlement_tx: settlement.transaction, status: out.status || 200, latency_ms: now() - started });
-      return deliver(res, { product, out, settlement, wireVersion, paymentMeta, idemKey, fingerprint, requestPath: route.path });
+      try {
+        return deliver(res, { product, out, settlement, wireVersion, paymentMeta, idemKey, fingerprint, requestPath: route.path });
+      } catch (e) {
+        return deliveryFailed(settlement, e);
+      }
     }
 
     // settle-then-execute
@@ -563,7 +702,13 @@ function createPaywall({
     }
 
     log.info && log.info('paid_request_served', { payer, amount: matched.amount, settlement_tx: settlement.transaction, status: out.status || 200, latency_ms: now() - started });
-    return deliver(res, { product, out, settlement, wireVersion, paymentMeta: ctx.paymentMeta, idemKey, fingerprint, requestPath: route.path });
+    try {
+      return deliver(res, { product, out, settlement, wireVersion, paymentMeta: ctx.paymentMeta, idemKey, fingerprint, requestPath: route.path });
+    } catch (e) {
+      // settle-then-execute cannot rehearse the serialization (the resource
+      // only exists after settlement), so this guard is the whole safety net.
+      return deliveryFailed(settlement, e);
+    }
   }
 
   return {

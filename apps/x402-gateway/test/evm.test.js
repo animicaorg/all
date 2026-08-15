@@ -214,22 +214,69 @@ test('facilitator config: every contradiction fails closed', () => {
   }
 });
 
-test('gateway load(): facilitator mode selection', () => {
-  // The seven live env names keep working with no facilitator-mode vars set.
+test('gateway load(): facilitator defaults to SELF and remote never falls back to a third party', () => {
+  // Default with nothing set: our own loopback facilitator, and the Base
+  // MAINNET lane the docs describe (not a testnet).
   const cfg = cfgMod.load();
-  assert.equal(cfg.facilitatorMode, 'remote');
-  assert.ok(cfg.evmFacilitatorUrl.length > 0);
-  // self mode points at the loopback facilitator
+  assert.equal(cfg.facilitatorMode, 'self');
+  assert.equal(cfg.evmFacilitatorUrl, 'http://127.0.0.1:8743');
+  assert.equal(cfg.networkEvm, cfgMod.NETWORKS.BASE_MAINNET);
+  assert.equal(cfg.usdcAsset, cfgMod.USDC_DEFAULTS[cfgMod.NETWORKS.BASE_MAINNET]);
+  // No third-party settlement endpoint may appear in a default config.
+  assert.doesNotMatch(JSON.stringify(cfg), /x402\.org|coinbase/i);
+
   process.env.X402_FACILITATOR_MODE = 'self';
   try {
     assert.equal(cfgMod.load().evmFacilitatorUrl, 'http://127.0.0.1:8743');
   } finally {
     delete process.env.X402_FACILITATOR_MODE;
   }
+
+  // remote without an explicit URL must FAIL CLOSED: silently settling other
+  // people's money through whatever a default names is the bug this guards.
+  process.env.X402_FACILITATOR_MODE = 'remote';
+  try {
+    assert.throws(() => cfgMod.load(), /X402_FACILITATOR_URL/);
+    process.env.X402_FACILITATOR_URL = 'https://facilitator.example.test';
+    assert.equal(cfgMod.load().evmFacilitatorUrl, 'https://facilitator.example.test');
+  } finally {
+    delete process.env.X402_FACILITATOR_MODE;
+    delete process.env.X402_FACILITATOR_URL;
+  }
+
   process.env.X402_FACILITATOR_MODE = 'nonsense';
   try {
     assert.throws(() => cfgMod.load(), /X402_FACILITATOR_MODE/);
   } finally {
     delete process.env.X402_FACILITATOR_MODE;
   }
+});
+
+test('gateway config: production fails closed on a loopback resource URL and a missing receipt key', () => {
+  const prod = {
+    X402_ENV: 'production',
+    X402_RESOURCE_BASE_URL: 'https://animica.dev',
+    X402_RECEIPT_HMAC_KEY: 'x'.repeat(32),
+  };
+  assert.ok(cfgMod.loadGatewayConfig(prod).env === 'production');
+  assert.throws(
+    () => cfgMod.loadGatewayConfig({ ...prod, X402_RESOURCE_BASE_URL: '' }),
+    /X402_RESOURCE_BASE_URL/);
+  assert.throws(
+    () => cfgMod.loadGatewayConfig({ ...prod, X402_RESOURCE_BASE_URL: 'http://127.0.0.1:4656' }),
+    /X402_RESOURCE_BASE_URL/,
+    'a loopback base URL would publish a commit-reveal link that resolves to the buyer\'s own machine');
+  assert.throws(
+    () => cfgMod.loadGatewayConfig({ ...prod, X402_RECEIPT_HMAC_KEY: '' }),
+    /X402_RECEIPT_HMAC_KEY/);
+  // development keeps the convenient defaults
+  assert.equal(cfgMod.loadGatewayConfig({}).env, 'development');
+});
+
+test('gateway config: mode=self refuses an offer network the built-in facilitator does not settle', () => {
+  assert.throws(
+    () => cfgMod.loadGatewayConfig({ X402_NETWORK: 'base' }, { networkEvm: cfgMod.NETWORKS.BASE_SEPOLIA }),
+    /contradicts the self-hosted facilitator/);
+  // agreeing pair loads fine
+  assert.ok(cfgMod.loadGatewayConfig({ X402_NETWORK: 'base-sepolia' }, { networkEvm: cfgMod.NETWORKS.BASE_SEPOLIA }));
 });

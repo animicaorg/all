@@ -79,15 +79,19 @@ function unpaidPost(baseUrl, path, body) {
 
 /**
  * Node handlers whose rand.quantumRandomBytes honours `n` (the shared
- * fixture always answers 32 bytes, which random_bulk must not accept).
- * Bytes are a deterministic ramp so the split rule can be checked exactly.
+ * fixture always answers 32 bytes, which random_bulk must not accept) and
+ * whose bytes DIFFER on every call — random_bulk now makes one node call per
+ * draw, so distinct bytes per call are what makes the independence testable.
+ * Each response carries a correct digest over its own bytes.
  */
 function rampHandlers({ health = { passed: true, min_entropy_per_byte: 7.8078 } } = {}) {
+  let call = 0;
   return Object.assign(chainHandlers(), {
     'rand.quantumRandomBytes': (p) => {
       const n = p.n;
+      const seq = call++;
       const buf = Buffer.alloc(n);
-      for (let i = 0; i < n; i++) buf[i] = i % 256;
+      for (let i = 0; i < n; i++) buf[i] = (i + 37 * seq) % 256;
       return {
         bytes_hex: buf.toString('hex'),
         n,
@@ -196,11 +200,42 @@ test('random family: catalog lists all five at spec prices with the free reveal 
       assert.equal(byId[id].outputSchema.input.type, 'http');
       assert.equal(byId[id].outputSchema.input.method, 'POST');
       assert.ok(Object.keys(byId[id].outputSchema.input.bodyFields).length > 0);
-      // no product may market hardware/quantum guarantees
-      assert.doesNotMatch(byId[id].description, /\bquantum\b/i);
     }
-    // volume discount is real: 10 bulk draws cost less than 10 single draws
-    assert.ok(BigInt(byId.random_bulk.price_atomic) < BigInt(byId.qrng.price_atomic) * 10n);
+    // NO product description — qrng included, since it is the one that used
+    // to read "Quantum-attested when hardware providers are connected" on a
+    // skim — may mention quantum without stating the CURRENT truth in the
+    // same breath.
+    for (const id of ['qrng', 'random_int', 'random_shuffle', 'random_pick', 'random_bulk', 'random_commit']) {
+      const d = byId[id].description;
+      if (/\bquantum\b/i.test(d)) {
+        assert.match(d, /is_quantum=false/,
+          `${id} mentions quantum without stating the current is_quantum=false truth`);
+        assert.match(d, /software/i, `${id} mentions quantum without naming the software source`);
+      }
+      assert.doesNotMatch(d, /quantum-attested|hardware quantum|quantum-grade/i, id);
+    }
+    // volume discount is real, measured against the CHEAPEST equivalent
+    // purchase (N independent draws == N single qrng calls at the bulk
+    // minimum), not against a strawman of 10 single calls.
+    const minDraws = 6; // floor(50000/10000)+1, published in the schema
+    assert.ok(
+      BigInt(byId.random_bulk.price_atomic) < BigInt(byId.qrng.price_atomic) * BigInt(minDraws),
+      'bulk must be cheaper than the smallest number of single draws it will accept');
+    assert.match(byId.random_bulk.outputSchema.input.bodyFields.draws.description, /6\.\.10/);
+
+    // Pre-purchase honesty: the free catalog states the entropy source, so
+    // nobody has to pay to discover that it is a software CSPRNG.
+    for (const id of ['qrng', 'random_int', 'random_shuffle', 'random_pick', 'random_bulk', 'random_commit']) {
+      const e = byId[id].entropy;
+      assert.ok(e, `${id} must disclose its entropy source in the catalog`);
+      assert.equal(e.source, 'software-fallback');
+      assert.equal(e.is_hardware, false);
+      assert.equal(e.is_quantum, false);
+      assert.equal(e.attested, false);
+      assert.equal(e.health_passed, true);
+      assert.equal(e.min_entropy_per_byte, 7.8078);
+      assert.ok(e.observed_at, `${id} entropy disclosure must be timestamped`);
+    }
     // the free reveal is discoverable
     assert.deepEqual(byId.random_commit.free_endpoints, [{
       endpoint: 'GET /x402/random/reveal/{commit_id}',
@@ -443,7 +478,7 @@ test('random_pick: weight/size violations are refused before settlement', async 
 
 // -------------------------------------------------------------- random_bulk
 
-test('random_bulk: one draw split into segments, with a real per-unit discount', async () => {
+test('random_bulk: N INDEPENDENT draws (one node call + one attestation each), one settlement', async () => {
   const t = await buildTestGateway({ handlers: rampHandlers() });
   try {
     const { first, paid } = await post(t.baseUrl, '/x402/qrng/bulk', { draws: 10, bytes: 32 });
@@ -454,21 +489,104 @@ test('random_bulk: one draw split into segments, with a real per-unit discount',
     assert.equal(b.result.count, 10);
     assert.equal(b.result.bytes_per_draw, 32);
     assert.equal(b.result.draws.length, 10);
-    // the segments ARE the published randomness, in order, without overlap
-    assert.equal(b.result.draws.map((d) => d.randomness).join(''), b.randomness);
-    assert.equal(b.randomness.length, 10 * 32 * 2);
+    assert.equal(b.result.total_bytes, 320);
+
+    // Every draw is its OWN draw: distinct bytes, its own signed digest.
+    const seen = new Set();
     for (const d of b.result.draws) {
-      assert.equal(d.offset, d.index * 32);
+      assert.equal(d.bytes, 32);
+      assert.equal(d.randomness.length, 64);
       assert.equal(d.sha3_256, Buffer.from(sha3_256(Buffer.from(d.randomness, 'hex'))).toString('hex'));
+      assert.equal(d.attestation.digest_hex, d.sha3_256, 'the attestation covers THIS draw');
+      assert.equal(d.attestation.attested, false, 'honest: software signer');
+      assert.equal(d.health.passed, true);
+      assert.equal(d.verification.method, 'signed-digest-attestation');
+      seen.add(d.randomness);
     }
-    // honest about what a "draw" is here
-    assert.match(b.derivation.honesty, /ONE attested draw/);
-    assert.equal(b.derivation.algorithm, 'segment-split');
-    // volume discount: 5000 atomic per draw against 10000 for a single qrng call
-    assert.equal(b.result.pricing.price_atomic_per_draw, '5000');
-    assert.equal(b.result.pricing.single_draw_price_usd, '0.01');
+    assert.equal(seen.size, 10, 'ten distinct draws, not one buffer sliced ten ways');
+    // and there is no concatenation being passed off as one attested draw
+    assert.equal(b.randomness, undefined);
+    assert.equal(b.attestation.scope, 'per_draw');
+    assert.equal(b.attestation.count, 10);
+    assert.equal(b.derivation.algorithm, 'independent-draws');
+    assert.match(b.derivation.honesty, /10 node calls were made/);
+
+    // 10 node draws for the paid request (plus this fixture's un-memoised
+    // readiness probes — availabilityTtlMs is 0 here).
+    assert.ok(t.events.filter((e) => e === 'node:rand.quantumRandomBytes').length >= 10);
+
+    // The discount is stated in units that are real: independent draws.
+    const p = b.result.pricing;
+    assert.equal(p.price_atomic, '50000');
+    assert.equal(p.price_atomic_per_draw, '5000');
+    assert.equal(p.single_draw_price_atomic, '10000');
+    assert.equal(p.equivalent_single_draw_cost_atomic, '100000');
+    assert.equal(p.savings_atomic, '50000');
+    assert.equal(p.min_draws_for_discount, 6);
+    // ...and it does NOT pretend to be cheaper per byte, because it is not:
+    // the cheapest way to buy 320 BYTES (regardless of attestation count) is
+    // ceil(320/1024) = 1 single draw at 10000 atomic. The response says so
+    // rather than leaving the buyer to work it out after paying.
+    const cheapestByBytes = BigInt(Math.ceil(b.result.total_bytes / 1024)) * 10000n;
+    assert.ok(BigInt(p.price_atomic) > cheapestByBytes);
+    assert.equal(p.per_byte.cheaper_per_byte, 'single_max_draw');
+    assert.match(p.per_byte.note, /single 1024-byte draw at \$0\.01 is cheaper/);
+
     assert.equal(t.fac.calls.settle.length, 1, 'ten draws, ONE settlement');
     assertHonest(b);
+  } finally {
+    await t.close();
+  }
+});
+
+test('random_bulk: below the break-even draw count it refuses and names the cheaper endpoint', async () => {
+  const t = await buildTestGateway({ handlers: rampHandlers() });
+  try {
+    // $0.05 for 1..5 draws is a PREMIUM over 1..5 single $0.01 draws, so it
+    // is a 400 before any payment — never a settled "volume discount".
+    for (const draws of [1, 2, 5]) {
+      const res = await unpaidPost(t.baseUrl, '/x402/qrng/bulk', { draws, bytes: 32 });
+      assert.equal(res.status, 400, `draws=${draws} must be refused`);
+      assert.equal(res.json.error, 'below_bulk_minimum');
+      assert.equal(res.json.min_draws, 6);
+      assert.equal(res.json.cheaper_alternative.endpoint, 'GET /x402/qrng/draw');
+      assert.equal(res.json.cheaper_alternative.price_atomic, '10000');
+      assert.equal(res.headers.get('payment-required'), null, 'no terms are offered');
+    }
+    // 6 draws is the first count that is genuinely cheaper: 50000 < 60000.
+    const ok = await post(t.baseUrl, '/x402/qrng/bulk', { draws: 6, bytes: 32 });
+    assert.equal(ok.paid.status, 200);
+    const p = ok.paid.json.result.pricing;
+    assert.ok(BigInt(p.price_atomic) < BigInt(p.equivalent_single_draw_cost_atomic));
+    assert.ok(BigInt(p.price_atomic_per_draw) < BigInt(p.single_draw_price_atomic));
+    assert.equal(t.fac.calls.verify.length, 1, 'the refusals never reached the facilitator');
+  } finally {
+    await t.close();
+  }
+});
+
+test('random_bulk: a price table where bulk can never beat single draws is not sold at all', async () => {
+  // 10 max draws x $0.01 = $0.10, so a $0.20 bulk price can never be a
+  // discount. The catalog says so and the route never emits a 402.
+  const t = await buildTestGateway({
+    handlers: rampHandlers(),
+    overrides: { randomBulkPriceUsd: '0.20' },
+  });
+  try {
+    const cat = await request(t.baseUrl, '/x402');
+    const bulk = cat.json.products.find((p) => p.id === 'random_bulk');
+    assert.equal(bulk.available, false);
+    assert.equal(bulk.unavailable_reason, 'random_bulk_price_not_a_discount');
+    // Every reachable draw count is now below the break-even, so the request
+    // never even gets as far as the availability hook: validate() refuses it
+    // first with the same 400 + cheaper_alternative pointer. Either way no
+    // terms are offered and nothing is charged.
+    const res = await unpaidPost(t.baseUrl, '/x402/qrng/bulk', { draws: 10, bytes: 32 });
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error, 'below_bulk_minimum');
+    assert.equal(res.json.min_draws, 21);
+    assert.equal(res.headers.get('payment-required'), null);
+    assert.equal(t.fac.calls.verify.length, 0);
   } finally {
     await t.close();
   }

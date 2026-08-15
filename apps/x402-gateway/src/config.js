@@ -116,18 +116,33 @@ function parseIntEnv(source, name, fallback, { min = 0, max = Number.MAX_SAFE_IN
 }
 
 function load(overrides = {}) {
-  const networkEvm = env('X402_NETWORK_EVM', NETWORKS.BASE_SEPOLIA);
+  // Base MAINNET is the shipped default: it is what the docs, the README and
+  // the self-hosted facilitator's own default (X402_NETWORK=base) describe.
+  // A testnet default here would silently contradict all three and quote
+  // Sepolia USDC in production offers.
+  const networkEvm = env('X402_NETWORK_EVM', NETWORKS.BASE_MAINNET);
   const networkSvm = env('X402_NETWORK_SVM', NETWORKS.SOLANA_DEVNET);
 
-  // Facilitator selection: self = our own facilitator-evm server on
-  // loopback; remote = an external CDP-compatible facilitator URL. The
-  // gateway/product layer is identical either way (x402 v2 §7 client).
-  // Unset defaults to remote — that is what the live unit runs today.
-  const facilitatorMode = env('X402_FACILITATOR_MODE', 'remote');
+  // Facilitator selection: self = our own facilitator-evm server on loopback
+  // (the DEFAULT — this stack is self-hosted and depends on no third-party
+  // settlement service); remote = an external x402 v2 §7-compatible
+  // facilitator URL, which must then be named explicitly. The
+  // gateway/product layer is identical either way.
+  const facilitatorMode = env('X402_FACILITATOR_MODE', 'self');
   if (facilitatorMode !== 'self' && facilitatorMode !== 'remote') {
     throw new Error(`X402_FACILITATOR_MODE must be "self" or "remote", got ${JSON.stringify(facilitatorMode)}`);
   }
   const evmFacilitatorPort = parseIntEnv(process.env, 'X402_EVM_FACILITATOR_PORT', 8743, { min: 1, max: 65535 });
+  // mode=remote has NO default URL on purpose. A fallback here would send
+  // real /verify and /settle traffic — other people's money — to whichever
+  // third party the default names. Remote is an explicit operator decision.
+  const remoteFacilitatorUrl = env('X402_FACILITATOR_URL', env('X402_EVM_FACILITATOR_URL', ''));
+  if (facilitatorMode === 'remote' && !/^https?:\/\/.+/.test(remoteFacilitatorUrl)) {
+    throw new Error(
+      'X402_FACILITATOR_MODE=remote requires X402_FACILITATOR_URL (an http(s) x402 v2 §7 facilitator, e.g. https://facilitator.payai.network). '
+      + 'There is deliberately no default: settlement must never fall back to an unnamed third party. Use X402_FACILITATOR_MODE=self for the built-in facilitator.'
+    );
+  }
 
   const cfg = {
     enabled: env('ANM_X402_ENABLED', '0') === '1',
@@ -137,9 +152,13 @@ function load(overrides = {}) {
     serviceName: env('X402_SERVICE_NAME', 'Animica'),
 
     // Lane A: USDC on Base. mode=self talks to our own facilitator-evm
-    // server (loopback, default :8743); mode=remote talks to an external
-    // CDP-compatible facilitator (X402_FACILITATOR_URL, with the historic
-    // X402_EVM_FACILITATOR_URL name honored for the live unit's env file).
+    // server (loopback, default :8743) — this is the default and the
+    // production configuration; mode=remote talks to an external x402 v2
+    // §7-compatible facilitator that the operator names explicitly in
+    // X402_FACILITATOR_URL (the historic X402_EVM_FACILITATOR_URL name is
+    // still honored for the live unit's env file). One documented remote
+    // option is PayAI (https://facilitator.payai.network); there is no
+    // default remote and no implicit third party.
     facilitatorMode,
     evmFacilitatorPort,
     networkEvm,
@@ -147,10 +166,7 @@ function load(overrides = {}) {
     basePayTo: env('X402_BASE_PAYTO', ''), // EVM address that receives USDC
     evmFacilitatorUrl: facilitatorMode === 'self'
       ? `http://127.0.0.1:${evmFacilitatorPort}`
-      : env('X402_FACILITATOR_URL', env('X402_EVM_FACILITATOR_URL', 'https://x402.org/facilitator')),
-    // mainnet remote alternative (operator decision, see README):
-    //   https://facilitator.payai.network               (PayAI)
-    // Production goal is mode=self (our own facilitator-evm server).
+      : remoteFacilitatorUrl,
 
     // Lane B: wANM (SPL token) via the LOCAL self-facilitator.
     networkSvm,
@@ -367,6 +383,28 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
   const envName = envFrom(source, 'X402_ENV', 'development');
   const echoEnabled = envName !== 'production' || envFrom(source, 'X402_ENABLE_ECHO', '') === '1';
 
+  // Production fail-closed checks. Both of these are values a buyer is told
+  // to rely on, so a silent development default in production is a broken
+  // promise, not a warning:
+  //   - X402_RESOURCE_BASE_URL is interpolated into every 402 resource.url
+  //     AND into the commit-reveal `reveal_url` a buyer publishes to their
+  //     players. Left at the loopback default it sells an audit link that
+  //     resolves to the buyer's own machine.
+  //   - X402_RECEIPT_HMAC_KEY signs the error receipts that entitle a refund.
+  //     A per-boot ephemeral key makes them unverifiable after a restart.
+  if (envName === 'production') {
+    const rb = envFrom(source, 'X402_RESOURCE_BASE_URL', '');
+    if (!/^https?:\/\/.+/.test(rb) || /^https?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])/i.test(rb)) {
+      problems.push(
+        'X402_RESOURCE_BASE_URL must be the public base URL (e.g. https://animica.dev) when X402_ENV=production — '
+        + 'it is published in every 402 resource.url and in the commit-reveal reveal_url a buyer hands to their players'
+      );
+    }
+    if (!envFrom(source, 'X402_RECEIPT_HMAC_KEY', '')) {
+      problems.push('X402_RECEIPT_HMAC_KEY is required when X402_ENV=production (it signs the error receipts that entitle reconciliation/refund)');
+    }
+  }
+
   const walletsRaw = envFrom(source, 'X402_INFERENCE_WORKER_WALLETS', '');
   const inferenceWorkerWallets = walletsRaw
     ? walletsRaw.split(',').map((w) => w.trim()).filter(Boolean)
@@ -425,6 +463,13 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
       randomMaxItems: parseIntEnv(source, 'X402_RANDOM_MAX_ITEMS', 10000, { min: 1, max: 1000000 }),
       randomMaxPicks: parseIntEnv(source, 'X402_RANDOM_MAX_PICKS', 1000, { min: 1, max: 100000 }),
       randomMaxBodyBytes: parseIntEnv(source, 'X402_RANDOM_MAX_BODY_BYTES', 512_000, { min: 1024 }),
+      // Output cap, checked BEFORE settlement. Input caps alone do not bound
+      // the RESPONSE: `pick` with replace:true may emit the same large item k
+      // times, so a 512 KB request could otherwise ask for a ~512 MB answer
+      // (measured 1000x amplification, >2 GB RSS) for $0.02. The estimate is
+      // computed from the parsed request, so an oversize answer is a 400 that
+      // was never sold.
+      randomMaxResponseBytes: parseIntEnv(source, 'X402_RANDOM_MAX_RESPONSE_BYTES', 4_000_000, { min: 4096 }),
       randomBulkMaxDraws: parseIntEnv(source, 'X402_RANDOM_BULK_MAX_DRAWS', 10, { min: 1, max: 1000 }),
       randomMaxDrawBytes: parseIntEnv(source, 'X402_RANDOM_MAX_DRAW_BYTES', 65536, { min: 32, max: 1048576 }),
       randomCommitMaxDelaySec: parseIntEnv(source, 'X402_RANDOM_COMMIT_MAX_DELAY_SECONDS', 7 * 24 * 3600, { min: 0, max: 365 * 24 * 3600 }),
@@ -498,6 +543,19 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
     problems.push(
       `X402_CHAIN_INDEX_MAX_LAG_BLOCKS (${cfg.chainIndexMaxLagBlocks}) must exceed X402_CHAIN_INDEX_HEAD_MARGIN (${cfg.chainIndexHeadMargin}); the index never indexes above head - margin, so the gate could never open`
     );
+  }
+  // In mode=self the offers this gateway signs must name the same chain the
+  // built-in facilitator settles on. A mismatch (e.g. Sepolia offers against
+  // a mainnet facilitator) is not a degraded mode: every payment would be
+  // verified against the wrong chain id, so refuse to start.
+  if (cfg && cfg.facilitatorMode === 'self') {
+    const facNet = EVM_NETWORKS[envFrom(source, 'X402_NETWORK', 'base')];
+    if (facNet && cfg.networkEvm !== facNet.caip2) {
+      problems.push(
+        `X402_NETWORK_EVM (${cfg.networkEvm}) contradicts the self-hosted facilitator's X402_NETWORK=${facNet.slug} (${facNet.caip2}); `
+        + 'in mode=self both must name the same chain'
+      );
+    }
   }
   if (cfg && cfg.chainHistoryDefaultLimit > cfg.chainHistoryMaxLimit) {
     problems.push(

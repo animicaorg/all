@@ -191,6 +191,62 @@ test('qrng: bad params answer 400 before any payment is requested', async () => 
   }
 });
 
+test('qrng: POST reads its JSON body — a body parameter is never silently discarded', async () => {
+  // 64 bytes so the body value is distinguishable from the 32-byte default.
+  const draw = (n) => {
+    const buf = Buffer.alloc(n, 7);
+    return { bytes_hex: buf.toString('hex'), n, source: QRNG_FIXTURE.source, health: QRNG_FIXTURE.health, attestation: QRNG_FIXTURE.attestation };
+  };
+  const t = await buildTestGateway({
+    handlers: Object.assign(chainHandlers(), { 'rand.quantumRandomBytes': (p) => draw(p.n) }),
+  });
+  try {
+    // 1. the body IS honoured (this used to answer 32 bytes and charge $0.01)
+    const { paid } = await paidRequest(t.baseUrl, '/x402/qrng', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bytes: 256 }),
+    });
+    assert.equal(paid.status, 200);
+    assert.equal(paid.json.bytes, 256);
+    assert.equal(paid.json.randomness.length, 512);
+
+    // 2. an out-of-range body value is a 400 BEFORE payment, not a silent 32
+    const over = await request(t.baseUrl, '/x402/qrng', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bytes: 99999 }),
+    });
+    assert.equal(over.status, 400);
+    assert.equal(over.headers.get('payment-required'), null);
+
+    // 3. unknown body fields are refused rather than ignored
+    const unknown = await request(t.baseUrl, '/x402/qrng', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ byte: 64 }),
+    });
+    assert.equal(unknown.status, 400);
+    assert.match(unknown.json.detail, /unknown body field/);
+
+    // 4. query and body disagreeing is a 400, not an undocumented winner
+    const conflict = await request(t.baseUrl, '/x402/qrng?bytes=16', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bytes: 64 }),
+    });
+    assert.equal(conflict.status, 400);
+    assert.equal(conflict.json.error, 'conflicting_params');
+
+    // 5. the POST shape is advertised, so an indexer can describe it
+    const cat = await request(t.baseUrl, '/x402');
+    const qrng = cat.json.products.find((p) => p.id === 'qrng');
+    const alt = qrng.outputSchema.input.alternateMethods[0];
+    assert.equal(alt.method, 'POST');
+    assert.equal(alt.bodyType, 'json');
+    assert.ok(alt.bodyFields.bytes);
+  } finally {
+    await t.close();
+  }
+});
+
 // ------------------------------------------------------------ bulk chain
 
 test('bulk: window over the block cap answers 400 with cap detail, no payment demanded', async () => {
@@ -271,6 +327,60 @@ test('bulk: head pinning clamps to head - margin and reports the resume cursor',
     assert.equal(paid.json.summary.truncated_reason, 'pinned_below_requested_to');
     assert.equal(paid.json.summary.next_cursor, 95);
     assert.equal(paid.json.summary.complete, false);
+  } finally {
+    await t.close();
+  }
+});
+
+test('bulk: a window inside the head margin is refused pre-settlement, never sold empty', async () => {
+  const t = await buildTestGateway({ handlers: chainHandlers({ head: 200 }) });
+  try {
+    // head=200, margin=6 => nothing above 194 is exportable. A window that
+    // starts at 197 can only ever return zero rows.
+    //
+    // COLD PROCESS: the very first request lands before any head has ever
+    // been read, so the 402 goes out — but the PAID retry is refused with the
+    // same 400, before verify and before settle. No money can be taken for a
+    // window that cannot contain a row.
+    const cold = await paidRequest(t.baseUrl, '/x402/chain/blocks?from=197&count=2');
+    assert.equal(cold.first.status, 402);
+    assert.equal(cold.paid.status, 400);
+    assert.equal(cold.paid.json.error, 'window_not_yet_final');
+    assert.equal(t.fac.calls.verify.length, 0, 'the facilitator was never asked');
+    assert.equal(t.fac.settled(), 0);
+
+    // WARM (the steady state — the free catalog alone keeps the head fresh):
+    // the refusal happens up front and no terms are ever offered.
+    const first = await request(t.baseUrl, '/x402/chain/blocks?from=197&count=2');
+    assert.equal(first.status, 400, 'refused before any payment is requested');
+    assert.equal(first.json.error, 'window_not_yet_final');
+    assert.equal(first.json.max_exportable_height, 194);
+    assert.equal(first.json.head_margin, 6);
+    assert.equal(first.json.retry_after_blocks, 3);
+    assert.equal(first.headers.get('payment-required'), null);
+    assert.equal(t.fac.calls.verify.length, 0);
+    assert.equal(t.fac.settled(), 0);
+
+    // The boundary itself is still sellable and returns real rows.
+    const ok = await paidRequest(t.baseUrl, '/x402/chain/blocks?from=194&count=1&format=json');
+    assert.equal(ok.paid.status, 200);
+    assert.equal(ok.paid.json.blocks.length, 1);
+    assert.equal(ok.paid.json.summary.complete, true);
+  } finally {
+    await t.close();
+  }
+});
+
+test('bulk: next_cursor never points backward, before the window the buyer paid for', async () => {
+  const t = await buildTestGateway({ handlers: chainHandlers({ head: 200 }) });
+  try {
+    // from inside the exportable range but `to` above it: the cursor must be
+    // the first unconsumed height, and never below `from`.
+    const { paid } = await paidRequest(t.baseUrl, '/x402/chain/blocks?from=194&to=199&format=json');
+    assert.equal(paid.status, 200);
+    assert.ok(paid.json.summary.next_cursor >= 194,
+      `cursor ${paid.json.summary.next_cursor} must not send a paging agent backward`);
+    assert.equal(paid.json.summary.next_cursor, 195);
   } finally {
     await t.close();
   }

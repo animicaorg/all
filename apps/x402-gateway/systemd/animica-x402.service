@@ -36,6 +36,13 @@ User=root
 WorkingDirectory=/root/animica/apps/x402-gateway
 # Secrets come ONLY from this root-owned 0600 file (template: .env.example).
 EnvironmentFile=/etc/animica-x402.env
+# Settlement runs through OUR OWN facilitator on loopback. Stated here as
+# well as in the env file so a missing/edited env line cannot quietly move
+# real payments to a third-party facilitator: this unit is self-hosted or it
+# does not run. (Environment= is applied after EnvironmentFile=, so this
+# wins.) Switching to X402_FACILITATOR_MODE=remote is a deliberate edit of
+# this unit plus an explicit X402_FACILITATOR_URL.
+Environment=X402_FACILITATOR_MODE=self
 # NODE PATH MUST MATCH THE HOST. This is the nvm-managed Node on the
 # current production box (v20.20.2 — the app's tested engine; better-sqlite3
 # 12.x is pinned to it). Adjust if the host's Node lives elsewhere.

@@ -69,6 +69,52 @@ function buildVerification(result) {
 function createRandomnessSource({ cfg, node, probeTtlMs = 2000, now = Date.now }) {
   const timeoutMs = cfg.qrngTimeoutMs;
 
+  // The honesty triple observed on the LAST successful draw. The readiness
+  // probe already fetches a real draw every few seconds, so the current truth
+  // about the entropy source is known for free — publishing it in the catalog
+  // and in the 402 offer is what lets a buyer (or a directory) learn that the
+  // source is a software CSPRNG BEFORE paying, instead of after.
+  let lastHonesty = null;
+
+  function recordHonesty(result) {
+    const s = result.source || {};
+    const a = result.attestation || {};
+    const h = result.health || {};
+    lastHonesty = {
+      source: s.name === undefined ? null : s.name,
+      vendor: s.vendor === undefined ? null : s.vendor,
+      model: s.model === undefined ? null : s.model,
+      is_hardware: s.is_hardware === undefined ? null : Boolean(s.is_hardware),
+      is_quantum: s.is_quantum === undefined ? null : Boolean(s.is_quantum),
+      attested: a.attested === undefined ? null : Boolean(a.attested),
+      signer_backend: a.backend === undefined ? null : a.backend,
+      health_passed: h.passed === undefined ? null : Boolean(h.passed),
+      min_entropy_per_byte: h.min_entropy_per_byte === undefined ? null : h.min_entropy_per_byte,
+      observed_at: new Date(now()).toISOString(),
+      note:
+        'observed on the gateway\'s own readiness draw, published unpaid so the trust model is knowable before purchase; '
+        + 'the same fields ride verbatim on every paid response',
+    };
+  }
+
+  /**
+   * The current, pre-purchase truth about the entropy source. Never a claim:
+   * either the fields the node last reported, or an explicit "not observed
+   * yet". Callers publish this in the free catalog and in the 402 offer.
+   */
+  function honesty() {
+    if (lastHonesty) return lastHonesty;
+    return {
+      source: null,
+      is_hardware: null,
+      is_quantum: null,
+      attested: null,
+      health_passed: null,
+      observed_at: null,
+      note: 'no successful draw observed yet on this process — the paid response always carries the node\'s own source/health/attestation fields verbatim',
+    };
+  }
+
   async function fetchRandom(n) {
     let result;
     try {
@@ -79,6 +125,7 @@ function createRandomnessSource({ cfg, node, probeTtlMs = 2000, now = Date.now }
     if (!result || typeof result.bytes_hex !== 'string') {
       throw new ProductUnavailable('qrng_bad_response', 'randomness RPC returned no bytes');
     }
+    recordHonesty(result);
     if (!result.health || result.health.passed !== true) {
       // The RPC answers 200 even for a sick source — the gateway is the
       // fail-closed layer. No payment is requested for unhealthy entropy.
@@ -113,18 +160,20 @@ function createRandomnessSource({ cfg, node, probeTtlMs = 2000, now = Date.now }
     return bodyObj;
   }
 
-  return { fetchRandom, probe, attachHonesty, buildVerification };
+  return { fetchRandom, probe, attachHonesty, buildVerification, honesty };
 }
 
 function createQrngProduct({ cfg, node, source }) {
   const src = source || createRandomnessSource({ cfg, node });
   const { fetchRandom } = src;
 
+  const BYTES_FIELDS = new Set(['bytes', 'n']);
+
   return {
     id: 'qrng',
-    title: 'Verifiable randomness',
+    title: 'Signed random bytes',
     description:
-      'Random bytes from the Animica node randomness service with a signed digest attestation and entropy-health report. Quantum-attested when hardware providers are connected; source/attested fields state the current truth.',
+      `Random bytes from the Animica node's randomness service with a signed digest attestation and an entropy-health report, 1..${cfg.qrngMaxBytes} bytes per draw. Current trust model, stated up front and in every response: the entropy source is a software CSPRNG (os.urandom) and the signer is a software key, so source.is_quantum=false and attestation.attested=false today; those fields flip truthfully if a hardware/quantum provider is ever connected. The free catalog entry carries the same live entropy block, so you can check the source before paying.`,
     path: '/x402/qrng/draw',
     routes: [
       { method: 'GET', path: '/x402/qrng/draw' },
@@ -134,6 +183,12 @@ function createQrngProduct({ cfg, node, source }) {
     enabled: cfg.qrngEnabled,
     mode: 'execute-then-settle',
     mimeType: 'application/json',
+    // Explicit so the shipped nginx caps can be checked against it
+    // (test/nginx-conf.test.js): the app must be the layer that rejects an
+    // oversize body with structured JSON, never nginx with an HTML 413.
+    maxBodyBytes: 8 * 1024,
+    /** Live pre-purchase honesty for the catalog and the 402 offer. */
+    entropyDisclosure: () => src.honesty(),
     outputSchema: {
       input: {
         type: 'http',
@@ -141,6 +196,19 @@ function createQrngProduct({ cfg, node, source }) {
         queryParams: {
           bytes: { type: 'integer', description: `number of random bytes, 1..${cfg.qrngMaxBytes} (default 32); alias: n` },
         },
+        // POST /x402/qrng takes the SAME parameters as a JSON body. Declared
+        // here so an indexer advertises the right shape for both routes — a
+        // POST caller sending {"bytes":256} must not be silently answered
+        // with 32 bytes.
+        alternateMethods: [{
+          method: 'POST',
+          path: '/x402/qrng',
+          bodyType: 'json',
+          bodyFields: {
+            bytes: { type: 'integer', required: false, description: `number of random bytes, 1..${cfg.qrngMaxBytes} (default 32); alias: n` },
+          },
+          note: 'query parameters also work on POST; supplying both with different values is a 400 rather than a silent winner',
+        }],
       },
       output: {
         type: 'json',
@@ -154,9 +222,36 @@ function createQrngProduct({ cfg, node, source }) {
       return src.probe();
     },
 
-    /** Param validation happens before any payment is requested. */
+    /**
+     * Param validation happens before any payment is requested — and it
+     * reads the POST JSON body as well as the query string. Ignoring a body
+     * would charge a POST caller $0.01 for a request whose only parameter
+     * was discarded.
+     */
     validate(ctx) {
-      const raw = ctx.query.get('bytes') ?? ctx.query.get('n') ?? '32';
+      const badParams = (detail, error = 'invalid_params') => new ProductError(detail, { body: { error, detail } });
+      let bodyValue;
+      if (ctx.method === 'POST' || ctx.method === 'PUT') {
+        if (ctx.rawBody && ctx.rawBody.length) {
+          if (ctx.json === null || typeof ctx.json !== 'object' || Array.isArray(ctx.json)) {
+            throw badParams('a POST body must be a JSON object with content-type: application/json (or omit it and use ?bytes=)', 'invalid_body');
+          }
+          const unknown = Object.keys(ctx.json).filter((k) => !BYTES_FIELDS.has(k));
+          if (unknown.length) {
+            throw badParams(`unknown body field(s): ${unknown.join(', ')} — this endpoint takes only bytes (alias n)`);
+          }
+          bodyValue = ctx.json.bytes ?? ctx.json.n;
+          if (bodyValue !== undefined && bodyValue !== null
+              && !(typeof bodyValue === 'number' || (typeof bodyValue === 'string' && /^-?\d+$/.test(bodyValue)))) {
+            throw badParams('bytes must be an integer');
+          }
+        }
+      }
+      const queryRaw = ctx.query.get('bytes') ?? ctx.query.get('n');
+      if (bodyValue !== undefined && bodyValue !== null && queryRaw !== null && String(bodyValue) !== String(queryRaw)) {
+        throw badParams(`bytes given twice with different values (query ${queryRaw}, body ${bodyValue}) — send it once`, 'conflicting_params');
+      }
+      const raw = queryRaw ?? (bodyValue === undefined || bodyValue === null ? '32' : bodyValue);
       const n = Number(raw);
       if (!Number.isInteger(n) || n < 1 || n > cfg.qrngMaxBytes) {
         throw new ProductError(`bytes must be an integer in [1, ${cfg.qrngMaxBytes}]`, {

@@ -57,6 +57,7 @@ function createEchoProduct({ cfg }) {
     enabled: cfg.echoEnabled,
     mode: 'execute-then-settle',
     mimeType: 'application/json',
+    maxBodyBytes: 4 * 1024,
     outputSchema: {
       input: {
         type: 'http',
@@ -195,6 +196,18 @@ function createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferen
         mimeType: p.mimeType || 'application/json',
       };
       if (!avail.available && avail.reason) entry.unavailable_reason = avail.reason;
+      // Pre-purchase honesty: the randomness products publish the entropy
+      // source the gateway's own readiness draw last observed. The catalog is
+      // free, so nobody has to pay to discover that the source is a software
+      // CSPRNG with attested:false. availability() ran just above, which is
+      // what populates it.
+      if (typeof p.entropyDisclosure === 'function') {
+        try {
+          entry.entropy = p.entropyDisclosure();
+        } catch (e) {
+          entry.entropy = { source: null, note: `entropy disclosure unavailable: ${e.message}` };
+        }
+      }
       if (Array.isArray(p.freeRoutes) && p.freeRoutes.length) {
         // Advertised so an indexer (and a buyer) can see that part of this
         // product costs nothing — e.g. the commit-reveal disclosure.

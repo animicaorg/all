@@ -5,16 +5,23 @@
  *   random_int      POST /x402/random/int       $0.01  uniform ints
  *   random_shuffle  POST /x402/random/shuffle   $0.02  Fisher-Yates permutation
  *   random_pick     POST /x402/random/pick      $0.02  weighted sample ±replacement
- *   random_bulk     POST /x402/qrng/bulk        $0.05  10 draws, one settlement
+ *   random_bulk     POST /x402/qrng/bulk        $0.05  N INDEPENDENT draws,
+ *                                                      one settlement
  *   random_commit   POST /x402/random/commit    $0.02  commit now…
  *                   GET  /x402/random/reveal/{id}  FREE  …reveal to everyone
  *
  * Three rules shape every line of this file:
  *
- * 1. ONE verified draw per request. Each product buys exactly one
- *    `rand.quantumRandomBytes` call through the shared source in qrng.js and
- *    then derives its whole answer from those bytes with the deterministic
- *    DRNG in derive.js. Never one node call per output item.
+ * 1. ONE verified draw per DERIVED request. int/shuffle/pick/commit each buy
+ *    exactly one `rand.quantumRandomBytes` call through the shared source in
+ *    qrng.js and then derive their whole answer from those bytes with the
+ *    deterministic DRNG in derive.js. Never one node call per output item.
+ *    random_bulk is the deliberate exception and the reason it exists: it
+ *    sells N INDEPENDENT draws, one node call and one attestation each,
+ *    because slices of a single draw are something the buyer can cut for
+ *    themselves out of one $0.01 qrng call (so selling slices at a premium
+ *    would be a fake volume product). Its minimum draw count is enforced so
+ *    the batch is always cheaper than the same number of single draws.
  *
  * 2. The buyer can recompute everything. Every response carries the raw
  *    `randomness` bytes (the commit product carries them at reveal time),
@@ -131,9 +138,20 @@ function weightsField(body, n) {
   return { weights: w, total, positive: w.filter((x) => x > 0).length };
 }
 
-/** hex-encoded segment [start, end) of a hex string. */
-function hexSlice(hex, startByte, lenBytes) {
-  return hex.slice(startByte * 2, (startByte + lenBytes) * 2);
+/**
+ * Serialized size of every item, so a product can bound its OWN RESPONSE
+ * before settling. Input caps do not do that: `pick` with replace:true may
+ * emit one large item k times, turning a 512 KB request into a 512 MB answer.
+ */
+function itemSizes(items) {
+  let total = 0;
+  let max = 0;
+  for (const it of items) {
+    const len = JSON.stringify(it === undefined ? null : it).length;
+    total += len;
+    if (len > max) max = len;
+  }
+  return { total, max };
 }
 
 function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now }) {
@@ -144,6 +162,25 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
   /** Shared readiness: the same health-gated probe qrng uses. */
   function availability() {
     return src.probe();
+  }
+
+  /** Live pre-purchase entropy truth, published in the catalog and the 402. */
+  const entropyDisclosure = () => src.honesty();
+
+  /**
+   * Refuse, BEFORE settlement, a request whose ANSWER would be oversized.
+   * `estimate` is an upper bound on the response body in bytes.
+   */
+  function guardResponseSize(estimate, extra) {
+    if (estimate > cfg.randomMaxResponseBytes) {
+      throw bad(
+        `this request would produce roughly ${estimate} bytes of response; the cap is ${cfg.randomMaxResponseBytes}`,
+        'response_too_large',
+        Object.assign({
+          caps: { max_response_bytes: cfg.randomMaxResponseBytes, estimated_response_bytes: estimate },
+        }, extra || {})
+      );
+    }
   }
 
   /**
@@ -222,6 +259,7 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
       },
     },
     availability,
+    entropyDisclosure,
     validate(ctx) {
       const body = jsonBody(ctx);
       const min = intField(body, 'min', { min: -Number.MAX_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER, required: true });
@@ -288,6 +326,7 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
       },
     },
     availability,
+    entropyDisclosure,
     validate(ctx) {
       const body = jsonBody(ctx);
       const hasItems = body.items !== undefined && body.items !== null;
@@ -301,6 +340,13 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
       } else {
         n = intField(body, 'n', { min: 1, max: cfg.randomMaxItems, required: true });
       }
+      // The shuffled list is the caller's own items echoed once plus the
+      // permutation, so the answer is bounded by the request — but bound it
+      // explicitly anyway, pre-settlement, on the same rule as pick.
+      guardResponseSize((items ? itemSizes(items).total : n * 9) + n * 9 + 4096, {
+        hint: 'shuffle fewer items, or shuffle 1..n and apply the permutation to your own list',
+        items: n,
+      });
       return { items, n, requestId: requestIdField(body) };
     },
     async handler(ctx) {
@@ -366,21 +412,24 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
           k: { type: 'integer', required: false, description: `how many to pick, 1..${cfg.randomMaxPicks} (default 1; alias count). Without replacement k <= items.length` },
           replace: { type: 'boolean', required: false, description: 'true = with replacement (an item can win twice); default false' },
           weights: { type: 'array', required: false, description: 'one non-negative INTEGER weight per item (floats rejected: the cumulative search must be recomputable exactly)' },
+          indices_only: { type: 'boolean', required: false, description: `omit the picked items and return only their 0-based indices — use it when the items are large: the response cap is ${cfg.randomMaxResponseBytes} bytes and with replace:true the same item can be emitted k times` },
           request_id: { type: 'string', required: false, description: 'your own tag; mixed into the DRNG seed' },
         },
       },
       output: {
         type: 'json',
         description:
-          'result {picked, indices, k, replace, weighted}, randomness, source, health, attestation, verification, derivation {rules, steps, recompute?}, payment metadata',
+          'result {picked (omitted when indices_only), indices, k, replace, weighted}, randomness, source, health, attestation, verification, derivation {rules, steps, recompute?}, payment metadata',
       },
     },
     availability,
+    entropyDisclosure,
     validate(ctx) {
       const body = jsonBody(ctx);
       const items = itemsField(body, cfg.randomMaxItems);
       const k = intField(body, 'k', { min: 1, max: cfg.randomMaxPicks, fallback: 1, aliases: ['count'] });
       const replace = boolField(body, 'replace', false);
+      const indicesOnly = boolField(body, 'indices_only', false);
       const w = weightsField(body, items.length);
       if (!replace && k > items.length) {
         throw bad(`k=${k} exceeds items.length=${items.length}; use replace: true to allow repeats`);
@@ -388,10 +437,29 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
       if (!replace && w && k > w.positive) {
         throw bad(`k=${k} exceeds the ${w.positive} item(s) with a weight greater than 0; without replacement every pick needs a positive weight`);
       }
-      return { items, k, replace, weights: w ? w.weights : null, requestId: requestIdField(body) };
+      // Bound the RESPONSE, not just the request. With replace:true the
+      // k <= n rule is deliberately lifted, so one 300 KB item and k=1000
+      // is a ~1000x amplifier — refused here, before any payment, instead of
+      // being served (or OOMing the gateway) after settlement.
+      const indicesBytes = k * 9 + 512;
+      let estimate = indicesBytes + 4096; // + honesty/derivation envelope
+      if (!indicesOnly) {
+        const sizes = itemSizes(items);
+        const picked = replace ? k * sizes.max : Math.min(sizes.total, k * sizes.max);
+        estimate += picked + k; // + separators
+      }
+      guardResponseSize(estimate, {
+        hint: indicesOnly
+          ? 'lower k'
+          : 'send indices_only: true (you already have the items — apply items[indices[i]] yourself), lower k, or send smaller items',
+        k,
+        items: items.length,
+        indices_only: indicesOnly,
+      });
+      return { items, k, replace, indicesOnly, weights: w ? w.weights : null, requestId: requestIdField(body) };
     },
     async handler(ctx) {
-      const { items, k, replace, weights, requestId } = ctx.params;
+      const { items, k, replace, indicesOnly, weights, requestId } = ctx.params;
       const n = items.length;
       const result = await fetchRandom(cfg.randomSeedBytes);
       const entropy = derive.hexToBytes(result.bytes_hex);
@@ -445,13 +513,19 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
       }
 
       const indices = d.output;
-      const bodyObj = baseBody('random_pick', result, {
-        picked: indices.map((i) => items[i]),
+      const resultObj = {
         indices,
         k,
         replace,
         weighted: Boolean(weights),
-      });
+      };
+      if (indicesOnly) {
+        resultObj.indices_only = true;
+        resultObj.picked_note = 'picked items omitted at your request (indices_only) — apply items[indices[i]] to your own list';
+      } else {
+        resultObj.picked = indices.map((i) => items[i]);
+      }
+      const bodyObj = baseBody('random_pick', result, resultObj);
       bodyObj.derivation = derivationBlock({
         algorithm,
         kind: d.kind,
@@ -472,12 +546,31 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
   };
 
   // ---------------------------------------------------------- random_bulk
+  //
+  // What this sells is INDEPENDENT ATTESTED DRAWS, one node call and one
+  // signature each, batched into a single settlement. That is the only unit
+  // on which it can honestly claim a discount: slices of one draw are
+  // something a buyer can cut themselves out of a single $0.01 qrng call, so
+  // selling slices at a premium would be a fake volume product (and was).
+  //
+  // The discount is therefore ENFORCED, not asserted: `draws` must be large
+  // enough that the whole call costs less than the same number of single
+  // draws, and anything below that minimum is a 400 pointing at the cheaper
+  // endpoint — never a settled premium.
+
+  const bulkPriceAtomic = BigInt(cfgMod.usdToUsdcAtomic(cfg.randomBulkPriceUsd));
+  const singlePriceAtomic = BigInt(cfgMod.usdToUsdcAtomic(cfg.qrngPriceUsd));
+  // smallest d with bulkPrice < d * singlePrice
+  const minDiscountDraws = singlePriceAtomic > 0n
+    ? Number(bulkPriceAtomic / singlePriceAtomic) + 1
+    : 1;
+  const bulkPriceIsDiscount = singlePriceAtomic > 0n && minDiscountDraws <= cfg.randomBulkMaxDraws;
 
   const randomBulk = {
     id: 'random_bulk',
-    title: 'Bulk randomness (10 draws, one settlement)',
+    title: 'Batched independent draws (one settlement)',
     description:
-      `Up to ${cfg.randomBulkMaxDraws} independent random segments of up to ${cfg.qrngMaxBytes} bytes each, delivered in ONE payment — ${cfg.randomBulkMaxDraws} segments for $${cfg.randomBulkPriceUsd} against $${cfg.qrngPriceUsd} per single draw, a real per-unit discount. The segments are contiguous, non-overlapping slices of one attested draw (the attestation covers the whole concatenation) — stated plainly, not marketed as separate node calls.`,
+      `${minDiscountDraws}..${cfg.randomBulkMaxDraws} INDEPENDENT randomness draws — each one its own node call with its own signed digest attestation and health report — delivered under ONE payment of $${cfg.randomBulkPriceUsd}. Fewer than ${minDiscountDraws} draws is refused with a 400 that points at GET /x402/qrng/draw ($${cfg.qrngPriceUsd} per draw), because only at ${minDiscountDraws}+ draws is this genuinely cheaper per draw. Priced per draw, not per byte: if you just need many bytes under one attestation, a single ${cfg.qrngMaxBytes}-byte qrng draw is cheaper — the response states which is cheaper for the call you made.`,
     path: '/x402/qrng/bulk',
     routes: [{ method: 'POST', path: '/x402/qrng/bulk' }],
     priceUsd: cfg.randomBulkPriceUsd,
@@ -491,21 +584,45 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
         method: 'POST',
         bodyType: 'json',
         bodyFields: {
-          draws: { type: 'integer', required: false, description: `how many segments, 1..${cfg.randomBulkMaxDraws} (default ${cfg.randomBulkMaxDraws}; alias count)` },
-          bytes: { type: 'integer', required: false, description: `bytes per segment, 1..${cfg.qrngMaxBytes} (default 32; draws*bytes <= ${cfg.randomMaxDrawBytes})` },
+          draws: { type: 'integer', required: false, description: `how many INDEPENDENT draws, ${minDiscountDraws}..${cfg.randomBulkMaxDraws} (default ${cfg.randomBulkMaxDraws}; alias count). Below ${minDiscountDraws} this endpoint is more expensive than ${minDiscountDraws} single draws and refuses with a 400.` },
+          bytes: { type: 'integer', required: false, description: `bytes per draw, 1..${cfg.qrngMaxBytes} (default 32; draws*bytes <= ${cfg.randomMaxDrawBytes})` },
         },
       },
       output: {
         type: 'json',
         description:
-          'result {draws: [{index, offset, bytes, randomness, sha3_256}], count, bytes_per_draw, pricing}, randomness (the full concatenation), source, health, attestation, verification, derivation (the split rule), payment metadata',
+          'result {draws: [{index, bytes, randomness, sha3_256, source, health, attestation, verification}], count, bytes_per_draw, pricing}, source, health (aggregate), attestation {scope: per_draw}, verification, derivation (independence + digest rules), payment metadata',
       },
     },
-    availability,
+    async availability() {
+      // A price table where bulk can never beat single draws must not be
+      // sold at all — catalog says available:false and no 402 is emitted.
+      if (!bulkPriceIsDiscount) {
+        return {
+          available: false,
+          reason: 'random_bulk_price_not_a_discount',
+          detail: `X402_RANDOM_BULK_PRICE_USDC=${cfg.randomBulkPriceUsd} would need at least ${minDiscountDraws} draws to beat ${cfg.randomBulkMaxDraws} single draws at $${cfg.qrngPriceUsd}; lower the bulk price or raise X402_RANDOM_BULK_MAX_DRAWS`,
+        };
+      }
+      return src.probe();
+    },
+    entropyDisclosure,
     validate(ctx) {
       const body = jsonBody(ctx);
       const draws = intField(body, 'draws', { min: 1, max: cfg.randomBulkMaxDraws, fallback: cfg.randomBulkMaxDraws, aliases: ['count'] });
       const bytes = intField(body, 'bytes', { min: 1, max: cfg.qrngMaxBytes, fallback: 32, aliases: ['n'] });
+      // The discount rule, enforced before any payment is requested.
+      if (draws < minDiscountDraws) {
+        throw bad(
+          `draws=${draws} costs $${cfg.randomBulkPriceUsd} here but only $${cfg.qrngPriceUsd} each (${draws * Number(singlePriceAtomic)} atomic) at GET /x402/qrng/draw — this endpoint is only cheaper from ${minDiscountDraws} draws up`,
+          'below_bulk_minimum',
+          {
+            min_draws: minDiscountDraws,
+            cheaper_alternative: { endpoint: 'GET /x402/qrng/draw', price_usd: cfg.qrngPriceUsd, price_atomic: singlePriceAtomic.toString() },
+            caps: { min_draws: minDiscountDraws, max_draws: cfg.randomBulkMaxDraws, max_bytes_per_draw: cfg.qrngMaxBytes },
+          }
+        );
+      }
       const total = draws * bytes;
       if (total > cfg.randomMaxDrawBytes) {
         throw bad(`draws*bytes = ${total} exceeds the ${cfg.randomMaxDrawBytes}-byte cap for one request`, 'request_too_large',
@@ -515,41 +632,96 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
     },
     async handler(ctx) {
       const { draws, bytes, total } = ctx.params;
-      const result = await fetchRandom(total);
-      const hex = result.bytes_hex;
-      if (hex.length !== total * 2) {
-        throw new ProductUnavailable('qrng_short_draw',
-          `randomness RPC returned ${hex.length / 2} bytes, expected ${total}`);
-      }
-      const segments = [];
+      // ONE node call per draw: that independence IS the product. Each call
+      // is health-gated on its own, so a source that goes sick mid-batch
+      // fails the whole request BEFORE settlement (execute-then-settle).
+      const results = [];
       for (let i = 0; i < draws; i++) {
-        const offset = i * bytes;
-        const seg = hexSlice(hex, offset, bytes);
-        segments.push({ index: i, offset, bytes, randomness: seg, sha3_256: derive.sha3Hex(derive.hexToBytes(seg)) });
+        const r = await fetchRandom(bytes);
+        if (r.bytes_hex.length !== bytes * 2) {
+          throw new ProductUnavailable('qrng_short_draw',
+            `randomness RPC returned ${r.bytes_hex.length / 2} bytes for draw ${i}, expected ${bytes}`);
+        }
+        results.push(r);
       }
-      // Priced from config, not from the registry-injected field: the
-      // per-unit discount is a claim in the response body and must hold even
-      // when this product is constructed outside the registry.
-      const priceAtomic = BigInt(cfgMod.usdToUsdcAtomic(cfg.randomBulkPriceUsd));
-      const perDraw = priceAtomic / BigInt(draws);
-      const bodyObj = baseBody('random_bulk', result, {
-        count: draws,
-        bytes_per_draw: bytes,
-        draws: segments,
-        pricing: {
-          price_usd: cfg.randomBulkPriceUsd,
-          price_atomic: priceAtomic.toString(),
-          price_atomic_per_draw: perDraw.toString(),
-          single_draw_price_usd: cfg.qrngPriceUsd,
-          note: `one settlement for ${draws} segment(s); the single-draw product charges $${cfg.qrngPriceUsd} per call`,
+      const segments = results.map((r, i) => {
+        const seg = {
+          index: i,
+          bytes: r.n === undefined ? bytes : r.n,
+          randomness: r.bytes_hex,
+          sha3_256: derive.sha3Hex(derive.hexToBytes(r.bytes_hex)),
+        };
+        if (r.source !== undefined) seg.source = r.source;
+        if (r.health !== undefined) seg.health = r.health;
+        if (r.attestation !== undefined) seg.attestation = r.attestation;
+        seg.verification = src.buildVerification(r);
+        return seg;
+      });
+
+      const first = results[0];
+      const perDraw = bulkPriceAtomic / BigInt(draws);
+      const equivalent = singlePriceAtomic * BigInt(draws);
+      // Per-BYTE comparison, exact (cross-multiplied BigInts, no floats):
+      // is this call cheaper per byte than a maximum-size single draw?
+      const bulkCheaperPerByte = bulkPriceAtomic * BigInt(cfg.qrngMaxBytes) < singlePriceAtomic * BigInt(total);
+      const bodyObj = {
+        product: 'random_bulk',
+        result: {
+          count: draws,
+          bytes_per_draw: bytes,
+          total_bytes: total,
+          draws: segments,
+          pricing: {
+            price_usd: cfg.randomBulkPriceUsd,
+            price_atomic: bulkPriceAtomic.toString(),
+            price_atomic_per_draw: perDraw.toString(),
+            single_draw_price_usd: cfg.qrngPriceUsd,
+            single_draw_price_atomic: singlePriceAtomic.toString(),
+            equivalent_single_draw_cost_atomic: equivalent.toString(),
+            savings_atomic: (equivalent - bulkPriceAtomic).toString(),
+            min_draws_for_discount: minDiscountDraws,
+            unit: 'one independent, separately attested draw',
+            per_byte: {
+              this_call: { atomic: bulkPriceAtomic.toString(), bytes: total },
+              single_max_draw: { atomic: singlePriceAtomic.toString(), bytes: cfg.qrngMaxBytes },
+              cheaper_per_byte: bulkCheaperPerByte ? 'this_call' : 'single_max_draw',
+              note: bulkCheaperPerByte
+                ? 'this call is also cheaper per byte than a maximum-size single draw'
+                : `per BYTE a single ${cfg.qrngMaxBytes}-byte draw at $${cfg.qrngPriceUsd} is cheaper; you are paying for ${draws} independent attestations, not for volume of bytes`,
+            },
+          },
         },
+        encoding: 'hex',
+        bytes: total,
+      };
+      // Honesty blocks: the source is one node, so it is reported once; the
+      // ATTESTATION is per draw and says so rather than implying a single
+      // signature over a concatenation that nobody signed.
+      if (first.source !== undefined) bodyObj.source = first.source;
+      bodyObj.health = {
+        passed: results.every((r) => r.health && r.health.passed === true),
+        min_entropy_per_byte: results.reduce(
+          (m, r) => (r.health && typeof r.health.min_entropy_per_byte === 'number'
+            ? (m === null ? r.health.min_entropy_per_byte : Math.min(m, r.health.min_entropy_per_byte))
+            : m),
+          null),
+        scope: 'worst of the per-draw health reports; each draw carries its own in result.draws[i].health',
+      };
+      bodyObj.attestation = {
+        scope: 'per_draw',
+        count: segments.length,
+        attested: results.every((r) => r.attestation && r.attestation.attested === true),
+        note: 'each draw has its OWN signed digest attestation in result.draws[i].attestation; there is no single signature over the concatenation, because there is no concatenation — these are separate node draws',
+      };
+      bodyObj.verification = Object.assign({}, src.buildVerification(first), {
+        scope: 'apply the rules to EACH result.draws[i] independently (its own randomness, digest_hex and signature_hex)',
       });
       bodyObj.derivation = {
-        algorithm: 'segment-split',
-        rule: 'draws[i].randomness == randomness[i*bytes_per_draw : (i+1)*bytes_per_draw] (byte offsets; the hex string is sliced at 2*offset)',
-        per_segment_digest: 'draws[i].sha3_256 == sha3_256(bytes(draws[i].randomness))',
+        algorithm: 'independent-draws',
+        rule: 'result.draws[i] is a separate rand.quantumRandomBytes call; no draw is derived from another, and none is a slice of a shared buffer',
+        per_draw_digest: 'draws[i].sha3_256 == sha3_256(bytes(draws[i].randomness)) == draws[i].attestation.digest_hex',
         honesty:
-          'these segments come from ONE attested draw of the full concatenation, not from separate node calls; attestation.digest_hex covers `randomness` in full, and each segment inherits that single signature',
+          `${draws} node calls were made for this response, one per draw. What you buy over ${draws} single calls is one settlement instead of ${draws}, at ${perDraw} atomic per draw against ${singlePriceAtomic} — the bytes themselves are not exclusive: the node's rand.* RPC is free.`,
         verifier: derive.VERIFIER,
       };
       return { status: 200, bodyObj };
@@ -561,6 +733,22 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
   const COMMIT_ALGORITHM = 'sha3_256(secret||salt)';
   const COMMIT_KIND = 'commit';
 
+  /**
+   * The trust model, stated wherever the commitment is. What the
+   * construction proves and — just as important — what it does not: the
+   * draw is signed but not bound to a round, a time or a sequence number,
+   * and the node's randomness RPC is free and unlimited, so nothing here
+   * rules out an operator drawing repeatedly and committing only to a draw
+   * it likes. The binding starts at PUBLICATION.
+   */
+  const COMMIT_TRUST_MODEL =
+    'What a reveal proves: (1) the disclosed secret+salt open the commitment you were given, so nothing was changed after publication; '
+    + '(2) the secret is a deterministic function of a draw the node signed. What it does NOT prove: that the operator did not draw '
+    + 'repeatedly and commit only to a draw it preferred — the draw is not bound to any round, clock or sequence number. Treat the '
+    + 'commitment as binding from the moment you publish it to your players, and derive your fairness from that ordering, not from the '
+    + 'signature. If you need grinding to be detectable, bind the round to an external anchor of your own (e.g. include a public round '
+    + 'id or a block hash your players can see in request_id/memo before the commit).';
+
   function commitDerivationRules(requestId) {
     return {
       secret_and_salt:
@@ -569,14 +757,15 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
       draw: 'attestation.digest_hex == sha3_256(bytes(randomness)) — the node signed the draw the secret came from',
       seed: derive.RULES.seed,
       stream: derive.RULES.stream,
+      trust_model: COMMIT_TRUST_MODEL,
     };
   }
 
   const randomCommit = {
     id: 'random_commit',
-    title: 'Commit-reveal randomness (provably fair)',
+    title: 'Commit-reveal randomness (public audit trail)',
     description:
-      `Commit now, reveal to everyone later: the paid call returns a commitment sha3_256(secret||salt) and a commit id; GET /x402/random/reveal/{commit_id} is FREE, public and idempotent, and discloses the secret, the salt, the raw draw and the node's attestation so anyone — not just the buyer — can check the commitment. Reveal delay 0..${cfg.randomCommitMaxDelaySec}s. Built for provably-fair games, sealed-bid rounds and auditable draws.`,
+      `Commit now, reveal to everyone later: the paid call returns a commitment sha3_256(secret||salt) and a commit id; GET /x402/random/reveal/{commit_id} is FREE, public and idempotent, and discloses the secret, the salt, the raw draw and the node's attestation so anyone — not just the buyer — can check the commitment. Reveal delay 0..${cfg.randomCommitMaxDelaySec}s. For games, sealed-bid rounds and auditable draws. Trust model, stated plainly: the commitment binds the outcome from the moment you publish it, and the reveal proves the secret came from a node-signed draw — it does NOT prove the operator discarded no draws before committing, so publish the commitment to your players before the round.`,
     path: '/x402/random/commit',
     routes: [{ method: 'POST', path: '/x402/random/commit' }],
     priceUsd: cfg.randomCommitPriceUsd,
@@ -676,16 +865,18 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
           domain: derive.DOMAIN,
           rules: commitDerivationRules(fresh.request_id || ''),
           steps: [
-            'check commitment == sha3_256(bytes(secret) || bytes(salt)) — this is the commit-reveal property',
-            'check the secret was not cherry-picked: rebuild the DRNG from `randomness` with kind="commit" and your request_id, read 64 bytes, and compare with secret||salt',
+            'check commitment == sha3_256(bytes(secret) || bytes(salt)) — this is the commit-reveal property: nothing was changed after publication',
+            'check the secret is a deterministic function of THIS draw: rebuild the DRNG from `randomness` with kind="commit" and your request_id, read 64 bytes, and compare with secret||salt. (This proves the secret was derived from the disclosed, node-signed draw. It does NOT prove the operator did not discard draws before committing — see trust_model.)',
             'check the node signed the draw: attestation.digest_hex == sha3_256(bytes(randomness)) and ed25519_verify(public_key_hex, raw digest bytes, signature_hex)',
           ],
+          trust_model: COMMIT_TRUST_MODEL,
           verifier: derive.VERIFIER,
         };
         return { status: 200, bodyObj };
       },
     }],
     availability,
+    entropyDisclosure,
     validate(ctx) {
       const body = jsonBody(ctx);
       const delay = intField(body, 'reveal_after_seconds', { min: 0, max: cfg.randomCommitMaxDelaySec, fallback: 0, aliases: ['delay_seconds'] });
@@ -755,10 +946,11 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
         domain: derive.DOMAIN,
         rules: commitDerivationRules(requestId),
         sealed_until_reveal: ['randomness', 'secret', 'salt'],
+        trust_model: COMMIT_TRUST_MODEL,
         steps: [
-          'keep this commitment (publish it to your players before the round)',
+          'publish this commitment to your players BEFORE the round — that publication, not the signature, is what binds the outcome',
           `GET ${bodyObj.reveal_url} once reveal_after has passed — it is free, public and idempotent`,
-          'anyone can then check commitment == sha3_256(secret||salt) and that secret||salt came from the signed draw',
+          'anyone can then check commitment == sha3_256(secret||salt) and that secret||salt was derived from the disclosed node-signed draw',
         ],
         verifier: derive.VERIFIER,
       };

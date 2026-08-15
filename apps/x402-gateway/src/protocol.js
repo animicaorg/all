@@ -133,7 +133,8 @@ function toV1Body(paymentRequired, outputSchema) {
       description: paymentRequired.resource.description || '',
       mimeType: paymentRequired.resource.mimeType || 'application/json',
       // Bazaar-style discovery schema ({input:{type:'http',method,...},output})
-      // — indexers (x402scan, CDP Bazaar) require it to know what to send.
+      // — x402 discovery indexers (e.g. x402scan) require it to know what to
+      // send.
       outputSchema: outputSchema || null,
       maxTimeoutSeconds: a.maxTimeoutSeconds,
       extra: a.extra || undefined,

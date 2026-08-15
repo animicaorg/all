@@ -204,7 +204,7 @@ function createBulkChainProduct({ cfg, node, sleep }) {
     return { nextCursor: truncatedReason ? h : null, truncatedReason };
   }
 
-  function buildSummary({ counts, truncatedReason, nextCursor, effTo, requestedTo }) {
+  function buildSummary({ counts, truncatedReason, nextCursor, effTo, requestedTo, from }) {
     const pinnedShort = effTo < requestedTo;
     const summary = {
       type: 'summary',
@@ -212,8 +212,37 @@ function createBulkChainProduct({ cfg, node, sleep }) {
       truncated_reason: truncatedReason || (pinnedShort ? 'pinned_below_requested_to' : null),
       next_cursor: truncatedReason ? nextCursor : (pinnedShort ? effTo + 1 : null),
     };
+    // A cursor below the caller's own `from` would send a paging agent
+    // BACKWARD over ground it already paid for. The resume point is never
+    // earlier than the window that was requested.
+    if (summary.next_cursor !== null && Number.isInteger(from) && summary.next_cursor < from) {
+      summary.next_cursor = from;
+    }
     summary.complete = summary.next_cursor === null;
     return summary;
+  }
+
+  /**
+   * The export pins to head - X402_BULK_HEAD_MARGIN, so a window that starts
+   * above that bound is EMPTY BY CONSTRUCTION. Selling it is charging for
+   * zero rows, which is exactly the "caps before settlement" rule this file
+   * already follows for over-large windows — it was just checked against the
+   * wrong bound (head, not the pinned head).
+   */
+  function guardFinality(from, head) {
+    const bound = head - cfg.bulkHeadMargin;
+    if (from > bound) {
+      throw new ProductError('window is not confirmation-safe yet', {
+        body: {
+          error: 'window_not_yet_final',
+          detail: `from=${from} is above the exportable bound ${bound} (head ${head} - margin ${cfg.bulkHeadMargin}); blocks that close to the tip are not exported because a shallow reorg could still replace them`,
+          head_height: head,
+          head_margin: cfg.bulkHeadMargin,
+          max_exportable_height: bound,
+          retry_after_blocks: from - bound,
+        },
+      });
+    }
   }
 
   async function runExport(ctx, params) {
@@ -288,7 +317,7 @@ function createBulkChainProduct({ cfg, node, sleep }) {
     const counts = isTxExport
       ? { blocks_scanned: blockCount, txs: txCount }
       : { blocks: blockCount, txs: txCount };
-    const summary = buildSummary({ counts, truncatedReason, nextCursor, effTo, requestedTo: params.to });
+    const summary = buildSummary({ counts, truncatedReason, nextCursor, effTo, requestedTo: params.to, from: params.from });
 
     let body;
     let contentType;
@@ -357,19 +386,25 @@ function createBulkChainProduct({ cfg, node, sleep }) {
       const forType = ctx.route.path.endsWith('/blocks') ? 'blocks'
         : ctx.route.path.endsWith('/transactions') ? 'transactions' : null;
       const params = parseParams(ctx, { forType });
-      // from beyond the (cached) head is a caller mistake — reject before
-      // any payment is demanded rather than selling an empty export.
-      if (headCache.height !== null && params.from > headCache.height) {
-        throw new ProductError('from is beyond the chain head', {
-          body: { error: 'invalid_params', detail: `from=${params.from} is beyond head ${headCache.height}` },
-        });
+      // A window that cannot contain an exportable block is a caller mistake
+      // — reject before any payment is demanded rather than selling an empty
+      // export. Checked against the PINNED bound (head - margin), which is
+      // what the export actually walks, not against the raw head.
+      if (headCache.height !== null) {
+        guardFinality(params.from, headCache.height);
       }
       return params;
     },
 
-    /** Pre-settle readiness: pin the head NOW; failure => nothing charged. */
-    async preSettle() {
+    /**
+     * Pre-settle readiness: pin the head NOW; failure => nothing charged.
+     * The finality guard runs again here against the freshly pinned head,
+     * because validate() may have run before any head was ever cached (first
+     * request of a process) or against one that has since moved.
+     */
+    async preSettle(ctx) {
       const head = await pinnedHead();
+      guardFinality(ctx.params.from, head);
       return { head };
     },
 

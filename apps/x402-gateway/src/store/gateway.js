@@ -146,6 +146,28 @@ function createGatewayStore(dbPath, { Database, maxBodyBytes = 4_000_000 } = {})
      * call stored the row (false = someone beat us — harmless).
      */
     putIdempotent({ idemKey, paymentFingerprint, resource, status, contentType, contentEncoding, body, settlementHeader, settlementTx }) {
+      // Test the cap BEFORE copying. UTF-8 byte length is never below the
+      // string length, so an over-cap string is known to be oversize without
+      // materializing a second copy of it — which matters because the body
+      // can be megabytes and Buffer.from() would be one more full copy of it
+      // on the way to being discarded.
+      const known = typeof body === 'string' ? body.length : (body && body.length) || 0;
+      if (body !== undefined && body !== null && known > maxBodyBytes) {
+        const r0 = stmts.putIdem.run({
+          idem_key: String(idemKey),
+          payment_fingerprint: String(paymentFingerprint),
+          resource: String(resource || ''),
+          response_status: Number(status),
+          content_type: contentType || null,
+          content_encoding: contentEncoding || null,
+          body: null,
+          oversize: 1,
+          settlement_header: settlementHeader || null,
+          settlement_tx: settlementTx || null,
+          created_at: nowSec(),
+        });
+        return r0.changes === 1;
+      }
       const buf = body === undefined || body === null ? null : Buffer.from(body);
       const oversize = buf !== null && buf.length > maxBodyBytes ? 1 : 0;
       const r = stmts.putIdem.run({
