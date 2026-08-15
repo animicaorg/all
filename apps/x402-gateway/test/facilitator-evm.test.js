@@ -8,6 +8,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const evm = require('../src/facilitator-evm/evm');
 const { scene } = require('./evm-helpers');
@@ -146,14 +150,25 @@ test('settle: happy path settles on-chain and persists everything', async () => 
 test('settle: concurrent duplicate settles -> exactly one succeeds, one broadcast', async () => {
   const sc = scene();
   const body = sc.payment();
-  const [a, b] = await Promise.all([sc.facilitator.settle(body), sc.facilitator.settle(body)]);
-  const succeeded = [a, b].filter((r) => r.success);
-  const failed = [a, b].filter((r) => !r.success);
+  // A real race: four in-flight settles of ONE authorization, all started
+  // in the same tick. The DB claim is the only arbiter.
+  const results = await Promise.all([
+    sc.facilitator.settle(body),
+    sc.facilitator.settle(body),
+    sc.facilitator.settle(body),
+    sc.facilitator.settle(body),
+  ]);
+  const succeeded = results.filter((r) => r.success);
+  const failed = results.filter((r) => !r.success);
   assert.equal(succeeded.length, 1, 'exactly one settle wins');
-  assert.equal(failed.length, 1);
-  assert.equal(failed[0].errorReason, 'invalid_transaction_state');
-  assert.equal(sc.rpc.sent.length, 1, 'exactly one tx broadcast');
-  assert.match(sc.metrics.render(), /x402_replays_rejected_total 1/);
+  assert.equal(failed.length, 3);
+  for (const f of failed) assert.equal(f.errorReason, 'invalid_transaction_state');
+  assert.equal(sc.rpc.sent.length, 1, 'exactly one tx broadcast (counting mock RPC)');
+  // exactly one settlement row in the real store — losers created nothing
+  const rows = sc.store.db.prepare('SELECT status FROM payments').all();
+  assert.equal(rows.length, 1, 'exactly one settlement row');
+  assert.equal(rows[0].status, 'settled');
+  assert.match(sc.metrics.render(), /x402_replays_rejected_total 3/);
 });
 
 test('settle: replay after settlement is rejected (chain nonce consumed)', async () => {
@@ -165,6 +180,63 @@ test('settle: replay after settlement is rejected (chain nonce consumed)', async
   assert.equal(replay.success, false);
   assert.equal(replay.errorReason, 'invalid_transaction_state');
   assert.equal(sc.rpc.sent.length, 1);
+});
+
+test('settle: restart does not allow replay — fresh facilitator instance AND fresh OS process', async () => {
+  // Spec "Replay: restart doesn't allow replay" — the persistent DB alone
+  // must block a replay even when the whole facilitator is rebuilt from
+  // scratch. Chain nonce-consumption is deliberately disabled in the second
+  // life (consumeOnSend:false + empty authConsumed) so ONLY the reopened DB
+  // can stop a double settlement.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'x402-restart-'));
+  const dbPath = path.join(dir, 'x402.db');
+  try {
+    const scA = scene({ storePath: dbPath, rpcOpts: { consumeOnSend: false } });
+    const body = scA.payment();
+    const first = await scA.facilitator.settle(body);
+    assert.equal(first.success, true);
+    assert.equal(scA.rpc.sent.length, 1);
+    const authHash = scA.store.db.prepare('SELECT authorization_hash FROM payments').get().authorization_hash;
+    scA.store.close(); // "process exit"
+
+    // Second life: brand-new facilitator + store instance over the same DB
+    // file. Same settlement address so the old body verifies; chain state is
+    // a fresh mock that has never seen the authorization.
+    const scB = scene({
+      storePath: dbPath,
+      rpcOpts: { consumeOnSend: false },
+      envOverrides: { X402_SETTLEMENT_ADDRESS: scA.payTo },
+    });
+    scB.rpc.state.balances[scA.payer.address.toLowerCase()] = 1_000_000_000n;
+    const replay = await scB.facilitator.settle(body);
+    // Idempotent report of the stored truth — never a second transfer.
+    assert.equal(replay.success, true);
+    assert.equal(replay.transaction, first.transaction, 'stored tx hash, not a new one');
+    assert.equal(scB.rpc.sent.length, 0, 'restart never rebroadcasts a settled authorization');
+    assert.equal(scB.store.db.prepare('SELECT COUNT(*) c FROM payments').get().c, 1, 'still exactly one row');
+
+    // And a genuinely fresh OS process: claim the same authorization straight
+    // against the DB file — must be refused.
+    const script = `
+      const { createStore } = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'store'))});
+      const s = createStore(process.argv[1]);
+      const out = s.claim({
+        paymentId: 'pay_fresh_process', authorizationHash: process.argv[2],
+        payer: '0x' + '11'.repeat(20), asset: '0x' + '22'.repeat(20),
+        network: 'eip155:8453', amount: 10000n, resource: '/x402/test',
+        expiresAt: 2000000000, authNonce: '0x' + 'cd'.repeat(32),
+      });
+      console.log(JSON.stringify({ claimed: out.claimed, status: out.existing && out.existing.status }));
+      s.close();
+    `;
+    const raw = execFileSync(process.execPath, ['-e', script, dbPath, authHash], { encoding: 'utf8' });
+    const fresh = JSON.parse(raw.trim().split('\n').pop());
+    assert.equal(fresh.claimed, false, 'fresh process cannot re-claim');
+    assert.equal(fresh.status, 'settled');
+    scB.store.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('settle: DB-level idempotency — settled row returns stored result, no re-send', async () => {
@@ -201,6 +273,42 @@ test('settle: receipt timeout leaves row submitting (recoverable), never rebroad
   const row = sc.store.db.prepare('SELECT * FROM payments').get();
   assert.equal(row.status, 'submitting', 'unknown outcome stays submitting');
   assert.equal(sc.rpc.sent.length, 1);
+});
+
+test('settle: send times out but the tx actually mined -> recovery settles it, NEVER rebroadcasts', async () => {
+  // Spec "known tx checked before rebroadcast": eth_sendRawTransaction dies
+  // with a transport timeout, so the outcome is unknown — but the tx in fact
+  // reached the mempool and mined. Recovery must read chain truth and settle
+  // the row without ever sending anything again.
+  const sc = scene({ rpcOpts: { sendError: { transport: true, message: 'ETIMEDOUT: rpc send timed out' } } });
+  const body = sc.payment();
+  const a = sc.lastAuth;
+  const out = await sc.facilitator.settle(body);
+  assert.equal(out.success, false, 'unknown outcome is not reported as settled');
+  assert.equal(out.errorReason, 'unexpected_settle_error');
+  const row = sc.store.db.prepare('SELECT * FROM payments').get();
+  assert.equal(row.status, 'submitting', 'row stays recoverable, not failed');
+  assert.ok(row.raw_tx, 'signed bytes persisted before the send');
+  assert.equal(sc.rpc.sent.length, 0, 'mock recorded no accepted send');
+
+  // The chain now shows the truth: authorization consumed, tx mined.
+  sc.rpc.state.authConsumed.add(`${a.from.toLowerCase()}:${a.nonce.toLowerCase()}`);
+  sc.rpc.state.receipts[row.settlement_tx_hash] = {
+    transactionHash: row.settlement_tx_hash, status: '0x1', blockNumber: '0x64',
+    gasUsed: '0x15122', effectiveGasPrice: '0x5f5e64',
+    logs: [{ address: sc.cfg.asset, topics: [require('../src/facilitator-evm/usdc').TOPICS.authorizationUsed, require('./evm-helpers').word(a.from), a.nonce], data: '0x' }],
+  };
+  // Heal the RPC so a (wrong) rebroadcast WOULD be recorded if attempted.
+  sc.rpc.opts.sendError = null;
+
+  const report = await sc.facilitator.recoverInFlight();
+  assert.equal(report.settled, 1);
+  assert.equal(report.rebroadcast, 0);
+  const after = sc.store.getByPaymentId(row.payment_id);
+  assert.equal(after.status, 'settled');
+  assert.equal(after.settlement_tx_hash, row.settlement_tx_hash);
+  assert.equal(sc.rpc.sent.length, 0, 'known tx was checked on chain — nothing rebroadcast');
+  assert.ok(BigInt(after.gas_spent_wei) > 0n, 'gas from the mined receipt accounted');
 });
 
 test('settle: gas cap and fee cap enforced before any broadcast', async () => {
@@ -252,6 +360,71 @@ test('settle: failed-before-broadcast authorization retries and then settles', a
   assert.equal(sc.rpc.sent.length, 1);
   assert.equal(sc.store.db.prepare('SELECT COUNT(*) c FROM payments').get().c, 1, 'same row reused');
   assert.equal(sc.store.db.prepare('SELECT status FROM payments').get().status, 'settled');
+});
+
+test('accounting invariants hold in the real DB: settled rows == successes, revenue == stored settled amounts, failed/replayed count nothing', async () => {
+  // Spec "Accounting invariants" — asserted with SQL over the real
+  // persistent store, not over metrics counters or mock bookkeeping.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'x402-acct-'));
+  const dbPath = path.join(dir, 'x402.db');
+  try {
+    const sc = scene({ storePath: dbPath });
+
+    // 2 delivered successes
+    const ok1 = await sc.facilitator.settle(sc.payment());
+    assert.equal(ok1.success, true);
+    const body2 = sc.payment();
+    const ok2 = await sc.facilitator.settle(body2);
+    assert.equal(ok2.success, true);
+
+    // 1 replay of an already-settled authorization — must move nothing
+    const replay = await sc.facilitator.settle(body2);
+    assert.equal(replay.success, false);
+    assert.equal(replay.errorReason, 'invalid_transaction_state');
+
+    // 1 on-chain revert — broadcast happens, gas burns, no revenue
+    sc.rpc.opts.revertOnChain = true;
+    const reverted = await sc.facilitator.settle(sc.payment());
+    assert.equal(reverted.success, false);
+    sc.rpc.opts.revertOnChain = false;
+
+    // 1 verification reject (amount mismatch) — no row at all
+    const rejected = await sc.facilitator.settle(sc.payment({ amount: '20000' }));
+    assert.equal(rejected.success, false);
+
+    // ---- invariants, straight from the DB ----
+    const rows = sc.store.db.prepare('SELECT payment_id, status, amount, settlement_tx_hash FROM payments').all();
+    assert.equal(rows.length, 3, '2 settled + 1 failed; replay and reject created no rows');
+
+    const settled = rows.filter((r) => r.status === 'settled');
+    assert.equal(settled.length, 2, 'one success == exactly one settlement row');
+    const txHashes = new Set(settled.map((r) => r.settlement_tx_hash));
+    assert.equal(txHashes.size, 2, 'each success has its own settlement tx');
+    assert.equal(sc.rpc.sent.length, 3, '2 successes + 1 reverted broadcast — replay/reject sent nothing');
+
+    const settledSum = settled.reduce((acc, r) => acc + BigInt(r.amount), 0n);
+    assert.equal(settledSum, 20_000n, 'revenue == sum of stored settled amounts');
+    assert.equal(sc.store.settledRevenueAtomic(), settledSum, 'store revenue helper agrees with raw SQL');
+    assert.match(sc.metrics.render(), /x402_revenue_usdc\{product="\/x402\/test"\} 0\.02/);
+
+    const failed = rows.filter((r) => r.status === 'failed');
+    assert.equal(failed.length, 1);
+    assert.equal(failed[0].amount, '10000');
+    // the failed amount is provably outside the revenue sum
+    assert.equal(settledSum + BigInt(failed[0].amount), 30_000n);
+
+    // gas ledger: every burned wei is a gas_spend row; helper == raw SQL
+    const gasRows = sc.store.db.prepare('SELECT spent_wei FROM gas_spend').all();
+    const gasSum = gasRows.reduce((acc, r) => acc + BigInt(r.spent_wei), 0n);
+    assert.ok(gasSum > 0n, 'reverted + settled gas recorded');
+    assert.equal(sc.store.gasSpentSince(0), gasSum);
+
+    assert.match(sc.metrics.render(), /x402_settlements_total 2/);
+    assert.match(sc.metrics.render(), /x402_replays_rejected_total 1/);
+    sc.store.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /* ------------------------------------------------------ crash recovery -- */

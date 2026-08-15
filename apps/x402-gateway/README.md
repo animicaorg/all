@@ -21,7 +21,7 @@ never send us a key.
 
 ```sh
 cd apps/x402-gateway
-node --test test/                       # 122 tests, no network anywhere
+node --test test/                       # 138 tests, no network anywhere
 
 # dev demo (what the live unit runs): /free/ping + /paid/echo on :4656
 ANM_X402_ENABLED=1 node src/demo-server.js
@@ -196,6 +196,43 @@ Local DBs only, `--json` everywhere. `reconcile` exits 1 if any settled row
 lacks a matching on-chain receipt (status + `AuthorizationUsed` +
 `Transfer` log check) — run it after every deploy and on a cron.
 
+## Test matrix
+
+`node --test test/` — 138 tests, no network, every key throwaway and
+in-process. The spec's minimum list maps line by line onto named tests, so a
+missing guarantee shows up as a missing test rather than as prose:
+
+| spec line | where it is proved |
+|---|---|
+| **Protocol** — 402 w/o payment | `protocol-e2e` §1 (whole gateway), `products` (qrng 402 terms), `middleware` (scaffold gate) |
+| valid payment unlocks | `protocol-e2e` §2 — real EIP-3009 signature, real facilitator, settled row + `payment-response` |
+| insufficient | `protocol-e2e` §3 (signed short / quoted short / payer broke), `facilitator-evm` value-mismatch + `insufficient_funds` |
+| wrong token | `protocol-e2e` §4 (gateway refuses pre-verify; facilitator refuses again), `facilitator-evm` |
+| wrong chain | `protocol-e2e` §5 (+ signature over the wrong EIP-712 domain), `facilitator-evm` |
+| wrong recipient | `protocol-e2e` §6 (quoted `payTo` and signed payee), `facilitator-evm` |
+| expired | `protocol-e2e` §7 (expired / not-yet-valid / expiring inside the settle margin) |
+| malformed | `protocol-e2e` §8 (11 shapes over HTTP), `protocol` (parser raises `PaymentParseError`, never a 500), `facilitator-evm` |
+| **Replay** — reuse blocked | `protocol-e2e` replay, `facilitator-evm` post-settlement replay |
+| simultaneous double submission settles once | `facilitator-evm` (4× `Promise.all`, counting mock RPC: 1 broadcast, 1 row), `protocol-e2e` concurrency (3 concurrent paid requests, 1 delivery) |
+| restart doesn't allow replay | `facilitator-evm` — fresh facilitator instance **and** a fresh OS process re-claiming against the same DB file |
+| **Settlement** — success receipt recognized | `facilitator-evm` happy path (status + `AuthorizationUsed`/`Transfer` logs + confirmations) |
+| reverted rejected | `facilitator-evm` reverted tx → `failed` row, gas accounted, zero revenue |
+| RPC timeout → recoverable | `facilitator-evm` receipt timeout leaves the row `submitting`, never rebroadcasts |
+| known tx checked before rebroadcast | `facilitator-evm` — send times out, tx actually mined, recovery settles from chain truth with `rebroadcast: 0` |
+| gas limits enforced | `facilitator-evm` gas cap / fee cap / simulation revert / daily-budget breaker (refuses **before** claiming) |
+| **Products** — QRNG requires payment | `products` 402 with $0.01 terms, `protocol-e2e` §1 |
+| QRNG returns real proof fields | `products` — verbatim `source`/`health`/`attestation` from the live-captured RPC fixture, no fabricated `proof`/`beacon` |
+| bulk limits enforced | `products` block cap, tx-record cap, byte budget, head-margin clamp, cursors |
+| free APIs unaffected | `gateway` free surfaces, `protocol-e2e` free surfaces (unowned paths 404, unpaid traffic shares one cached readiness probe, paid work stays read-only) |
+| inference refuses payment w/o capacity | `products` disabled / below floor / capacity dropped between 402 and retry |
+| inference activates at threshold | `products` — catalog flips `available:true`, proxies with priority headers |
+| **Accounting** — one success = one settlement | `facilitator-evm` invariants (raw SQL over the real DB), `gateway` paywall invariants |
+| revenue = stored settled amounts | same — `settledRevenueAtomic()` cross-checked against `SUM` of settled rows |
+| failed/replayed never increment revenue | same — reverted + replayed + rejected all proven outside the sum |
+
+Real-chain proof is a runbook step, not a unit test: `test/manual/base-sepolia.md`
+plus `test/manual/smoke-pay.mjs` do the funded end-to-end settlement.
+
 ## Metrics reference
 
 Prometheus text on two loopback endpoints — gateway
@@ -277,7 +314,8 @@ src/solana.js            RETIRED SVM primitives (legacy)
 bin/animica-x402         operator CLI (settlements, revenue, reconcile, gas, incidents)
 systemd/                 hardened example units (NOT installed from here)
 nginx/                   animica.dev location set + INSTALL.md (NOT installed from here)
-test/                    node --test suite — 122 tests, all RPC mocked, loopback only
+test/                    node --test suite — 138 tests, all RPC mocked, loopback only
+test/protocol-e2e.test.js  real gateway → real facilitator over HTTP, real EIP-3009 signatures
 test/manual/             base-sepolia.md (real-chain manual pass) + smoke-pay.mjs (payer client)
 ```
 

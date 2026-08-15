@@ -105,6 +105,36 @@ test('parsePaymentHeaders: v2 PAYMENT-SIGNATURE and v1 X-PAYMENT both normalize'
   assert.equal(protocol.parsePaymentHeaders({}, pr.accepts), null);
 });
 
+test('parsePaymentHeaders: every malformed client header is a PaymentParseError, never a raw throw', () => {
+  // Regression: garbage base64 used to reach JSON.parse and escape as a
+  // SyntaxError, which the HTTP layers answer 500 instead of re-offering a
+  // 402. A malformed payment is the client's problem, not a server fault.
+  const pr = buildPaymentRequiredForRoute(ROUTE, CFG);
+  const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+  const cases = {
+    'not base64 at all': { 'payment-signature': '@@@not-base64@@@' },
+    'base64 of plain text': { 'payment-signature': b64('hello') },
+    'base64 of a JSON array': { 'payment-signature': b64('[1,2,3]') },
+    'base64 of a JSON string': { 'payment-signature': b64('"nope"') },
+    'truncated json': { 'payment-signature': b64('{"x402Version":2,') },
+    'v1 version on the v2 header': { 'payment-signature': protocol.encodeHeader({ x402Version: 1 }) },
+    'accepted is an array': { 'payment-signature': protocol.encodeHeader({ x402Version: 2, accepted: [] }) },
+    'accepted missing': { 'payment-signature': protocol.encodeHeader({ x402Version: 2, payload: {} }) },
+    'x-payment garbage': { 'x-payment': '####' },
+    'x-payment wrong version': { 'x-payment': protocol.encodeHeader({ x402Version: 2 }) },
+    'x-payment unoffered lane': {
+      'x-payment': protocol.encodeHeader({ x402Version: 1, scheme: 'exact', network: 'ethereum', payload: {} }),
+    },
+  };
+  for (const [label, headers] of Object.entries(cases)) {
+    assert.throws(
+      () => protocol.parsePaymentHeaders(headers, pr.accepts),
+      (e) => e instanceof protocol.PaymentParseError,
+      `${label} must raise PaymentParseError`
+    );
+  }
+});
+
 test('validatePaymentRequirements rejects malformed entries', () => {
   const good = {
     scheme: 'exact', network: 'eip155:8453', amount: '5000',

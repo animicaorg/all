@@ -34,6 +34,26 @@ function decodeHeader(value) {
 }
 
 /**
+ * decodeHeader for CLIENT-SUPPLIED headers. Garbage base64 / garbage JSON is
+ * a malformed payment, not a server fault: it must produce a structured 402
+ * re-offer, never an unhandled exception (which the HTTP layer would answer
+ * 500). Kept separate from decodeHeader so our own encode/decode round-trips
+ * still fail loudly on a real bug.
+ */
+function decodeClientHeader(value, what) {
+  let obj;
+  try {
+    obj = JSON.parse(Buffer.from(String(value), 'base64').toString('utf8'));
+  } catch (e) {
+    throw new PaymentParseError(`${what} is not base64-encoded JSON`);
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new PaymentParseError(`${what} must decode to a JSON object`);
+  }
+  return obj;
+}
+
+/**
  * v2 PaymentRequired.
  * resource: { url (required), description?, mimeType?, serviceName? (<=32
  * ascii), tags? (<=5), iconUrl? }
@@ -109,16 +129,16 @@ function toV1Body(paymentRequired, outputSchema) {
 function parsePaymentHeaders(headers, acceptsForMatch) {
   const v2 = headers[HEADER_PAYMENT_SIGNATURE];
   if (v2) {
-    const payload = decodeHeader(v2);
+    const payload = decodeClientHeader(v2, 'PAYMENT-SIGNATURE');
     if (payload.x402Version !== 2) throw new PaymentParseError('unsupported x402Version in PAYMENT-SIGNATURE');
-    if (!payload.accepted || typeof payload.accepted !== 'object') {
+    if (!payload.accepted || typeof payload.accepted !== 'object' || Array.isArray(payload.accepted)) {
       throw new PaymentParseError('PAYMENT-SIGNATURE missing accepted requirements');
     }
     return { wireVersion: 2, paymentPayload: payload };
   }
   const v1 = headers[HEADER_X_PAYMENT];
   if (v1) {
-    const p = decodeHeader(v1);
+    const p = decodeClientHeader(v1, 'X-PAYMENT');
     if (p.x402Version !== 1) throw new PaymentParseError('unsupported x402Version in X-PAYMENT');
     const match = (acceptsForMatch || []).find(
       (a) => a.scheme === p.scheme &&
@@ -166,6 +186,7 @@ module.exports = {
   HEADER_X_PAYMENT_RESPONSE,
   encodeHeader,
   decodeHeader,
+  decodeClientHeader,
   buildPaymentRequired,
   validatePaymentRequirements,
   toV1Body,
