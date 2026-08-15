@@ -26,6 +26,7 @@ import pytest
 from core.encoding.cbor import cbor_dumps, cbor_loads
 from core.types.proof import AIProofRef, ProofType, make_envelope
 from core.utils.hash import sha3_256
+from mempool.tx_hash import tx_hash_bytes
 
 from consensus.ai_work_proof import (
     AI_WORK_PROOF_VERSION,
@@ -37,6 +38,7 @@ from consensus.ai_work_proof import (
     work_nullifier,
 )
 from consensus.useful_work_verify import (
+    PAYMENT_EXECUTED,
     POLICY_V1,
     BlockContext,
     PaymentRecord,
@@ -81,6 +83,31 @@ def requester_digest() -> bytes:
     return sha3_256(b"requester-account-key")
 
 
+def paid(
+    sender: bytes,
+    *,
+    to: bytes = None,
+    amount: Optional[int] = None,
+    height: int = None,
+    status: str = PAYMENT_EXECUTED,
+    in_ancestry: bool = True,
+) -> PaymentRecord:
+    """A PaymentRecord in the shape a correct ChainView returns.
+
+    The rejecting values (`unknown` / not-in-ancestry) are the dataclass
+    DEFAULTS, so a test that wants a passing payment has to say so — the same
+    fail-closed direction the real adapter has.
+    """
+    return PaymentRecord(
+        sender=sender,
+        to=TREASURY if to is None else to,
+        amount=POLICY_V1.payment_floor_base_units if amount is None else amount,
+        height=(HEIGHT - 20) if height is None else height,
+        status=status,
+        in_ancestry=in_ancestry,
+    )
+
+
 class FakeChain:
     """Deterministic ChainView stub."""
 
@@ -90,10 +117,12 @@ class FakeChain:
         ancestors: Dict[int, bytes],
         payments: Dict[bytes, PaymentRecord],
         seen: Optional[set] = None,
+        scan_complete: bool = True,
     ):
         self.ancestors = dict(ancestors)
         self.payments = dict(payments)
         self.seen_set = set(seen or ())
+        self.scan_complete = bool(scan_complete)
         self.recorded: list = []
 
     def ancestor_hash_at(self, height: int) -> Optional[bytes]:
@@ -102,7 +131,9 @@ class FakeChain:
     def payment(self, tx_hash: bytes) -> Optional[PaymentRecord]:
         return self.payments.get(bytes(tx_hash))
 
-    def nullifier_seen(self, nullifier: bytes) -> bool:
+    def nullifier_used_in_ancestry(self, nullifier: bytes) -> Optional[bool]:
+        if not self.scan_complete:
+            return None
         return bytes(nullifier) in self.seen_set
 
 
@@ -125,9 +156,8 @@ def make_context(
         chain = FakeChain(
             ancestors={height - 1: ANCHOR_HASH, height - 10: ANCHOR_HASH},
             payments={
-                PAYMENT_TX: PaymentRecord(
-                    sender=requester,
-                    to=TREASURY,
+                PAYMENT_TX: paid(
+                    requester,
                     amount=policy.payment_floor_base_units,
                     height=height - 20,
                 )
@@ -238,7 +268,7 @@ def test_block_level_accept_and_sigma_psi(worker_keys, requester_digest):
     assert report.psi_micro_total == 1_536
     assert report.h_micro > 0
     assert report.s_micro == report.h_micro + report.psi_micro_total
-    assert len(report.nullifiers_to_record) == 2
+    assert len(report.nullifiers_spent) == 2
 
 
 def test_block_with_no_proofs_is_always_accepted():
@@ -249,7 +279,7 @@ def test_block_with_no_proofs_is_always_accepted():
     assert report.ok
     assert report.proof_count == 0
     assert report.psi_micro_total == 0
-    assert report.nullifiers_to_record == ()
+    assert report.nullifiers_spent == ()
 
 
 # ───────────────────────── malformation matrix ───────────────────────────────
@@ -418,11 +448,8 @@ def test_anchor_window_boundaries(worker_keys, requester_digest):
         chain = FakeChain(
             ancestors={anchor_height: ANCHOR_HASH},
             payments={
-                PAYMENT_TX: PaymentRecord(
-                    sender=requester_digest,
-                    to=TREASURY,
-                    amount=POLICY_V1.payment_floor_base_units,
-                    height=min(anchor_height, HEIGHT - 1),
+                PAYMENT_TX: paid(
+                    requester_digest, height=min(anchor_height, HEIGHT - 1)
                 )
             },
         )
@@ -446,12 +473,7 @@ def test_rejects_unresolved_and_mismatched_anchor(worker_keys, requester_digest)
     wrong = FakeChain(
         ancestors={HEIGHT - 1: bytes.fromhex("ee" * 32)},
         payments={
-            PAYMENT_TX: PaymentRecord(
-                sender=requester_digest,
-                to=TREASURY,
-                amount=POLICY_V1.payment_floor_base_units,
-                height=HEIGHT - 20,
-            )
+            PAYMENT_TX: paid(requester_digest)
         },
     )
     ctx2 = make_context(worker_digest=worker, requester=requester_digest, chain=wrong)
@@ -466,19 +488,19 @@ def test_rejects_unresolved_and_mismatched_anchor(worker_keys, requester_digest)
     [
         (lambda p, r: None, "payment_unresolved"),
         (
-            lambda p, r: PaymentRecord(sha3_256(b"someone-else"), TREASURY, p, HEIGHT - 20),
+            lambda p, r: paid(sha3_256(b"someone-else")),
             "payment_sender_mismatch",
         ),
         (
-            lambda p, r: PaymentRecord(r, sha3_256(b"not-the-treasury"), p, HEIGHT - 20),
+            lambda p, r: paid(r, to=sha3_256(b"not-the-treasury")),
             "payment_recipient_not_treasury",
         ),
         (
-            lambda p, r: PaymentRecord(r, TREASURY, p - 1, HEIGHT - 20),
+            lambda p, r: paid(r, amount=p - 1),
             "payment_below_floor",
         ),
         (
-            lambda p, r: PaymentRecord(r, TREASURY, p, HEIGHT - 1),
+            lambda p, r: paid(r, height=HEIGHT - 1),
             "payment_after_anchor",
         ),
     ],
@@ -504,9 +526,7 @@ def test_payment_too_old(worker_keys, requester_digest):
     chain = FakeChain(
         ancestors={HEIGHT - 1: ANCHOR_HASH},
         payments={
-            PAYMENT_TX: PaymentRecord(
-                requester_digest, TREASURY, POLICY_V1.payment_floor_base_units, too_old
-            )
+            PAYMENT_TX: paid(requester_digest, height=too_old)
         },
     )
     body = make_proof_body(worker_keys, requester_digest)
@@ -532,9 +552,7 @@ def test_nullifier_blocks_replay_of_the_same_work(worker_keys, requester_digest)
     chain = FakeChain(
         ancestors={HEIGHT - 1: ANCHOR_HASH},
         payments={
-            PAYMENT_TX: PaymentRecord(
-                requester_digest, TREASURY, POLICY_V1.payment_floor_base_units, HEIGHT - 20
-            )
+            PAYMENT_TX: paid(requester_digest)
         },
         seen={n_work},
     )
@@ -549,9 +567,7 @@ def test_payment_nullifier_blocks_a_second_job_on_one_payment(worker_keys, reque
     chain = FakeChain(
         ancestors={HEIGHT - 1: ANCHOR_HASH},
         payments={
-            PAYMENT_TX: PaymentRecord(
-                requester_digest, TREASURY, POLICY_V1.payment_floor_base_units, HEIGHT - 20
-            )
+            PAYMENT_TX: paid(requester_digest)
         },
         seen={n_pay},
     )
@@ -699,9 +715,7 @@ def test_psi_caps_bound_sigma(worker_keys, requester_digest):
     chain = FakeChain(
         ancestors={HEIGHT - 1: ANCHOR_HASH},
         payments={
-            bytes([200 + i]) * 32: PaymentRecord(
-                requester_digest, TREASURY, POLICY_V1.payment_floor_base_units, HEIGHT - 20
-            )
+            bytes([200 + i]) * 32: paid(requester_digest)
             for i in range(3)
         },
     )
@@ -799,16 +813,82 @@ def test_proofs_registry_is_still_unusable():
 # ─────────────────── block-import gate: shadow vs enforcing ──────────────────
 
 
-class _FakeBlockDB:
-    def __init__(self, payments=None, headers=None):
-        self._payments = payments or {}
-        self._headers = headers or {}
+class _FakeChainDB:
+    """A linear fake chain the real _ImporterChainView can actually walk.
+
+    The view no longer answers from a global tx index; it walks the block's own
+    ancestors and reads their tx sets and proof bodies. So the test double has to
+    be a chain, not a dict of lookups — which is the point: a stub that could
+    answer "is this tx included" without an ancestry would let the split bug back
+    in unnoticed.
+
+    ``kv`` mimics the receipt side-table (b"\x25" || tx_hash -> CBOR receipt).
+    """
+
+    def __init__(self, *, tip_height: int, depth: int = 80):
+        self._headers = {}
+        self._blocks = {}
+        self._hash_by_height = {}
+        self._receipts = {}
+        self.kv = self
+        lo = max(0, tip_height - depth)
+        parent = bytes.fromhex("aa" * 32)
+        for h in range(lo, tip_height + 1):
+            bh = PARENT_HASH if h == tip_height else sha3_256(b"blk:%d" % h)
+            self._hash_by_height[h] = bh
+            header = SimpleNamespace(
+                extra=b"",
+                poiesPolicyRoot=b"\x00" * 32,
+                thetaMicro=THETA_MICRO,
+                height=h,
+                parentHash=parent,
+            )
+            self._headers[bh] = header
+            self._blocks[bh] = SimpleNamespace(header=header, txs=(), proofs=())
+            parent = bh
+
+    # ── construction helpers ────────────────────────────────────────────────
+
+    def hash_at(self, height: int) -> bytes:
+        return self._hash_by_height[int(height)]
+
+    def include_tx(self, tx, *, height: int, status=None):
+        from core.types.receipt import Receipt, ReceiptStatus
+
+        bh = self._hash_by_height[int(height)]
+        blk = self._blocks[bh]
+        blk.txs = tuple(blk.txs) + (tx,)
+        st = ReceiptStatus.SUCCESS if status is None else status
+        self._receipts[bytes(tx_hash_bytes(tx))] = Receipt(
+            status=st, gas_used=21_000, logs=()
+        ).to_cbor()
+        return tx
+
+    def drop_receipt(self, tx):
+        self._receipts.pop(bytes(tx_hash_bytes(tx)), None)
+
+    def include_proofs(self, proofs, *, height: int):
+        bh = self._hash_by_height[int(height)]
+        self._blocks[bh].proofs = tuple(proofs)
+
+    def prune_body(self, *, height: int):
+        """Header stays, body goes — the pruned-node case."""
+        self._blocks.pop(self._hash_by_height[int(height)], None)
+
+    # ── the read API the view uses ──────────────────────────────────────────
 
     def get_header_by_hash(self, h):
         return self._headers.get(bytes(h))
 
-    def get_transaction_by_hash(self, tx_hash):
-        return self._payments.get(bytes(tx_hash))
+    def get_block_by_hash(self, h):
+        return self._blocks.get(bytes(h))
+
+    def get(self, key):
+        if not isinstance(key, (bytes, bytearray)) or len(key) != 33:
+            return None
+        if key[:1] != b"\x25":
+            return None
+        return self._receipts.get(bytes(key[1:]))
 
 
 def _make_importer(block_db):
@@ -817,7 +897,6 @@ def _make_importer(block_db):
     imp = BlockImporter.__new__(BlockImporter)
     imp.params = SimpleNamespace(chain_id=CHAIN_ID, theta_initial=THETA_MICRO)
     imp.block_db = block_db
-    imp._useful_work_nullifiers = None
     return imp
 
 
@@ -831,17 +910,25 @@ def _gate_header():
     )
 
 
-def _payment_tx_row(requester: bytes, *, amount: int, height: int, to: bytes = None):
-    from core.types.tx import TxKind
+def _transfer_tx(sender: bytes, *, amount: int, to: bytes = None, salt: bytes = b"\x00" * 16):
+    from core.types.tx import Tx, TxKind, TxTransfer, UnsignedTx
 
-    tx = SimpleNamespace(
-        unsigned=SimpleNamespace(
-            kind=int(TxKind.TRANSFER),
-            sender=requester,
-            payload=SimpleNamespace(to=(TREASURY if to is None else to), amount=amount),
-        )
+    return Tx(
+        unsigned=UnsignedTx(
+            version=2,
+            chain_id=CHAIN_ID,
+            fork_id=None,
+            valid_after=0,
+            valid_until=1 << 40,
+            salt=salt,
+            gas_price=1,
+            gas_limit=21_000,
+            sender=sender,
+            kind=TxKind.TRANSFER,
+            payload=TxTransfer(to=(TREASURY if to is None else to), amount=amount),
+        ),
+        sigs=(),
     )
-    return (height, 0, b"\x00" * 32, tx)
 
 
 def _gate_block(worker: bytes, proofs):
@@ -857,12 +944,16 @@ def gate_env(monkeypatch):
     yield monkeypatch
 
 
+def _fresh_chain(*, tip_height: int = HEIGHT - 1, depth: int = 80):
+    return _FakeChainDB(tip_height=tip_height, depth=depth)
+
+
 def test_gate_enforcing_rejects_invalid_proof(worker_keys, requester_digest, gate_env, caplog):
     pk, _ = worker_keys
     worker = account_digest_for_pubkey(pk)
     body = make_proof_body(worker_keys, requester_digest, sign=False)  # bad signature
     block = _gate_block(worker, [wrap_proof(body)])
-    imp = _make_importer(_FakeBlockDB())
+    imp = _make_importer(_fresh_chain())
 
     reason = imp._verify_block_useful_work_gated(
         block=block,
@@ -881,7 +972,7 @@ def test_gate_shadow_never_rejects(worker_keys, requester_digest, gate_env, capl
     worker = account_digest_for_pubkey(pk)
     body = make_proof_body(worker_keys, requester_digest, sign=False)
     block = _gate_block(worker, [wrap_proof(body)])
-    imp = _make_importer(_FakeBlockDB())
+    imp = _make_importer(_fresh_chain())
 
     with caplog.at_level(logging.ERROR, logger="animica.chain.block_import"):
         reason = imp._verify_block_useful_work_gated(
@@ -903,7 +994,7 @@ def test_gate_grandfathered_below_activation_height(worker_keys, requester_diges
     worker = account_digest_for_pubkey(pk)
     body = make_proof_body(worker_keys, requester_digest, sign=False)
     block = _gate_block(worker, [wrap_proof(body)])
-    imp = _make_importer(_FakeBlockDB())
+    imp = _make_importer(_fresh_chain())
     assert (
         imp._verify_block_useful_work_gated(
             block=block,
@@ -936,63 +1027,82 @@ def test_mainnet_has_no_default_activation_height(monkeypatch):
     assert is_fork_active(FORK_USEFUL_WORK_VERIFY, 73_549, chain_id=1) is True
 
 
-def test_gate_accepts_and_then_blocks_replay_across_blocks(
-    worker_keys, requester_digest, gate_env
-):
-    """The whole point of the nullifier: a receipt that was good in block N must
-    not be good again in block N+1, even re-signed for the new slot."""
-    pk, sk = worker_keys
-    worker = account_digest_for_pubkey(pk)
-    payments = {
-        PAYMENT_TX: _payment_tx_row(
-            requester_digest, amount=POLICY_V1.payment_floor_base_units, height=HEIGHT - 20
-        )
-    }
-    imp = _make_importer(_FakeBlockDB(payments=payments))
+def _paid_chain(requester: bytes, *, pay_height: int = HEIGHT - 20, status=None):
+    """A chain whose block at ``pay_height`` contains a successful 1 ANM transfer
+    from ``requester`` to the treasury."""
+    db = _fresh_chain()
+    tx = _transfer_tx(requester, amount=POLICY_V1.payment_floor_base_units)
+    db.include_tx(tx, height=pay_height, status=status)
+    return db, bytes(tx_hash_bytes(tx))
 
-    # The real ChainView walks the block's own parent chain, so the anchor at
-    # HEIGHT-1 is the parent hash itself.
-    body1 = make_proof_body(worker_keys, requester_digest, anchor_hash=PARENT_HASH)
-    block1 = _gate_block(worker, [wrap_proof(body1)])
-    reason1 = imp._verify_block_useful_work_gated(
-        block=block1,
-        header=block1.header,
+
+def test_gate_accepts_a_good_proof_end_to_end(worker_keys, requester_digest, gate_env):
+    pk, _ = worker_keys
+    worker = account_digest_for_pubkey(pk)
+    db, pay_hash = _paid_chain(requester_digest)
+    imp = _make_importer(db)
+    body = make_proof_body(
+        worker_keys,
+        requester_digest,
+        anchor_hash=db.hash_at(HEIGHT - 1),
+        payment_tx=pay_hash,
+    )
+    block = _gate_block(worker, [wrap_proof(body)])
+    assert (
+        imp._verify_block_useful_work_gated(
+            block=block,
+            header=block.header,
+            header_hash=HEADER_HASH,
+            parent_hash=PARENT_HASH,
+            height=HEIGHT,
+        )
+        is None
+    )
+
+
+def test_gate_blocks_replay_from_an_ancestor(worker_keys, requester_digest, gate_env):
+    """A receipt spent by an ANCESTOR must not be spendable again, even re-signed
+    for the new slot. Decided by re-deriving the tag from the ancestor's body —
+    no store, so a restart cannot forget it and a reorg cannot strand it."""
+    pk, _ = worker_keys
+    worker = account_digest_for_pubkey(pk)
+    db, pay_hash = _paid_chain(requester_digest)
+    imp = _make_importer(db)
+
+    # The proof as it appeared in the ancestor at HEIGHT-1.
+    spent_body = make_proof_body(
+        worker_keys,
+        requester_digest,
+        height=HEIGHT - 1,
+        parent_hash=db.hash_at(HEIGHT - 2),
+        anchor_height=HEIGHT - 2,
+        anchor_hash=db.hash_at(HEIGHT - 2),
+        payment_tx=pay_hash,
+    )
+    db.include_proofs([wrap_proof(spent_body)], height=HEIGHT - 1)
+
+    # Same job + same payment, re-signed for THIS slot.
+    body = make_proof_body(
+        worker_keys,
+        requester_digest,
+        anchor_hash=db.hash_at(HEIGHT - 1),
+        payment_tx=pay_hash,
+    )
+    block = _gate_block(worker, [wrap_proof(body)])
+    reason = imp._verify_block_useful_work_gated(
+        block=block,
+        header=block.header,
         header_hash=HEADER_HASH,
         parent_hash=PARENT_HASH,
         height=HEIGHT,
     )
-    assert reason1 is None, reason1
-
-    # Same job + same payment, re-signed for the NEXT slot (height+1, new parent).
-    next_parent = bytes.fromhex("33" * 32)
-    body2 = make_proof_body(
-        worker_keys,
-        requester_digest,
-        height=HEIGHT + 1,
-        parent_hash=next_parent,
-        anchor_height=HEIGHT,
-        anchor_hash=next_parent,
-    )
-    header2 = _gate_header()
-    header2.extra = cbor_dumps({"coinbase": worker})
-    header2.height = HEIGHT + 1
-    header2.parentHash = next_parent
-    block2 = SimpleNamespace(header=header2, txs=(), proofs=(wrap_proof(body2),))
-    reason2 = imp._verify_block_useful_work_gated(
-        block=block2,
-        header=header2,
-        header_hash=HEADER_HASH,
-        parent_hash=next_parent,
-        height=HEIGHT + 1,
-    )
-    assert reason2 is not None
-    assert "nullifier_replay" in reason2
+    assert reason is not None and "nullifier_replay" in reason, reason
 
 
 def test_gate_is_a_noop_for_blocks_without_proofs(gate_env):
-    """Live mainnet: 95,004 of 95,004 stored blocks carry zero proofs. Activation
-    must be inert for them."""
-    imp = _make_importer(_FakeBlockDB())
+    """Live mainnet: 200 of 200 sampled blocks (heights 1..73,570, recon
+    2026-08-15) commit proofsRoot = ZERO32. Activation must be inert for them."""
+    imp = _make_importer(_fresh_chain())
     header = _gate_header()
     block = SimpleNamespace(header=header, txs=(), proofs=())
     assert (

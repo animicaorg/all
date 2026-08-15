@@ -5,8 +5,18 @@ Operational procedure for `FORK_USEFUL_WORK_VERIFY` (`core/network_params.py`,
 
 The security properties, and the things this rule explicitly does **not**
 provide, are in the module docstring of `consensus/useful_work_verify.py` under
-`RESIDUAL WEAKNESSES`. Read that before arming anything. This file is the
-procedure only.
+`FORGERY VERDICT` and `RESIDUAL WEAKNESSES`. Read those before arming anything.
+This file is the procedure only.
+
+**The one-sentence honest summary, so it cannot be lost in the procedure:** this
+rule does *not* force a miner to run a model. Check 2 requires the receipt's
+worker to be the block's coinbase, so every valid proof is self-signed by the
+miner; a null worker with a fabricated `outputDigest` passes. Do not describe it
+to operators or miners as "serve or don't mine".
+
+A full operator rollout runbook, including the live-node deployment mechanics and
+the go/no-go for the *required-proof* fork, lives at
+`/root/animica-growth-staging/RUNBOOK-USEFUL-WORK.md`.
 
 ---
 
@@ -46,9 +56,10 @@ Setting the height below the head makes the gate evaluate every incoming block
 immediately, which is what produces telemetry. The shadow env makes it
 observe-only: it logs the verdict and returns `None`.
 
-Restart the node so the env is picked up. **Nullifiers are not recorded in shadow
-mode** — a shadow node must not accumulate replay state from a rule it is only
-observing.
+Restart the node so the env is picked up. The rule records **no state in any
+mode**: replay is decided by re-deriving nullifiers from the block's own
+ancestors, so a shadow node and an enforcing node compute the same verdict from
+the same chain.
 
 ## 3. What to watch
 
@@ -63,13 +74,25 @@ Logger `animica.chain.block_import`.
 Every line carries structured `extra`: `height`, `proofs`, `psi_micro_total`,
 `h_micro`, `theta_micro`, `s_micro`, `theta_ok`, `failures[]`, `policy_digest`.
 
-Reasons that indicate a **node-local** problem rather than a bad block, and that
-must read **zero** before enforcement:
+Reasons that indicate a **node-local** problem rather than a bad block. Each of
+these means *this node would reject a block another node accepts*, i.e. a split
+under enforcement. All must read **zero** across the whole fleet:
 
-* `payment_unresolved` — this node's transaction index cannot find the payment
-  tx. A node with a pruned index would reject a block a complete node accepts.
-* `anchor_unresolved` — the ancestor at `anchorHeight` is not reachable locally.
-* `verifier_unavailable:*` — this build's verifier does not import. Fix the build.
+| Reason | Meaning | Fix |
+|---|---|---|
+| `payment_status_unknown` | The payment tx was found in the ancestry but this node has no execution receipt for it. **The known blocker** — headers commit `receiptsRoot = 0`, so status is not chain-derived. Expected on any node that snapshot-synced past the range. | Commit receipts in a header root, or replace the payment check. Not fixable by configuration. |
+| `nullifier_scan_incomplete` | A block body inside the `payment_max_age` (64-block) window is missing, so the replay scan could not complete. | Stop pruning bodies inside the window. |
+| `payment_unresolved` | The payment tx is in no ancestor of this block within the window. Usually a genuinely bad proof; investigate before assuming node-local. | — |
+| `payment_not_in_ancestry` | A `ChainView` answered without proving ancestry. Should be unreachable with the shipped adapter. | Bug — report it. |
+| `anchor_unresolved` | The ancestor at `anchorHeight` is not reachable locally. | Check body retention. |
+| `worker_sig_backend_unavailable` | This build cannot verify ML-DSA-65 at all (missing `animica._vendor.dilithium_py_v2`). Every proof fails **on this node only**. | Reinstall. A loud one-shot `log.error` also fires the first time a proof-carrying block arrives. |
+| `verifier_unavailable:*` | This build's verifier does not import. | Fix the build. |
+
+Reasons that indicate a **bad block** (safe to reject, no fleet action):
+`worker_sig_invalid`, `worker_not_miner`, `self_dealing_same_identity`,
+`payment_reverted`, `payment_below_floor`, `payment_after_anchor`,
+`payment_too_old`, `nullifier_replay_work`, `nullifier_replay_payment`,
+`slot_mismatch`, `anchor_hash_mismatch`, `structure:*`, `unsupported_proof_type:*`.
 
 ## 4. Go / no-go for enforcement
 
@@ -78,12 +101,21 @@ Do **not** unset the shadow env until all of the following hold:
 1. A non-zero `proofs` count has been observed on real blocks for a sustained
    window (days, not blocks). Until then there is nothing to enforce and
    enforcement buys nothing.
-2. Zero occurrences of `payment_unresolved`, `anchor_unresolved`, and
-   `verifier_unavailable` across **every** node in the fleet, not just one.
-3. The nullifier store has been made persistent. Today it is
-   `MemoryNullifierStore`, rebuilt empty on restart — a restarted enforcing node
-   forgets recorded tags and would re-accept a replayed proof inside the window.
-   This is a real gap and is the single biggest blocker to enforcement.
+2. Zero occurrences of every node-local reason in the table above, across
+   **every** node in the fleet, not just one.
+3. **`payment_status_unknown` is structurally impossible, not merely observed at
+   zero.** This is now the single biggest blocker. Payment execution status is
+   read from the node-local receipt side-table (`b"\x25" || tx_hash`) because
+   headers commit `receiptsRoot = 0`; a node that snapshot-synced past a range
+   has no entry and fails closed while an executing node accepts. Either commit
+   receipts in a header root so status is chain-derived, or replace the payment
+   check with something verifiable from block bodies alone. Observing zero in a
+   window where no proofs exist proves nothing.
+
+   (The *previous* biggest blocker — an in-memory `MemoryNullifierStore` that was
+   written for side-chain blocks, never unwound on reorg and emptied by a restart
+   — is FIXED. Replay is now decided by re-deriving the tags from the block's own
+   ancestors, so there is no store, nothing to unwind, and nothing to forget.)
 4. `ANIMICA_AICF_REQUIRE_SETTLEMENT=1` remains set, and
    `rpc/methods/aicf_jobs.submit_inference_job` has been changed to actually
    verify the payment tx's `to` and `value` (today neither is checked, and
@@ -114,7 +146,8 @@ time), and ship it as its own release.
 
 Unset `ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT` and restart. The gate returns
 `None` at every height and the node behaves exactly as it did before this
-release. There is no persisted state to unwind while the store is in-memory.
+release. There is **no persisted state to unwind at all** — the rule writes
+nothing, by design.
 
 Once a height is pinned in code, rollback is the env override again
 (`ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT` to a very large number), applied to the

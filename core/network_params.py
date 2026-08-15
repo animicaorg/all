@@ -491,6 +491,22 @@ FORK_IOU_SETTLEMENT = FORK_VPN_RELAY_REWARDS
 #   3. It cannot make self-dealing impossible. See the "residual weakness" docstring
 #      in consensus/useful_work_verify.py — a permissionless miner can always fund a
 #      second identity. The design goal is a priced floor, not a barrier.
+#   4. IT DOES NOT FORCE REAL INFERENCE, and cannot in this shape. Check 2 requires
+#      worker == coinbase, so the receipt is ALWAYS self-signed by the miner; a
+#      miner running a null worker satisfies every check with a fabricated
+#      outputDigest. That is asserted by a regression test
+#      (consensus/tests/test_useful_work_adversarial.py::
+#      test_forged_proof_for_zero_inference_is_accepted) precisely so it cannot be
+#      quietly re-described as "serve or don't mine". Do not present it that way to
+#      operators or miners.
+#
+# ENFORCEMENT PREREQUISITE (not yet met, 2026-08-15): payment execution status is
+# read from the node-local receipt side-table because headers commit
+# receiptsRoot = 0, so the outcome of a transfer is not chain-derived. The verifier
+# fails closed with `payment_status_unknown`, which is safe while the gate is
+# disabled or observe-only but would split an enforcing fleet between nodes that
+# executed a range and nodes that snapshot-synced past it. Fix that (commit
+# receipts in a header root, or replace the payment check) before enforcing.
 #
 # SHADOW SWITCH: ANIMICA_USEFUL_WORK_SHADOW=1 makes the gate observe-only (log the
 # would-be rejection with reason/height/proof index/type, accept anyway), modelled on

@@ -7,11 +7,21 @@ This is the verifier that ``core/chain/block_import.py`` calls behind
 
     "Is every useful-work proof this block carries valid, and what is Σψ?"
 
-It is PURE. Every input is (a) a field of the block, (b) data already committed
-in the chain below it (reached through the ``ChainView`` the caller supplies),
-or (c) a constant in this file. No clock, no environment read, no filesystem
-access, no network, no ambient randomness. ``verify_block_useful_work`` called
-twice with equal inputs returns an equal report, on any node.
+This module is PURE. Every input is (a) a field of the block, (b) data reached
+through the ``ChainView`` the caller supplies, or (c) a constant in this file.
+No clock, no environment read, no filesystem access, no network, no ambient
+randomness. ``verify_block_useful_work`` called twice with equal inputs returns
+an equal report, on any node.
+
+**Purity of the module is not purity of the rule.** The verdict is only as
+deterministic as the ``ChainView`` implementation. A ``ChainView`` that answers
+from a global index, a node-local cache, or in-memory state makes acceptance a
+per-node decision, i.e. a chain split. The protocol below therefore specifies
+*ancestry-derived* answers, and the shipped implementation
+(``core.chain.block_import._ImporterChainView``) derives all three from the
+block's own ancestor chain — with ONE residual exception, payment execution
+status, called out under RESIDUAL WEAKNESSES. That exception is a hard blocker
+for enforcement, not a footnote.
 
 ------------------------------------------------------------------------------
 WHAT THIS RULE DOES AND DOES NOT DO — read before planning enforcement
@@ -34,7 +44,53 @@ change, and would split the network; it is deliberately out of scope. As wired,
 this gate can only ever reject a block PoW already accepted — it can never admit
 one PoW rejected.
 
+**It does not force real inference, and it never will in this shape.** Read the
+FORGERY VERDICT below before presenting this rule to anyone as "serve or don't
+mine". It is not that.
+
 **It cannot make self-dealing impossible.** See RESIDUAL WEAKNESSES below.
+
+------------------------------------------------------------------------------
+FORGERY VERDICT — the honest answer to "does the receipt binding force work?"
+------------------------------------------------------------------------------
+
+**No. A miner running a null worker satisfies every check, and check 2 requires
+it to.**
+
+The signature is ``DOMAIN_AI_WORK_SIG || cbor(body minus workerPk/workerSig)``,
+made by the holder of the key whose ``sha3_256(pk)`` equals ``worker``. Check 2
+requires ``worker == the block's coinbase digest``. So the signer is, by
+construction, the miner. The signature proves custody of the payout key and
+says nothing whatsoever about inference. ``promptDigest``, ``outputDigest``,
+``jobId`` and ``modelId`` are miner-chosen bytes; ``tokensIn``/``tokensOut`` are
+self-reported. There is no worker registry, no requester counter-signature, no
+trap set, no redundancy, no re-execution. A proof over
+``outputDigest = sha3_256(b"garbage")`` verifies in ~21 ms. This is pinned by
+``consensus/tests/test_useful_work_adversarial.py::test_forged_proof_for_zero_
+inference_is_accepted`` — a regression test that asserts the FORGERY, so nobody
+later mistakes the rule for an anti-fake-work defence.
+
+Two structural consequences follow from check 2, and both are costs:
+
+* A miner that legitimately BUYS inference from a third-party GPU worker can
+  never attach that worker's receipt — the digests will not match. The rule
+  makes honest third-party sourcing invalid and self-dealing the only permitted
+  shape.
+* The private key controlling the mining payout address must be hot in the
+  mining process, signing once per block attempt (the body contains ``slot``,
+  which binds chainId+height+parentHash, so signatures cannot be pre-minted in
+  bulk for unknown parents). Today miners can point ``--address`` at a cold or
+  custodied address; under a required-proof rule they could not. For
+  pool.animica.org the coinbase is the pool's address, so only the pool operator
+  could sign and there is no path to attribute a receipt to the share submitter
+  who actually ran the GPU. That is a real security regression traded for a
+  signature that proves nothing about work.
+
+Making a proof mean something needs redundancy, traps, TEE attestation, or
+staking with slashing. None of those exist and work in this tree. The
+recommended shape if this is ever revisited: a separately registered worker key
+with an on-chain delegation to the coinbase, so the payout key stays cold, pools
+can attribute per share, and third-party workers become legal.
 
 ------------------------------------------------------------------------------
 The five checks on an AI proof (see consensus/ai_work_proof.py for the body)
@@ -47,6 +103,10 @@ The five checks on an AI proof (see consensus/ai_work_proof.py for the body)
    constant in ``consensus/ai_work_proof.py`` — never read from the proof.
    (0x1001/0x1002 are forgeable stubs in this tree; a verifier that lets the
    object name its own algorithm lets the attacker pick a broken one.)
+   A MISSING PQ backend is reported as ``worker_sig_backend_unavailable``,
+   never as ``worker_sig_invalid``: a build defect and a bad block must not be
+   indistinguishable in the logs, because one is fixed by reinstalling and the
+   other by banning a peer.
 
 2. **The miner is the worker.** ``worker`` must equal the block's coinbase
    account digest. Compared as 32-byte digests, never as bech32m strings.
@@ -55,41 +115,92 @@ The five checks on an AI proof (see consensus/ai_work_proof.py for the body)
    a second identity — its only function is to force check 4 to be paid by a
    different account.
 
-4. **The requester paid.** ``paymentTxHash`` must reference a TRANSFER already
-   included in an ancestor of this block, at a height in
+4. **The requester paid, and the payment EXECUTED.** ``paymentTxHash`` must
+   reference a TRANSFER included in an ANCESTOR of this block at a height in
    ``[H - payment_max_age, anchorHeight]``, whose sender is ``requester``, whose
-   recipient is the code-committed AICF treasury digest for this chain, and
-   whose amount is at least ``payment_floor_base_units``. This is the only check
-   that costs an attacker anything.
+   recipient is the code-committed AICF treasury digest for this chain, whose
+   amount is at least ``payment_floor_base_units``, **and whose execution
+   receipt status is SUCCESS**.
+
+   The execution-status half is not optional decoration; without it this check
+   costs zero. An under-funded TRANSFER raises ``InsufficientBalance``
+   (``execution/runtime/transfers.py``) BEFORE any debit, ``apply_block`` turns
+   that into a REVERT with ``gas_used = 0``, the journal rolls it back, the
+   block stays valid, and the tx index entry is still written. A miner could
+   therefore satisfy "the requester paid 1 ANM" with a transfer from an empty
+   account that moved nothing and paid no fee: 0 ANM principal, 0 ANM fee. That
+   attack is pinned by ``test_useful_work_adversarial.py::
+   test_reverted_payment_is_rejected``.
+
+   Inclusion is resolved by scanning the block's OWN ancestors, never a global
+   tx index: the index is a canonical-height view that is never deleted on
+   reorg, so a payment that exists only on an orphaned fork would otherwise
+   satisfy this check on the canonical chain.
 
 5. **Fresh and single-use.** ``anchorHeight ∈ [H - anchor_window, H - 1]`` and
    ``anchorHash`` equals the header hash of THIS block's ancestor at that height
    (ancestor, not "canonical at that height" — on a fork those differ and the
-   canonical index is not a property of the block being validated). Single-use
-   via two nullifiers (work instance, and payment) checked against the
-   ``NullifierStore`` window and recorded at H after acceptance.
+   canonical index is not a property of the block being validated).
+
+   Single-use is decided by scanning the block's own ancestry for the same
+   nullifier, NOT by a node-local nullifier store. That distinction is the
+   difference between a replay rule and a chain split: an in-memory store is
+   written for side-chain blocks that never become canonical, is never unwound
+   on reorg, is emptied by a restart, and is absent entirely on a snapshot-
+   synced node — so two honest nodes would disagree about ACCEPTANCE, not just
+   about replay. Pinned by ``test_useful_work_adversarial.py::
+   test_orphaned_block_does_not_poison_the_canonical_chain``.
+
+   The scan window is exactly ``payment_max_age`` blocks, and that is
+   *provably complete* rather than a guess. If nullifier N is used at H1 and
+   again at H2 > H1 on one chain, both uses name the same ``paymentTxHash``,
+   hence the same inclusion height P. Check 4 gives ``P <= anchorHeight_1 <=
+   H1 - 1`` and ``P >= H2 - payment_max_age``; combining,
+   ``H1 >= H2 - payment_max_age + 1``. So H1 always lies inside the window
+   scanned at H2. (This is why ``payment_max_age`` is pinned equal to
+   ``anchor_window`` — it bounds the scan as well as the payment.)
 
 Plus, block-wide: a ``slot`` binding to (chainId, height, parentHash) so a proof
 cannot be lifted into another block; a cap on proofs per block; and — when the
 header commits a non-zero ``poiesPolicyRoot`` — the committed policy root must
 equal this module's ``POLICY_V1_DIGEST``.
 
+A note on ``anchorHeight``/``anchorHash``, so the next reader does not have to
+re-derive it: **they add no freshness that ``slot`` does not already provide.**
+``slot = sha3(domain || chainId || height || parentHash)`` pins the exact fork
+position at H-1, which is strictly stronger than an anchor at H-64. The anchor's
+only remaining function is bounding the payment window from above
+(``payment.height <= anchorHeight``), which ``H - 1`` would do directly. They are
+kept because changing the body shape would churn the codec and every test for no
+security gain; a v2 body should drop them and bound the payment by ``H - 1``.
+
 ------------------------------------------------------------------------------
 RESIDUAL WEAKNESSES — stated plainly, because the honest claim is narrow
 ------------------------------------------------------------------------------
 
-* **Self-dealing is priced, not prevented.** A miner can create a second
-  account, fund it, and pay itself for jobs it "served". Checks 3 and 4 do not
-  stop that; they make it cost ``payment_floor_base_units + tx fee`` per block
-  mined, paid to the AICF treasury (an account the miner does not control). The
-  defensible claim is exactly: *mining with an AI proof costs at least the
-  payment floor per block, transferred to the treasury.* With the default floor
-  of 1 ANM against a miner subsidy of ~150 ANM/block, that is a ~0.7% tax, NOT a
-  barrier. Raising the floor above the subsidy would make self-dealing
-  unprofitable and would simultaneously make honest inference absurdly expensive
-  (nobody pays 150 ANM for one completion). That tension is real and this module
-  does not resolve it; it only makes the price an explicit, code-committed
-  number that governance can move.
+* **Self-dealing is priced, not prevented — and even the price is soft.** A
+  miner can create a second account, fund it, and pay itself for jobs it
+  "served". Checks 3 and 4 do not stop that. With the execution-status check in
+  place the narrowest defensible claim is: *on a node that can resolve the
+  payment receipt, mining with an AI proof requires a SUCCESSFULLY EXECUTED
+  transfer of at least the payment floor from a second identity to the AICF
+  treasury.* Note what that sentence does not say:
+
+  - it is a ~0.7% tax, not a barrier — 1 ANM against a ~150 ANM/block subsidy;
+  - raising the floor above the subsidy would kill self-dealing and
+    simultaneously make honest inference absurd (nobody pays 150 ANM for one
+    completion). That tension is real and unresolved here; the floor is simply
+    an explicit, code-committed number governance can move;
+  - **the payment is substantially refundable to the attacker.** The treasury
+    is swept into the AICF state pool (``execution/state/aicf_treasury.py``)
+    and ``distribute_epoch_to_miners`` (``execution/state/aicf_state.py``) pays
+    the epoch budget pro-rata to AICF credit holders — a path live-wired in
+    ``core/chain/block_import.py``. A miner that is also the network's only
+    credit-earning provider gets its own payment back. On a network with one
+    dominant miner, that is the expected case, not the corner case.
+
+  Do not repeat the earlier form of this claim ("costs at least the payment
+  floor per block") without those three qualifiers.
 
 * **The work itself is not verified.** ``outputDigest`` binds *an* output, not a
   *correct* one. Nothing here proves the model ran, or ran honestly. The
@@ -103,17 +214,42 @@ RESIDUAL WEAKNESSES — stated plainly, because the honest claim is narrow
   consensus credit, self-reported tokens become a direct minting lever and must
   be replaced by something the requester also signs.
 
-* **The payment check depends on a non-pruned transaction index.** A node that
-  cannot resolve ``paymentTxHash`` returns ``payment_unresolved`` and, in
-  enforcing mode, rejects — while a node with a complete index accepts. That is
-  a per-node input in a consensus decision, i.e. a split risk. It is why the
-  reason string is distinct: shadow-mode telemetry must show a zero rate for it
-  before enforcement is switched on. The nullifier store has the same property
-  (its window is bounded and, when oversized, it evicts oldest-first, which
-  re-opens replay for evicted tags — hence ``max_proofs_per_block``).
+* **THE BLOCKER: payment execution status is still a per-node input.** Chain
+  headers commit ``receiptsRoot = 0`` (all 73,570 mainnet headers as of
+  2026-08-15), so nothing about execution outcome is committed on-chain and
+  nothing in a block body reveals whether a transfer succeeded. The shipped
+  ``ChainView`` therefore reads the node's local receipt side-table
+  (``b"\\x25" || tx_hash``, written by ``BlockImporter._persist_receipts``).
+  That table is best-effort — its write is wrapped in a swallow-all except, and
+  a node that runs without a state DB never writes it at all — so a node
+  missing the entry answers ``unknown``.
+
+  The verifier FAILS CLOSED on ``unknown`` (reason
+  ``payment_status_unknown``), which is the safe direction for a rule that is
+  disabled by default, but it means an enforcing fleet could split between
+  nodes that executed a range and nodes that snapshot-synced past it. **This is
+  a hard prerequisite for enforcement, not a caveat**: either receipts must be
+  committed in a header root (so status is chain-derived), or the payment check
+  must be replaced with something structurally verifiable from block bodies
+  alone. Shadow telemetry must show a zero rate for ``payment_status_unknown``
+  AND ``payment_not_in_ancestry`` AND ``nullifier_scan_incomplete`` across a
+  full observation window before anyone proposes enforcing.
+
+* **The ancestry scan needs the last ``payment_max_age`` blocks.** A node that
+  has pruned block bodies inside that window cannot complete the payment or
+  nullifier scan and returns ``nullifier_scan_incomplete`` /
+  ``payment_unresolved``. That is a much weaker requirement than the complete,
+  never-pruned global tx index the previous design needed (64 recent blocks vs
+  all history), but it is still a requirement, and it is still fail-closed.
 
 * **A second identity is free to create.** Only funding it costs anything.
   Nothing on a permissionless chain changes that.
+
+* **One residual un-gated import path exists in this tree, pre-existing.**
+  ``mining/adapters/core_chain.py`` persists a block and sets the head with NO
+  validation when ``core.chain.block_import`` cannot be imported. It is not
+  introduced here and not reachable on a healthy build, but it is a bypass of
+  every gate in ``import_block``, this one included.
 """
 
 from __future__ import annotations
@@ -139,15 +275,21 @@ __all__ = [
     "POLICY_V1",
     "POLICY_V1_DIGEST",
     "PaymentRecord",
+    "PAYMENT_EXECUTED",
+    "PAYMENT_FAILED",
+    "PAYMENT_STATUS_UNKNOWN",
     "ChainView",
     "BlockContext",
     "ProofVerdict",
     "BlockUsefulWorkReport",
     "verify_block_useful_work",
     "verify_ai_work_proof",
+    "ai_work_nullifiers_of_body",
+    "block_ai_work_nullifiers",
     "block_miner_digest",
     "h_micro_from_hash256",
     "canonical_proof_type_name",
+    "pq_backend_available",
     "SUPPORTED_PROOF_TYPE_NAMES",
 ]
 
@@ -224,9 +366,14 @@ class UsefulWorkPolicy:
 
     # ── structural bounds ────────────────────────────────────────────────────
     max_proofs_per_block: int = 8
-    """Bounded so a block cannot exhaust the nullifier store's oversize guard
-    (``consensus/nullifiers.MemoryNullifierStore`` evicts oldest-first when
-    ``max_entries`` is exceeded, and an evicted tag becomes replayable)."""
+    """Bounds the per-block verification cost: at most 8 ML-DSA-65 verifies
+    (0.166 s measured, against a ~102 s block interval) and at most 8 tags to
+    resolve against the ancestry scan. Verification is PoW-gated — ``_pow_sanity``
+    runs long before this gate — so an attacker must find a real block to trigger
+    any of it. This bound used to exist for a different reason (an oversized
+    proof set could evict entries from a fixed-size in-memory nullifier store and
+    re-open replay); that store is gone, and the bound is now purely about
+    cost."""
 
     max_proof_body_bytes: int = 8_192
     """One AIWorkProofV1 is ~5.5 KB (1952 B pubkey + 3309 B signature + fields).
@@ -238,12 +385,25 @@ class UsefulWorkPolicy:
 
     # ── freshness / payment windows (blocks; height is the only time source) ─
     anchor_window: int = 64
-    """``H - anchor_window <= anchorHeight <= H - 1``. ~1.8 h at 102 s/block.
-    Kept far below ``consensus.nullifiers.Config.window`` (10,000) so a proof is
-    always "too old to use" long before its nullifier is forgotten."""
+    """``H - anchor_window <= anchorHeight <= H - 1``. ~1.8 h at 102 s/block."""
 
-    payment_max_age: int = 1_024
-    """The payment tx must be included no more than this many blocks below H."""
+    payment_max_age: int = 64
+    """The payment tx must be included no more than this many blocks below H.
+
+    PINNED EQUAL TO ``anchor_window``, and that equality is load-bearing twice
+    over, not a coincidence:
+
+    * it is the width of the ancestry scan that decides both payment inclusion
+      and nullifier replay (see check 5 in the module docstring for the proof
+      that ``payment_max_age`` blocks is exactly sufficient, and
+      ``test_policy_windows_are_consistent`` for the invariant);
+    * it bounds the per-block work: a proof-carrying block walks at most
+      ``payment_max_age`` ancestors, so verification cost is O(64 blocks)
+      rather than O(1024) or O(chain).
+
+    It was 1,024 in the first draft, when replay was decided by an in-memory
+    ``NullifierStore``; that store was the split bug this window replaces.
+    """
 
     payment_floor_base_units: int = 1_000_000_000
     """1 ANM (1e9 base units). THIS IS A TAX, NOT A BARRIER — see RESIDUAL
@@ -303,25 +463,61 @@ class UsefulWorkPolicy:
 POLICY_V1 = UsefulWorkPolicy()
 POLICY_V1_DIGEST = POLICY_V1.digest()
 
+# The completeness proof for the replay scan (module docstring, check 5) needs
+# payment_max_age >= anchor_window. Assert it at import so a future tweak to one
+# constant cannot silently open a replay window.
+assert POLICY_V1.payment_max_age >= POLICY_V1.anchor_window, (
+    "payment_max_age must be >= anchor_window or the ancestry replay scan is "
+    "no longer complete"
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Chain view — the only way this module reaches committed state
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+# Execution outcome of a resolved payment, as far as the node can tell.
+PAYMENT_EXECUTED = "executed"
+"""The payment's receipt says SUCCESS: value actually moved."""
+PAYMENT_FAILED = "failed"
+"""The payment's receipt says REVERT/OOG: included, but moved nothing."""
+PAYMENT_STATUS_UNKNOWN = "unknown"
+"""No receipt available on this node. FAIL-CLOSED, and a split risk under
+enforcement — see THE BLOCKER in the module docstring."""
+
+
 @dataclass(frozen=True)
 class PaymentRecord:
-    """A TRANSFER already included in the chain, as the verifier needs it."""
+    """A TRANSFER included in the chain, as the verifier needs it.
+
+    ``status`` and ``in_ancestry`` default to the REJECTING values on purpose: a
+    ``ChainView`` written against the old three-field shape now fails closed
+    instead of silently accepting a reverted or off-chain payment.
+    """
 
     sender: bytes  # 32-byte account digest
     to: bytes  # 32-byte account digest
     amount: int  # base units (1 ANM = 1e9)
     height: int  # inclusion height
+    status: str = PAYMENT_STATUS_UNKNOWN
+    in_ancestry: bool = False
+    """True only if the including block is an ancestor of the block under test.
+    A global tx index cannot answer this — it is a canonical-height view whose
+    entries survive a reorg — so an implementation that cannot prove ancestry
+    must leave this False."""
 
 
 class ChainView(Protocol):
-    """Committed-chain lookups. Implementations must be pure with respect to the
-    chain: same chain + same argument -> same answer, on every node."""
+    """Chain lookups for the verifier.
+
+    Implementations MUST answer from the block's own ancestry. "Same chain, same
+    argument -> same answer on every node" is not enough; the answer has to be
+    the same for every node validating THIS block, which during a reorg is a
+    different question. Anything resolved from a canonical-height index, a
+    node-local cache, or process memory belongs to the node, not to the chain,
+    and putting it in an acceptance decision splits the network.
+    """
 
     def ancestor_hash_at(self, height: int) -> Optional[bytes]:
         """Header hash of THIS block's ancestor at ``height``.
@@ -332,10 +528,23 @@ class ChainView(Protocol):
         pruned, missing)."""
 
     def payment(self, tx_hash: bytes) -> Optional[PaymentRecord]:
-        """Resolve an included transfer by hash, or None if not found."""
+        """Resolve a transfer included in an ANCESTOR of this block.
 
-    def nullifier_seen(self, nullifier: bytes) -> bool:
-        """True if this nullifier is already recorded in the active window."""
+        Returns None when the tx is not found in the scanned ancestry. A record
+        with ``in_ancestry=False`` means "found, but not on this block's chain"
+        and is rejected with its own reason string."""
+
+    def nullifier_used_in_ancestry(self, nullifier: bytes) -> Optional[bool]:
+        """Was this nullifier already spent by an ancestor of this block?
+
+        Returns True/False from an ancestry scan, or None when the scan could
+        not be completed (pruned bodies) — which the verifier treats as a
+        rejection, never as "not seen".
+
+        Deliberately NOT ``nullifier_seen(store)``: a node-local store is
+        written for side-chain blocks, never unwound on reorg, emptied by a
+        restart, and empty on a snapshot-synced node. Every one of those makes
+        two honest nodes disagree about acceptance."""
 
 
 @dataclass(frozen=True)
@@ -390,7 +599,12 @@ class BlockUsefulWorkReport:
     theta_micro: int
     s_micro: int
     theta_ok: bool
-    nullifiers_to_record: Tuple[bytes, ...]
+    nullifiers_spent: Tuple[bytes, ...]
+    """Tags this block's proofs consume. INFORMATIONAL — nothing records them.
+    Replay is decided by re-deriving these tags from the block's ancestors
+    (``block_ai_work_nullifiers``), so there is no store to write to, nothing to
+    unwind on reorg, and nothing to lose on restart. Kept in the report because
+    telemetry wants it."""
     policy_digest: bytes
 
     def failures(self) -> Tuple[ProofVerdict, ...]:
@@ -565,19 +779,52 @@ def block_miner_digest(block: Any) -> Tuple[Optional[bytes], Optional[str]]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _verify_ml_dsa_65(*, pubkey: bytes, signature: bytes, message: bytes) -> bool:
+def pq_backend_available() -> bool:
+    """True iff this build can actually verify an ML-DSA-65 signature.
+
+    There is exactly one ML-DSA-65 implementation in-tree (the vendored
+    pure-Python FIPS-204 reference; no liboqs fast path), so every node that HAS
+    the backend agrees bit-for-bit. A node that lacks it agrees with nobody —
+    ``pq/py/algs/ml_dsa_65.verify`` returns False for every input when the
+    vendored package is missing, which is indistinguishable from "the miner
+    signed badly" unless it is checked separately. That is exactly this repo's
+    recurring failure mode (untracked packages that publish fine to PyPI and
+    break every fresh clone), so callers should assert this at startup rather
+    than discovering it one rejected block at a time.
+    """
+    try:
+        import pq.py.algs.ml_dsa_65 as _m
+    except Exception:
+        return False
+    try:
+        return bool(_m.is_available())
+    except Exception:
+        return False
+
+
+def _verify_ml_dsa_65(*, pubkey: bytes, signature: bytes, message: bytes) -> Tuple[bool, bool]:
     """Detached ML-DSA-65 verify with the algorithm id pinned by the caller.
 
-    Never raises: a backend failure is a verification failure, not an accept.
+    Returns ``(backend_ok, signature_ok)``. Never raises. The two failures are
+    kept apart on purpose: ``backend_ok=False`` is a broken build (fix by
+    reinstalling; every proof would fail on this node and nowhere else) while
+    ``signature_ok=False`` is a bad block (fix by rejecting it). Collapsing them
+    into one boolean turns a silent, permanent chain split into a reason string
+    that reads like an ordinary invalid signature.
     """
+    if not pq_backend_available():
+        return False, False
     try:
         from pq.py.verify import verify as _pq_verify
     except Exception:
-        return False
+        return False, False
     try:
-        return bool(_pq_verify(ML_DSA_65_ALG_ID, bytes(pubkey), bytes(signature), bytes(message)))
+        ok = bool(
+            _pq_verify(ML_DSA_65_ALG_ID, bytes(pubkey), bytes(signature), bytes(message))
+        )
     except Exception:
-        return False
+        return True, False
+    return True, ok
 
 
 def verify_ai_work_proof(
@@ -610,27 +857,36 @@ def verify_ai_work_proof(
     if proof.slot != expected_slot:
         return False, "slot_mismatch", 0, ()
 
-    # ── check 1b: key binds to the claimed worker, then the signature ───────
-    if account_digest_for_pubkey(proof.workerPk) != proof.worker:
-        return False, "worker_pk_mismatch", 0, ()
-    if not _verify_ml_dsa_65(
-        pubkey=proof.workerPk,
-        signature=proof.workerSig,
-        message=proof.signing_message(),
-    ):
-        return False, "worker_sig_invalid", 0, ()
-
-    # ── check 2: the miner is the worker ────────────────────────────────────
+    # ── checks 2 and 3 run BEFORE the signature ─────────────────────────────
+    # Both are 32-byte comparisons; the ML-DSA-65 verify below is ~21 ms of
+    # pure Python. Measured on this box: 8 full verifies = 0.170 s, 8 rejects
+    # via these comparisons = 0.0012 s — 141x cheaper to throw away a garbage
+    # proof. Neither check depends on the signature being valid (they constrain
+    # fields the signature covers, so a forged field is caught here and a
+    # tampered one at the signature).
     if ctx.miner_digest is None:
         return False, "miner_unknown", 0, ()
     if proof.worker != ctx.miner_digest:
         return False, "worker_not_miner", 0, ()
-
-    # ── check 3: the requester is not the miner ─────────────────────────────
     if proof.requester == proof.worker:
         return False, "self_dealing_same_identity", 0, ()
     if proof.requester == _ZERO32:
         return False, "requester_zero", 0, ()
+
+    # ── check 1b: key binds to the claimed worker, then the signature ───────
+    if account_digest_for_pubkey(proof.workerPk) != proof.worker:
+        return False, "worker_pk_mismatch", 0, ()
+    backend_ok, sig_ok = _verify_ml_dsa_65(
+        pubkey=proof.workerPk,
+        signature=proof.workerSig,
+        message=proof.signing_message(),
+    )
+    if not backend_ok:
+        # A build defect, not a bad block. Distinct reason so an operator sees
+        # "reinstall the PQ backend", not "some miner is sending junk".
+        return False, "worker_sig_backend_unavailable", 0, ()
+    if not sig_ok:
+        return False, "worker_sig_invalid", 0, ()
 
     # ── check 5a: freshness ─────────────────────────────────────────────────
     lo = ctx.height - int(policy.anchor_window)
@@ -648,10 +904,25 @@ def verify_ai_work_proof(
     if bytes(anchor_hash) != proof.anchorHash:
         return False, "anchor_hash_mismatch", 0, ()
 
-    # ── check 4: the requester actually paid ────────────────────────────────
+    # ── check 4: the requester actually paid, and the payment EXECUTED ──────
     payment = ctx.chain.payment(proof.paymentTxHash)
     if payment is None:
         return False, "payment_unresolved", 0, ()
+    if not bool(payment.in_ancestry):
+        # Found somewhere, but not on this block's chain. A global tx index is
+        # never pruned on reorg, so without this a payment that exists only on
+        # an orphaned fork would fund a proof on the canonical chain.
+        return False, "payment_not_in_ancestry", 0, ()
+    status = str(payment.status)
+    if status == PAYMENT_FAILED:
+        # An under-funded TRANSFER reverts BEFORE any debit and pays no fee, yet
+        # stays in the block and in the tx index. Accepting it makes the whole
+        # payment check cost the attacker exactly zero.
+        return False, "payment_reverted", 0, ()
+    if status != PAYMENT_EXECUTED:
+        # No receipt on this node. Fail closed; see THE BLOCKER in the module
+        # docstring — a non-zero rate here means enforcement would split.
+        return False, "payment_status_unknown", 0, ()
     if bytes(payment.sender) != proof.requester:
         return False, "payment_sender_mismatch", 0, ()
     treasury = policy.treasury_digest(ctx.chain_id)
@@ -666,15 +937,19 @@ def verify_ai_work_proof(
     if int(payment.height) < ctx.height - int(policy.payment_max_age):
         return False, f"payment_too_old:{int(payment.height)}", 0, ()
 
-    # ── check 5b: single use ────────────────────────────────────────────────
+    # ── check 5b: single use, decided by the block's own ancestry ───────────
     nulls = (
         proof.work_nullifier(chain_id=ctx.chain_id),
         proof.payment_nullifier(chain_id=ctx.chain_id),
     )
-    if ctx.chain.nullifier_seen(nulls[0]):
-        return False, "nullifier_replay_work", 0, ()
-    if ctx.chain.nullifier_seen(nulls[1]):
-        return False, "nullifier_replay_payment", 0, ()
+    for tag, reason in ((nulls[0], "nullifier_replay_work"), (nulls[1], "nullifier_replay_payment")):
+        used = ctx.chain.nullifier_used_in_ancestry(tag)
+        if used is None:
+            # The scan could not be completed (pruned bodies). "Could not check"
+            # is not "not seen".
+            return False, "nullifier_scan_incomplete", 0, ()
+        if used:
+            return False, reason, 0, ()
 
     return True, None, _psi_ai_micro_raw(proof, policy), nulls
 
@@ -682,6 +957,60 @@ def verify_ai_work_proof(
 # ═══════════════════════════════════════════════════════════════════════════
 # Block-level entry point
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+def ai_work_nullifiers_of_body(
+    body: Any, *, chain_id: int, max_body_bytes: int = POLICY_V1.max_proof_body_bytes
+) -> Tuple[bytes, ...]:
+    """Both nullifiers of one AI proof body, or () if it does not decode.
+
+    Used by the ancestry replay scan, which must derive the tags from ancestor
+    proof BODIES rather than trust the envelope's declared ``nullifier`` field:
+    ancestors below the fork activation height were never verified, so their
+    declared tags are unconstrained, and the payment nullifier never appears in
+    an envelope at all. Signatures are deliberately NOT re-verified here — an
+    ancestor's signature was already checked at its own import, and re-checking
+    ``payment_max_age * max_proofs_per_block`` ML-DSA verifies per block would
+    cost seconds for no added safety.
+
+    Pure and total: any decode failure yields (), which is conservative — an
+    undecodable ancestor proof simply spends no tag.
+    """
+    if not isinstance(body, (bytes, bytearray)) or not body:
+        return ()
+    try:
+        proof = decode_ai_work_proof(bytes(body), max_body_bytes=int(max_body_bytes))
+    except Exception:
+        return ()
+    try:
+        return (
+            proof.work_nullifier(chain_id=int(chain_id)),
+            proof.payment_nullifier(chain_id=int(chain_id)),
+        )
+    except Exception:  # pragma: no cover - defensive
+        return ()
+
+
+def block_ai_work_nullifiers(
+    block: Any, *, chain_id: int, policy: "UsefulWorkPolicy" = POLICY_V1
+) -> Tuple[bytes, ...]:
+    """Every AI-work nullifier spent by ``block``. Pure; never raises."""
+    out: List[bytes] = []
+    proofs = tuple(getattr(block, "proofs", ()) or ())
+    for proof_like in proofs[: int(policy.max_proofs_per_block)]:
+        env = _envelope_of(proof_like)
+        if env is None:
+            continue
+        if canonical_proof_type_name(getattr(env, "type_id", None)) != "AI":
+            continue
+        out.extend(
+            ai_work_nullifiers_of_body(
+                getattr(env, "body", None),
+                chain_id=chain_id,
+                max_body_bytes=policy.max_proof_body_bytes,
+            )
+        )
+    return tuple(out)
 
 
 def _envelope_of(proof_like: Any) -> Optional[Any]:
@@ -729,7 +1058,7 @@ def verify_block_useful_work(block: Any, ctx: BlockContext) -> BlockUsefulWorkRe
             theta_micro=int(ctx.theta_micro),
             s_micro=s_micro,
             theta_ok=s_micro >= int(ctx.theta_micro),
-            nullifiers_to_record=tuple(nulls),
+            nullifiers_spent=tuple(nulls),
             policy_digest=POLICY_V1_DIGEST if policy is POLICY_V1 else policy.digest(),
         )
 
