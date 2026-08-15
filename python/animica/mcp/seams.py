@@ -11,6 +11,8 @@ Every public Animica surface used by the MCP tools is reachable here:
                                  method can never be reached, even by a bug).
   * ``pool_get``               — the public pool/mining stats API.
   * ``beacon_latest`` / ``beacon_round`` — the public quantum randomness beacon.
+  * ``x402_catalog``           — the public x402 paid-API discovery document
+                                 (read-only: it describes prices, it never pays).
 
 All endpoints are configured from the environment with public defaults, so the
 server works out-of-the-box from a laptop (Claude Code plugin) and degrades to a
@@ -55,6 +57,11 @@ def pool_url() -> str:
 def beacon_url() -> str:
     # The verifiable quantum beacon HTTP API (drand-style /beacon/* endpoints).
     return os.environ.get("ANIMICA_BEACON_URL", "https://pool.animica.org").rstrip("/")
+
+
+def x402_url() -> str:
+    # Host publishing the x402 paid-API catalog at /.well-known/x402.
+    return os.environ.get("ANIMICA_X402_URL", "https://animica.dev").rstrip("/")
 
 
 def api_key() -> str:
@@ -197,3 +204,23 @@ def beacon_latest(*, timeout: Optional[float] = None) -> Any:
 
 def beacon_round(round_id: int, *, timeout: Optional[float] = None) -> Any:
     return _get_json(f"{beacon_url()}/beacon/round/{int(round_id)}", timeout=timeout)
+
+
+# --------------------------------------------------------------------------- #
+# x402 paid-API catalog (public discovery document — read-only)
+# --------------------------------------------------------------------------- #
+
+
+def x402_catalog_url() -> str:
+    return f"{x402_url()}/.well-known/x402"
+
+
+def x402_catalog(*, timeout: Optional[float] = None) -> Any:
+    """Fetch the public x402 discovery document (products, prices, availability).
+
+    Plain unauthenticated GET of a small static JSON, so it uses a snappier
+    ceiling than the general backend timeout: an unreachable catalog should fail
+    fast rather than stall a tool call. Nothing here signs or pays.
+    """
+    return _get_json(x402_catalog_url(),
+                     timeout=timeout or min(DEFAULT_TIMEOUT, 15.0))

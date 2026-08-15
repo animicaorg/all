@@ -21,7 +21,7 @@ _HAS_MCP = importlib.util.find_spec("mcp") is not None
 
 def test_tools_importable_without_sdk():
     # The registry + tool fns import with no MCP SDK requirement.
-    assert len(TOOLS) == 15
+    assert len(TOOLS) == 16
 
 
 @pytest.mark.skipif(_HAS_MCP, reason="mcp SDK is installed; tests the absent path")

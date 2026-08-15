@@ -24,7 +24,7 @@ def test_tools_json_lists_all(monkeypatch):
     data = json.loads(res.output)
     names = {t["name"] for t in data}
     assert {"animica_ai_ask", "animica_quantum_draw", "animica_studio_estimate"} <= names
-    assert len(data) == 15
+    assert len(data) == 16
 
 
 def test_tools_table_renders():

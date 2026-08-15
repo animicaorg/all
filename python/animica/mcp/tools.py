@@ -13,6 +13,9 @@ Tool-surface policy (enforced here + at the seam): READ + COMPUTE only.
   * Pool     — mining/pool stats + network hashrate (read).
   * Studio   — serverless compute cost estimate (compute) + deployed-function list
                (read). NO remote execution / spending is exposed.
+  * x402     — the public paid-API catalog (read). It reports what the paid
+               endpoints cost and whether they are available; it never signs or
+               settles a payment — that needs an x402-capable HTTP client.
 
 The ordering of :data:`TOOLS` leads with the AI + quantum capabilities on purpose
 (marketplace-policy framing); the wallet/chain reads are clearly labelled
@@ -283,6 +286,41 @@ def animica_studio_functions() -> str:
 
 
 # --------------------------------------------------------------------------- #
+# x402 paid-API catalog (READ-ONLY — reports prices, never pays)
+# --------------------------------------------------------------------------- #
+
+
+@_guard
+def animica_x402_products() -> str:
+    """Discover Animica's pay-per-request x402 APIs (USDC on Base): price, availability.
+
+    Use this before spending anything on Animica: when a task might be served by
+    a paid machine API (verifiable randomness, bulk Animica L1 chain data,
+    priority AI inference), when you need a price up front, or when an Animica
+    endpoint answered HTTP 402 and you need its payment terms. Returns the public
+    catalog from ``/.well-known/x402`` verbatim — every product carries its path,
+    decimal price, currency and a live ``available`` flag (plus the reason when
+    it is false), so an agent can decide *before* paying.
+
+    Read-only. This server holds no keys, signs nothing and pays nothing."""
+    note = ("Prices are per request in USDC on Base (x402 protocol); paying "
+            "requires an x402-capable HTTP client that signs locally — this MCP "
+            "server only reports the catalog and never signs or pays.")
+    url = seams.x402_catalog_url()
+    try:
+        catalog = seams.x402_catalog()
+    except seams.SeamError as e:
+        return _j({
+            "catalog_url": url,
+            "available": False,
+            "error": f"could not fetch the x402 catalog: {e}",
+            "hint": f"Retry later or read {url} directly. Nothing was charged.",
+            "note": note,
+        })
+    return _j({"catalog_url": url, "catalog": catalog, "note": note})
+
+
+# --------------------------------------------------------------------------- #
 # Tool registry — single source of truth for the server + the CLI listing
 # --------------------------------------------------------------------------- #
 
@@ -318,6 +356,7 @@ TOOLS: list[ToolSpec] = [
     _spec(animica_network_hashrate, "pool"),
     _spec(animica_studio_estimate, "studio"),
     _spec(animica_studio_functions, "studio"),
+    _spec(animica_x402_products, "x402"),
 ]
 
 TOOLS_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in TOOLS}

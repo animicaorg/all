@@ -23,6 +23,7 @@ RPC = "https://rpc.test/rpc"
 V1 = "https://v1.test/v1"
 POOL = "https://pool.test"
 BEACON = "https://beacon.test"
+X402 = "https://x402.test"
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +32,7 @@ def _env(monkeypatch):
     monkeypatch.setenv("ANIMICA_BASE_URL", V1)
     monkeypatch.setenv("ANIMICA_POOL_URL", POOL)
     monkeypatch.setenv("ANIMICA_BEACON_URL", BEACON)
+    monkeypatch.setenv("ANIMICA_X402_URL", X402)
     monkeypatch.delenv("ANIMICA_API_KEY", raising=False)
 
 
@@ -55,8 +57,9 @@ def _rpc_router(handlers: dict):
 
 def test_registry_has_expected_tools():
     names = [t.name for t in tools.TOOLS]
-    assert len(names) == 15
+    assert len(names) == 16
     assert names[0] == "animica_info"  # discovery leads
+    assert names[-1] == "animica_x402_products"  # paid-API catalog (read-only)
     # AI + quantum lead the list (marketplace-policy framing).
     assert names[1:8] == [
         "animica_ai_ask", "animica_ai_models", "animica_ai_job_status",
@@ -247,6 +250,69 @@ def test_network_hashrate():
     respx.post(RPC).mock(side_effect=_rpc_router({"chain.getNetworkHashrate": 987654}))
     out = json.loads(tools.animica_network_hashrate())
     assert out["network_hashrate"] == 987654
+
+
+# --------------------------------------------------------------------------- #
+# x402 paid-API catalog (read-only; the tool never signs or pays)
+# --------------------------------------------------------------------------- #
+
+CATALOG = {
+    "x402Version": 2,
+    "name": "Animica",
+    "network": "eip155:8453",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "scheme": "exact",
+    "products": [
+        {"id": "qrng", "path": "/x402/qrng/draw", "price": "0.01",
+         "price_atomic": "10000", "currency": "USDC", "available": True},
+        {"id": "priority_inference", "path": "/x402/v1/chat/completions",
+         "price": "0.10", "price_atomic": "100000", "currency": "USDC",
+         "available": False,
+         "unavailable_reason": "priority_inference_unavailable"},
+    ],
+}
+
+
+@respx.mock
+def test_x402_products_returns_catalog_verbatim():
+    route = respx.get(f"{X402}/.well-known/x402").mock(
+        return_value=httpx.Response(200, json=CATALOG))
+    out = json.loads(tools.animica_x402_products())
+    # The catalog is passed through unmodified — prices come from the registry,
+    # they are never restated (or rounded) by this tool.
+    assert out["catalog"] == CATALOG
+    assert out["catalog_url"] == f"{X402}/.well-known/x402"
+    # Availability survives so an agent can decide before paying.
+    by_id = {p["id"]: p for p in out["catalog"]["products"]}
+    assert by_id["qrng"]["available"] is True
+    assert by_id["priority_inference"]["available"] is False
+    assert by_id["priority_inference"]["unavailable_reason"] == \
+        "priority_inference_unavailable"
+    # Honest note: this server reports, it does not pay.
+    assert "never signs or pays" in out["note"]
+    # Read-only on the wire: a plain GET, no auth header, no body.
+    assert route.calls.last.request.method == "GET"
+    assert not route.calls.last.request.content
+
+
+@respx.mock
+def test_x402_products_unreachable_is_graceful():
+    respx.get(f"{X402}/.well-known/x402").mock(
+        return_value=httpx.Response(503, text="upstream down"))
+    out = json.loads(tools.animica_x402_products())
+    assert out["available"] is False
+    assert "could not fetch the x402 catalog" in out["error"]
+    assert "Nothing was charged." in out["hint"]
+    assert "catalog" not in out
+
+
+@respx.mock
+def test_x402_products_connection_error_is_graceful():
+    respx.get(f"{X402}/.well-known/x402").mock(
+        side_effect=httpx.ConnectError("no route to host"))
+    out = json.loads(tools.animica_x402_products())
+    assert out["available"] is False
+    assert out["catalog_url"] == f"{X402}/.well-known/x402"
 
 
 @respx.mock
