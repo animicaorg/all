@@ -83,6 +83,44 @@ curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' 
   -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}'
 ```
 
+## 💸 x402 Paid Agent APIs
+
+Pay-per-request APIs for autonomous agents — USDC on **Base mainnet** (`eip155:8453`) over
+the open x402 protocol (Apache-2.0), settled by Animica's own self-hosted facilitator. No
+account, no signup, no API key: an unpaid request returns HTTP 402 with the exact terms,
+the client signs a USDC authorization locally, and the retry is served. **The
+free APIs above stay free** — x402 sells bulk, batching, indexes the free APIs do not have,
+and per-request verifiable randomness.
+
+**Discovery:** `https://animica.dev/.well-known/x402` (machine-readable catalog, generated
+from the gateway's product registry) · `https://animica.dev/x402` (overview page; returns
+the same JSON to non-browser clients) · `https://animica.dev/x402/openapi.json`
+
+| Product | Endpoint | Price |
+|---|---|---|
+| Verifiable randomness (+ derived int/shuffle/pick/bulk/commit-reveal, $0.01–$0.05) | `GET /x402/qrng/draw` | $0.01 |
+| Bulk L1 chain data — range exports, account history, batch balances | `GET /x402/chain/export` | $0.05 |
+| Priority AI inference — capacity-gated, currently unavailable | `POST /x402/v1/chat/completions` | $0.10 |
+
+Randomness is the lead product: **verifiable quantum randomness for $0.01 per request**,
+where *verifiable* means recomputable and signed, not hardware-attested. The serving node
+runs its software CSPRNG fallback today, so every draw reports `source.is_quantum: false`
+and `attestation.attested: false` — no hardware QRNG is connected and hardware attestation
+is not live. Those fields are published free in the catalog before you pay and ride verbatim
+on every paid response. What you can check on each draw:
+`attestation.digest_hex == sha3_256(bytes(randomness))` and
+`ed25519_verify(public_key_hex, raw_bytes(digest_hex), signature_hex)`; the derived products
+recompute from the same bytes by a published rule.
+
+Priority inference exists but is gated on live serving capacity: while capacity is below the
+floor the catalog reports `available: false` and the endpoint answers 503 **without**
+requesting payment. Animica never takes money for a service it knows is unavailable.
+
+Implementation: [`apps/x402-gateway/`](apps/x402-gateway/) · docs:
+[`docs/x402.md`](docs/x402.md) · directory/submission facts:
+[`docs/exposure/x402/dossier.md`](docs/exposure/x402/dossier.md) · health check:
+`node scripts/check-x402-discovery.mjs`
+
 ## 📋 Prerequisites
 
 ### Required Software
