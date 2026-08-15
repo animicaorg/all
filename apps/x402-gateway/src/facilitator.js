@@ -1,5 +1,14 @@
 'use strict';
 /**
+ * ============================= LEGACY / UNUSED =============================
+ * Solana (SVM) wANM self-facilitator — kept intact as a reference pattern
+ * and for the (unconfigured-in-prod) wANM lane. The PRODUCTION facilitator
+ * is the self-hosted exact-EVM one in src/facilitator-evm/ (Base USDC,
+ * EIP-3009, persistent replay store). Do not build new features here; its
+ * in-memory ReplayStore is a known scaffold limitation the EVM facilitator
+ * replaces with the persistent src/store/.
+ * ===========================================================================
+ *
  * Self-facilitation server for the wANM lane: implements the facilitator HTTP
  * contract of x402 spec v2 §7 for the `exact` scheme on Solana (specs/
  * schemes/exact/scheme_exact_svm.md), talking plain Solana JSON-RPC.

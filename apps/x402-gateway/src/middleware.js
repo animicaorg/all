@@ -29,13 +29,18 @@ const cfgMod = require('./config');
 const protocol = require('./protocol');
 
 /** POST to a facilitator, x402 v2 §7 contract. */
-function facilitatorClient(baseUrl, { fetchImpl = fetch, timeoutMs = 20_000 } = {}) {
-  async function post(path, body) {
+function facilitatorClient(baseUrl, { fetchImpl = fetch, timeoutMs = 20_000, settleTimeoutMs } = {}) {
+  // Settling waits for an on-chain receipt + confirmations — it legitimately
+  // runs far past a verify's budget. A settle clipped by a short client
+  // timeout looks failed while the tx lands anyway (the money moves and the
+  // resource is withheld), so it gets its own generous deadline.
+  const settleBudget = settleTimeoutMs || Math.max(timeoutMs, 75_000);
+  async function post(path, body, budget = timeoutMs) {
     const res = await fetchImpl(baseUrl.replace(/\/$/, '') + path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: AbortSignal.timeout(budget),
     });
     if (!res.ok) throw new Error(`facilitator ${path} http ${res.status}`);
     return res.json();
@@ -44,7 +49,7 @@ function facilitatorClient(baseUrl, { fetchImpl = fetch, timeoutMs = 20_000 } = 
     verify: (paymentPayload, paymentRequirements) =>
       post('/verify', { x402Version: 2, paymentPayload, paymentRequirements }),
     settle: (paymentPayload, paymentRequirements) =>
-      post('/settle', { x402Version: 2, paymentPayload, paymentRequirements }),
+      post('/settle', { x402Version: 2, paymentPayload, paymentRequirements }, settleBudget),
     supported: async () => {
       const res = await (fetchImpl)(baseUrl.replace(/\/$/, '') + '/supported', {
         signal: AbortSignal.timeout(timeoutMs),

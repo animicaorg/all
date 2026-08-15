@@ -43,14 +43,92 @@ const USDC_DEFAULTS = {
   [NETWORKS.BASE_SEPOLIA]: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
 };
 
+/**
+ * EVM network + asset allowlist for the SELF-HOSTED facilitator. A network
+ * or token not in this table cannot be configured at all — fail closed.
+ *
+ * Every value below was verified LIVE (2026-08-15) with eth_call against
+ * mainnet.base.org / sepolia.base.org: eth_chainId, name(), version(),
+ * decimals(), DOMAIN_SEPARATOR(). CRITICAL live finding: Base MAINNET
+ * USDC's EIP-712 domain name is "USD Coin" (the spec's examples show "USDC"
+ * because they use Sepolia — advertising "USDC" on mainnet would make every
+ * compliant client compute a wrong domain separator). The facilitator also
+ * re-reads DOMAIN_SEPARATOR() from the live contract at startup/readyz and
+ * refuses to serve on mismatch.
+ */
+const EVM_NETWORKS = {
+  base: {
+    slug: 'base',
+    caip2: NETWORKS.BASE_MAINNET,
+    chainId: 8453,
+    usdc: {
+      address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      name: 'USD Coin',
+      version: '2',
+      decimals: 6,
+      // live DOMAIN_SEPARATOR() 2026-08-15
+      domainSeparator: '0x02fa7265e7c5d81118673727957699e4d68f74cd74b7db77da710fe8a2c7834f',
+    },
+    explorerTx: 'https://basescan.org/tx/',
+  },
+  'base-sepolia': {
+    slug: 'base-sepolia',
+    caip2: NETWORKS.BASE_SEPOLIA,
+    chainId: 84532,
+    usdc: {
+      address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      name: 'USDC',
+      version: '2',
+      decimals: 6,
+      domainSeparator: '0x71f17a3b2ff373b803d70a5a07c046c1a2bc8e89c09ef722fcb047abe94c9818',
+    },
+    explorerTx: 'https://sepolia.basescan.org/tx/',
+  },
+};
+
 function env(name, fallback) {
   const v = process.env[name];
   return v === undefined || v === '' ? fallback : v;
 }
 
+function envFrom(source, name, fallback) {
+  const v = source[name];
+  return v === undefined || v === '' ? fallback : v;
+}
+
+/** Strict non-negative BigInt env parse; garbage fails closed at startup. */
+function parseBigIntEnv(source, name, fallback) {
+  const v = envFrom(source, name, fallback);
+  if (typeof v === 'bigint') return v;
+  if (typeof v !== 'string' || !/^\d+$/.test(v)) {
+    throw new Error(`${name} must be a non-negative decimal integer string, got ${JSON.stringify(v)}`);
+  }
+  return BigInt(v);
+}
+
+function parseIntEnv(source, name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const v = envFrom(source, name, fallback);
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    throw new Error(`${name} must be an integer in [${min}, ${max}], got ${JSON.stringify(v)}`);
+  }
+  return n;
+}
+
 function load(overrides = {}) {
   const networkEvm = env('X402_NETWORK_EVM', NETWORKS.BASE_SEPOLIA);
   const networkSvm = env('X402_NETWORK_SVM', NETWORKS.SOLANA_DEVNET);
+
+  // Facilitator selection: self = our own facilitator-evm server on
+  // loopback; remote = an external CDP-compatible facilitator URL. The
+  // gateway/product layer is identical either way (x402 v2 §7 client).
+  // Unset defaults to remote — that is what the live unit runs today.
+  const facilitatorMode = env('X402_FACILITATOR_MODE', 'remote');
+  if (facilitatorMode !== 'self' && facilitatorMode !== 'remote') {
+    throw new Error(`X402_FACILITATOR_MODE must be "self" or "remote", got ${JSON.stringify(facilitatorMode)}`);
+  }
+  const evmFacilitatorPort = parseIntEnv(process.env, 'X402_EVM_FACILITATOR_PORT', 8743, { min: 1, max: 65535 });
+
   const cfg = {
     enabled: env('ANM_X402_ENABLED', '0') === '1',
 
@@ -58,11 +136,18 @@ function load(overrides = {}) {
     resourceBaseUrl: env('X402_RESOURCE_BASE_URL', 'http://127.0.0.1:4656'),
     serviceName: env('X402_SERVICE_NAME', 'Animica'),
 
-    // Lane A: USDC on Base via an external, CDP-compatible facilitator.
+    // Lane A: USDC on Base. mode=self talks to our own facilitator-evm
+    // server (loopback, default :8743); mode=remote talks to an external
+    // CDP-compatible facilitator (X402_FACILITATOR_URL, with the historic
+    // X402_EVM_FACILITATOR_URL name honored for the live unit's env file).
+    facilitatorMode,
+    evmFacilitatorPort,
     networkEvm,
     usdcAsset: env('X402_USDC_ASSET', USDC_DEFAULTS[networkEvm] || ''),
     basePayTo: env('X402_BASE_PAYTO', ''), // EVM address that receives USDC
-    evmFacilitatorUrl: env('X402_EVM_FACILITATOR_URL', 'https://x402.org/facilitator'),
+    evmFacilitatorUrl: facilitatorMode === 'self'
+      ? `http://127.0.0.1:${evmFacilitatorPort}`
+      : env('X402_FACILITATOR_URL', env('X402_EVM_FACILITATOR_URL', 'https://x402.org/facilitator')),
     // mainnet alternatives (operator decision, see README):
     //   https://api.cdp.coinbase.com/platform/v2/x402   (Coinbase CDP)
     //   https://facilitator.payai.network               (PayAI)
@@ -125,11 +210,124 @@ function usdToTokenAtomic(usd, usdPerToken, decimals) {
   return ((numerator + rateScaled - 1n) / rateScaled).toString();
 }
 
+/**
+ * Strict, fail-closed configuration for the SELF-HOSTED EVM facilitator
+ * (src/facilitator-evm/). Reads the spec's env model:
+ *
+ *   X402_NETWORK=base|base-sepolia   (allowlist — nothing else configures)
+ *   X402_CHAIN_ID                    (optional; MUST match the network if set)
+ *   X402_ASSET                       (optional; "USDC" or the exact allowlisted
+ *                                     token address for the network)
+ *   X402_RPC_URL                     (required, http(s))
+ *   X402_RPC_FALLBACK_URL            (optional second RPC)
+ *   X402_SETTLEMENT_ADDRESS          (required; the payTo that receives USDC —
+ *                                     server-config only, never client-supplied)
+ *   X402_FACILITATOR_PRIVATE_KEY     (required; validated by key.js loadSigner,
+ *                                     only the derived address is ever logged)
+ *   X402_EVM_FACILITATOR_PORT=8743   X402_FACILITATOR_BIND=127.0.0.1
+ *   X402_MAX_GAS_PER_SETTLEMENT=150000
+ *   X402_MAX_FEE_PER_GAS_WEI=1000000000        (1 gwei ~ 100x Base headroom)
+ *   X402_DAILY_GAS_BUDGET_WEI=0                (0 = breaker disabled)
+ *   X402_MIN_GAS_BALANCE_WEI=2000000000000000  (readyz floor, ~0.002 ETH)
+ *   X402_CONFIRMATIONS=2
+ *   X402_DB_PATH=./state/x402.db
+ *   X402_RPC_TIMEOUT_MS=10000  X402_RPC_RETRIES=2
+ *   X402_RECEIPT_TIMEOUT_MS=30000  X402_RECEIPT_POLL_MS=1000
+ *   X402_EXPIRY_MARGIN_SECONDS=6
+ *
+ * Every contradiction (chain id vs network, asset vs allowlist) throws with
+ * a precise message; the facilitator refuses to start.
+ */
+function loadEvmFacilitatorConfig(source = process.env) {
+  const problems = [];
+  const slug = envFrom(source, 'X402_NETWORK', 'base');
+  const net = EVM_NETWORKS[slug];
+  if (!net) {
+    throw new Error(
+      `X402_NETWORK=${JSON.stringify(slug)} is not allowlisted (allowed: ${Object.keys(EVM_NETWORKS).join(', ')})`
+    );
+  }
+
+  const chainIdRaw = envFrom(source, 'X402_CHAIN_ID', String(net.chainId));
+  if (!/^\d+$/.test(String(chainIdRaw)) || Number(chainIdRaw) !== net.chainId) {
+    problems.push(`X402_CHAIN_ID=${chainIdRaw} contradicts X402_NETWORK=${slug} (expected ${net.chainId})`);
+  }
+
+  const assetRaw = envFrom(source, 'X402_ASSET', 'USDC');
+  let asset = net.usdc.address;
+  if (assetRaw !== 'USDC' && String(assetRaw).toLowerCase() !== net.usdc.address.toLowerCase()) {
+    problems.push(
+      `X402_ASSET=${assetRaw} is not allowlisted for ${slug} (allowed: "USDC" or ${net.usdc.address})`
+    );
+  }
+
+  const rpcUrl = envFrom(source, 'X402_RPC_URL', '');
+  if (!/^https?:\/\/.+/.test(rpcUrl)) problems.push('X402_RPC_URL is required and must be http(s)');
+  const rpcFallbackUrl = envFrom(source, 'X402_RPC_FALLBACK_URL', '');
+  if (rpcFallbackUrl && !/^https?:\/\/.+/.test(rpcFallbackUrl)) problems.push('X402_RPC_FALLBACK_URL must be http(s)');
+
+  const settlementAddress = envFrom(source, 'X402_SETTLEMENT_ADDRESS', '');
+  let payTo = '';
+  try {
+    payTo = require('./facilitator-evm/evm').validateAddress(settlementAddress, 'X402_SETTLEMENT_ADDRESS');
+  } catch (e) {
+    problems.push(e.message);
+  }
+
+  let cfg;
+  try {
+    cfg = {
+      network: slug,
+      caip2: net.caip2,
+      chainId: net.chainId,
+      asset,
+      assetDecimals: net.usdc.decimals,
+      eip712: { name: net.usdc.name, version: net.usdc.version },
+      expectedDomainSeparator: net.usdc.domainSeparator,
+      explorerTx: net.explorerTx,
+      rpcUrl,
+      rpcFallbackUrl: rpcFallbackUrl || null,
+      settlementAddress: payTo,
+      privateKey: envFrom(source, 'X402_FACILITATOR_PRIVATE_KEY', ''),
+      bind: envFrom(source, 'X402_FACILITATOR_BIND', '127.0.0.1'),
+      port: parseIntEnv(source, 'X402_EVM_FACILITATOR_PORT', 8743, { min: 1, max: 65535 }),
+      maxGasPerSettlement: parseBigIntEnv(source, 'X402_MAX_GAS_PER_SETTLEMENT', 150000n),
+      maxFeePerGasWei: parseBigIntEnv(source, 'X402_MAX_FEE_PER_GAS_WEI', 1000000000n),
+      dailyGasBudgetWei: parseBigIntEnv(source, 'X402_DAILY_GAS_BUDGET_WEI', 0n),
+      minGasBalanceWei: parseBigIntEnv(source, 'X402_MIN_GAS_BALANCE_WEI', 2000000000000000n),
+      confirmations: parseIntEnv(source, 'X402_CONFIRMATIONS', 2, { min: 0, max: 500 }),
+      dbPath: envFrom(source, 'X402_DB_PATH', './state/x402.db'),
+      rpcTimeoutMs: parseIntEnv(source, 'X402_RPC_TIMEOUT_MS', 10000, { min: 100, max: 120000 }),
+      rpcRetries: parseIntEnv(source, 'X402_RPC_RETRIES', 2, { min: 0, max: 10 }),
+      receiptTimeoutMs: parseIntEnv(source, 'X402_RECEIPT_TIMEOUT_MS', 30000, { min: 1000, max: 600000 }),
+      receiptPollMs: parseIntEnv(source, 'X402_RECEIPT_POLL_MS', 1000, { min: 50, max: 30000 }),
+      expiryMarginSeconds: parseIntEnv(source, 'X402_EXPIRY_MARGIN_SECONDS', 6, { min: 0, max: 3600 }),
+    };
+  } catch (e) {
+    problems.push(e.message);
+  }
+
+  if (!envFrom(source, 'X402_FACILITATOR_PRIVATE_KEY', '')) {
+    problems.push('X402_FACILITATOR_PRIVATE_KEY is required (0600 env file; never committed)');
+  }
+  if (problems.length) {
+    throw new Error('facilitator-evm config invalid (fail closed):\n  - ' + problems.join('\n  - '));
+  }
+  if (cfg.maxGasPerSettlement < 60000n) {
+    // transferWithAuthorization real-world gasUsed is ~86k; a cap below the
+    // floor means every settlement fails after claiming — refuse the footgun.
+    throw new Error('X402_MAX_GAS_PER_SETTLEMENT below 60000 can never settle a transferWithAuthorization');
+  }
+  return cfg;
+}
+
 module.exports = {
   NETWORKS,
   V1_NETWORK_SLUGS,
   USDC_DEFAULTS,
+  EVM_NETWORKS,
   load,
+  loadEvmFacilitatorConfig,
   decimalToScaled,
   usdToUsdcAtomic,
   usdToTokenAtomic,

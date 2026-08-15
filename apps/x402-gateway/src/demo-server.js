@@ -20,6 +20,7 @@ const http = require('node:http');
 
 const { load } = require('./config');
 const { createX402Gate } = require('./middleware');
+const { createMetrics } = require('./metrics');
 
 function main() {
   if (process.env.ANM_X402_ENABLED !== '1') {
@@ -28,6 +29,7 @@ function main() {
   }
   const cfg = load();
   const x402 = createX402Gate();
+  const metrics = createMetrics(); // gateway-side /metrics (loopback bind)
 
   const paidEcho = x402.gate(
     {
@@ -63,6 +65,11 @@ function main() {
       }
       if (url.pathname === '/paid/echo') {
         return await paidEcho(req, res);
+      }
+      if (url.pathname === '/metrics') {
+        const body = metrics.render();
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
+        return res.end(body);
       }
       res.writeHead(404, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ error: 'not_found', routes: ['/free/ping', '/paid/echo'] }));

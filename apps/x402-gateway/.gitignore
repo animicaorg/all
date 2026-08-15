@@ -1,0 +1,8 @@
+# runtime state (replay/settlement DB, WAL files) — never commit
+state/
+*.db
+*.db-wal
+*.db-shm
+# local env files — secrets live in a 0600 file outside the repo
+.env
+.env.local
