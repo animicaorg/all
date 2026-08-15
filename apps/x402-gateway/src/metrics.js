@@ -158,6 +158,13 @@ function createMetrics() {
     treasuryUsdcBalance: new Gauge('x402_treasury_usdc_balance', 'Facilitator USDC balance in atomic units (6 decimals) as last read by the treasury watcher'),
     treasurySippingEnabled: new Gauge('x402_treasury_sipping_enabled', '1 while sipping is armed, 0 after the consecutive-failure breaker opened'),
     treasurySweepingEnabled: new Gauge('x402_treasury_sweeping_enabled', '1 while sweeping is armed, 0 after the consecutive-failure breaker opened'),
+    // 1 when the wallet has been under the ETH floor for X402_TREASURY_REFUEL_ALERT_TICKS
+    // consecutive checks with the sip SKIPPED (uneconomic quote, no liquidity,
+    // exhausted budget...). A skip is not a failure, so no breaker fires — but
+    // "cannot refuel" is the condition that ends in an empty wallet, so it has
+    // its own gauge and its own /readyz warning.
+    treasuryRefuelBlocked: new Gauge('x402_treasury_refuel_blocked', '1 while the wallet is under the ETH floor and the sip keeps being skipped'),
+    treasuryUnresolvedActions: new Gauge('x402_treasury_unresolved_actions', 'Treasury transactions broadcast whose on-chain outcome is still unknown (they block the settlement nonce lane)'),
   };
 
   return {
@@ -183,6 +190,8 @@ function createMetrics() {
         m.treasuryUsdcBalance.render(),
         m.treasurySippingEnabled.render(),
         m.treasurySweepingEnabled.render(),
+        m.treasuryRefuelBlocked.render(),
+        m.treasuryUnresolvedActions.render(),
       ].join('\n') + '\n';
     },
   };

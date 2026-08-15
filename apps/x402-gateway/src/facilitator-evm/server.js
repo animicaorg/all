@@ -108,8 +108,10 @@ function createEvmFacilitator({ cfg, rpc, store, signer, metrics, logger, sleep,
   const engine = createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, domainSepBytes, hooks, sleep, now });
 
   /**
-   * Treasury. It shares the settlement engine's FIFO submit lock so the
-   * facilitator's tx nonce stays coherent, but it holds that lock only for a
+   * Treasury. It shares the settlement engine's FIFO submit lock AND its
+   * nonce allocator, so the facilitator's tx nonce stays coherent even when a
+   * load-balanced RPC answers `eth_getTransactionCount(...,'pending')` from a
+   * node that has not seen our last broadcast. It holds the lock only for a
    * single sign+broadcast — never across receipt polling — so a settlement
    * arriving mid-sip queues behind one RPC round trip and nothing more.
    */
@@ -119,6 +121,7 @@ function createEvmFacilitator({ cfg, rpc, store, signer, metrics, logger, sleep,
     treasury = createTreasury({
       cfg, rpc, tstore, signer, metrics, logger,
       withSubmitLock: engine.withSubmitLock,
+      nonces: engine.nonces,
       now, sleep,
     });
     hooks.onSettled = () => treasury.notifySettlement();
@@ -356,7 +359,18 @@ async function main() {
 
   // Treasury last: recovery must own the nonce lane until it is done, and a
   // sip fired mid-recovery would race the rebroadcast of a stored raw tx.
-  if (facilitator.treasury) facilitator.treasury.start();
+  // Its own in-flight actions are resolved from chain truth first — an
+  // unresolved treasury transaction sits in front of every settlement in the
+  // same nonce lane, so it is a settlement outage until it clears.
+  if (facilitator.treasury) {
+    try {
+      const tRecovery = await facilitator.treasury.recover({ trigger: 'startup' });
+      logger.info('treasury_recovery_done', tRecovery);
+    } catch (e) {
+      logger.error('treasury_recovery_failed', { detail: e.message });
+    }
+    facilitator.treasury.start();
+  }
 
   const server = createEvmFacilitatorServer(facilitator);
   server.listen(cfg.port, cfg.bind, () => {

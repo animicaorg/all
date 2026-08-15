@@ -147,6 +147,7 @@ function createMockChain(opts = {}) {
     eth: new Map(),        // address(lower) -> wei
     usdc: new Map(),       // address(lower) -> atomic
     allowance: new Map(),  // `${owner}:${spender}` -> atomic
+    code: new Map(),       // address(lower) -> deployed bytecode ('0x' when absent)
     paused: false,
     blacklisted: new Set(),
     receipts: {},
@@ -290,6 +291,11 @@ function createMockChain(opts = {}) {
           return '0x' + BigInt(state.nonce).toString(16);
         case 'eth_getBalance':
           return '0x' + getEth(params[0]).toString(16);
+        case 'eth_getCode':
+          // Cold-address verification: EOAs answer '0x'. `state.code` lets a
+          // test put contract code at an address (the safe/multisig case, and
+          // the "you pasted a contract" accident).
+          return state.code.get(lc(params[0])) || '0x';
         case 'eth_estimateGas': {
           const { from, to, data } = params[0];
           if (state.failAtEstimate) execute({ to, data }, from, { commit: false }); // throws on revert

@@ -25,12 +25,20 @@
  * The facilitator account's tx nonce is protected by a process-wide FIFO
  * mutex around steps 4-6a; volume at $0.01-a-call scale does not need
  * parallel nonce lanes, and serial submission makes nonce reasoning exact.
+ *
+ * The mutex alone is not enough when a SECOND writer (the treasury) signs
+ * from the same account: `eth_getTransactionCount(...,'pending')` is answered
+ * by whichever node the RPC front-end picked, and that node may not have seen
+ * the transaction we broadcast a moment ago. Both writers therefore take
+ * their nonce from ONE allocator (nonce.js) that keeps a fresh high-water
+ * mark, inside the same lock. See its header for the failure it prevents.
  */
 
 const evm = require('./evm');
 const usdc = require('./usdc');
 const gasMod = require('./gas');
 const { VerifyReject, verifyPayment } = require('./verify');
+const { createNonceAllocator } = require('./nonce');
 const { newPaymentId } = require('../logging');
 
 /**
@@ -41,7 +49,14 @@ const { newPaymentId } = require('../logging');
  * complete when its receipt is confirmed — nothing downstream of that may
  * delay the response or fail the payment.
  */
-function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, domainSepBytes, hooks = {}, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
+function createSettlementEngine({
+  cfg, rpc, store, signer, metrics, logger, domainSepBytes, hooks = {},
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now = Date.now,
+  // One allocator per facilitator account. The treasury is handed THIS one
+  // (facilitator-evm/server.js) so both writers share a single lane.
+  nonces = createNonceAllocator({ rpc, address: signer.address, now, logger }),
+}) {
   let submitLock = Promise.resolve();
 
   function fireSettled(info) {
@@ -268,9 +283,21 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
         }
 
         // Facilitator account nonce (sequential tx nonce, NOT the 3009 nonce).
+        // From the shared allocator: max(remote pending, our own high-water
+        // mark), so a lagging RPC front-end can never hand this settlement a
+        // nonce the treasury already broadcast on.
         let txNonce;
         try {
-          txNonce = Number(evm.quantityToBigInt(await rpc.call('eth_getTransactionCount', [signer.address, 'pending'])));
+          const alloc = await nonces.next();
+          txNonce = alloc.nonce;
+          if (alloc.source === 'high_water') {
+            logger.warn('nonce_rpc_lagging', {
+              payment_id: activePaymentId,
+              remote_pending: alloc.remotePending,
+              using_nonce: txNonce,
+              detail: 'the RPC pending count is behind our own last broadcast; using the local high-water mark',
+            });
+          }
         } catch (e) {
           store.markFailed(activePaymentId, `nonce_fetch_failed: ${e.message}`);
           return fail('unexpected_settle_error', { payer: facts.payer, detail: 'could not fetch facilitator nonce' });
@@ -288,7 +315,9 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
         });
 
         // Persist BEFORE broadcast: whatever happens next, recovery knows
-        // exactly which signed bytes may be in flight.
+        // exactly which signed bytes may be in flight. The nonce is claimed at
+        // the same moment for the same reason.
+        nonces.commit(txNonce);
         store.markSubmitting(activePaymentId, { txHash: signed.hash, txNonce, rawTx: signed.rawTx, gasReservedWei });
         logger.info('settlement_submitting', {
           payment_id: activePaymentId,
@@ -312,6 +341,9 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
             // is in flight. Failed, gas untouched, authorization unconsumed
             // on-chain (row keeps raw_tx, so it is not reclaimable — payer
             // signs a fresh authorization instead; safe beats convenient).
+            // Hand the nonce back: nothing occupies it, and keeping the mark
+            // advanced would sign the NEXT transaction into a permanent gap.
+            nonces.release(txNonce);
             store.markFailed(activePaymentId, `send_rejected: ${e.message}`);
             logger.error('settlement_send_rejected', { payment_id: activePaymentId, settlement_tx: signed.hash, detail: e.message });
             return fail('unexpected_settle_error', { payer: facts.payer, detail: 'transaction rejected by rpc node' });
@@ -390,6 +422,9 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
           // Dropped from the mempool: rebroadcasting the SAME signed bytes
           // is always safe (same nonce, same authorization).
           await rpc.call('eth_sendRawTransaction', [row.raw_tx]);
+          // Claim its nonce in the shared lane so the first settlement after
+          // recovery does not sign a duplicate while the RPC catches up.
+          if (row.tx_nonce !== null && row.tx_nonce !== undefined) nonces.commit(Number(row.tx_nonce));
           report.rebroadcast++;
           logger.warn('recovery_rebroadcast', { payment_id: row.payment_id, settlement_tx: row.settlement_tx_hash });
         } else {
@@ -424,7 +459,7 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
     return null;
   }
 
-  return { settle, recoverInFlight, confirmSettlement, withSubmitLock };
+  return { settle, recoverInFlight, confirmSettlement, withSubmitLock, nonces };
 }
 
 module.exports = { createSettlementEngine };

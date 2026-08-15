@@ -16,9 +16,14 @@
  *   animica-x402 commitments list|get <id>|prune [--older-than 90d]
  *   animica-x402 treasury status            sweep-and-sip policy, balances, breaker state
  *   animica-x402 treasury history [--kind sip|sweep|approve] [--limit N]
+ *   animica-x402 treasury reconcile         resolve in-flight treasury txs from chain truth
  *   animica-x402 treasury sip --confirm     force one adaptive sip NOW
  *   animica-x402 treasury sweep --confirm   force one sweep of the surplus NOW
  *   animica-x402 treasury resume --confirm  clear a consecutive-failure disable
+ *
+ * Anything that SIGNS (sip/sweep/reconcile) takes the treasury's exclusive
+ * lease from the shared DB first and refuses to run while the facilitator
+ * service holds it: one signer per transaction-nonce lane, always.
  *
  * One exception to "the DBs hold none": random_commitments holds sealed
  * commit-reveal secrets. `commitments` never prints material the FREE public
@@ -540,19 +545,65 @@ function liveTreasury() {
   return createTreasury({ cfg, rpc, tstore, signer, metrics: createMetrics(), logger });
 }
 
+/**
+ * Everything below signs from the facilitator wallet, i.e. it writes to the
+ * SAME transaction-nonce lane the running service uses. Two signers on one
+ * lane is how a manual sip takes a live settlement's nonce and gets it
+ * rejected as an underpriced replacement — so this process must hold the
+ * treasury's exclusive lease (a TTL row in the shared DB) before it signs,
+ * and the running facilitator holds that lease continuously.
+ */
+async function withTreasuryLease(fn) {
+  const treasury = liveTreasury();
+  const lease = treasury.acquireLease({ label: `cli:${process.pid}`, ttlS: 300 });
+  if (!lease.ok) {
+    const holder = lease.holder || {};
+    fail(
+      'the treasury signing lease is held by another process'
+      + (holder.label ? ` (${holder.label})` : '')
+      + '. The running facilitator holds it continuously: stop animica-x402-facilitator.service first,\n'
+      + '       or wait for the lease to expire. Signing anyway would put two writers on one nonce lane,\n'
+      + '       which rejects a live settlement as an underpriced replacement.'
+    );
+  }
+  try {
+    return await fn(treasury);
+  } finally {
+    try { treasury.releaseLease(); } catch (e) { /* best effort */ }
+  }
+}
+
 async function cmdTreasuryAction(kind, args) {
   if (!args.flags.confirm) {
     fail(`treasury ${kind} moves real money — re-run with --confirm.\n`
-      + '       NOTE: this signs from the facilitator wallet using its pending nonce. If the facilitator\n'
-      + '       service is running it owns that nonce lane behind its own submit lock, which this process\n'
-      + '       cannot see; stop the unit first or be ready to retry one of the two transactions.');
+      + '       This signs from the facilitator wallet. It takes the treasury signing lease first and\n'
+      + '       refuses to run while the facilitator service holds it (one signer per nonce lane).');
   }
-  const treasury = liveTreasury();
-  const result = kind === 'sip' ? await treasury.sipNow() : await treasury.sweepNow();
-  if (args.flags.json) return console.log(JSON.stringify(result, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
-  for (const [k, v] of Object.entries(result)) console.log(`${k.padEnd(20)} ${typeof v === 'bigint' ? v.toString() : v}`);
-  if (result.action !== 'sipped' && result.action !== 'swept') process.exitCode = 1;
-  return undefined;
+  return withTreasuryLease(async (treasury) => {
+    // Resolve anything left in flight before signing something new: a
+    // treasury transaction with an unknown outcome sits in front of every
+    // settlement in the same nonce lane.
+    const recovery = await treasury.recover({ trigger: 'cli' });
+    if (recovery.checked) console.error(`(recovered ${JSON.stringify(recovery)})`);
+    const result = kind === 'sip' ? await treasury.sipNow() : await treasury.sweepNow();
+    if (args.flags.json) {
+      console.log(JSON.stringify(result, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
+    } else {
+      for (const [k, v] of Object.entries(result)) console.log(`${k.padEnd(20)} ${typeof v === 'bigint' ? v.toString() : v}`);
+    }
+    if (result.action !== 'sipped' && result.action !== 'swept') process.exitCode = 1;
+    return undefined;
+  });
+}
+
+/** Resolve in-flight treasury transactions from chain truth (no new signing). */
+async function cmdTreasuryReconcile(args) {
+  return withTreasuryLease(async (treasury) => {
+    const report = await treasury.recover({ trigger: 'cli' });
+    if (args.flags.json) return console.log(JSON.stringify(report, null, 2));
+    for (const [k, v] of Object.entries(report)) console.log(`${k.padEnd(16)} ${v}`);
+    return undefined;
+  });
 }
 
 function cmdTreasuryResume(args) {
@@ -569,8 +620,9 @@ async function cmdTreasury(args) {
   if (sub === 'history') return cmdTreasuryHistory(args);
   if (sub === 'sip') return cmdTreasuryAction('sip', args);
   if (sub === 'sweep') return cmdTreasuryAction('sweep', args);
+  if (sub === 'reconcile') return cmdTreasuryReconcile(args);
   if (sub === 'resume') return cmdTreasuryResume(args);
-  return fail('usage: animica-x402 treasury status|history|sip --confirm|sweep --confirm|resume --confirm');
+  return fail('usage: animica-x402 treasury status|history|reconcile|sip --confirm|sweep --confirm|resume --confirm');
 }
 
 function usage() {
@@ -589,6 +641,7 @@ function usage() {
   commitments prune [--older-than 90d]        drop old commitments
   treasury status                             sweep-and-sip policy, breaker state, totals
   treasury history [--kind sip|sweep|approve] sip/sweep ledger
+  treasury reconcile                          resolve in-flight treasury txs from the chain
   treasury sip --confirm                      force one adaptive sip now (real money)
   treasury sweep --confirm                    force one sweep to the cold address (real money)
   treasury resume --confirm                   clear a consecutive-failure disable

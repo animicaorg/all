@@ -247,7 +247,7 @@ non-allowlisted asset, malformed key, garbage price) refuse to boot.
 | self-hosted facilitator | `X402_NETWORK` (`base`\|`base-sepolia` allowlist), `X402_CHAIN_ID` (must agree), `X402_ASSET` (`USDC` or the exact allowlisted address), `X402_RPC_URL` (+`_FALLBACK_URL`), `X402_SETTLEMENT_ADDRESS` (payTo — server config, never client input), `X402_FACILITATOR_PRIVATE_KEY`, `X402_FACILITATOR_BIND`/`X402_EVM_FACILITATOR_PORT` (127.0.0.1:8743), `X402_DB_PATH` |
 | gas policy | `X402_MAX_GAS_PER_SETTLEMENT` (150k), `X402_MAX_FEE_PER_GAS_WEI` (1 gwei), `X402_DAILY_GAS_BUDGET_WEI` (0=off breaker), `X402_MIN_GAS_BALANCE_WEI` (readyz floor) |
 | confirmation | `X402_CONFIRMATIONS` (2), `X402_RECEIPT_TIMEOUT_MS`, `X402_RECEIPT_POLL_MS`, `X402_EXPIRY_MARGIN_SECONDS` |
-| treasury (sweep+sip) | `X402_TREASURY_ENABLED` (0), `X402_TREASURY_COLD_ADDRESS` (**required** in single-wallet mode, must be exactly EIP-55 checksummed), `X402_TREASURY_ETH_FLOOR_WEI` (1e14), `X402_TREASURY_SIP_USDC` (5.00), `X402_TREASURY_SIP_MIN_USDC` (0.50), `X402_TREASURY_MAX_SLIPPAGE_BPS` (100), `X402_TREASURY_SIP_COOLDOWN_S` (86400), `X402_TREASURY_RETRY_COOLDOWN_S` (900), `X402_TREASURY_DAILY_SWAP_BUDGET_USDC` (10.00), `X402_TREASURY_USDC_CEILING` (20.00), `X402_TREASURY_CHECK_INTERVAL_S` (300), `X402_TREASURY_MIN_SWEEP_USDC` (0.10), `X402_TREASURY_POOL_FEES` (500,100), `X402_TREASURY_SWAP_DEADLINE_S` (180), `X402_TREASURY_MAX_{SWAP,APPROVE,SWEEP}_GAS`, `X402_TREASURY_MIN_ETH_OUT_GAS_RATIO` (20), `X402_TREASURY_MAX_CONSECUTIVE_FAILURES` (2) |
+| treasury (sweep+sip) | `X402_TREASURY_ENABLED` (0), `X402_TREASURY_COLD_ADDRESS` (**required** in single-wallet mode; exactly EIP-55 checksummed, not in the reserved low-address range, not a contract unless `X402_TREASURY_COLD_ALLOW_CONTRACT`=1), `X402_TREASURY_ETH_FLOOR_WEI` (5e14, must be ≥3× `X402_MIN_GAS_BALANCE_WEI`), `X402_TREASURY_SIP_USDC` (5.00), `X402_TREASURY_SIP_MIN_USDC` (0.50), `X402_TREASURY_MAX_SLIPPAGE_BPS` (100), `X402_TREASURY_MAX_QUOTE_DEVIATION_BPS` (5000), `X402_TREASURY_RATE_REFERENCE_MAX_AGE_S` (7d), `X402_TREASURY_SIP_COOLDOWN_S` (86400), `X402_TREASURY_RETRY_COOLDOWN_S` (900), `X402_TREASURY_DAILY_SWAP_BUDGET_USDC` (10.00), `X402_TREASURY_USDC_CEILING` (20.00), `X402_TREASURY_MAX_SWEEPS_PER_DAY` (24), `X402_TREASURY_CHECK_INTERVAL_S` (300), `X402_TREASURY_MIN_SWEEP_USDC` (0.10), `X402_TREASURY_POOL_FEES` (500,100), `X402_TREASURY_SWAP_DEADLINE_S` (180), `X402_TREASURY_MAX_{SWAP,APPROVE,SWEEP}_GAS`, `X402_TREASURY_MIN_ETH_OUT_GAS_RATIO` (4), `X402_TREASURY_MAX_CONSECUTIVE_FAILURES` (2), `X402_TREASURY_STUCK_TX_S` (180), `X402_TREASURY_MAX_TX_BUMPS` (3), `X402_TREASURY_REFUEL_ALERT_TICKS` (3), `X402_TREASURY_LEASE_TTL_S` (900) |
 | products | `X402_QRNG_*`, `X402_RANDOM_*` (`ENABLED`, the five `*_PRICE_USDC`, `SEED_BYTES`, `MAX_INTS`/`MAX_ITEMS`/`MAX_PICKS`/`MAX_BODY_BYTES`/`MAX_RESPONSE_BYTES`, `BULK_MAX_DRAWS`, `MAX_DRAW_BYTES`, `COMMIT_MAX_DELAY_SECONDS`, `COMMIT_TTL_SECONDS`), `X402_BULK_*`, `PRIORITY_INFERENCE_ENABLED`, `PRIORITY_INFERENCE_MIN_SERVING_WORKERS`, `X402_INFERENCE_*`, `X402_CAPACITY_*` |
 | logging/rpc | `X402_LOG_LEVEL`, `X402_LOG_FORMAT`, `X402_RPC_TIMEOUT_MS`, `X402_RPC_RETRIES` |
 
@@ -291,7 +291,9 @@ X402_FACILITATOR_PRIVATE_KEY=<hex> node -e '
 (≈$0.002: ~86k gas at Base's ~0.006 gwei effective price + the OP-stack L1
 data fee — both are summed into `x402_gas_spent_wei` and the ledger's
 `gas_spent_wei`, measured live 2026-08-15). The `readyz` floor defaults to
-0.002 ETH (`X402_MIN_GAS_BALANCE_WEI`) ≈ ~3,500 settlements of headroom;
+0.0001 ETH (`X402_MIN_GAS_BALANCE_WEI`) ≈ ~185 settlements of headroom
+(single-wallet mode additionally requires the treasury's refuel trigger to be
+≥3× that, so refuelling starts while the facilitator is still ready);
 holding **0.005–0.01 ETH** (~$20-40, roughly 9k-18k settlements) and
 topping up on the `x402_facilitator_gas_balance_wei` gauge is comfortable.
 Do not park more — the wallet is hot by definition. Margin note: at $0.01
@@ -314,8 +316,10 @@ The short version:
   only thing that makes the trade defensible. Prefer the two-wallet posture?
   Point `X402_SETTLEMENT_ADDRESS` at a wallet the facilitator does not
   control and leave the treasury off — nothing else changes.
-* **Sip.** ETH below `X402_TREASURY_ETH_FLOOR_WEI` (0.0001 ETH ≈ 185
-  settlements of runway) → swap `min($5, balance)` but never under `$0.50`
+* **Sip.** ETH below `X402_TREASURY_ETH_FLOOR_WEI` (0.0005 ETH ≈ 900
+  settlements of runway, deliberately well above the `/readyz` gas floor so a
+  refuel never begins with the facilitator advertising itself unhealthy) →
+  swap `min($5, balance)` but never under `$0.50`
   of USDC to ETH in one atomic SwapRouter02 `multicall(deadline,
   [exactInputSingle, unwrapWETH9])`, `amountOutMinimum` from a QuoterV2
   quote minus ≤1%, exact-amount approve (no standing allowance), one sip per
@@ -324,20 +328,32 @@ The short version:
   spike (ETH gone at ~75 settlements with only ~$0.75 accrued); a $0.50 sip
   buys ~490 settlements. That scenario is an explicit test.
 * **Sweep.** USDC above `X402_TREASURY_USDC_CEILING` ($20) → ERC-20 transfer
-  of `balance − ceiling` to the cold address. The destination is captured
+  of `balance − ceiling` to the cold address, at most
+  `X402_TREASURY_MAX_SWEEPS_PER_DAY` times a day. The destination is captured
   from server config at construction and is unreachable from any argument,
-  request or later config mutation (proved against the *signed bytes*).
+  request or later config mutation (proved against the *signed bytes*); the
+  AMOUNT comes from a balance the sweep reads itself, never from a caller.
 * **Failure policy.** Two consecutive swap failures disable sipping and
   raise a `/readyz` **WARNING that does not fail readiness** — settlements
   keep running on the ETH that is left. Price-movement reverts (`Too little
   received`) are not strikes; `STE` hard-disables immediately.
 * **Never on the settlement path.** Own timer + a fire-and-forget
   post-settlement trigger; the shared nonce lane is held for one
-  sign+broadcast and released before receipt polling.
+  sign+broadcast and released before receipt polling. Both writers draw from
+  ONE nonce allocator (`src/facilitator-evm/nonce.js`), so a lagging RPC
+  cannot hand a sip and a settlement the same nonce; a treasury transaction
+  with an unknown outcome blocks further treasury signing and is resolved
+  (rebroadcast / fee-bumped on the same nonce) by `treasury.recover()` at
+  startup and on every tick; and `treasury sip|sweep|reconcile` must take an
+  exclusive DB lease the running service holds — one signer per lane.
+* **Gas budget.** Treasury gas counts against `X402_DAILY_GAS_BUDGET_WEI`
+  (the breaker sums both ledgers) and the treasury stops spending while it is
+  open.
 
 ```sh
 animica-x402 treasury status                # policy, balances, breaker, totals
 animica-x402 treasury history --kind sip    # tx-by-tx ledger
+animica-x402 treasury reconcile             # resolve in-flight txs from chain truth
 animica-x402 treasury sip --confirm         # manual (bypasses floor+cooldown, not the budget)
 animica-x402 treasury sweep --confirm
 animica-x402 treasury resume --confirm      # re-arm after a two-strike disable
@@ -417,6 +433,7 @@ bin/animica-x402 commitments get <commit_id>  # secret withheld while sealed
 bin/animica-x402 commitments prune [--older-than 90d]
 bin/animica-x402 treasury status               # sweep-and-sip policy, breaker, totals
 bin/animica-x402 treasury history [--kind sip|sweep|approve]
+bin/animica-x402 treasury reconcile            # chain-truth pass over in-flight txs
 bin/animica-x402 treasury sip --confirm        # moves real money (see the runbook note)
 bin/animica-x402 treasury sweep --confirm
 bin/animica-x402 treasury resume --confirm
@@ -497,6 +514,19 @@ as prose:
 | two failures disable sipping, readyz WARNs | `treasury` — breaker opens, `/readyz` stays `ready:true` with a warning, no further gas spent, state survives a restart, `resume` re-arms; price-movement reverts are not strikes and `STE` hard-disables |
 | settlements are never blocked or delayed | `treasury` — the hook returns synchronously and swallows a throwing callback (a real `settle()` still succeeds); a settlement queued mid-broadcast runs while the sip is still polling for its receipt |
 | treasury accounting reconciles | `treasury` — sipped + swept + remaining == starting USDC, ETH gained == Σ `Withdrawal` logs, metrics == ledger, treasury gas kept out of `x402_gas_spent_wei` |
+| **Treasury (adversarial fixes)** — one nonce lane, two writers | `adv-treasury-nonce` — a frozen `pending` count no longer hands a sip and the next settlement the same nonce (N1); a rejected send gives its nonce back so the lane cannot gap (N1b); a stale high-water mark defers to chain truth (N1c) |
+| a stuck treasury tx is not a settlement outage | `adv-treasury-nonce` — the stuck tx is fee-bumped on the SAME nonce, then confirmed from chain truth; a vanished one is rebroadcast byte-for-byte; nothing new is signed meanwhile and `/readyz` warns (N2, N2b) |
+| one signer per lane, across processes | `adv-treasury-nonce` — the CLI is refused the lease while the service holds it, a started service that lost the lease signs nothing, an expired lease is reclaimable (N3, N3b, N3c) |
+| the refuel is not vetoed by its own guard | `adv-treasury-econ` — the spec's $0.75/0.025 gwei bootstrap case sips, a $0.50 sip works at 0.17 gwei, and the guard still refuses a dust sip in an expensive market (E1a-E1e) |
+| "cannot refuel" is visible | `adv-treasury-econ` — 3 blocked checks under the floor raise the `/readyz` warning, `x402_treasury_refuel_blocked` and an error log, without firing a breaker (E2) |
+| an unknown outcome reconciles | `adv-treasury-accounting` — the ledger catches up with the chain on the next pass; recovery is wired into startup and every tick (A1, A1b) |
+| the sweep never sizes from a stale balance | `adv-treasury-accounting` — no over-drain past the float, no revert-driven self-disable (A2a, A2b); a caller-supplied balance is ignored entirely (`adv-treasury-config` C2) |
+| the daily ETH ceiling bounds the whole account | `adv-treasury-accounting` — treasury gas counts against `X402_DAILY_GAS_BUDGET_WEI` and an open breaker stops sips and sweeps; sweeps also carry a per-day cap (A3, A3b) |
+| no standing allowance survives a failed swap | `adv-treasury-accounting` — the allowance is reset to zero in the same tick, and NOT while the outcome is unknown (A4, A4b) |
+| the cold address is more than a checksum | `adv-treasury-config` — the zero address, the precompiles and burn addresses refuse startup; a contract destination refuses to be swept to unless declared (C1a-C1d) |
+| refuelling starts while still ready | `adv-treasury-config` — the sip trigger is ≥3× the readyz floor and the dead-band configuration refuses to boot (C3, C3b, C3c) |
+| the budget is claimed, not merely read | `adv-treasury-drain` — a second caller inside the approve window gets nothing; the check and the intent row are one `BEGIN IMMEDIATE` (D1, D1a) |
+| a manipulated quote is refused | `adv-treasury-drain` — a quote 10× below an independent reference (price knob or our own last realised rate) is skipped, not "settled"; a stale reference expires rather than deadlocking (D2, D2b) |
 
 Real-chain proof is a runbook step, not a unit test: `test/manual/base-sepolia.md`
 plus `test/manual/smoke-pay.mjs` do the funded end-to-end settlement.
@@ -532,6 +562,8 @@ exposes either):
 | `x402_treasury_usdc_balance` | gauge | facilitator | USDC atomic units at the last watcher tick |
 | `x402_treasury_sipping_enabled` | gauge | facilitator | **alarm on this** — 0 means the two-strike breaker opened and the wallet needs a manual top-up |
 | `x402_treasury_sweeping_enabled` | gauge | facilitator | 0 means sweeps are disabled after repeated failures |
+| `x402_treasury_refuel_blocked` | gauge | facilitator | **alarm on this** — 1 means the wallet is under the ETH floor and the sip keeps being skipped (no breaker fires: a skip is not a failure, but this is what ends in an empty wallet) |
+| `x402_treasury_unresolved_actions` | gauge | facilitator | treasury transactions whose on-chain outcome is unknown; they sit in the settlement nonce lane, so anything >0 for long is an outage risk |
 
 Money metrics accumulate BigInt atomic units internally and render as exact
 decimal strings — no floats anywhere near amounts.
@@ -548,6 +580,7 @@ decimal strings — no floats anywhere near amounts.
 | `502 facilitator_unreachable` | facilitator down or wrong `X402_FACILITATOR_URL`/mode; check `curl 127.0.0.1:8743/healthz` |
 | facilitator refuses to start | fail-closed config: read the printed reason (chain-id contradiction, non-allowlisted asset, malformed key, `locally computed domain separator != allowlisted`) — every one is a real misconfiguration, never bypass |
 | `/readyz` false | the `checks` object names the failing leg: `rpc`, `chain_id`, `usdc_domain` (live `DOMAIN_SEPARATOR()` mismatch = wrong token/chain/name), `db`, `gas_balance` (fund the wallet or lower `X402_MIN_GAS_BALANCE_WEI`) |
+| `/readyz` ready with a treasury WARNING | non-fatal by design. `cannot refuel` = the sip keeps being skipped under the floor (check `treasury status` for the reason: quote, budget, economics); `unresolved on-chain` = a treasury tx is in flight — `animica-x402 treasury reconcile` after the RPC recovers; `contract code` = the cold address is a contract (set `X402_TREASURY_COLD_ALLOW_CONTRACT=1` if that is intended, then `animica-x402 treasury resume --confirm` to clear the disable) |
 | `better-sqlite3` install/segfault | must be **12.11.1** on this Node 20 box — 13.x is Node-22-only and segfaults here; the lockfile pins it, don't "upgrade" |
 | echo 404s in production | by design (`X402_ENV=production`); `X402_ENABLE_ECHO=1` re-enables the smoke marker |
 | catalog shows `available:false` | the `unavailable_reason` field says why: `qrng_entropy_health_failed` / `qrng_rpc_unreachable` (node RPC), `bulk_chain_node_unreachable`, `chain_index_backfilling` / `chain_index_stale` / `chain_index_walker_stalled` (the address index is not current — `animica-x402 index status`; the first backfill takes ~5-7 min), `priority_inference_unavailable` (operator flag off or worker floor unmet — this is the gate working, not a bug) |

@@ -256,7 +256,26 @@ function usdToTokenAtomic(usd, usdPerToken, decimals) {
  * address is a valid EVM address and this loader would happily accept it —
  * but this one value is where every dollar of revenue ends up, and the
  * checksum is the only cheap way to catch a transposed character in it.
+ *
+ * A checksum is NOT enough on its own, though: the addresses most likely to
+ * arrive by accident are all-digit and therefore have no case to get wrong.
+ * `0x0000…0000` (an unset or templated variable, a truncated paste) and the
+ * precompiles `0x…01`-`0x…09` all pass a checksum comparison unchanged, and a
+ * burn address does not even revert — it would silently destroy every swept
+ * dollar. Those are rejected outright below; a cold address that has CONTRACT
+ * CODE is caught at runtime with one eth_getCode (see treasury.js
+ * verifyColdAddress and X402_TREASURY_COLD_ALLOW_CONTRACT).
  */
+
+/** Anything below this is the zero address or a precompile, never a wallet. */
+const RESERVED_ADDRESS_CEILING = 0x10000n;
+
+/** Well-known burn addresses: valid, checksummable, and unrecoverable. */
+const BURN_ADDRESSES = new Set([
+  '0x000000000000000000000000000000000000dEaD',
+  '0x00000000000000000000000000000000DeaDBeef',
+]);
+
 function loadTreasuryConfig(source, { network, problems }) {
   const enabled = envFrom(source, 'X402_TREASURY_ENABLED', '0') === '1';
   const coldRaw = envFrom(source, 'X402_TREASURY_COLD_ADDRESS', '');
@@ -269,6 +288,17 @@ function loadTreasuryConfig(source, { network, problems }) {
         problems.push(
           `X402_TREASURY_COLD_ADDRESS must be EIP-55 checksummed exactly (got ${coldRaw}, expected ${checksummed}) — `
           + 'this is the address every swept dollar goes to; the checksum is the typo guard'
+        );
+      } else if (BigInt(checksummed) < RESERVED_ADDRESS_CEILING) {
+        problems.push(
+          `X402_TREASURY_COLD_ADDRESS=${checksummed} is in the reserved low-address range (the zero address, the `
+          + 'precompiles 0x…01-0x…09, 0x…dEaD). Those have no checksum to fail, so this is exactly the '
+          + 'paste/template accident an EIP-55 comparison cannot catch. Real USDC reverts on a transfer to 0x0, '
+          + 'which would disable sweeping and leave every dollar of revenue on the hot key.'
+        );
+      } else if (BURN_ADDRESSES.has(checksummed)) {
+        problems.push(
+          `X402_TREASURY_COLD_ADDRESS=${checksummed} is a burn address: a sweep to it succeeds and the money is gone`
         );
       } else {
         coldAddress = checksummed;
@@ -285,9 +315,15 @@ function loadTreasuryConfig(source, { network, problems }) {
     t = {
       enabled,
       coldAddress,
-      // Sip trigger. 0.0001 ETH is ~185 settlements of remaining runway at
-      // Base's typical 0.006 gwei — a trigger point, not a cliff.
-      ethFloorWei: parseBigIntEnv(source, 'X402_TREASURY_ETH_FLOOR_WEI', 100000000000000n),
+      // Sip trigger. 0.0005 ETH is ~900 settlements of remaining runway at
+      // Base's typical 0.006 gwei — a trigger point, not a cliff, and
+      // deliberately WELL ABOVE X402_MIN_GAS_BALANCE_WEI (the readiness
+      // floor, 0.0001 ETH). The spec's original 1e14 default equalled the
+      // readiness floor, so every refuel cycle could only ever begin at a
+      // balance where /readyz was already 503: the facilitator advertised
+      // itself unhealthy for the entire refuel. The two are now
+      // cross-validated (floor >= 3x the readiness floor) below.
+      ethFloorWei: parseBigIntEnv(source, 'X402_TREASURY_ETH_FLOOR_WEI', 500000000000000n),
       sipUsdcAtomic: parseDecimalEnv(source, 'X402_TREASURY_SIP_USDC', '5.00', 6),
       // The adaptive floor: never swap less than this, but DO swap less than
       // X402_TREASURY_SIP_USDC when that is all the revenue there is. A fixed
@@ -315,10 +351,39 @@ function loadTreasuryConfig(source, { network, problems }) {
       maxSwapGas: parseBigIntEnv(source, 'X402_TREASURY_MAX_SWAP_GAS', 300000n),
       maxApproveGas: parseBigIntEnv(source, 'X402_TREASURY_MAX_APPROVE_GAS', 100000n),
       maxSweepGas: parseBigIntEnv(source, 'X402_TREASURY_MAX_SWEEP_GAS', 150000n),
-      // Refuse to convert revenue when the ETH bought is not worth many times
-      // the gas the conversion costs. Today's ratio is ~2,000x.
-      minEthOutGasRatio: parseIntEnv(source, 'X402_TREASURY_MIN_ETH_OUT_GAS_RATIO', 20, { min: 1, max: 100000 }),
+      // Refuse to convert revenue when the ETH bought is not worth several
+      // times the gas the conversion costs. Priced on the MEASURED gas of the
+      // legs this attempt will really send, at the fee it will really pay
+      // (baseFee + tip) — see treasury.js priceForAmount. Pricing the CAPS at
+      // the fee CEILING (the previous behaviour, ratio 20) demanded ~90x the
+      // true cost and vetoed every sip above ~0.17 gwei, i.e. it disabled the
+      // bootstrap-stall cure precisely in the gas spike that needs it.
+      minEthOutGasRatio: parseIntEnv(source, 'X402_TREASURY_MIN_ETH_OUT_GAS_RATIO', 4, { min: 1, max: 100000 }),
       maxConsecutiveFailures: parseIntEnv(source, 'X402_TREASURY_MAX_CONSECUTIVE_FAILURES', 2, { min: 1, max: 10 }),
+      // How far a quote may sit below an INDEPENDENT reference (the optional
+      // X402_ETH_USD_PRICE, and our own last realised sip rate) before the sip
+      // is skipped. The slippage bound alone is anchored to the pool it
+      // protects: a manipulated or stale quote drags amountOutMinimum down
+      // with it, and the fill then looks like a clean success.
+      maxQuoteDeviationBps: parseIntEnv(source, 'X402_TREASURY_MAX_QUOTE_DEVIATION_BPS', 5000, { min: 100, max: 9000 }),
+      // A realised rate older than this is not a price reference any more.
+      rateReferenceMaxAgeS: parseIntEnv(source, 'X402_TREASURY_RATE_REFERENCE_MAX_AGE_S', 7 * 86400, { min: 3600, max: 90 * 86400 }),
+      // Sweeps have no cooldown (draining fast is the point), so they get a
+      // per-day count cap instead — otherwise their gas is bounded by nothing
+      // the operator configured.
+      maxSweepsPerDay: parseIntEnv(source, 'X402_TREASURY_MAX_SWEEPS_PER_DAY', 24, { min: 1, max: 1000 }),
+      // A treasury transaction still pending after this long is bumped
+      // (same nonce, higher fee): every settlement is queued behind it.
+      stuckTxS: parseIntEnv(source, 'X402_TREASURY_STUCK_TX_S', 180, { min: 30, max: 3600 }),
+      maxTxBumps: parseIntEnv(source, 'X402_TREASURY_MAX_TX_BUMPS', 3, { min: 0, max: 10 }),
+      // Consecutive checks under the ETH floor with the sip SKIPPED before
+      // /readyz raises the "cannot refuel" warning.
+      refuelAlertTicks: parseIntEnv(source, 'X402_TREASURY_REFUEL_ALERT_TICKS', 3, { min: 1, max: 100 }),
+      // Cross-process signing lease (service vs `treasury sip|sweep --confirm`).
+      leaseTtlS: parseIntEnv(source, 'X402_TREASURY_LEASE_TTL_S', 900, { min: 60, max: 86400 }),
+      // A cold address with contract code is refused unless declared (a safe
+      // or multisig is legitimate — it just has to be deliberate).
+      coldAllowContract: envFrom(source, 'X402_TREASURY_COLD_ALLOW_CONTRACT', '0') === '1',
     };
   } catch (e) {
     problems.push(e.message);
@@ -367,7 +432,54 @@ function loadTreasuryConfig(source, { network, problems }) {
     // headroom for a tick-crossing swap and turns every sip into a cap error.
     problems.push('X402_TREASURY_MAX_SWAP_GAS below 200000 cannot fit the measured 165k-gas swap+unwrap multicall');
   }
+  if (t.leaseTtlS < 2 * t.checkIntervalS) {
+    // The service renews the lease once per tick. A TTL shorter than two
+    // ticks would let it lapse between renewals, and a CLI sip could then
+    // take the nonce lane out from under a running facilitator.
+    problems.push(
+      `X402_TREASURY_LEASE_TTL_S (${t.leaseTtlS}) must be at least 2x X402_TREASURY_CHECK_INTERVAL_S (${t.checkIntervalS}): `
+      + 'the running service renews the signing lease once per check interval'
+    );
+  }
   return t;
+}
+
+/**
+ * Cross-check the treasury against the facilitator knobs it interacts with.
+ * Kept separate because these need the fully built config, not just the
+ * treasury block.
+ */
+function validateTreasuryAgainstFacilitator(cfg, problems) {
+  const t = cfg.treasury;
+  if (!t || !t.enabled) return;
+  // The refuel trigger must sit meaningfully ABOVE the readiness floor.
+  // Equal (the shipped default before this fix) means the treasury may only
+  // ever act at a balance where /readyz is already 503: every refuel begins
+  // with the facilitator advertising itself unhealthy, and any supervisor or
+  // load balancer gating on /readyz flaps mid-sip. Worse, a readiness floor
+  // ABOVE the sip trigger creates a dead band in which the facilitator
+  // refuses traffic while the treasury reports "above_eth_floor" and does
+  // nothing at all.
+  if (t.ethFloorWei < 3n * cfg.minGasBalanceWei) {
+    problems.push(
+      `X402_TREASURY_ETH_FLOOR_WEI (${t.ethFloorWei}) must be at least 3x X402_MIN_GAS_BALANCE_WEI `
+      + `(${cfg.minGasBalanceWei}): the treasury has to start refuelling well before /readyz fails on gas_balance, `
+      + 'or the facilitator spends every refuel cycle reporting itself not-ready (and below the readiness floor it '
+      + 'refuses the very traffic that pays for the gas)'
+    );
+  }
+  // When the operator gave us a price, check that the SMALLEST allowed sip
+  // can actually restore readiness. A sip that cannot clear the floor turns
+  // the refuel loop into a slow leak.
+  if (cfg.ethUsdPrice && cfg.ethUsdPrice > 0n) {
+    const minSipWei = (t.sipMinUsdcAtomic * 1_000_000_000_000n) / cfg.ethUsdPrice;
+    if (minSipWei < cfg.minGasBalanceWei) {
+      problems.push(
+        `X402_TREASURY_SIP_MIN_USDC buys ~${minSipWei} wei at X402_ETH_USD_PRICE=${cfg.ethUsdPrice}, which is below `
+        + `X402_MIN_GAS_BALANCE_WEI (${cfg.minGasBalanceWei}): the smallest permitted sip could not restore readiness`
+      );
+    }
+  }
 }
 
 /**
@@ -488,6 +600,7 @@ function loadEvmFacilitatorConfig(source = process.env) {
   if (!envFrom(source, 'X402_FACILITATOR_PRIVATE_KEY', '')) {
     problems.push('X402_FACILITATOR_PRIVATE_KEY is required (0600 env file; never committed)');
   }
+  if (cfg && cfg.treasury) validateTreasuryAgainstFacilitator(cfg, problems);
   if (problems.length) {
     throw new Error('facilitator-evm config invalid (fail closed):\n  - ' + problems.join('\n  - '));
   }

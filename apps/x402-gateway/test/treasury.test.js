@@ -132,7 +132,13 @@ test('treasury defaults parse to the spec values in atomic units', () => {
   const t = facCfg().treasury;
   assert.equal(t.enabled, false);
   assert.equal(t.coldAddress, null);
-  assert.equal(t.ethFloorWei, 100000000000000n);
+  // DELIBERATE DEVIATION from the spec's literal 1e14: that value equals
+  // X402_MIN_GAS_BALANCE_WEI, so the treasury could only ever start
+  // refuelling at a balance where /readyz already reported 503 (see the
+  // adversarial C3 regression). The trigger is now 5x the readiness floor and
+  // the two are cross-validated at startup.
+  assert.equal(t.ethFloorWei, 500000000000000n);
+  assert.ok(t.ethFloorWei >= 3n * facCfg().minGasBalanceWei);
   assert.equal(t.sipUsdcAtomic, 5_000_000n);
   assert.equal(t.sipMinUsdcAtomic, 500_000n);
   assert.equal(t.maxSlippageBps, 100);
@@ -343,8 +349,8 @@ test('the cooldown halves below floor/2 and is enforced exactly', async () => {
   s.clock.advance(2 * 1000);
   assert.equal((await s.treasury.tick()).sip.action, 'sipped', 'halved cooldown (500s) has elapsed');
 
-  // Just under the floor (not below floor/2) the FULL cooldown applies.
-  s.rpc.setEth(s.facilitator, 99n * 10n ** 12n);
+  // Just under the floor (not below floor/2 = 2.5e14) the FULL cooldown applies.
+  s.rpc.setEth(s.facilitator, 499n * 10n ** 12n);
   s.clock.advance(600 * 1000);
   assert.equal((await s.treasury.tick()).sip.reason, 'cooldown', 'non-emergency uses the full 1000s');
   s.clock.advance(401 * 1000);

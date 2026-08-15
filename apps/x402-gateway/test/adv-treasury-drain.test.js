@@ -1,27 +1,25 @@
 'use strict';
 /**
- * ADVERSARIAL REVIEW — forced-sip drain and the slippage bound.
+ * ADVERSARIAL REGRESSION — forced-sip drain and the slippage bound.
  *
- * FINDING D1 — the daily swap budget is a read-then-act check with a long
- * window and no lock. attemptSip() reads `sipSpendSince()` near the top and
- * only inserts its own row (`tstore.begin({kind:'sip'})`) after the approve
- * transaction has been signed, broadcast AND confirmed — up to
- * X402_RECEIPT_TIMEOUT_MS later. Any second caller that starts inside that
- * window sees a stale total and gets its own full allocation. In-process the
- * treasury's own `run()` mutex hides this, but the shipped CLI
- * (`animica-x402 treasury sip --confirm`) is a SECOND PROCESS on the same DB
- * with no mutex and no lock, and `force` deliberately bypasses the cooldown
- * that would otherwise catch it. Two callers => 2x the configured daily cap.
+ * FINDING D1 (fixed) — the daily swap budget was a read-then-act check with a
+ * very long window: attemptSip() read `sipSpendSince()` near the top and only
+ * inserted its own row AFTER the approve had been signed, broadcast and
+ * confirmed (up to X402_RECEIPT_TIMEOUT_MS later). A second caller starting
+ * inside that window saw a stale total and got its own full allocation, and
+ * the shipped CLI (`animica-x402 treasury sip --confirm`) is exactly such a
+ * second caller — a different process on the same DB, with `force` skipping
+ * the cooldown that might otherwise have caught it. FIX (two layers): the
+ * budget check and the intent row are now ONE `BEGIN IMMEDIATE` transaction
+ * written before a wei of gas is spent, and a cross-process lease stops the
+ * CLI running against a live service at all.
  *
- * FINDING D2 — the slippage bound is anchored to the same pool it protects.
- * `amountOutMinimum = QuoterV2(quote) * (1 - 1%)`, and the quote is a read of
- * the pool's current price. If the quote is wrong (manipulated pool, thin fee
- * tier, stale block), the bound is wrong by the same factor and the module
- * accepts the fill as a success. The only ABSOLUTE floor is the `uneconomic`
- * ratio, which at typical Base fees permits converting a $5 sip into ~$0.003
- * of ETH. docs/x402.md's "worst credible daily loss to slippage/MEV is cents"
- * is therefore an assumption about pool depth, not a bound the code enforces;
- * the enforced bound is the daily budget ($10/day).
+ * FINDING D2 (fixed) — the slippage bound is anchored to the same pool it
+ * protects: `amountOutMinimum = QuoterV2(quote) * (1 - 1%)`, so a manipulated,
+ * thin or stale quote moved the bound with it and the fill was reported as a
+ * clean success. FIX: two optional INDEPENDENT references — X402_ETH_USD_PRICE
+ * (the knob the settlement path already has) and the realised rate of our own
+ * last confirmed sip — with X402_TREASURY_MAX_QUOTE_DEVIATION_BPS as the band.
  */
 
 const test = require('node:test');
@@ -37,15 +35,9 @@ const { quietLogger } = require('./evm-helpers');
 
 const USDC = (d) => BigInt(Math.round(d * 1e6));
 
-test('D1: a second caller (the CLI) doubles the daily swap budget through the read-then-act window', async () => {
-  const s = treasuryScene({
-    eth: 1n,
-    usdc: USDC(30),
-    env: { X402_TREASURY_DAILY_SWAP_BUDGET_USDC: '5.00' }, // one $5 sip per day, by policy
-  });
-
-  // The CLI process: same key, same DB file, its own store handle, no lock.
-  const cliTreasury = createTreasury({
+/** A second process on the same DB file (what the CLI is). */
+function cliTreasuryFor(s) {
+  return createTreasury({
     cfg: s.cfg,
     rpc: s.rpc,
     tstore: createTreasuryStore(s.store.db, { now: s.clock.now }),
@@ -55,99 +47,166 @@ test('D1: a second caller (the CLI) doubles the daily swap budget through the re
     now: s.clock.now,
     sleep: s.clock.sleep,
   });
+}
 
-  // The operator runs `animica-x402 treasury sip --confirm` while the service
-  // is already mid-sip (its approve is in flight). Neither sees the other's
-  // intent, because the intent row is not written until the approve confirms.
+test('D1: a second caller inside the approve window can no longer double the daily swap budget', async () => {
+  const s = treasuryScene({
+    eth: 1n,
+    usdc: USDC(30),
+    env: { X402_TREASURY_DAILY_SWAP_BUDGET_USDC: '5.00' }, // one $5 sip per day, by policy
+  });
+  const cli = cliTreasuryFor(s);
+
+  // The operator runs `treasury sip --confirm` while the service is already
+  // mid-sip (its approve is in flight). The intent row is written BEFORE the
+  // approve now, so the second caller sees the commitment immediately.
   let fired = false;
+  let cliResult = null;
   const inner = s.rpc.call.bind(s.rpc);
   s.rpc.call = async (method, params = []) => {
     const out = await inner(method, params);
     if (!fired && method === 'eth_estimateGas'
         && String(params[0].data).startsWith(uniswap.SELECTORS.approve)) {
       fired = true;
-      const cli = await cliTreasury.sipNow();
-      assert.equal(cli.action, 'sipped', 'the CLI saw a clean budget and sipped');
+      cliResult = await cli.sipNow();
     }
     return out;
   };
 
   const service = await s.treasury.attemptSip({ trigger: 'interval' });
-  assert.equal(service.action, 'sipped', 'and so did the service');
+  assert.equal(service.action, 'sipped');
+  assert.ok(fired, 'the second caller really did run inside the window');
+  assert.equal(cliResult.action, 'skipped');
+  // Two independent guards close this window, and whichever fires first is a
+  // correct answer: the in-flight approve is an unresolved action (nothing
+  // new may be signed onto that nonce lane), and the budget row is already
+  // committed (proved on its own in D1a).
+  assert.ok(['unresolved_action', 'daily_budget_exhausted'].includes(cliResult.reason),
+    `expected the second caller to be stopped, got ${cliResult.reason}`);
 
   const spent = s.tstore.sipSpendSince(0);
-  assert.equal(spent, USDC(10), 'two $5 sips in one day against a $5/day budget');
-  assert.ok(spent > s.cfg.treasury.dailySwapBudgetAtomic,
-    `daily budget ${s.cfg.treasury.dailySwapBudgetAtomic} exceeded by ${spent - s.cfg.treasury.dailySwapBudgetAtomic} atomic units`);
-
-  // Both rows are confirmed: this is not a race that fails safe, it is money
-  // converted twice over the policy the operator wrote down.
+  assert.equal(spent, USDC(5), 'exactly the $5/day the operator configured');
+  assert.ok(spent <= s.cfg.treasury.dailySwapBudgetAtomic);
   const rows = s.tstore.list({ kind: 'sip', limit: 10 });
-  assert.equal(rows.length, 2);
-  for (const r of rows) assert.equal(r.status, 'confirmed');
+  assert.equal(rows.length, 1);
 });
 
-test('D1b: the same window exists for the cooldown — force skips it, and the row is written last', async () => {
-  const s = treasuryScene({ eth: 1n, usdc: USDC(30) });
-  // A sip that has already run today: the cooldown should forbid another.
+test('D1a: the budget check and the intent row are one atomic write (the CLI cannot even start a second one)', async () => {
+  const s = treasuryScene({ eth: 1n, usdc: USDC(30), env: { X402_TREASURY_DAILY_SWAP_BUDGET_USDC: '5.00' } });
+  const store = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'treasury', 'store.js'), 'utf8');
+  assert.match(store, /beginSipTx\.immediate/, 'BEGIN IMMEDIATE takes SQLite\'s write lock across processes');
+
+  const claim = s.tstore.beginSip({
+    amount: USDC(5), minAmount: USDC(0.5), budget: USDC(5), windowSec: 86_400, destination: C.swapRouter02,
+  });
+  assert.equal(claim.ok, true);
+  const second = s.tstore.beginSip({
+    amount: USDC(5), minAmount: USDC(0.5), budget: USDC(5), windowSec: 86_400, destination: C.swapRouter02,
+  });
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, 'daily_budget_exhausted');
+});
+
+test('D1b: force still bypasses the cooldown — and still cannot bypass the budget', async () => {
+  const s = treasuryScene({ eth: 1n, usdc: USDC(30) }); // default budget $10/day
   const first = await s.treasury.attemptSip({ trigger: 'interval' });
   assert.equal(first.action, 'sipped');
-  s.rpc.setEth(s.facilitator, 1n); // gas spent again, back under the floor
-  const held = await s.treasury.attemptSip({ trigger: 'settlement' });
-  assert.equal(held.reason, 'cooldown', 'the automatic path is correctly held');
+  s.rpc.setEth(s.facilitator, 1n);
+  assert.equal((await s.treasury.attemptSip({ trigger: 'settlement' })).reason, 'cooldown', 'the automatic path is held');
 
-  // The CLI is not.
   const forced = await s.treasury.sipNow();
-  assert.equal(forced.action, 'sipped', 'force bypasses the cooldown by design — combined with D1 it also bypasses the budget accounting window');
+  assert.equal(forced.action, 'sipped', 'the operator override still works');
   assert.equal(s.tstore.sipSpendSince(0), USDC(10));
+
+  s.rpc.setEth(s.facilitator, 1n);
+  const third = await s.treasury.sipNow();
+  assert.equal(third.reason, 'daily_budget_exhausted', 'and the budget is the wall force cannot walk through');
 });
 
-test('D2: a wrong quote moves the slippage bound with it — a 90% haircut is accepted as a success', async () => {
+test('D1c: the CLI is locked out of a live service entirely (the lease, not just the budget)', async () => {
+  const s = treasuryScene({ eth: 1n, usdc: USDC(30) });
+  const cli = cliTreasuryFor(s);
+  assert.equal(s.treasury.acquireLease({ label: 'facilitator' }).ok, true);
+  const denied = cli.acquireLease({ label: 'cli:999', ttlS: 300 });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.holder.label, 'facilitator');
+});
+
+test('D2: a quote far below an independent price reference is refused, not "settled"', async () => {
   // The quoter reports 10% of the fair rate (a manipulated/thin pool, or a
-  // stale price). amountOutMinimum is derived from that number alone.
+  // stale price). amountOutMinimum derives from that number alone, so before
+  // the fix the module reported a clean, successful sip having accepted >10x
+  // less ETH than fair value.
   const s = treasuryScene({
     eth: 1n,
     usdc: USDC(30),
-    chain: { quoteInflateBps: -9000 }, // quote = 10% of fair
+    chain: { quoteInflateBps: -9000 },             // quote = 10% of fair
+    env: { X402_ETH_USD_PRICE: '1880' },           // ~the rate the mock pool quotes
   });
   s.rpc.state.allowance.set(`${s.facilitator.toLowerCase()}:${C.swapRouter02.toLowerCase()}`, 10n ** 18n);
 
-  // Model the matching bad fill: the swap returns exactly amountOutMinimum
-  // (the worst fill the module will accept) instead of the fair amount.
-  let minOut = null;
-  const inner = s.rpc.call.bind(s.rpc);
-  s.rpc.call = async (method, params = []) => {
-    if (method === 'eth_sendRawTransaction') {
-      const tx = decodeEip1559(params[0]);
-      if (evm.addressEquals(tx.to, C.swapRouter02)) {
-        minOut = decodeSipCalldata(tx.data).swap.amountOutMinimum;
-      }
-      return inner(method, params);
-    }
-    const r = await inner(method, params);
-    if (method === 'eth_getTransactionReceipt' && r && minOut !== null) {
-      for (const log of r.logs) {
-        if (evm.addressEquals(log.address, C.weth9) && log.topics[0] === uniswap.TOPICS.withdrawal) {
-          log.data = '0x' + minOut.toString(16).padStart(64, '0');
-        }
-      }
-    }
-    return r;
-  };
-
   const r = await s.treasury.attemptSip({ trigger: 'interval' });
-  assert.equal(r.action, 'sipped', 'the module reports a clean, successful sip');
+  assert.equal(r.action, 'skipped');
+  assert.equal(r.reason, 'quote_off_reference');
+  assert.equal(s.rpc.sent.length, 0, 'not a cent of revenue was converted at that rate');
+  assert.equal(s.treasury.status().sip_consecutive_failures, 0, 'a bad market is a skip, never a strike');
 
-  const fair = s.rpc.quoteOut(USDC(5), 100); // what $5 is really worth
-  assert.ok(r.eth_received_wei * 10n < fair,
-    `accepted ${r.eth_received_wei} wei for $5 of revenue; fair value was ${fair} wei (>10x more)`);
+  // The band is wide enough that ordinary price movement still sips.
+  const ok = treasuryScene({
+    eth: 1n, usdc: USDC(30),
+    chain: { quoteInflateBps: -2000 },             // 20% below the reference
+    env: { X402_ETH_USD_PRICE: '1880' },
+  });
+  ok.rpc.state.allowance.set(`${ok.facilitator.toLowerCase()}:${C.swapRouter02.toLowerCase()}`, 10n ** 18n);
+  assert.equal((await ok.treasury.attemptSip({ trigger: 'interval' })).action, 'sipped');
+});
 
-  // Nothing in the module compares the fill to any independent price: the
-  // only absolute floor is the uneconomic ratio.
-  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'treasury', 'treasury.js'), 'utf8');
-  assert.ok(!/ethUsdPrice|priceFloor|minWeiPerUsdc|oracle/i.test(src),
-    'treasury.js has no independent price reference to sanity-check a quote against');
+test('D2b: with no price knob, our own last realised sip rate catches the same manipulation', async () => {
+  const s = treasuryScene({
+    eth: 1n, usdc: USDC(30),
+    env: { X402_TREASURY_SIP_COOLDOWN_S: '0', X402_TREASURY_DAILY_SWAP_BUDGET_USDC: '100.00' },
+  });
+  s.rpc.state.allowance.set(`${s.facilitator.toLowerCase()}:${C.swapRouter02.toLowerCase()}`, 10n ** 18n);
+  assert.equal(s.cfg.ethUsdPrice, 0n, 'no operator price configured — the default posture');
 
-  // And the enforced daily exposure is the swap budget, not "cents".
+  const first = await s.treasury.attemptSip({ trigger: 'interval' });
+  assert.equal(first.action, 'sipped', 'a normal sip establishes the realised rate');
+
+  // Now the pool quotes 10% of what we actually filled at last time.
+  s.rpc.state.quoteInflateBps = -9000;
+  s.rpc.setEth(s.facilitator, 1n);
+  const r = await s.treasury.attemptSip({ trigger: 'interval' });
+  assert.equal(r.reason, 'quote_off_last_realized');
+
+  // A stale reference must not become a refuel deadlock: past
+  // X402_TREASURY_RATE_REFERENCE_MAX_AGE_S it stops being a reference.
+  s.clock.advance((s.cfg.treasury.rateReferenceMaxAgeS + 60) * 1000);
+  const later = await s.treasury.attemptSip({ trigger: 'interval' });
+  assert.equal(later.action, 'sipped', 'an ancient rate is not evidence about today\'s price');
+});
+
+test('D2c: the enforced daily exposure is the swap budget, and the module says so', async () => {
+  const s = treasuryScene({ eth: 1n, usdc: USDC(1_000) });
   assert.equal(s.cfg.treasury.dailySwapBudgetAtomic, USDC(10));
+  assert.equal(s.treasury.status().policy.daily_swap_budget_usdc, '10');
+  assert.equal(s.treasury.status().policy.max_quote_deviation_bps, 5000);
+
+  // And docs/x402.md states the enforced bound rather than an assumption
+  // about pool depth.
+  const docs = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', '..', 'docs', 'x402.md'), 'utf8');
+  assert.match(docs, /X402_TREASURY_DAILY_SWAP_BUDGET_USDC/);
+  assert.match(docs, /X402_ETH_USD_PRICE/);
+});
+
+test('D2d: the amountOutMinimum bound itself is unchanged (quote minus exactly the configured slippage)', async () => {
+  const s = treasuryScene({ eth: 1n, usdc: USDC(5), env: { X402_TREASURY_MAX_SLIPPAGE_BPS: '250' } });
+  await s.treasury.attemptSip({ trigger: 'interval' });
+  const swapTx = s.rpc.sent.find((x) => evm.addressEquals(x.tx.to, C.swapRouter02));
+  const call = decodeSipCalldata(swapTx.tx.data);
+  const quote = s.rpc.quoteOut(USDC(5), call.swap.fee);
+  assert.equal(call.swap.amountOutMinimum, (quote * 9750n) / 10_000n);
+  assert.equal(call.unwrap.amountMinimum, call.swap.amountOutMinimum);
+  const tx = decodeEip1559(swapTx.raw);
+  assert.equal(tx.value, 0n);
 });

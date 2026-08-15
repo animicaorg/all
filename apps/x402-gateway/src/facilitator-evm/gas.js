@@ -102,17 +102,24 @@ async function estimateGasLimit(rpc, { from, to, data, maxGasPerSettlement }) {
  * in-flight reservations (+ this one) closes that race, which is why the
  * authoritative call happens inside the submit lock.
  */
-function checkDailyBudget(store, dailyBudgetWei, { reserveWei = 0n } = {}) {
+function checkDailyBudget(store, dailyBudgetWei, { reserveWei = 0n, now = Date.now } = {}) {
   if (!dailyBudgetWei || dailyBudgetWei <= 0n) return null;
-  const spent = store.gasSpentSince(Math.floor(Date.now() / 1000) - 86_400);
+  const since = Math.floor(now() / 1000) - 86_400;
+  const spent = store.gasSpentSince(since);
+  // Treasury transactions (approve/sip/sweep) spend from the SAME account.
+  // Leaving them out made the documented "daily ETH ceiling" bound only half
+  // the outflow, and let the treasury keep spending while the breaker was open.
+  const treasurySpent = typeof store.treasuryGasSpentSince === 'function'
+    ? store.treasuryGasSpentSince(since) : 0n;
   const reservedInFlight = typeof store.gasReservedInFlight === 'function'
     ? store.gasReservedInFlight() : 0n;
-  const projected = spent + reservedInFlight + BigInt(reserveWei || 0n);
+  const projected = spent + treasurySpent + reservedInFlight + BigInt(reserveWei || 0n);
   if (projected >= dailyBudgetWei) {
     return new GasPolicyError(
       'gas_budget_exhausted',
-      `projected trailing-24h gas ${projected} wei (spent ${spent} + in-flight ${reservedInFlight}` +
-      `${reserveWei ? ` + this ${reserveWei}` : ''}) >= X402_DAILY_GAS_BUDGET_WEI ${dailyBudgetWei}`
+      `projected trailing-24h gas ${projected} wei (settlements ${spent} + treasury ${treasurySpent}` +
+      ` + in-flight ${reservedInFlight}${reserveWei ? ` + this ${reserveWei}` : ''})` +
+      ` >= X402_DAILY_GAS_BUDGET_WEI ${dailyBudgetWei}`
     );
   }
   return null;

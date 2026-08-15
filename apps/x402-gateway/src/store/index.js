@@ -113,6 +113,9 @@ function createStore(dbPath, { Database } = {}) {
     revenueByStatus: db.prepare(`SELECT amount FROM payments WHERE status='settled'`),
   };
 
+  // Prepared lazily: the treasury tables only exist once the treasury runs.
+  let treasuryGasStmt = null;
+
   return {
     db, // exposed for tests/CLI reconciliation only
 
@@ -217,10 +220,35 @@ function createStore(dbPath, { Database } = {}) {
       return stmts.listByStatus.all(status, limit);
     },
 
-    /** Total gas spent (BigInt wei) since a unix-seconds timestamp. */
+    /** Settlement gas spent (BigInt wei) since a unix-seconds timestamp. */
     gasSpentSince(sinceSec) {
       let total = 0n;
       for (const row of stmts.gasSince.all(Number(sinceSec))) total += BigInt(row.spent_wei);
+      return total;
+    },
+
+    /**
+     * Treasury gas (approve/sip/sweep) over the same window, read from the
+     * treasury ledger in this very DB file. The daily gas circuit breaker is
+     * documented as an ETH ceiling for the facilitator ACCOUNT, so it has to
+     * count every wei that account spends — treasury transactions included.
+     * The table only exists once the treasury has run, hence the guard.
+     */
+    treasuryGasSpentSince(sinceSec) {
+      let total = 0n;
+      try {
+        if (!treasuryGasStmt) {
+          treasuryGasStmt = db.prepare(
+            'SELECT gas_spent_wei FROM treasury_actions WHERE gas_spent_wei IS NOT NULL AND created_at >= ?'
+          );
+        }
+        const rows = treasuryGasStmt.all(Number(sinceSec));
+        for (const row of rows) {
+          try { total += BigInt(row.gas_spent_wei); } catch (e) { /* ignore malformed */ }
+        }
+      } catch (e) {
+        // No treasury table in this DB (treasury never enabled) — zero.
+      }
       return total;
     },
 
