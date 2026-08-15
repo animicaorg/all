@@ -458,6 +458,48 @@ FORK_VPN_RELAY_REWARDS = "vpn_relay_rewards"
 # Readable 9.0.0 alias (same fork key, same height, same env override).
 FORK_IOU_SETTLEMENT = FORK_VPN_RELAY_REWARDS
 
+# FORK_USEFUL_WORK_VERIFY (10.2.0) — VERIFY the useful-work proofs a block carries.
+# DELIBERATELY UNSET ON MAINNET (see ACTIVATION_HEIGHTS_BY_NETWORK below): the
+# activation height is absent, so get_activation_height() returns None and
+# is_fork_active() is False at every height. The rule cannot fire on mainnet until
+# an operator sets ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT. That is the point — the
+# spec wants a SHADOW window first, and a default height would have removed the
+# operator's decision.
+#
+# WHAT IT DOES: at/after H, every proof envelope in an imported block is verified
+# (structure, canonical CBOR, ML-DSA-65 signature with the scheme id pinned by the
+# VERIFIER not read from the proof, miner==worker, requester!=worker, receipt
+# freshness against an ancestor anchor, single-use nullifier, payment reference) and
+# Σψ is recomputed under code-committed policy caps. An invalid proof rejects the
+# block. See consensus/useful_work_verify.py.
+#
+# WHAT IT DOES *NOT* DO — read this before planning step (3):
+#   1. It NEVER REQUIRES A PROOF. A block carrying zero proofs is valid at every
+#      height, forever. This rule is PRESENCE-GATED, exactly like
+#      FORK_QUANTUM_BEACON: it only constrains blocks that DO carry proofs. Live
+#      mainnet blocks carry zero proofs in 95,004 of 95,004 stored blocks (recon
+#      2026-08-15), so activating this alone is a no-op on today's fleet and CANNOT
+#      halt it. "A block MUST carry a verified AI proof" is a SEPARATE, later fork —
+#      that one is a 100% hard cutover and must not be co-located with this height.
+#   2. It NEVER GRANTS ψ CREDIT. Live acceptance is `header_hash <= target(Θ)`
+#      (core/chain/block_import._pow_sanity), i.e. S = H(u) with Σψ == 0. Crediting
+#      Σψ toward Θ would RELAX the work requirement and would require a matching
+#      change on the miner side; that is out of scope here and would be a split.
+#      The recomputed Σψ and the S = H(u) + Σψ ≥ Θ relationship are computed and
+#      LOGGED for telemetry, never used to accept a block that PoW rejected. This
+#      gate can only ever REJECT (tighten), never admit.
+#   3. It cannot make self-dealing impossible. See the "residual weakness" docstring
+#      in consensus/useful_work_verify.py — a permissionless miner can always fund a
+#      second identity. The design goal is a priced floor, not a barrier.
+#
+# SHADOW SWITCH: ANIMICA_USEFUL_WORK_SHADOW=1 makes the gate observe-only (log the
+# would-be rejection with reason/height/proof index/type, accept anyway), modelled on
+# ANIMICA_PQ_HARDENING_SHADOW. A shadow node and an enforcing node DISAGREE about a
+# block carrying an invalid proof, so the shadow valve is a rollout tool for a window
+# in which no such block exists — never a permanent per-node setting. Run shadow
+# until the logs show a real fleet attaching well-formed proofs, THEN unset it.
+FORK_USEFUL_WORK_VERIFY = "useful_work_verify"
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
     # This MUST match on every node — the live node and every operator's pip install
@@ -529,6 +571,27 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT. Until sealed, activation cannot mint
         # or change emission — behaviour is byte-identical to no-fork.
         FORK_VPN_RELAY_REWARDS: 50_000,
+        # FORK_USEFUL_WORK_VERIFY is DELIBERATELY ABSENT for mainnet. An absent key
+        # makes get_activation_height() return None and is_fork_active() False at
+        # every height, so the rule is disabled by default and no code path can turn
+        # it on by accident. Enabling it is an explicit, documented operator action:
+        #
+        #   ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT=<height>   # arm the gate
+        #   ANIMICA_USEFUL_WORK_SHADOW=1                       # observe-only first
+        #
+        # Recommended rollout (see docs/USEFUL_WORK_SHADOW_RUNBOOK.md):
+        #   1. Set the height to a value BELOW the current head with the shadow env
+        #      ON. The gate then evaluates every incoming block immediately and logs;
+        #      because it is presence-gated and live blocks carry no proofs, the
+        #      expected reading is "proofs=0" on every block and zero would-be
+        #      rejections.
+        #   2. Leave it running until the first non-zero proof count appears — that is
+        #      the signal that a miner has upgraded and is attaching real evidence.
+        #   3. Only after a clean window on a fleet that actually attaches proofs,
+        #      unset the shadow env and PIN a future height here in code so every node
+        #      agrees without env configuration.
+        # Do NOT ship a code-pinned mainnet height in the same release that first
+        # introduces the verifier.
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {
@@ -544,6 +607,10 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,
         FORK_VM_EXEC: 0,
+        # Safe from genesis because the rule is presence-gated: a block with no
+        # proofs is never rejected, and testnet/devnet have no proof-carrying
+        # history to grandfather. This is where the verifier gets exercised.
+        FORK_USEFUL_WORK_VERIFY: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
@@ -558,6 +625,9 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,
         FORK_VM_EXEC: 0,
+        # See the testnet note above: presence-gated, so genesis activation is inert
+        # until a block actually carries a proof.
+        FORK_USEFUL_WORK_VERIFY: 0,
     },
 }
 

@@ -76,6 +76,7 @@ from core.network_params import (
     FORK_PQ_HARDENING,
     FORK_ROOT_COMMITMENT,
     FORK_SERVICE_CARVE,
+    FORK_USEFUL_WORK_VERIFY,
     FORK_VPN_RELAY_REWARDS,
     is_fork_active,
 )
@@ -492,9 +493,21 @@ def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Op
     - txsRoot closes the 'same PoW header, different tx set -> silent divergence'
       hole (ANM-C03).
     - proofsRoot closes proof-swapping: the block's proofs must match what the PoW
-      header committed. This is ANM-C04's *implementable* slice; full PoIES
-      useful-work *validity* verification (validate_block) needs the proofs/ verifier
-      package, which does not exist in-tree — see SECURITY_6.0.0_STATUS.md.
+      header committed. That is a *binding* check only: it proves the proof set is
+      the one the header committed, never that any proof is valid.
+
+    UPDATED 2026-08-15 (this comment previously said the PoIES verifier "does not
+    exist in-tree"). Proof VALIDITY is now checked, separately and behind its own
+    fork: see _verify_block_useful_work_gated below and
+    consensus/useful_work_verify.py. The claim the old comment made was accurate
+    about `proofs/` — that package still does not import (five of six verifiers
+    raise ImportError at load, and `proofs.ai.verify_ai_body` validates one body
+    shape and then reads a disjoint one, so it can never succeed) and
+    `consensus.validator.validate_block` is not usable as-is because it derives its
+    supported work types from `importlib.util.find_spec` at validation time, making
+    acceptance depend on which modules happen to be installed on each node. What is
+    new is a purpose-built pure verifier for the AI slice; the rest of the proof
+    types remain unverifiable and are therefore REJECTED when present.
     """
     if not is_fork_active(FORK_ROOT_COMMITMENT, height, chain_id=chain_id):
         return None
@@ -527,6 +540,117 @@ def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Op
                 f"header={bytes(committed_pr).hex()[:16]}"
             )
     return None
+
+
+def _useful_work_shadow() -> bool:
+    """ANIMICA_USEFUL_WORK_SHADOW=1 -> observe-only: log exactly what WOULD be
+    rejected (reason, height, proof index, proof type, Σψ, Θ) and accept anyway.
+
+    Modelled on _pq_hardening_shadow(). Same caveat, stated plainly: a shadow node
+    and an enforcing node DISAGREE about a block that carries an invalid proof, so
+    this is a rollout instrument for a window in which no such block exists — never
+    a permanent per-node setting. The safe sequence is (1) arm the fork height with
+    shadow ON, (2) confirm zero would-be rejections across a real window, (3) unset
+    the env everywhere, (4) only then pin a code height.
+
+    Why a valve exists here at all, when _verify_block_frozen_addresses_gated
+    deliberately has none: the freeze set is a code constant, so an enforcing node's
+    verdict is knowable in advance and needs no observation window. This rule's
+    verdict depends on proof bodies no miner has ever produced — nothing has ever
+    checked one, so nobody knows what the fleet will actually attach. Observation is
+    the only responsible way to find out, and the fork height defaults to disabled
+    so the valve is not even reachable until an operator arms it.
+    """
+    return os.getenv("ANIMICA_USEFUL_WORK_SHADOW", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+class _ImporterChainView:
+    """ChainView adapter over the block DB for consensus/useful_work_verify.
+
+    Every lookup is against data already committed below the block under test, so
+    the verdict stays a function of the chain rather than of node-local state —
+    with the one exception documented in the verifier's RESIDUAL WEAKNESSES: a node
+    whose transaction index has been pruned returns None from `payment()` and, in
+    enforcing mode, would reject a block another node accepts. Shadow-mode
+    telemetry must show a zero `payment_unresolved` rate before enforcement.
+    """
+
+    __slots__ = ("_block_db", "_parent_hash", "_height", "_max_walk", "_nullifiers")
+
+    def __init__(self, *, block_db, parent_hash: bytes, height: int, max_walk: int, nullifiers):
+        self._block_db = block_db
+        self._parent_hash = bytes(parent_hash)
+        self._height = int(height)
+        self._max_walk = int(max_walk)
+        self._nullifiers = nullifiers
+
+    def ancestor_hash_at(self, height: int) -> Optional[bytes]:
+        """Walk THIS block's parent chain. Deliberately not
+        block_db.get_canonical_hash(): during a reorg the canonical index and the
+        block's own ancestry differ, and only the ancestry is a property of the
+        block being validated."""
+        target = int(height)
+        cur_height = self._height - 1
+        if target < 0 or target > cur_height:
+            return None
+        cur_hash = self._parent_hash
+        steps = 0
+        while cur_height > target:
+            if steps > self._max_walk:
+                return None
+            hdr = self._block_db.get_header_by_hash(cur_hash)
+            if hdr is None:
+                return None
+            parent = getattr(hdr, "parentHash", None)
+            if not isinstance(parent, (bytes, bytearray)) or len(parent) != 32:
+                return None
+            cur_hash = bytes(parent)
+            cur_height -= 1
+            steps += 1
+        return cur_hash
+
+    def payment(self, tx_hash: bytes):
+        from consensus.useful_work_verify import PaymentRecord
+
+        try:
+            found = self._block_db.get_transaction_by_hash(bytes(tx_hash))
+        except Exception:
+            return None
+        if not found:
+            return None
+        try:
+            inc_height, _idx, _blk_hash, tx = found
+            unsigned = getattr(tx, "unsigned", None)
+            if unsigned is None:
+                return None
+            if int(getattr(unsigned, "kind", -1)) != int(TxKind.TRANSFER):
+                return None
+            sender = getattr(unsigned, "sender", None)
+            payload = getattr(unsigned, "payload", None)
+            to = getattr(payload, "to", None) if payload is not None else None
+            amount = int(getattr(payload, "amount", 0) or 0) if payload is not None else 0
+            if not isinstance(sender, (bytes, bytearray)) or len(sender) != 32:
+                return None
+            if not isinstance(to, (bytes, bytearray)) or len(to) != 32:
+                return None
+            return PaymentRecord(
+                sender=bytes(sender), to=bytes(to), amount=amount, height=int(inc_height)
+            )
+        except Exception:
+            return None
+
+    def nullifier_seen(self, nullifier: bytes) -> bool:
+        if self._nullifiers is None:
+            return False
+        try:
+            return bool(self._nullifiers.seen(bytes(nullifier)))
+        except Exception:
+            return False
 
 
 def _scan_block_frozen_addresses(block: Block, height: int) -> Optional[str]:
@@ -833,6 +957,7 @@ class BlockImporter:
         "_data_dir",
         "_pinned_checkpoints",
         "_invalid_blocks",
+        "_useful_work_nullifiers",
     )
 
     def __init__(
@@ -859,6 +984,16 @@ class BlockImporter:
         # _init_fork_choice_from_db, so this is the source of truth that is
         # re-applied after every rebuild and short-circuits re-import.
         self._invalid_blocks: set[bytes] = set()
+        # FORK_USEFUL_WORK_VERIFY: sliding-window nullifier store for useful-work
+        # proofs. Built lazily on first use so a node that never sees a proof —
+        # i.e. every mainnet node today — pays nothing for it. In-memory: the
+        # window (consensus.nullifiers.Config.window = 10,000 blocks) is rebuilt
+        # from scratch on restart, which means a restarted node forgets tags it
+        # had recorded and would re-accept a replayed proof inside the window.
+        # That is a REAL GAP for enforcement and is why this stays observe-only
+        # until a persistent (KV-backed) store is wired; it is recorded in the
+        # shadow-mode runbook rather than papered over.
+        self._useful_work_nullifiers: Optional[Any] = None
         # Store full params dict for reward calculation (includes monetary.issuance)
         # If not provided, try to load from spec/params.yaml
         self.full_params_dict = full_params_dict
@@ -1582,6 +1717,32 @@ class BlockImporter:
                     ImportErrorCode.INVALID, height, h, False, f"quantum_beacon: {beacon_error}"
                 )
 
+            # FORK_USEFUL_WORK_VERIFY (C04 slice): verify the useful-work proofs
+            # the block carries — structure, ML-DSA-65 signature with the scheme
+            # pinned by the verifier, miner==worker, requester!=miner, receipt
+            # freshness against an ancestor anchor, a paid requester, and a
+            # single-use nullifier — and recompute Σψ under code-committed policy
+            # caps. Presence-gated (a block with no proofs is always valid) and
+            # DISABLED on mainnet by default; ANIMICA_USEFUL_WORK_SHADOW=1 makes it
+            # observe-only. Runs last among the gates so cheaper structural checks
+            # reject first and the coinbase identity used by the worker==miner
+            # comparison has already survived _validate_coinbase_outputs_nonzero.
+            useful_work_error = self._verify_block_useful_work_gated(
+                block=block,
+                header=header,
+                header_hash=h,
+                parent_hash=parent_hash,
+                height=height,
+            )
+            if useful_work_error is not None:
+                return ImportResult(
+                    ImportErrorCode.INVALID,
+                    height,
+                    h,
+                    False,
+                    f"useful_work: {useful_work_error}",
+                )
+
             # Persist header & block
             self._store_header(height, h, header)
             self._store_block(h, block)
@@ -1820,6 +1981,144 @@ class BlockImporter:
                     },
                 )
             return f"pow check failed: {e}"
+        return None
+
+    def _useful_work_nullifier_store(self):
+        """Lazily build the useful-work nullifier store (see __init__ note)."""
+        if self._useful_work_nullifiers is None:
+            from consensus.nullifiers import Config as _NullConfig, MemoryNullifierStore
+
+            self._useful_work_nullifiers = MemoryNullifierStore(_NullConfig())
+        return self._useful_work_nullifiers
+
+    def _verify_block_useful_work_gated(
+        self,
+        *,
+        block: Block,
+        header: Header,
+        header_hash: bytes,
+        parent_hash: bytes,
+        height: int,
+    ) -> Optional[str]:
+        """FORK_USEFUL_WORK_VERIFY: verify the useful-work proofs a block carries.
+
+        Returns a rejection reason or None. Grandfathered below the activation
+        height, which is UNSET on mainnet by default — this gate cannot fire there
+        until an operator sets ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT.
+
+        PRESENCE-GATED: a block with no proofs is accepted at every height. It is
+        also a pure TIGHTENING — the recomputed Σψ is logged, never fed back into
+        acceptance, so this can only reject a block PoW already accepted and can
+        never admit one PoW rejected. Making Σψ count toward Θ would relax the work
+        requirement and needs a matching miner-side change; that is a separate fork.
+
+        Shadow mode (ANIMICA_USEFUL_WORK_SHADOW=1) logs the identical verdict and
+        returns None. Nullifiers are recorded ONLY on an enforcing accept: a shadow
+        node must not build replay state from blocks it is not actually policing,
+        or it would start rejecting on a rule it is supposedly only observing.
+        """
+        chain_id = int(self.params.chain_id)
+        if not is_fork_active(FORK_USEFUL_WORK_VERIFY, height, chain_id=chain_id):
+            return None
+
+        # Fast path with zero imports for the ~100% case (no proofs attached).
+        proofs = getattr(block, "proofs", ()) or ()
+        shadow = _useful_work_shadow()
+        if not proofs and not shadow:
+            return None
+
+        try:
+            from consensus.useful_work_verify import (
+                POLICY_V1,
+                BlockContext,
+                block_miner_digest,
+                verify_block_useful_work,
+            )
+        except Exception as e:  # pragma: no cover - a broken build, not a bad block
+            reason = f"verifier_unavailable:{type(e).__name__}:{e}"
+            log.error("useful_work: verifier import failed", extra={"height": height})
+            if shadow:
+                return None
+            # Fail-closed. This is a per-node input in a consensus decision and
+            # therefore a split risk; it is reachable only on a build where the
+            # verifier does not import, which the operator must fix before
+            # enforcing. The distinct reason string makes it obvious in logs.
+            return reason
+
+        miner_digest, miner_reason = block_miner_digest(block)
+        store = self._useful_work_nullifier_store()
+        chain_view = _ImporterChainView(
+            block_db=self.block_db,
+            parent_hash=parent_hash,
+            height=height,
+            max_walk=int(POLICY_V1.anchor_window) + 2,
+            nullifiers=store,
+        )
+        ctx = BlockContext(
+            chain_id=chain_id,
+            height=int(height),
+            parent_hash=bytes(parent_hash),
+            header_hash=bytes(header_hash),
+            theta_micro=int(_weight_micro_of(header, None, self.params)),
+            poies_policy_root=bytes(getattr(header, "poiesPolicyRoot", b"") or b""),
+            miner_digest=miner_digest,
+            chain=chain_view,
+            policy=POLICY_V1,
+        )
+
+        try:
+            report = verify_block_useful_work(block, ctx)
+        except Exception as e:  # pragma: no cover - the verifier is total by design
+            log.error(
+                "useful_work: verifier raised (treated as reject)",
+                extra={"height": height, "error": f"{type(e).__name__}: {e}"},
+            )
+            if shadow:
+                return None
+            return f"verifier_error:{type(e).__name__}"
+
+        reason = report.reason
+        if reason is None and proofs and miner_reason is not None:
+            # Only matters when proofs are present: an unattributable block that
+            # carries none is untouched by this rule.
+            reason = f"miner:{miner_reason}"
+
+        if shadow:
+            # Observe-only. Log unconditionally when proofs are present (the first
+            # non-zero proof count is the go/no-go signal step (3) is waiting on),
+            # and at debug when there are none.
+            extra = report.log_extra()
+            extra["shadow"] = True
+            extra["would_reject"] = reason is not None
+            if reason is not None:
+                log.error(
+                    "useful_work SHADOW: block would be rejected (observe-only): %s",
+                    reason,
+                    extra=extra,
+                )
+            elif proofs:
+                log.warning("useful_work SHADOW: block carries proofs (accepted)", extra=extra)
+            else:
+                log.debug("useful_work SHADOW: no proofs", extra=extra)
+            return None
+
+        if reason is not None:
+            log.warning("useful_work: rejecting block: %s", reason, extra=report.log_extra())
+            return reason
+
+        # Accepted and enforcing: burn the nullifiers so the same receipt cannot be
+        # replayed in a later block.
+        for nullifier in report.nullifiers_to_record:
+            try:
+                store.record(bytes(nullifier), int(height))
+            except Exception as e:  # pragma: no cover - defensive
+                log.error("useful_work: nullifier record failed: %s", e)
+        try:
+            store.prune(int(height))
+        except Exception:  # pragma: no cover - defensive
+            pass
+        if proofs:
+            log.info("useful_work: verified block proofs", extra=report.log_extra())
         return None
 
     def _tx_hash(self, tx: Tx) -> bytes:
