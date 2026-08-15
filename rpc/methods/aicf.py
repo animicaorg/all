@@ -28,6 +28,68 @@ log = logging.getLogger("rpc.methods.aicf")
 # --------------------------------------------------------------------------------------
 
 
+def _resolve_state(ctx: Any = None) -> Any:
+    """The state DB, or None.
+
+    THE `ctx` A HANDLER RECEIVES IS NOT THE ONE THAT HOLDS THE STATE. A method
+    declaring a parameter named ``ctx`` gets ``rpc.jsonrpc.Context`` injected
+    (rpc/jsonrpc.py:439) — a per-request TRANSPORT object whose only fields are
+    request/received_at_ms/client/headers. The database handles live on
+    ``rpc.deps.RpcContext`` (kv, state_db, block_db, tx_index), reached through
+    ``deps.get_ctx()``. Two unrelated classes, both conventionally called "ctx".
+
+    This module read state off the transport object for its whole life, which is
+    why ``aicf.status`` answered {enabled: false, reason: dependency_missing,
+    "State not available"} on every node ever deployed and why
+    ``aicf.listProviders`` was catalogued but never dispatchable. Every working
+    namespace resolves state the way this helper does — see rpc/methods/state.py.
+
+    The passed ctx is still consulted as a fallback, for embeddings (and tests)
+    that hand in a real RpcContext directly.
+    """
+    try:
+        from rpc import deps
+
+        state = getattr(deps.get_ctx(), "state_db", None)
+        if state is not None:
+            return state
+    except Exception:  # context not initialised (tests, tooling) — fall through
+        pass
+    if ctx is None:
+        return None
+    return getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
+
+
+def _resolve_height(ctx: Any = None) -> int:
+    """Current chain height, or 0.
+
+    Same trap as _resolve_state: ``ctx.block_env`` is only ever set while a
+    block is being executed, and it is absent from the per-request transport
+    ctx an RPC handler receives — so reading it here reported height 0, and
+    therefore epoch 0, on a live chain. The canonical head is on
+    ``rpc.deps.RpcContext.head``.
+    """
+    block_env = getattr(ctx, "block_env", None) if ctx is not None else None
+    if block_env is not None:
+        try:
+            return int(getattr(block_env, "height", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+    try:
+        from rpc import deps
+
+        head = getattr(deps.get_ctx(), "head", None)
+        if head is not None:
+            info = head.get() or {}
+            height = info.get("canonicalHeight")
+            if height is None:
+                height = info.get("height")
+            return int(height or 0)
+    except Exception:
+        pass
+    return 0
+
+
 def _get_aicf_params(ctx: Any) -> Dict[str, Any]:
     """Get AICF parameters from chain params."""
     params = getattr(ctx, "params", None)
@@ -56,14 +118,11 @@ def _get_current_epoch(ctx: Any) -> int:
         return 0
     
     # Get current height
-    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
+    state = _resolve_state(ctx)
     if state is None:
         return 0
     
-    block_env = getattr(ctx, "block_env", None)
-    height = 0
-    if block_env is not None:
-        height = int(getattr(block_env, "height", 0) or 0)
+    height = _resolve_height(ctx)
     
     epoch_length = get_epoch_length(state)
     return compute_epoch(height, epoch_length)
@@ -150,15 +209,12 @@ async def getStatus(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     except ImportError:
         raise InternalError("AICF state module not available")
     
-    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
+    state = _resolve_state(ctx)
     if state is None:
         raise InternalError("State not available")
     
     # Get current height and epoch
-    block_env = getattr(ctx, "block_env", None)
-    height = 0
-    if block_env is not None:
-        height = int(getattr(block_env, "height", 0) or 0)
+    height = _resolve_height(ctx)
     
     epoch_length = get_epoch_length(state)
     current_epoch = compute_epoch(height, epoch_length)
@@ -207,7 +263,7 @@ async def getClaimable(address: str, ctx: Any = None, up_to_epoch: Optional[int]
     except ImportError:
         raise InternalError("AICF state module not available")
 
-    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
+    state = _resolve_state(ctx)
     if state is None:
         raise InternalError("State not available")
 
@@ -284,7 +340,7 @@ async def buildClaimTx(ctx: Any, params: List[Any]) -> Dict[str, Any]:
     
     # Get current nonce if not provided
     if nonce is None:
-        state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
+        state = _resolve_state(ctx)
         if state is not None:
             try:
                 from execution.state.balances import get_nonce
@@ -477,7 +533,7 @@ async def aicf_status_endpoint(ctx: Any, params: Any = None) -> Dict[str, Any]:
             "details": {},
         }
 
-    state = getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
+    state = _resolve_state(ctx)
     if state is None:
         return {
             "enabled": False,
@@ -488,10 +544,7 @@ async def aicf_status_endpoint(ctx: Any, params: Any = None) -> Dict[str, Any]:
         }
 
     try:
-        block_env = getattr(ctx, "block_env", None)
-        height = 0
-        if block_env is not None:
-            height = int(getattr(block_env, "height", 0) or 0)
+        height = _resolve_height(ctx)
 
         epoch_length = get_epoch_length(state)
         current_epoch = compute_epoch(height, epoch_length)
