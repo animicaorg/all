@@ -1,0 +1,73 @@
+# animica-x402.service — Animica x402 paid-API gateway (src/server.js).
+#
+# THIS IS A REPO EXAMPLE FILE — it is not installed by being here.
+# Deployment is a separate, human-approved runbook step (README "Ops /
+# runbook"). NOTE: the unit currently installed on the production host under
+# this same name runs the DEV entry (src/demo-server.js on 127.0.0.1:4656);
+# installing this file REPLACES that behavior with the production gateway
+# (src/server.js on 127.0.0.1:8742) — do both sides of the cutover together
+# with the nginx change in ../nginx/ (see ../nginx/INSTALL.md).
+#
+# Install (operator, deliberate):
+#   cp systemd/animica-x402.service /etc/systemd/system/animica-x402.service
+#   install -m 0600 /dev/null /etc/animica-x402.env   # then fill from .env.example
+#   mkdir -p /root/animica/apps/x402-gateway/state    # ReadWritePaths target must exist
+#   systemctl daemon-reload && systemctl restart animica-x402
+
+[Unit]
+Description=Animica x402 paid-API gateway (products, paywall, discovery — 127.0.0.1:8742)
+Wants=network-online.target
+After=network-online.target
+# In X402_FACILITATOR_MODE=self the facilitator should come up first
+# (soft ordering only — the gateway degrades to 502s, it does not crash).
+After=animica-x402-facilitator.service
+
+# Restart on crash without hot-looping: 5 attempts per 5 minutes, then stop.
+# (src/server.js exits non-zero on bad config; without this cap a config
+# typo + Restart= would spin every RestartSec forever.)
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# The app lives under /root — runs as root like the rest of this host's
+# services. The hardening below still removes most of root's blast radius.
+User=root
+WorkingDirectory=/root/animica/apps/x402-gateway
+# Secrets come ONLY from this root-owned 0600 file (template: .env.example).
+EnvironmentFile=/etc/animica-x402.env
+# NODE PATH MUST MATCH THE HOST. This is the nvm-managed Node on the
+# current production box (v20.20.2 — the app's tested engine; better-sqlite3
+# 12.x is pinned to it). Adjust if the host's Node lives elsewhere.
+ExecStart=/root/.nvm/versions/node/v20.20.2/bin/node src/server.js
+
+Restart=on-failure
+RestartSec=5
+
+# ------------------------------------------------------------- hardening --
+NoNewPrivileges=true
+PrivateTmp=true
+# Whole filesystem read-only except the explicit state dir (sqlite DBs +
+# WAL). The path must exist before start — created in the install step.
+ProtectSystem=strict
+ReadWritePaths=/root/animica/apps/x402-gateway/state
+# The app itself lives under /root, so ProtectHome must be read-only, not
+# `true` (which would hide /root entirely and break WorkingDirectory).
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+PrivateDevices=true
+# Loopback HTTP to the facilitator/node + outbound RPC only.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+# Deliberately NOT set: MemoryDenyWriteExecute (breaks V8's JIT).
+
+[Install]
+WantedBy=multi-user.target

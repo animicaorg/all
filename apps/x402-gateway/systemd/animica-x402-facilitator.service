@@ -1,0 +1,70 @@
+# animica-x402-facilitator.service — self-hosted exact-EVM x402 facilitator
+# (src/facilitator-evm/server.js: /verify /settle /supported /healthz
+# /readyz /metrics on 127.0.0.1:8743 — NEVER exposed through nginx).
+#
+# THIS IS A REPO EXAMPLE FILE — it is not installed by being here.
+# Deployment is a separate, human-approved runbook step (README "Ops /
+# runbook"). This unit holds the ONLY secret in the system: it reads
+# X402_FACILITATOR_PRIVATE_KEY from the 0600 env file, refuses to start on
+# a malformed key, and logs only the derived address.
+#
+# Install (operator, deliberate):
+#   cp systemd/animica-x402-facilitator.service /etc/systemd/system/
+#   install -m 0600 /dev/null /etc/animica-x402.env   # then fill from .env.example
+#   mkdir -p /root/animica/apps/x402-gateway/state    # ReadWritePaths target must exist
+#   systemctl daemon-reload && systemctl start animica-x402-facilitator
+#   curl -s http://127.0.0.1:8743/readyz              # must be all-true before cutover
+
+[Unit]
+Description=Animica x402 self-hosted EVM facilitator (Base USDC EIP-3009 — 127.0.0.1:8743)
+Wants=network-online.target
+After=network-online.target
+
+# Restart on crash without hot-looping: 5 attempts per 5 minutes, then stop.
+# (Startup is fail-closed: bad config/key/domain-separator exits non-zero;
+# this cap keeps a misconfig from spinning. Crash recovery of in-flight
+# settlements runs on every start BEFORE the listener opens.)
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/animica/apps/x402-gateway
+# Secrets come ONLY from this root-owned 0600 file (template: .env.example).
+EnvironmentFile=/etc/animica-x402.env
+# NODE PATH MUST MATCH THE HOST. This is the nvm-managed Node on the
+# current production box (v20.20.2 — the app's tested engine; better-sqlite3
+# 12.x is pinned to it). Adjust if the host's Node lives elsewhere.
+ExecStart=/root/.nvm/versions/node/v20.20.2/bin/node src/facilitator-evm/server.js
+
+Restart=on-failure
+RestartSec=5
+
+# ------------------------------------------------------------- hardening --
+NoNewPrivileges=true
+PrivateTmp=true
+# Whole filesystem read-only except the settlement/replay ledger dir
+# (X402_DB_PATH default ./state/x402.db + WAL files). Must exist pre-start.
+ProtectSystem=strict
+ReadWritePaths=/root/animica/apps/x402-gateway/state
+# The app itself lives under /root, so ProtectHome must be read-only, not
+# `true` (which would hide /root entirely and break WorkingDirectory).
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+PrivateDevices=true
+# Loopback listener + outbound HTTPS to the Base RPC only.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+# Deliberately NOT set: MemoryDenyWriteExecute (breaks V8's JIT).
+
+[Install]
+WantedBy=multi-user.target

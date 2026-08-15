@@ -1,217 +1,286 @@
-# x402 gateway — agent payments scaffold
+# x402 gateway + self-hosted facilitator
 
-> **Status: scaffold, reviewed, NOT deployed.** Nothing here is wired into
-> nginx or systemd, and the code refuses to run without `ANM_X402_ENABLED=1`.
-> Enabling it for real requires three decisions that are explicitly NOT made
-> here:
->
-> 1. **CDP facilitator account** for the USDC lane (or PayAI, or staying on
->    the x402.org testnet facilitator) — an operator/business decision.
-> 2. **wANM mint + treasury configuration** — the real mint address lives
->    with the solana.animica.org bridge config, and the treasury and fee-payer
->    sponsor keys must be provisioned and funded (the sponsor pays SOL fees).
-> 3. **Which endpoints get paid tiers** — an operator decision per service;
->    this repo ships only a demo echo route.
+> **Status (2026-08-15): Base-USDC x402 stack, facilitator SELF-HOSTED —
+> no third-party settlement dependency, no Coinbase services anywhere.
+> The wANM/Solana lane is RETIRED** (code kept in-tree as legacy, never
+> configured; see "Retired wANM lane" below). Deployment is a separate
+> human-approved runbook step: the live `animica-x402.service` still runs
+> the dev entry (`src/demo-server.js`), and the systemd/nginx files in this
+> repo are **examples, not installed state**. Everything refuses to run
+> without `ANM_X402_ENABLED=1`.
 
-## What this is
+Sells Animica capabilities per-call over the open
+[x402 protocol](https://github.com/x402-foundation/x402) (v2 wire + v1
+compat): the server answers `402` with machine-readable payment
+requirements, the client signs a USDC EIP-3009 authorization locally,
+retries with a header, our facilitator settles it on Base and the resource
+is delivered with a settlement receipt header. Payers never spend gas and
+never send us a key.
 
-[x402](https://x402.org) is the HTTP-402 payments protocol used by agentic
-clients (canonical spec: `github.com/x402-foundation/x402`, protocol
-version 2). A server answers unpaid requests with `402` + machine-readable
-payment requirements; the client pays with a signed payload in a header; a
-*facilitator* verifies and settles on-chain; the server then serves the
-resource and attaches a settlement receipt header.
+## Quickstart
 
-This scaffold gives Animica services a drop-in gate with **two lanes** in
-every offer:
+```sh
+cd apps/x402-gateway
+node --test test/                       # 122 tests, no network anywhere
 
-| Lane | Rail | Facilitator | Why |
-|------|------|-------------|-----|
-| A | **USDC on Base** (`exact` EVM scheme, CAIP-2 `eip155:8453` / `eip155:84532`) | External, CDP-compatible (`X402_EVM_FACILITATOR_URL`) | Meets agents where they already are; gets endpoints indexed by the Bazaar / x402scan ecosystem |
-| B | **wANM** (SPL token from the solana.animica.org bridge, `exact` SVM scheme) | **Local self-facilitator** (`src/facilitator.js`) | ANM utility: agents can pay in wrapped ANM with no third party between payer and treasury |
+# dev demo (what the live unit runs): /free/ping + /paid/echo on :4656
+ANM_X402_ENABLED=1 node src/demo-server.js
+
+# production gateway (product catalog on 127.0.0.1:8742)
+ANM_X402_ENABLED=1 node src/server.js
+curl -s http://127.0.0.1:8742/x402 | python3 -m json.tool     # discovery
+curl -si http://127.0.0.1:8742/x402/qrng/draw | head -5       # 402 offer
+
+# full local loop incl. the self-hosted facilitator + a REAL testnet
+# settlement: follow test/manual/base-sepolia.md, then pay with
+#   SMOKE_PRIVATE_KEY=… node test/manual/smoke-pay.mjs <url>
+```
 
 ## Architecture
 
 ```
-agent client
-   │  GET /paid/echo
-   ▼
-demo-server.js ──► middleware.js (x402 gate)
-   │  402 + PAYMENT-REQUIRED header (v2) + v1 JSON body
-   │      accepts: [ USDC@Base , wANM@Solana ]
-   │
-   │  retry with PAYMENT-SIGNATURE (v2) or X-PAYMENT (v1)
-   ▼
-middleware ──POST /verify──► facilitator
-   │                           ├─ EVM lane: external CDP-compatible URL
-   │  serve resource           └─ SVM lane: facilitator.js (this repo)
-   │  (held, not delivered)         │ static tx checks + Solana JSON-RPC
-   ├──POST /settle──────────────────┘ (getAccountInfo / sendTransaction /
-   │                                   getSignatureStatuses via SOLANA_RPC_URL)
-   ▼
-200 + PAYMENT-RESPONSE header (settlement receipt)
+                    https://animica.dev/x402/…       (nginx/animica-dev-x402.conf:
+                              │                       per-product locations, rate
+                              ▼                       limits, request-id forwarding)
+             ┌─ x402 GATEWAY  127.0.0.1:8742 ── src/server.js ──────────────┐
+             │  discovery /x402 + /.well-known/x402 (free, live availability)│
+             │  paywall (src/paywall.js): validate → availability (503, no   │
+             │  402 when down) → 402 offer → tamper-proof match → idempotency│
+             │  replay → verify → [preSettle readiness] → settle → execute   │
+             │  products/: echo(dev) qrng($0.01) bulk_chain($0.05)           │
+             │             priority_inference($0.10, capacity-gated, OFF)    │
+             │  stores: state/x402-gateway.db (idempotency + incidents)      │
+             └───┬───────────────────────────────┬───────────────────────────┘
+                 │ x402 v2 §7: /verify /settle    │ JSON-RPC (single-flight,
+                 ▼                                ▼  BigInt-safe)
+   ┌─ FACILITATOR 127.0.0.1:8743 ─────────┐   Animica node 127.0.0.1:8545/rpc
+   │ src/facilitator-evm/server.js        │   (qrng draws, block exports,
+   │ EIP-3009 verify: sig recovery, chain │    aicf.workerStatus capacity)
+   │ time window, balance, nonce unused   │
+   │ (chain + DB); settle: atomic claim → │        Base RPC (X402_RPC_URL)
+   │ estimateGas(=simulation) → sign      │◄──────► eth_call / estimateGas /
+   │ EIP-1559 → persist → broadcast →     │         sendRawTransaction /
+   │ receipt + log match + confirmations  │         receipts
+   │ ledger: state/x402.db (UNIQUE        │
+   │ authorization_hash = replay arbiter) │
+   └──────────────────────────────────────┘
 ```
 
-* **Wire versions.** Spec v2 is in force (headers `PAYMENT-REQUIRED` /
-  `PAYMENT-SIGNATURE` / `PAYMENT-RESPONSE`, base64 JSON, CAIP-2 networks).
-  The still-common v1 wire (`402` JSON body, `X-PAYMENT` /
-  `X-PAYMENT-RESPONSE`) is supported simultaneously: the 402 carries the v2
-  object in its header and the v1 rendering in its body, and both inbound
-  payment headers are accepted.
-* **Flow.** Default `authorization` flow: verify → produce resource → settle
-  → deliver. If settlement fails, the resource is not delivered — we eat the
-  compute, the payer keeps their money.
-* **Self-facilitator** (`src/facilitator.js`) implements the spec §7
-  facilitator contract (`POST /verify`, `POST /settle`, `GET /supported`)
-  for the `exact` SVM scheme: the accepts entry advertises
-  `extra.feePayer` = our sponsor pubkey; the client submits a partially
-  signed `TransferChecked` with our sponsor as fee payer; `/verify` does the
-  spec's static-layout check (1–7 instructions, only compute-budget ≤5
-  lamports/CU, memo, wallet-injected Lighthouse guards, and exactly one
-  `TransferChecked`; authority signature cryptographically verified;
-  fee-payer isolation — the sponsor may appear nowhere but the fee slot)
-  plus RPC checks (destination token account owned by `payTo` with the right
-  mint; source funded); `/settle` signs as fee payer, broadcasts, and polls
-  for confirmation. Replay protection keys on `sha256(messageBytes)` with an
-  atomic check-and-mark before broadcast, closing the spec's
-  duplicate-settlement race (in-memory — a real deployment needs a
-  persistent store, noted in the source).
-* Zero npm dependencies (house rule, same as animica-pay): base58, compact-
-  u16, transaction parsing and ed25519 are done with `node:crypto` and
-  BigInt. SPL program ids are cross-checked against the bridge's sources.
+Two separable layers: the **gateway** (products, paywall, discovery) speaks
+to any x402-v2-§7 facilitator; the **facilitator** is ours by default
+(`X402_FACILITATOR_MODE=self`) and swappable for a remote one
+(`remote` + `X402_FACILITATOR_URL`, e.g. PayAI) with zero product changes.
+
+## Products
+
+| id | route(s) | price (default) | mode | notes |
+|---|---|---|---|---|
+| `qrng` | `GET /x402/qrng/draw`, `POST /x402/qrng` | $0.01 `X402_QRNG_PRICE_USDC` | execute-then-settle | wraps the node's real `rand.quantumRandomBytes`; health-gated readiness probe BEFORE any 402; attestation fields pass through verbatim (`attested:false` today — honesty enforced) |
+| `bulk_chain` | `GET /x402/chain/export\|blocks\|transactions` | $0.05 `X402_BULK_CHAIN_PRICE_USDC` | settle-then-execute | ≤1,000 blocks / ≤10,000 tx rows / byte+time budgets, cursor pagination, NDJSON/JSON, gzip; amounts = decimal strings (nANM); loopback node only, chunked + single-flight |
+| `priority_inference` | `POST /x402/v1/chat/completions` | $0.10 `X402_INFERENCE_PRICE_USDC` | settle-then-execute | **DISABLED by default** (`PRIORITY_INFERENCE_ENABLED=0`) AND capacity-gated on live `aicf.workerStatus` polling; below the worker floor: catalog `available:false`, clear 503, **never a 402** |
+| `echo` | `GET/POST /x402/paid/echo` | $0.005 | execute-then-settle | development-only settlement smoke marker; off when `X402_ENV=production` unless `X402_ENABLE_ECHO=1` |
+
+Cross-product guarantees (all in `src/paywall.js`, tested in
+`test/gateway.test.js`): an unavailable product never requests payment;
+settle-first products re-check readiness immediately before settlement;
+after a settled payment a downstream failure produces an **HMAC-signed
+error receipt** + an incident row (never silently kept money);
+`Idempotency-Key` + same payment replays the stored result with no second
+charge; one delivered success == exactly one settlement; failed/replayed
+payments never count as revenue.
 
 ## Environment
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `ANM_X402_ENABLED` | `0` | Master switch. Anything but `1` → middleware answers 503 and servers refuse to start. |
-| `X402_RESOURCE_BASE_URL` | `http://127.0.0.1:4656` | Public base URL used in `resource.url` of the 402 offer. |
-| `X402_SERVICE_NAME` | `Animica` | `resource.serviceName` (≤32 ascii). |
-| `X402_NETWORK_EVM` | `eip155:84532` (Base Sepolia) | CAIP-2 network for the USDC lane. Mainnet: `eip155:8453`. |
-| `X402_USDC_ASSET` | per-network well-known USDC | USDC contract address. Verify against Circle's list before enabling. |
-| `X402_BASE_PAYTO` | *(empty — lane off)* | EVM address receiving USDC. |
-| `X402_EVM_FACILITATOR_URL` | `https://x402.org/facilitator` | Remote facilitator URL (`X402_FACILITATOR_MODE=remote`). Mainnet remote option: `https://facilitator.payai.network`; production goal is `X402_FACILITATOR_MODE=self` (our own `src/facilitator-evm/`). |
-| `X402_NETWORK_SVM` | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet) | CAIP-2 network for the wANM lane. Mainnet: `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`. |
-| `WANM_MINT` | *(empty — lane off)* | wANM SPL mint. **The real mint lives with the solana.animica.org bridge config — never hardcode it.** |
-| `WANM_TREASURY` | *(empty — lane off)* | Owner wallet that receives wANM (`payTo`). |
-| `WANM_DECIMALS` | `9` | wANM decimals (bridge default is 9, matching ANM nano-units). |
-| `WANM_USD_PRICE` | *(empty — lane off)* | USD per 1 wANM, decimal string, for pricing USD-quoted routes. |
-| `WANM_FEEPAYER_PUBKEY` | *(empty — lane off)* | Sponsor pubkey advertised as `extra.feePayer` (middleware side). |
-| `WANM_FEEPAYER_SECRET` | *(empty — ephemeral)* | 32-byte ed25519 seed (hex or base58) for the facilitator's sponsor. Unset → ephemeral keypair + loud warning. |
-| `X402_SVM_FACILITATOR_URL` | `http://127.0.0.1:4655` | Where the middleware reaches the local facilitator. |
-| `SOLANA_RPC_URL` | *(empty — required by facilitator)* | Solana JSON-RPC. The repo already has a server-side QuikNode endpoint configured elsewhere — inject it via env, never paste it into source. |
-| `X402_FACILITATOR_PORT` | `4655` | Facilitator listen port (loopback). |
-| `X402_DEMO_PORT` | `4656` | Demo server listen port (loopback). |
-| `X402_MAX_TIMEOUT_SECONDS` | `60` | `maxTimeoutSeconds` advertised in offers. |
+Template with every knob commented: [`.env.example`](.env.example) — copy
+to a root-owned **0600** file (`/etc/animica-x402.env`); both systemd units
+read it. The load is fail-closed: contradictions (chain id vs network,
+non-allowlisted asset, malformed key, garbage price) refuse to boot.
 
-No variable ever contains a default secret, and nothing network-facing starts
-without the flag.
+| group | variables |
+|---|---|
+| master | `ANM_X402_ENABLED` (=1 or nothing runs), `X402_ENV` (`production` disables echo) |
+| gateway | `X402_GATEWAY_BIND`/`PORT` (127.0.0.1:8742), `X402_GATEWAY_DB_PATH`, `X402_RESOURCE_BASE_URL`, `X402_SERVICE_NAME`, `X402_RECEIPT_HMAC_KEY` (**required in prod** — signs error receipts), `X402_IDEMPOTENCY_MAX_BODY_BYTES`/`TTL_SECONDS`, `X402_ANIMICA_RPC_URL` (loopback node only) |
+| offers (EVM lane) | `X402_NETWORK_EVM` (CAIP-2), `X402_BASE_PAYTO`, `X402_USDC_ASSET` (defaults to canonical per-network USDC), `X402_MAX_TIMEOUT_SECONDS` |
+| facilitator selection | `X402_FACILITATOR_MODE` (`self`\|`remote`), `X402_FACILITATOR_URL` (+ legacy alias `X402_EVM_FACILITATOR_URL`, still honored — the live unit's env uses it) |
+| self-hosted facilitator | `X402_NETWORK` (`base`\|`base-sepolia` allowlist), `X402_CHAIN_ID` (must agree), `X402_ASSET` (`USDC` or the exact allowlisted address), `X402_RPC_URL` (+`_FALLBACK_URL`), `X402_SETTLEMENT_ADDRESS` (payTo — server config, never client input), `X402_FACILITATOR_PRIVATE_KEY`, `X402_FACILITATOR_BIND`/`X402_EVM_FACILITATOR_PORT` (127.0.0.1:8743), `X402_DB_PATH` |
+| gas policy | `X402_MAX_GAS_PER_SETTLEMENT` (150k), `X402_MAX_FEE_PER_GAS_WEI` (1 gwei), `X402_DAILY_GAS_BUDGET_WEI` (0=off breaker), `X402_MIN_GAS_BALANCE_WEI` (readyz floor) |
+| confirmation | `X402_CONFIRMATIONS` (2), `X402_RECEIPT_TIMEOUT_MS`, `X402_RECEIPT_POLL_MS`, `X402_EXPIRY_MARGIN_SECONDS` |
+| products | `X402_QRNG_*`, `X402_BULK_*`, `PRIORITY_INFERENCE_ENABLED`, `PRIORITY_INFERENCE_MIN_SERVING_WORKERS`, `X402_INFERENCE_*`, `X402_CAPACITY_*` |
+| logging/rpc | `X402_LOG_LEVEL`, `X402_LOG_FORMAT`, `X402_RPC_TIMEOUT_MS`, `X402_RPC_RETRIES` |
 
-## Run the demo
+## Ops / runbook
+
+### What the facilitator wallet is (and is not)
+
+The facilitator's key can do exactly two things: **spend its own ETH on
+gas** (bounded by the per-settlement gas cap, the fee-per-gas cap and the
+optional daily budget breaker) and **broadcast user-signed USDC
+authorizations whose amount and destination it cannot alter** (EIP-3009 —
+the payer signed `to = X402_SETTLEMENT_ADDRESS` and the exact value; the
+facilitator is only the courier). Revenue never touches it: USDC lands
+directly at `X402_SETTLEMENT_ADDRESS`, which needs **no hot key at all** —
+keep it a cold address. Compromise of the facilitator key = loss of its gas
+ETH balance, nothing more. The key exists only in the 0600 env file and in
+process memory (`src/facilitator-evm/key.js` — never logged, never
+serialized; only the derived address appears anywhere).
+
+### Key generation + funding
 
 ```sh
-cd apps/x402-gateway
-
-# facilitator (wANM lane), terminal 1:
-ANM_X402_ENABLED=1 SOLANA_RPC_URL=<injected> node src/facilitator.js
-
-# demo server, terminal 2 (configure the lanes you want offered):
-ANM_X402_ENABLED=1 \
-  WANM_MINT=<mint> WANM_TREASURY=<owner> WANM_USD_PRICE=0.05 \
-  WANM_FEEPAYER_PUBKEY=<sponsor pubkey printed by the facilitator> \
-  node src/demo-server.js
-
-curl -i http://127.0.0.1:4656/free/ping     # 200, free
-curl -i http://127.0.0.1:4656/paid/echo     # 402 + PAYMENT-REQUIRED offer
+# generate (on the host, output goes straight into the 0600 env file):
+node -e 'const s=require("@noble/secp256k1");console.log(Buffer.from(s.utils.randomSecretKey()).toString("hex"))'
+# derive the address to fund:
+X402_FACILITATOR_PRIVATE_KEY=<hex> node -e '
+  const {loadSigner}=require("./src/facilitator-evm/key");
+  console.log(loadSigner(process.env.X402_FACILITATOR_PRIVATE_KEY).address)'
 ```
 
-## Products layer (production entry: `src/server.js`)
+**How much ETH-on-Base to hold:** one settlement costs ≈ 5.4×10¹¹ wei
+(≈$0.002: ~86k gas at Base's ~0.006 gwei effective price + the OP-stack L1
+data fee — both are summed into `x402_gas_spent_wei` and the ledger's
+`gas_spent_wei`, measured live 2026-08-15). The `readyz` floor defaults to
+0.002 ETH (`X402_MIN_GAS_BALANCE_WEI`) ≈ ~3,500 settlements of headroom;
+holding **0.005–0.01 ETH** (~$20-40, roughly 9k-18k settlements) and
+topping up on the `x402_facilitator_gas_balance_wei` gauge is comfortable.
+Do not park more — the wallet is hot by definition. Margin note: at $0.01
+QRNG pricing the gas cost is ~20% of revenue; watch
+`x402_gas_spent_wei` vs `x402_revenue_usdc` and the daily budget breaker
+(`X402_DAILY_GAS_BUDGET_WEI`) is the stop-loss if Base fees spike.
 
-`node src/server.js` (binds `127.0.0.1:8742` by default) serves the real
-paid catalog on top of the core; `demo-server.js` stays the dev/smoke
-entry. Everything is config-driven — see `.env.example` for every knob.
+### Key rotation (no user-facing change)
 
-| Product | Route(s) | Price (default) | Notes |
+1. Generate + fund the NEW key (previous section).
+2. Edit `/etc/animica-x402.env`: replace `X402_FACILITATOR_PRIVATE_KEY`.
+3. `systemctl restart animica-x402-facilitator` — crash recovery resolves
+   any in-flight settlement of the old key from chain truth before serving.
+4. Verify: `curl -s 127.0.0.1:8743/supported` shows the new signer address;
+   `readyz` all-true.
+5. Sweep the old address's leftover ETH at leisure; retire the old key.
+
+Nothing user-facing references the facilitator address — offers only carry
+`payTo`. Rotating `X402_SETTLEMENT_ADDRESS` is a different operation:
+change it in the env file and restart BOTH units; authorizations signed
+against the old payTo will (correctly) stop verifying, so expect a brief
+window of client re-402s.
+
+### Deployment files (in this repo; installing them is the runbook step)
+
+* `systemd/animica-x402.service` + `systemd/animica-x402-facilitator.service`
+  — hardened units (NoNewPrivileges, PrivateTmp, ProtectSystem=strict with
+  `ReadWritePaths=state/`, ProtectHome=read-only, ProtectKernel*/
+  ProtectControlGroups, RestrictSUIDSGID, Restart=on-failure with a
+  StartLimit so a misconfig can't hot-loop). The node path in `ExecStart`
+  must match the host (this box: `/root/.nvm/versions/node/v20.20.2/bin/node`).
+* `nginx/animica-dev-x402.conf` + `nginx/INSTALL.md` — the
+  `animica.dev/x402/` location set (per-product timeouts, request-size
+  caps, three `limit_req` zones, request-id forwarding, no buffering on the
+  inference route). **Installing it replaces the current simple `/x402/`
+  location that fronts the demo server** — read `nginx/INSTALL.md`.
+* Order: Sepolia manual pass (`test/manual/base-sepolia.md`) → mainnet env
+  file → facilitator unit → `readyz` all-true → gateway unit → nginx cutover
+  → `smoke-pay.mjs` against production → `animica-x402 reconcile`.
+
+### Admin CLI
+
+```
+bin/animica-x402 settlements list [--status failed] [--limit N]
+bin/animica-x402 payment get <payment_id|auth_hash|tx_hash>
+bin/animica-x402 revenue [--since 24h]        # settled sums per product
+bin/animica-x402 reconcile [--limit N]        # settled rows vs chain receipts (X402_RPC_URL)
+bin/animica-x402 gas report [--since 7d]      # incl. OP-stack L1 data fees
+bin/animica-x402 incidents list [--status open]
+bin/animica-x402 incidents resolve <id> --status refunded|resolved
+```
+
+Local DBs only, `--json` everywhere. `reconcile` exits 1 if any settled row
+lacks a matching on-chain receipt (status + `AuthorizationUsed` +
+`Transfer` log check) — run it after every deploy and on a cron.
+
+## Metrics reference
+
+Prometheus text on two loopback endpoints — gateway
+`127.0.0.1:8742/metrics`, facilitator `127.0.0.1:8743/metrics` (nginx never
+exposes either):
+
+| metric | type | where | meaning |
 |---|---|---|---|
-| `qrng` | `GET /x402/qrng/draw`, `POST /x402/qrng` | `$0.01` (`X402_QRNG_PRICE_USDC`) | wraps the node's real `rand.quantumRandomBytes`; readiness = an actual health-gated randomness fetch BEFORE any payment is requested; fields pass through verbatim (`attested:false` today — honesty enforced) |
-| `bulk_chain` | `GET /x402/chain/export`, `/x402/chain/blocks`, `/x402/chain/transactions` | `$0.05` (`X402_BULK_CHAIN_PRICE_USDC`) | batched loopback-node reads, ≤1000 blocks / ≤10000 tx rows / byte+time budgets, cursor pagination, NDJSON/JSON + gzip, BigInt-exact amounts as decimal strings |
-| `priority_inference` | `POST /x402/v1/chat/completions` | `$0.10` (`X402_INFERENCE_PRICE_USDC`) | **disabled by default** (`PRIORITY_INFERENCE_ENABLED=0`) and capacity-gated on live `aicf.workerStatus` polling; below the worker floor it never issues a 402 |
-| `echo` | `GET/POST /x402/paid/echo` | `$0.005` | development-only settlement smoke test; off when `X402_ENV=production` unless `X402_ENABLE_ECHO=1` |
+| `x402_settlements_total` | counter | both (gateway: per `product`) | successfully settled payments |
+| `x402_settlement_failures_total` | counter | both, by `reason`/`product` | failed settlement attempts |
+| `x402_replays_rejected_total` | counter | facilitator | authorization already used/claimed |
+| `x402_verifications_total` | counter | both, by `outcome` | verify calls |
+| `x402_gas_spent_wei` | counter (BigInt-exact) | facilitator | gas incl. L1 data fee |
+| `x402_revenue_usdc` | counter (BigInt-exact, per `product`) | both | settled revenue (facilitator labels by resource) |
+| `x402_payment_latency_seconds` | histogram | both | end-to-end settle latency |
+| `x402_ready` | gauge | facilitator | 1 when `/readyz` passes |
+| `x402_facilitator_gas_balance_wei` | gauge | facilitator | wallet gas balance (float rendering — exact value in logs) |
+| `x402_idempotent_replays_total` | counter | gateway | answers served from the Idempotency-Key store |
+| `x402_incidents_total` | counter | gateway, by `kind` | settled-but-failed payments (signed receipt issued) |
+| `x402_inference_serving_workers` | gauge | gateway | live capacity-gate worker count |
 
-* **Discovery**: `GET /x402` and `GET /.well-known/x402` — unpaid,
-  machine-readable `{name, network, asset, products:[{id, path, price,
-  description, available, outputSchema…}]}` with LIVE `available` flags from
-  each product's readiness hook.
-* **Idempotency**: send `Idempotency-Key` with a paid request; the same
-  payment + key that already produced a delivered outcome replays the
-  stored result with no facilitator round-trip and no second charge.
-* **Payment-then-service failure**: settle-first products (bulk, inference)
-  retry once on downstream failure, then return an HMAC-signed error
-  receipt (`X402_RECEIPT_HMAC_KEY`) referencing the settled payment and
-  open an incident row for reconciliation/refund.
-* **Admin CLI**: `bin/animica-x402` reads the DBs directly —
-  `settlements list --status failed`, `payment get <id>`, `revenue --since
-  24h`, `reconcile` (settled rows vs chain receipts via `X402_RPC_URL`),
-  `gas report`, `incidents list|resolve`. `--json` everywhere.
+Money metrics accumulate BigInt atomic units internally and render as exact
+decimal strings — no floats anywhere near amounts.
 
-## Tests
+## Troubleshooting
 
-```sh
-node --test test/
-```
+| symptom | cause / fix |
+|---|---|
+| everything answers `503 x402_disabled` | `ANM_X402_ENABLED` is not `1` (deliberate kill switch) |
+| `503 x402_unconfigured` on paid routes | no payment lane configured — set `X402_BASE_PAYTO` (offers are only made when the lane is complete) |
+| `402` again after paying, `invalid_exact_evm_payload_signature` | wrong EIP-712 domain. Base **mainnet** USDC's domain name is `"USD Coin"`; Base **Sepolia**'s is `"USDC"` (live-verified — the x402 spec examples show Sepolia). Also note: the gateway's accepts entries currently omit `extra.{name,version}`, so clients that refuse to sign without it (e.g. `@x402/evm` 2.22.0 throws) need the domain from their own table — `test/manual/smoke-pay.mjs` carries the verified one. See docs/x402.md "Known gaps". |
+| `402` with `insufficient_funds` | payer holds less USDC than the offer amount on that network (fund at faucet.circle.com on Sepolia) |
+| `402` with `invalid_transaction_state` | replay: that authorization nonce is already used/claimed (chain or ledger). Sign a fresh nonce. |
+| `502 facilitator_unreachable` | facilitator down or wrong `X402_FACILITATOR_URL`/mode; check `curl 127.0.0.1:8743/healthz` |
+| facilitator refuses to start | fail-closed config: read the printed reason (chain-id contradiction, non-allowlisted asset, malformed key, `locally computed domain separator != allowlisted`) — every one is a real misconfiguration, never bypass |
+| `/readyz` false | the `checks` object names the failing leg: `rpc`, `chain_id`, `usdc_domain` (live `DOMAIN_SEPARATOR()` mismatch = wrong token/chain/name), `db`, `gas_balance` (fund the wallet or lower `X402_MIN_GAS_BALANCE_WEI`) |
+| `better-sqlite3` install/segfault | must be **12.11.1** on this Node 20 box — 13.x is Node-22-only and segfaults here; the lockfile pins it, don't "upgrade" |
+| echo 404s in production | by design (`X402_ENV=production`); `X402_ENABLE_ECHO=1` re-enables the smoke marker |
+| catalog shows `available:false` | the `unavailable_reason` field says why: `qrng_entropy_health_failed` / `qrng_rpc_unreachable` (node RPC), `bulk_chain_node_unreachable`, `priority_inference_unavailable` (operator flag off or worker floor unmet — this is the gate working, not a bug) |
+| unit fails under systemd with EROFS/EACCES | `state/` doesn't exist — `ReadWritePaths` needs it created before first start (`mkdir -p …/state`, see unit comments) |
+| `paid_service_failed` (502) responses | payment settled, downstream kept failing: the body carries a signed receipt + `incident_id`; reconcile with `bin/animica-x402 incidents list` and refund per docs/x402.md |
 
-No network anywhere: the Solana/EVM/Animica-node RPCs are mocked (the QRNG
-mock replays a captured real node response) and all servers run on
-loopback. Covered: 402 shape against the v2 spec fields (and
-v1 body rendering), verify/settle happy path including a check that the
-broadcast transaction carries a valid fee-payer signature, concurrent
-settles of the same transaction (exactly one may win), Lighthouse guard
-allowance, and rejection paths — wrong amount, wrong mint, replayed
-transaction, missing authority signature, foreign fee payer, sponsor
-appearing outside the fee slot, unknown program instruction,
-non-TransferChecked token instruction, wrong destination owner, insufficient
-funds, tampered offer terms, and the kill switch.
+## Retired wANM lane
 
-## Two-lane strategy (why both)
-
-* **Base-USDC** is the discoverability lane: x402 agent tooling, the
-  Bazaar (`GET /discovery/resources`) and x402scan all index Base
-  endpoints, and USDC is what agent wallets hold today. Settled either by
-  our own `src/facilitator-evm/` (`X402_FACILITATOR_MODE=self`, the
-  production goal — no third party) or a remote facilitator such as PayAI.
-* **Self-facilitated wANM** is the utility lane: payments land directly in
-  the Animica treasury as wrapped ANM with no external facilitator, which
-  both dogfoods the solana.animica.org bridge and creates a real ANM demand
-  path for agents. It costs us running the facilitator (sponsor SOL, RPC)
-  and gives sovereignty.
-
-Offering both in every 402 lets the client pick; the spec is explicitly
-multi-rail, so this is idiomatic, not clever.
+The original scaffold shipped a second lane — wANM (SPL token) settled by a
+local Solana facilitator (`src/facilitator.js`, `src/solana.js`). It is
+**retired** as of the 2026-08 self-hosted-facilitator spec: not configured
+in any environment, not part of the product scope, not offered in any 402
+(a lane is only offered when fully configured, and its variables stay
+empty). The code and its tests remain in-tree as the reference
+implementation of the SVM `exact` scheme; the paywall would still route a
+configured `solana:*` accepts entry to it, so leaving the `WANM_*`
+variables empty **is** the retirement mechanism.
 
 ## Files
 
 ```
-src/config.js            env names, CAIP-2 constants, BigInt money math,
-                         gateway + facilitator config loaders (fail closed)
-src/protocol.js          v2 + v1 wire shapes, header codecs, offer validation
-src/middleware.js        the scaffold gate + the §7 facilitator HTTP client
-src/paywall.js           production gate: availability -> 402 -> verify ->
-                         settle -> execute, idempotency, signed error receipts
-src/server.js            production entry: catalog + product routes (:8742)
-src/products/            registry, qrng, bulk-chain, priority-inference, echo
-src/capacity.js          serving-worker gate (aicf.workerStatus polling)
-src/animica-node.js      Animica node JSON-RPC client (BigInt-safe, single-flight)
-src/bech32m.js           anim1… address -> account digest
-src/receipts.js          HMAC-signed machine-readable error receipts
-src/store/index.js       facilitator settlement/replay ledger (better-sqlite3)
+src/config.js            env loaders (fail-closed), CAIP-2 + USDC allowlist, BigInt money math
+src/protocol.js          x402 v2 + v1 wire shapes, header codecs, canonical compare
+src/middleware.js        §7 facilitator HTTP client, accepts/402 builders (+ legacy scaffold gate)
+src/paywall.js           production gate: availability → 402 → verify → settle → execute,
+                         idempotency, signed error receipts, incidents
+src/server.js            gateway entry (127.0.0.1:8742): catalog + product routes + /metrics
+src/products/            registry, qrng, bulk-chain, priority-inference, echo, errors
+src/capacity.js          serving-worker gate (aicf.workerStatus polling, fail-closed)
+src/animica-node.js      node JSON-RPC client (BigInt-safe parse, single-flight)
+src/bech32m.js           anim1… address → account digest
+src/receipts.js          HMAC-SHA256 machine-readable error receipts
+src/store/index.js       facilitator settlement/replay ledger (better-sqlite3, WAL)
 src/store/gateway.js     gateway idempotency + incident store (own DB file)
-src/facilitator-evm/     self-hosted exact-EVM facilitator (Base USDC, EIP-3009)
-src/facilitator.js       legacy SVM (wANM) self-facilitator
-src/solana.js            base58 / compact-u16 / tx parsing / ed25519 / SPL / RPC
-src/demo-server.js       dev/smoke entry: /free/ping + /paid/echo
-bin/animica-x402         operator CLI (settlements, revenue, reconcile, gas,
-                         incidents) — local DBs only
-test/                    node --test suite (mocked RPC, loopback HTTP)
+src/facilitator-evm/     self-hosted exact-EVM facilitator: evm.js (noble crypto, RLP,
+                         EIP-1559), usdc.js (EIP-3009 calldata + receipt-log checks),
+                         verify.js, settlement.js (claim→sign→persist→broadcast→confirm,
+                         crash recovery), gas.js (caps + budget breaker), key.js, rpc.js,
+                         server.js (/verify /settle /supported /healthz /readyz /metrics)
+src/demo-server.js       dev/smoke entry (what the live unit runs today)
+src/facilitator.js       RETIRED wANM/SVM facilitator (legacy, unconfigured)
+src/solana.js            RETIRED SVM primitives (legacy)
+bin/animica-x402         operator CLI (settlements, revenue, reconcile, gas, incidents)
+systemd/                 hardened example units (NOT installed from here)
+nginx/                   animica.dev location set + INSTALL.md (NOT installed from here)
+test/                    node --test suite — 122 tests, all RPC mocked, loopback only
+test/manual/             base-sepolia.md (real-chain manual pass) + smoke-pay.mjs (payer client)
 ```
 
-Design doc: [`docs/x402.md`](../../docs/x402.md) in the repo root.
+Deps (pinned, audited-crypto house rule): `@noble/secp256k1` 3.1.0,
+`@noble/hashes` 2.3.0, `better-sqlite3` 12.11.1. Full protocol/threat/ops
+documentation: [`docs/x402.md`](../../docs/x402.md).
