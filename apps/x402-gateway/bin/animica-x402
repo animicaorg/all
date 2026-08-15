@@ -14,6 +14,11 @@
  *   animica-x402 incidents resolve <incident_id> --status refunded|resolved
  *   animica-x402 index status               address-index backfill/lag
  *   animica-x402 commitments list|get <id>|prune [--older-than 90d]
+ *   animica-x402 treasury status            sweep-and-sip policy, balances, breaker state
+ *   animica-x402 treasury history [--kind sip|sweep|approve] [--limit N]
+ *   animica-x402 treasury sip --confirm     force one adaptive sip NOW
+ *   animica-x402 treasury sweep --confirm   force one sweep of the surplus NOW
+ *   animica-x402 treasury resume --confirm  clear a consecutive-failure disable
  *
  * One exception to "the DBs hold none": random_commitments holds sealed
  * commit-reveal secrets. `commitments` never prints material the FREE public
@@ -398,6 +403,176 @@ function cmdCommitments(args) {
   return out(args, rows, ['commit_id', 'state', 'commitment', 'request_id', 'memo', 'created', 'reveal_after', 'revealed']);
 }
 
+/* ------------------------------------------------------------- treasury -- */
+
+/**
+ * Treasury commands. `status`/`history` are read-only and work with nothing
+ * but the DB. `sip`/`sweep`/`resume` MUTATE and need the facilitator's own
+ * environment (key + RPC), so they are gated on --confirm.
+ *
+ * WARNING carried into the help text and the docs: a manual sip/sweep signs
+ * a transaction from the facilitator wallet using the account's `pending`
+ * nonce. If the facilitator service is running it owns that nonce lane
+ * behind its own submit lock, which this process cannot see — so a manual
+ * send can collide with a settlement in flight. Either stop the unit first
+ * or accept that one of the two may need a retry.
+ */
+function treasuryTables(db) {
+  const has = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('treasury_actions','treasury_state')").all();
+  return has.length === 2;
+}
+
+function cmdTreasuryStatus(args) {
+  const db = openDb(DB_PATH);
+  if (!treasuryTables(db)) {
+    if (args.flags.json) return console.log(JSON.stringify({ enabled: false, detail: 'treasury has never run against this DB' }, null, 2));
+    return console.log('treasury: no treasury_actions table in this DB — the module has never run (X402_TREASURY_ENABLED=0?)');
+  }
+  const state = Object.fromEntries(db.prepare('SELECT key, value FROM treasury_state').all().map((r) => [r.key, r.value]));
+  const sinceDay = Math.floor(Date.now() / 1000) - 86400;
+  const sipsToday = db.prepare(
+    "SELECT COALESCE(SUM(CAST(usdc_amount AS INTEGER)), 0) AS n, COUNT(*) AS c FROM treasury_actions WHERE kind='sip' AND status IN ('submitting','confirmed') AND created_at >= ?"
+  ).get(sinceDay);
+  const totals = db.prepare(
+    "SELECT kind, status, COUNT(*) AS n, GROUP_CONCAT(COALESCE(usdc_amount,'0')) AS usdc, GROUP_CONCAT(COALESCE(eth_received_wei,'0')) AS eth, GROUP_CONCAT(COALESCE(gas_spent_wei,'0')) AS gas FROM treasury_actions GROUP BY kind, status"
+  ).all();
+  const sum = (s) => String(s || '').split(',').filter(Boolean).reduce((a, b) => { try { return a + BigInt(b); } catch (e) { return a; } }, 0n);
+  const agg = { sipped: 0n, swept: 0n, eth: 0n, gas: 0n, counts: {} };
+  for (const r of totals) {
+    agg.counts[`${r.kind}_${r.status}`] = r.n;
+    agg.gas += sum(r.gas);
+    if (r.status === 'confirmed' && r.kind === 'sip') { agg.sipped += sum(r.usdc); agg.eth += sum(r.eth); }
+    if (r.status === 'confirmed' && r.kind === 'sweep') agg.swept += sum(r.usdc);
+  }
+  const lastSip = db.prepare("SELECT * FROM treasury_actions WHERE kind='sip' ORDER BY created_at DESC LIMIT 1").get();
+  const lastSweep = db.prepare("SELECT * FROM treasury_actions WHERE kind='sweep' ORDER BY created_at DESC LIMIT 1").get();
+
+  // Policy/live view is best-effort: it needs the facilitator's own env.
+  let live = null;
+  try {
+    const cfgMod = require(path.join(__dirname, '..', 'src', 'config'));
+    const cfg = cfgMod.loadEvmFacilitatorConfig(process.env);
+    live = {
+      network: cfg.network,
+      settlement_address: cfg.settlementAddress,
+      treasury_enabled: cfg.treasury.enabled,
+      cold_address: cfg.treasury.coldAddress || '(unset)',
+      eth_floor_wei: cfg.treasury.ethFloorWei.toString(),
+      sip_usdc: atomicToDecimalString(cfg.treasury.sipUsdcAtomic, 6),
+      sip_min_usdc: atomicToDecimalString(cfg.treasury.sipMinUsdcAtomic, 6),
+      daily_budget_usdc: atomicToDecimalString(cfg.treasury.dailySwapBudgetAtomic, 6),
+      ceiling_usdc: atomicToDecimalString(cfg.treasury.usdcCeilingAtomic, 6),
+      cooldown_s: cfg.treasury.sipCooldownS,
+      slippage_bps: cfg.treasury.maxSlippageBps,
+      pool_fees: cfg.treasury.poolFees.join(','),
+    };
+  } catch (e) {
+    live = { config: `unavailable (${e.message.split('\n')[0]})` };
+  }
+
+  const row = {
+    sipping_disabled: state.sipping_disabled === '1',
+    sipping_disabled_reason: state.sipping_disabled_reason || '',
+    sip_consecutive_failures: Number(state.sip_consecutive_failures || 0),
+    sweeping_disabled: state.sweeping_disabled === '1',
+    sweep_consecutive_failures: Number(state.sweep_consecutive_failures || 0),
+    sips_confirmed: agg.counts.sip_confirmed || 0,
+    sips_failed: agg.counts.sip_failed || 0,
+    sweeps_confirmed: agg.counts.sweep_confirmed || 0,
+    sweeps_failed: agg.counts.sweep_failed || 0,
+    sipped_usdc_total: atomicToDecimalString(agg.sipped, 6),
+    swept_usdc_total: atomicToDecimalString(agg.swept, 6),
+    eth_received_total_wei: agg.eth.toString(),
+    treasury_gas_wei: agg.gas.toString(),
+    sip_usdc_last_24h: atomicToDecimalString(BigInt(sipsToday.n || 0), 6),
+    sips_last_24h: sipsToday.c,
+    last_sip: lastSip ? `${fmtTs(lastSip.created_at)} ${lastSip.status} ${lastSip.tx_hash || '-'}` : 'never',
+    last_sweep: lastSweep ? `${fmtTs(lastSweep.created_at)} ${lastSweep.status} ${lastSweep.tx_hash || '-'}` : 'never',
+  };
+  if (args.flags.json) return console.log(JSON.stringify({ ...row, config: live }, null, 2));
+  for (const [k, v] of Object.entries(live)) console.log(`${k.padEnd(26)} ${v}`);
+  console.log('');
+  for (const [k, v] of Object.entries(row)) console.log(`${k.padEnd(26)} ${v}`);
+  return undefined;
+}
+
+function cmdTreasuryHistory(args) {
+  const db = openDb(DB_PATH);
+  if (!treasuryTables(db)) return console.log('(no treasury history in this DB)');
+  const limit = Number(args.flags.limit || 50);
+  const kind = args.flags.kind;
+  const rows = kind
+    ? db.prepare('SELECT * FROM treasury_actions WHERE kind = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(kind, limit)
+    : db.prepare('SELECT * FROM treasury_actions ORDER BY created_at DESC, rowid DESC LIMIT ?').all(limit);
+  out(args, rows.map((r) => ({
+    action_id: r.action_id,
+    kind: r.kind,
+    status: r.status,
+    trigger: r.trigger,
+    usdc: r.usdc_amount === null ? '-' : atomicToDecimalString(BigInt(r.usdc_amount), 6),
+    eth_received_wei: r.eth_received_wei || '-',
+    fee: r.pool_fee === null ? '-' : r.pool_fee,
+    destination: r.destination || '-',
+    tx: r.tx_hash || '-',
+    created: fmtTs(r.created_at),
+    error: (r.error || '').slice(0, 48),
+  })), ['action_id', 'kind', 'status', 'trigger', 'usdc', 'eth_received_wei', 'fee', 'destination', 'tx', 'created', 'error']);
+}
+
+/** Build a live treasury from the facilitator's own environment. */
+function liveTreasury() {
+  const cfgMod = require(path.join(__dirname, '..', 'src', 'config'));
+  const { loadSigner } = require(path.join(__dirname, '..', 'src', 'facilitator-evm', 'key'));
+  const { createRpcClient } = require(path.join(__dirname, '..', 'src', 'facilitator-evm', 'rpc'));
+  const { createMetrics } = require(path.join(__dirname, '..', 'src', 'metrics'));
+  const { createLogger } = require(path.join(__dirname, '..', 'src', 'logging'));
+  const { createTreasury, createTreasuryStore, assertTreasuryPolicy } = require(path.join(__dirname, '..', 'src', 'treasury'));
+
+  const cfg = cfgMod.loadEvmFacilitatorConfig(process.env);
+  if (!cfg.treasury.enabled) fail('X402_TREASURY_ENABLED is not 1 in this environment — refusing to move money the service is not configured to move');
+  const signer = loadSigner(cfg.privateKey);
+  delete cfg.privateKey;
+  assertTreasuryPolicy(cfg, signer.address);
+  const db = openDb(DB_PATH, { writable: true });
+  const tstore = createTreasuryStore(db);
+  const rpc = createRpcClient(cfg.rpcUrl, { timeoutMs: cfg.rpcTimeoutMs, retries: cfg.rpcRetries });
+  const logger = createLogger({ service: 'animica-x402-cli', format: process.env.X402_LOG_FORMAT || 'pretty' });
+  return createTreasury({ cfg, rpc, tstore, signer, metrics: createMetrics(), logger });
+}
+
+async function cmdTreasuryAction(kind, args) {
+  if (!args.flags.confirm) {
+    fail(`treasury ${kind} moves real money — re-run with --confirm.\n`
+      + '       NOTE: this signs from the facilitator wallet using its pending nonce. If the facilitator\n'
+      + '       service is running it owns that nonce lane behind its own submit lock, which this process\n'
+      + '       cannot see; stop the unit first or be ready to retry one of the two transactions.');
+  }
+  const treasury = liveTreasury();
+  const result = kind === 'sip' ? await treasury.sipNow() : await treasury.sweepNow();
+  if (args.flags.json) return console.log(JSON.stringify(result, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
+  for (const [k, v] of Object.entries(result)) console.log(`${k.padEnd(20)} ${typeof v === 'bigint' ? v.toString() : v}`);
+  if (result.action !== 'sipped' && result.action !== 'swept') process.exitCode = 1;
+  return undefined;
+}
+
+function cmdTreasuryResume(args) {
+  if (!args.flags.confirm) fail('treasury resume re-arms automatic swaps — re-run with --confirm (fix the cause first)');
+  const treasury = liveTreasury();
+  const was = treasury.resume();
+  console.log(`treasury re-armed (was: sipping_disabled=${was.sipping_disabled}, sweeping_disabled=${was.sweeping_disabled})`);
+}
+
+async function cmdTreasury(args) {
+  // parseArgs already split flags out; args._[0] is the subcommand (if any).
+  const sub = args._[0];
+  if (sub === undefined || sub === 'status') return cmdTreasuryStatus(args);
+  if (sub === 'history') return cmdTreasuryHistory(args);
+  if (sub === 'sip') return cmdTreasuryAction('sip', args);
+  if (sub === 'sweep') return cmdTreasuryAction('sweep', args);
+  if (sub === 'resume') return cmdTreasuryResume(args);
+  return fail('usage: animica-x402 treasury status|history|sip --confirm|sweep --confirm|resume --confirm');
+}
+
 function usage() {
   console.log(`animica-x402 — x402 operator CLI (local DBs only)
 
@@ -412,6 +587,11 @@ function usage() {
   commitments list [--state sealed|open|revealed]   commit-reveal ledger (random_commit)
   commitments get <commit_id>                 one commitment (secret withheld while sealed)
   commitments prune [--older-than 90d]        drop old commitments
+  treasury status                             sweep-and-sip policy, breaker state, totals
+  treasury history [--kind sip|sweep|approve] sip/sweep ledger
+  treasury sip --confirm                      force one adaptive sip now (real money)
+  treasury sweep --confirm                    force one sweep to the cold address (real money)
+  treasury resume --confirm                   clear a consecutive-failure disable
   --json on any command for machine output`);
 }
 
@@ -425,6 +605,7 @@ async function main() {
   if (cmd === 'incidents') return cmdIncidents(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   if (cmd === 'index') return cmdIndex(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   if (cmd === 'commitments') return cmdCommitments(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
+  if (cmd === 'treasury') return cmdTreasury(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   usage();
   if (cmd !== undefined && cmd !== 'help' && cmd !== '--help') process.exit(1);
 }

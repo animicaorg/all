@@ -144,6 +144,20 @@ function createMetrics() {
       [0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60]),
     ready: new Gauge('x402_ready', '1 when readyz passes, 0 otherwise'),
     gasBalanceWei: new Gauge('x402_facilitator_gas_balance_wei', 'Facilitator account balance in wei (approximate, float rendering)'),
+
+    // Treasury ("sweep and sip", src/treasury/). Gauges hold BigInt and
+    // render digit-wise, so a wei balance stays exact in the exposition even
+    // though a scraper will store it as float64.
+    treasurySipsTotal: new Counter('x402_treasury_sips_total', 'Adaptive USDC->ETH sips, by result'),
+    treasurySweepsTotal: new Counter('x402_treasury_sweeps_total', 'USDC sweeps to the cold address, by result'),
+    treasurySweptUsdcTotal: new BigCounter('x402_treasury_swept_usdc_total', 'Total USDC swept to the cold address', { renderDecimals: 6 }),
+    treasurySippedUsdcTotal: new BigCounter('x402_treasury_sipped_usdc_total', 'Total USDC converted to ETH by sips', { renderDecimals: 6 }),
+    treasurySipEthReceivedWei: new BigCounter('x402_treasury_sip_eth_received_wei', 'Total wei received from sips (WETH9 Withdrawal log, chain truth)'),
+    treasuryGasSpentWei: new BigCounter('x402_treasury_gas_spent_wei', 'Gas spent on treasury transactions in wei (L2 execution + L1 data fee), by kind'),
+    treasuryEthBalanceWei: new Gauge('x402_treasury_eth_balance_wei', 'Facilitator ETH balance in wei as last read by the treasury watcher'),
+    treasuryUsdcBalance: new Gauge('x402_treasury_usdc_balance', 'Facilitator USDC balance in atomic units (6 decimals) as last read by the treasury watcher'),
+    treasurySippingEnabled: new Gauge('x402_treasury_sipping_enabled', '1 while sipping is armed, 0 after the consecutive-failure breaker opened'),
+    treasurySweepingEnabled: new Gauge('x402_treasury_sweeping_enabled', '1 while sweeping is armed, 0 after the consecutive-failure breaker opened'),
   };
 
   return {
@@ -159,6 +173,16 @@ function createMetrics() {
         m.paymentLatencySeconds.render(),
         m.ready.render(),
         m.gasBalanceWei.render(),
+        m.treasurySipsTotal.render(),
+        m.treasurySweepsTotal.render(),
+        m.treasurySweptUsdcTotal.render(),
+        m.treasurySippedUsdcTotal.render(),
+        m.treasurySipEthReceivedWei.render(),
+        m.treasuryGasSpentWei.render(),
+        m.treasuryEthBalanceWei.render(),
+        m.treasuryUsdcBalance.render(),
+        m.treasurySippingEnabled.render(),
+        m.treasurySweepingEnabled.render(),
       ].join('\n') + '\n';
     },
   };

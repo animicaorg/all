@@ -70,6 +70,11 @@ curl -si http://127.0.0.1:8742/x402/qrng/draw | head -5       # 402 offer
    │ receipt + log match + confirmations  │         receipts
    │ ledger: state/x402.db (UNIQUE        │
    │ authorization_hash = replay arbiter) │
+   │ treasury/ (single-wallet mode, OFF   │   Uniswap v3 on Base
+   │ by default): own timer + fire-and-   │◄──────► QuoterV2 quote,
+   │ forget post-settlement trigger; ETH  │         SwapRouter02 multicall
+   │ < floor → adaptive USDC→ETH sip;     │         (swap+unwrap), USDC
+   │ USDC > ceiling → sweep to COLD       │         approve/transfer
    └──────────────────────────────────────┘
 ```
 
@@ -242,6 +247,7 @@ non-allowlisted asset, malformed key, garbage price) refuse to boot.
 | self-hosted facilitator | `X402_NETWORK` (`base`\|`base-sepolia` allowlist), `X402_CHAIN_ID` (must agree), `X402_ASSET` (`USDC` or the exact allowlisted address), `X402_RPC_URL` (+`_FALLBACK_URL`), `X402_SETTLEMENT_ADDRESS` (payTo — server config, never client input), `X402_FACILITATOR_PRIVATE_KEY`, `X402_FACILITATOR_BIND`/`X402_EVM_FACILITATOR_PORT` (127.0.0.1:8743), `X402_DB_PATH` |
 | gas policy | `X402_MAX_GAS_PER_SETTLEMENT` (150k), `X402_MAX_FEE_PER_GAS_WEI` (1 gwei), `X402_DAILY_GAS_BUDGET_WEI` (0=off breaker), `X402_MIN_GAS_BALANCE_WEI` (readyz floor) |
 | confirmation | `X402_CONFIRMATIONS` (2), `X402_RECEIPT_TIMEOUT_MS`, `X402_RECEIPT_POLL_MS`, `X402_EXPIRY_MARGIN_SECONDS` |
+| treasury (sweep+sip) | `X402_TREASURY_ENABLED` (0), `X402_TREASURY_COLD_ADDRESS` (**required** in single-wallet mode, must be exactly EIP-55 checksummed), `X402_TREASURY_ETH_FLOOR_WEI` (1e14), `X402_TREASURY_SIP_USDC` (5.00), `X402_TREASURY_SIP_MIN_USDC` (0.50), `X402_TREASURY_MAX_SLIPPAGE_BPS` (100), `X402_TREASURY_SIP_COOLDOWN_S` (86400), `X402_TREASURY_RETRY_COOLDOWN_S` (900), `X402_TREASURY_DAILY_SWAP_BUDGET_USDC` (10.00), `X402_TREASURY_USDC_CEILING` (20.00), `X402_TREASURY_CHECK_INTERVAL_S` (300), `X402_TREASURY_MIN_SWEEP_USDC` (0.10), `X402_TREASURY_POOL_FEES` (500,100), `X402_TREASURY_SWAP_DEADLINE_S` (180), `X402_TREASURY_MAX_{SWAP,APPROVE,SWEEP}_GAS`, `X402_TREASURY_MIN_ETH_OUT_GAS_RATIO` (20), `X402_TREASURY_MAX_CONSECUTIVE_FAILURES` (2) |
 | products | `X402_QRNG_*`, `X402_RANDOM_*` (`ENABLED`, the five `*_PRICE_USDC`, `SEED_BYTES`, `MAX_INTS`/`MAX_ITEMS`/`MAX_PICKS`/`MAX_BODY_BYTES`/`MAX_RESPONSE_BYTES`, `BULK_MAX_DRAWS`, `MAX_DRAW_BYTES`, `COMMIT_MAX_DELAY_SECONDS`, `COMMIT_TTL_SECONDS`), `X402_BULK_*`, `PRIORITY_INFERENCE_ENABLED`, `PRIORITY_INFERENCE_MIN_SERVING_WORKERS`, `X402_INFERENCE_*`, `X402_CAPACITY_*` |
 | logging/rpc | `X402_LOG_LEVEL`, `X402_LOG_FORMAT`, `X402_RPC_TIMEOUT_MS`, `X402_RPC_RETRIES` |
 
@@ -254,12 +260,21 @@ gas** (bounded by the per-settlement gas cap, the fee-per-gas cap and the
 optional daily budget breaker) and **broadcast user-signed USDC
 authorizations whose amount and destination it cannot alter** (EIP-3009 —
 the payer signed `to = X402_SETTLEMENT_ADDRESS` and the exact value; the
-facilitator is only the courier). Revenue never touches it: USDC lands
-directly at `X402_SETTLEMENT_ADDRESS`, which needs **no hot key at all** —
-keep it a cold address. Compromise of the facilitator key = loss of its gas
-ETH balance, nothing more. The key exists only in the 0600 env file and in
-process memory (`src/facilitator-evm/key.js` — never logged, never
-serialized; only the derived address appears anywhere).
+facilitator is only the courier). In the **two-wallet posture** revenue
+never touches it: USDC lands directly at `X402_SETTLEMENT_ADDRESS`, which
+needs **no hot key at all** — keep it a cold address. Compromise of the
+facilitator key = loss of its gas ETH balance, nothing more. The key exists
+only in the 0600 env file and in process memory
+(`src/facilitator-evm/key.js` — never logged, never serialized; only the
+derived address appears anywhere).
+
+In **single-wallet mode** (`X402_SETTLEMENT_ADDRESS` = the facilitator's own
+address, the operator's chosen deployment) that last sentence changes:
+revenue *does* transit the hot key, and compromise costs whatever is sitting
+on it at that moment. The compensating control is the treasury module, which
+drains everything above a small ceiling to a cold address — see [Treasury:
+single-wallet mode + sweep and sip](#treasury-single-wallet-mode--sweep-and-sip)
+below. The facilitator **refuses to start** in single-wallet mode without it.
 
 ### Key generation + funding
 
@@ -283,6 +298,50 @@ Do not park more — the wallet is hot by definition. Margin note: at $0.01
 QRNG pricing the gas cost is ~20% of revenue; watch
 `x402_gas_spent_wei` vs `x402_revenue_usdc` and the daily budget breaker
 (`X402_DAILY_GAS_BUDGET_WEI`) is the stop-loss if Base fees spike.
+
+### Treasury: single-wallet mode + sweep and sip
+
+`src/treasury/` keeps a single-wallet facilitator self-refuelling and nearly
+empty. Full reference — policy, failure classes, MEV stance, cost tables,
+verified contract set — in [`docs/x402.md`](../../docs/x402.md#treasury-single-wallet-mode--sweep-and-sip).
+The short version:
+
+* **Trade-off.** Single-wallet mode buys a loop that funds itself (each
+  settlement collects ~10× the gas it costs at $0.01 pricing, so ~$2 of ETH
+  once is enough forever) and costs the separation between gas float and
+  revenue. Startup is **refused** unless `X402_TREASURY_ENABLED=1` and a
+  checksummed `X402_TREASURY_COLD_ADDRESS` is set, because the sweep is the
+  only thing that makes the trade defensible. Prefer the two-wallet posture?
+  Point `X402_SETTLEMENT_ADDRESS` at a wallet the facilitator does not
+  control and leave the treasury off — nothing else changes.
+* **Sip.** ETH below `X402_TREASURY_ETH_FLOOR_WEI` (0.0001 ETH ≈ 185
+  settlements of runway) → swap `min($5, balance)` but never under `$0.50`
+  of USDC to ETH in one atomic SwapRouter02 `multicall(deadline,
+  [exactInputSingle, unwrapWETH9])`, `amountOutMinimum` from a QuoterV2
+  quote minus ≤1%, exact-amount approve (no standing allowance), one sip per
+  24 h (halved below floor/2), hard $10/day budget.
+  **Adaptive sizing is the point:** a fixed $5 floor deadlocks after a gas
+  spike (ETH gone at ~75 settlements with only ~$0.75 accrued); a $0.50 sip
+  buys ~490 settlements. That scenario is an explicit test.
+* **Sweep.** USDC above `X402_TREASURY_USDC_CEILING` ($20) → ERC-20 transfer
+  of `balance − ceiling` to the cold address. The destination is captured
+  from server config at construction and is unreachable from any argument,
+  request or later config mutation (proved against the *signed bytes*).
+* **Failure policy.** Two consecutive swap failures disable sipping and
+  raise a `/readyz` **WARNING that does not fail readiness** — settlements
+  keep running on the ETH that is left. Price-movement reverts (`Too little
+  received`) are not strikes; `STE` hard-disables immediately.
+* **Never on the settlement path.** Own timer + a fire-and-forget
+  post-settlement trigger; the shared nonce lane is held for one
+  sign+broadcast and released before receipt polling.
+
+```sh
+animica-x402 treasury status                # policy, balances, breaker, totals
+animica-x402 treasury history --kind sip    # tx-by-tx ledger
+animica-x402 treasury sip --confirm         # manual (bypasses floor+cooldown, not the budget)
+animica-x402 treasury sweep --confirm
+animica-x402 treasury resume --confirm      # re-arm after a two-strike disable
+```
 
 ### Key rotation (no user-facing change)
 
@@ -356,9 +415,16 @@ bin/animica-x402 index status                 # address-index backfill / lag
 bin/animica-x402 commitments list [--state sealed|open|revealed]
 bin/animica-x402 commitments get <commit_id>  # secret withheld while sealed
 bin/animica-x402 commitments prune [--older-than 90d]
+bin/animica-x402 treasury status               # sweep-and-sip policy, breaker, totals
+bin/animica-x402 treasury history [--kind sip|sweep|approve]
+bin/animica-x402 treasury sip --confirm        # moves real money (see the runbook note)
+bin/animica-x402 treasury sweep --confirm
+bin/animica-x402 treasury resume --confirm
 ```
 
-Local DBs only, `--json` everywhere. `commitments` is the one command that
+Local DBs only except the three `treasury` mutators, which need the
+facilitator's own env (key + RPC) and are gated behind `--confirm`;
+`--json` everywhere. `commitments` is the one command that
 touches secret material, and it never discloses what the FREE public reveal
 route would still be withholding: while `now < reveal_after` the secret and
 salt print as `<sealed>`; `list` never prints them at all. `reconcile` exits 1 if any settled row
@@ -367,7 +433,7 @@ lacks a matching on-chain receipt (status + `AuthorizationUsed` +
 
 ## Test matrix
 
-`node --test test/` — 266 tests at this commit, no network, every key
+`node --test test/` — 334 tests at this commit, no network, every key
 throwaway and in-process. The spec's minimum list maps line by line onto
 named tests, so a missing guarantee shows up as a missing test rather than
 as prose:
@@ -420,6 +486,17 @@ as prose:
 | **Accounting** — one success = one settlement | `facilitator-evm` invariants (raw SQL over the real DB), `gateway` paywall invariants |
 | revenue = stored settled amounts | same — `settledRevenueAtomic()` cross-checked against `SUM` of settled rows |
 | failed/replayed never increment revenue | same — reverted + replayed + rejected all proven outside the sum |
+| **Treasury** — single-wallet mode is gated | `treasury` — `payTo == facilitator` refuses startup without `X402_TREASURY_ENABLED=1` + a checksummed cold address (both in `assertTreasuryPolicy` and in the real `createEvmFacilitator`); a partial env cannot downgrade past it |
+| the calldata is the recon's calldata | `treasury` — every selector recomputed from its signature, every Base address re-checksummed, and the 548-byte sip multicall reproduced field by field from the live simulation |
+| floor crossing sips exactly once | `treasury` — one sip, then ten triggers of every kind held by the cooldown; halved cooldown below floor/2 proved at the second boundary |
+| BOOTSTRAP STALL is survivable | `treasury` — ETH exhausted at $0.50 accrued still sips and recovers >400 settlements of runway; the fixed-$5-minimum variant is proved to deadlock |
+| the daily budget is a hard cap | `treasury` — 50 settlement-triggered attempts with zero cooldown convert exactly $10.00, then refill after 24 h; a partial fit clamps rather than skips |
+| slippage bound is real and BigInt-exact | `treasury` — `amountOutMinimum == quote × (10000−bps)/10000` read back out of the signed calldata; best allowlisted fee tier wins |
+| ceiling crossing sweeps `balance − ceiling` | `treasury` — exact surplus to the cold address, float left behind, dust surplus skipped |
+| the sweep destination is immutable | `treasury` — no parameter, config mutation or env change retargets it; asserted over every ERC-20 transfer the module ever signed |
+| two failures disable sipping, readyz WARNs | `treasury` — breaker opens, `/readyz` stays `ready:true` with a warning, no further gas spent, state survives a restart, `resume` re-arms; price-movement reverts are not strikes and `STE` hard-disables |
+| settlements are never blocked or delayed | `treasury` — the hook returns synchronously and swallows a throwing callback (a real `settle()` still succeeds); a settlement queued mid-broadcast runs while the sip is still polling for its receipt |
+| treasury accounting reconciles | `treasury` — sipped + swept + remaining == starting USDC, ETH gained == Σ `Withdrawal` logs, metrics == ledger, treasury gas kept out of `x402_gas_spent_wei` |
 
 Real-chain proof is a runbook step, not a unit test: `test/manual/base-sepolia.md`
 plus `test/manual/smoke-pay.mjs` do the funded end-to-end settlement.
@@ -445,6 +522,16 @@ exposes either):
 | `x402_incidents_total` | counter | gateway, by `kind` | settled-but-failed payments (signed receipt issued) |
 | `x402_inference_serving_workers` | gauge | gateway | live capacity-gate worker count |
 | `x402_random_commitments_stored` | gauge | gateway | commit-reveal commitments held in the gateway DB (retention `X402_RANDOM_COMMIT_TTL_SECONDS`) |
+| `x402_treasury_sips_total` | counter, by `result` | facilitator | adaptive USDC→ETH refuels (`ok`/`failed`/`unknown`) |
+| `x402_treasury_sweeps_total` | counter, by `result` | facilitator | drains to the cold address |
+| `x402_treasury_swept_usdc_total` | counter (BigInt-exact) | facilitator | total USDC moved to cold |
+| `x402_treasury_sipped_usdc_total` | counter (BigInt-exact) | facilitator | total USDC converted to gas |
+| `x402_treasury_sip_eth_received_wei` | counter (BigInt-exact) | facilitator | wei received, from WETH9 `Withdrawal` logs (chain truth) |
+| `x402_treasury_gas_spent_wei` | counter, by `kind` | facilitator | treasury's own gas — kept OUT of `x402_gas_spent_wei` so settlement economics stay readable |
+| `x402_treasury_eth_balance_wei` | gauge | facilitator | ETH balance at the last watcher tick |
+| `x402_treasury_usdc_balance` | gauge | facilitator | USDC atomic units at the last watcher tick |
+| `x402_treasury_sipping_enabled` | gauge | facilitator | **alarm on this** — 0 means the two-strike breaker opened and the wallet needs a manual top-up |
+| `x402_treasury_sweeping_enabled` | gauge | facilitator | 0 means sweeps are disabled after repeated failures |
 
 Money metrics accumulate BigInt atomic units internally and render as exact
 decimal strings — no floats anywhere near amounts.
@@ -525,11 +612,17 @@ src/facilitator-evm/     self-hosted exact-EVM facilitator: evm.js (noble crypto
                          verify.js, settlement.js (claim→sign→persist→broadcast→confirm,
                          crash recovery), gas.js (caps + budget breaker), key.js, rpc.js,
                          server.js (/verify /settle /supported /healthz /readyz /metrics)
+src/treasury/            "sweep and sip" (single-wallet mode): uniswap.js (verified Base
+                         contract set, QuoterV2/SwapRouter02/ERC-20 calldata, revert
+                         classes), treasury.js (watcher, adaptive sip, sweep, two-strike
+                         breaker), store.js (treasury_actions ledger + durable state,
+                         same DB file as the payments ledger), index.js (single-wallet
+                         startup gate)
 src/demo-server.js       dev/smoke entry (what the live unit runs today)
 src/facilitator.js       RETIRED wANM/SVM facilitator (legacy, unconfigured)
 src/solana.js            RETIRED SVM primitives (legacy)
 bin/animica-x402         operator CLI (settlements, revenue, reconcile, gas, incidents,
-                         index status)
+                         index status, commitments, treasury)
 systemd/                 hardened example units (NOT installed from here)
 nginx/                   animica.dev location set + INSTALL.md (NOT installed from here)
 test/                    node --test suite (266 tests), all RPC mocked, loopback only

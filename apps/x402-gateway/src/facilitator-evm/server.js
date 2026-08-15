@@ -36,6 +36,7 @@ const { createMetrics } = require('../metrics');
 const { createLogger, newRequestId } = require('../logging');
 const { VerifyReject, verifyPayment } = require('./verify');
 const { createSettlementEngine } = require('./settlement');
+const { createTreasury, createTreasuryStore, assertTreasuryPolicy } = require('../treasury');
 
 const MAX_BODY_BYTES = 64 * 1024; // an eip3009 payload is ~1 KB; 64K is generous
 const REQUEST_TIMEOUT_MS = 90_000; // > settle receipt budget, < forever
@@ -98,7 +99,30 @@ function createEvmFacilitator({ cfg, rpc, store, signer, metrics, logger, sleep,
     );
   }
 
-  const engine = createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, domainSepBytes, sleep, now });
+  // Single-wallet mode (payTo == our own address) is refused unless the
+  // treasury is enabled with a cold address to drain into. Enforced here
+  // because this is the first place the derived facilitator address exists.
+  const walletPolicy = assertTreasuryPolicy(cfg, signer.address);
+
+  const hooks = {};
+  const engine = createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, domainSepBytes, hooks, sleep, now });
+
+  /**
+   * Treasury. It shares the settlement engine's FIFO submit lock so the
+   * facilitator's tx nonce stays coherent, but it holds that lock only for a
+   * single sign+broadcast — never across receipt polling — so a settlement
+   * arriving mid-sip queues behind one RPC round trip and nothing more.
+   */
+  let treasury = null;
+  if (cfg.treasury && cfg.treasury.enabled) {
+    const tstore = createTreasuryStore(store.db, { now });
+    treasury = createTreasury({
+      cfg, rpc, tstore, signer, metrics, logger,
+      withSubmitLock: engine.withSubmitLock,
+      now, sleep,
+    });
+    hooks.onSettled = () => treasury.notifySettlement();
+  }
 
   /** Live-vs-local domain separator check. One eth_call catches every
    * mis-config class: wrong token, wrong chain, wrong name/version. */
@@ -161,8 +185,22 @@ function createEvmFacilitator({ cfg, rpc, store, signer, metrics, logger, sleep,
       checks.gas_balance = 'skipped: rpc down';
       ready = false;
     }
+    // Treasury health is a WARNING, never a readiness failure. Sipping is a
+    // convenience that keeps the wallet fuelled; when it breaks the correct
+    // response is "operator tops up ETH manually", not "stop taking payments
+    // that are still perfectly settleable".
+    const warnings = [];
+    if (treasury) {
+      const w = treasury.warning();
+      if (w) {
+        checks.treasury = `WARNING (not fatal): ${w}`;
+        warnings.push(`treasury: ${w}`);
+      } else {
+        checks.treasury = true;
+      }
+    }
     metrics.ready.set({}, ready ? 1 : 0);
-    return { ready, checks };
+    return warnings.length ? { ready, checks, warnings } : { ready, checks };
   }
 
   async function verify(body) {
@@ -195,6 +233,8 @@ function createEvmFacilitator({ cfg, rpc, store, signer, metrics, logger, sleep,
     metrics,
     logger,
     engine,
+    treasury,
+    singleWallet: walletPolicy.singleWallet,
     domainSepBytes,
     verify,
     settle: (body) => engine.settle(body),
@@ -297,6 +337,10 @@ async function main() {
     facilitator_address: facilitator.signer.address, // derived address ONLY — never the key
     db_path: cfg.dbPath,
     confirmations: cfg.confirmations,
+    single_wallet: facilitator.singleWallet,
+    treasury: facilitator.treasury
+      ? { enabled: true, cold_address: facilitator.treasury.coldAddress }
+      : { enabled: false },
   });
 
   try {
@@ -309,6 +353,10 @@ async function main() {
 
   const recovery = await facilitator.recoverInFlight();
   logger.info('crash_recovery_done', recovery);
+
+  // Treasury last: recovery must own the nonce lane until it is done, and a
+  // sip fired mid-recovery would race the rebroadcast of a stored raw tx.
+  if (facilitator.treasury) facilitator.treasury.start();
 
   const server = createEvmFacilitatorServer(facilitator);
   server.listen(cfg.port, cfg.bind, () => {

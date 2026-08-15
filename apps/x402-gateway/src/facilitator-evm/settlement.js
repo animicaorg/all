@@ -33,8 +33,27 @@ const gasMod = require('./gas');
 const { VerifyReject, verifyPayment } = require('./verify');
 const { newPaymentId } = require('../logging');
 
-function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, domainSepBytes, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
+/**
+ * `hooks` is a mutable object the caller may fill in AFTER construction
+ * (the treasury needs this engine's submit lock, so it cannot exist yet when
+ * the engine is built). The only hook today is onSettled, and it is called
+ * fire-and-forget: never awaited, every throw swallowed. A settlement is
+ * complete when its receipt is confirmed — nothing downstream of that may
+ * delay the response or fail the payment.
+ */
+function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, domainSepBytes, hooks = {}, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now }) {
   let submitLock = Promise.resolve();
+
+  function fireSettled(info) {
+    const fn = hooks && hooks.onSettled;
+    if (typeof fn !== 'function') return;
+    try {
+      const p = fn(info);
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) {
+      logger.warn('settled_hook_failed', { detail: e.message });
+    }
+  }
 
   /** FIFO mutex: callers of fn are serialized in arrival order. */
   function withSubmitLock(fn) {
@@ -138,6 +157,9 @@ function createSettlementEngine({ cfg, rpc, store, signer, metrics, logger, doma
       gas_spent_wei: gasSpent.toString(),
       status: 'settled',
     });
+    // Post-settlement treasury trigger. Detached on purpose: the payer's
+    // response must not wait on a balance read, let alone on a swap.
+    fireSettled({ paymentId, txHash, payer: facts.payer, amount: facts.authorization.value, gasSpentWei: gasSpent });
     return {
       success: true,
       transaction: txHash,

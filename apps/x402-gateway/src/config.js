@@ -106,6 +106,20 @@ function parseBigIntEnv(source, name, fallback) {
   return BigInt(v);
 }
 
+/**
+ * Strict decimal-string -> atomic BigInt env parse ("5.00" @6 -> 5000000n).
+ * Never parseFloat: 2,658,950,900,358,165 does not survive Number, and a
+ * money knob that silently rounds is a money knob that silently steals.
+ */
+function parseDecimalEnv(source, name, fallback, scale) {
+  const v = envFrom(source, name, fallback);
+  try {
+    return decimalToScaled(String(v), scale);
+  } catch (e) {
+    throw new Error(`${name}: ${e.message}`);
+  }
+}
+
 function parseIntEnv(source, name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   const v = envFrom(source, name, fallback);
   const n = typeof v === 'number' ? v : Number(v);
@@ -233,6 +247,130 @@ function usdToTokenAtomic(usd, usdPerToken, decimals) {
 }
 
 /**
+ * Treasury ("sweep and sip") configuration — see src/treasury/ and
+ * docs/x402.md. Defaults are the spec's; every knob is validated fail-closed
+ * here so a typo'd cold address or an impossible budget refuses startup
+ * instead of misfiring at 3am with real money.
+ *
+ * The cold address must be EIP-55 checksummed EXACTLY. An all-lowercase
+ * address is a valid EVM address and this loader would happily accept it —
+ * but this one value is where every dollar of revenue ends up, and the
+ * checksum is the only cheap way to catch a transposed character in it.
+ */
+function loadTreasuryConfig(source, { network, problems }) {
+  const enabled = envFrom(source, 'X402_TREASURY_ENABLED', '0') === '1';
+  const coldRaw = envFrom(source, 'X402_TREASURY_COLD_ADDRESS', '');
+  let coldAddress = null;
+  if (coldRaw) {
+    try {
+      const evmMod = require('./facilitator-evm/evm');
+      const checksummed = evmMod.validateAddress(coldRaw, 'X402_TREASURY_COLD_ADDRESS');
+      if (coldRaw !== checksummed) {
+        problems.push(
+          `X402_TREASURY_COLD_ADDRESS must be EIP-55 checksummed exactly (got ${coldRaw}, expected ${checksummed}) — `
+          + 'this is the address every swept dollar goes to; the checksum is the typo guard'
+        );
+      } else {
+        coldAddress = checksummed;
+      }
+    } catch (e) {
+      problems.push(e.message);
+    }
+  } else if (enabled) {
+    problems.push('X402_TREASURY_ENABLED=1 requires X402_TREASURY_COLD_ADDRESS (the sweep destination; server config only)');
+  }
+
+  let t;
+  try {
+    t = {
+      enabled,
+      coldAddress,
+      // Sip trigger. 0.0001 ETH is ~185 settlements of remaining runway at
+      // Base's typical 0.006 gwei — a trigger point, not a cliff.
+      ethFloorWei: parseBigIntEnv(source, 'X402_TREASURY_ETH_FLOOR_WEI', 100000000000000n),
+      sipUsdcAtomic: parseDecimalEnv(source, 'X402_TREASURY_SIP_USDC', '5.00', 6),
+      // The adaptive floor: never swap less than this, but DO swap less than
+      // X402_TREASURY_SIP_USDC when that is all the revenue there is. A fixed
+      // $5 minimum deadlocks after a gas spike (ETH gone at ~75 settlements
+      // with ~$0.75 accrued); $0.50 already buys ~490 settlements of gas.
+      sipMinUsdcAtomic: parseDecimalEnv(source, 'X402_TREASURY_SIP_MIN_USDC', '0.50', 6),
+      maxSlippageBps: parseIntEnv(source, 'X402_TREASURY_MAX_SLIPPAGE_BPS', 100, { min: 1, max: 1000 }),
+      sipCooldownS: parseIntEnv(source, 'X402_TREASURY_SIP_COOLDOWN_S', 86400, { min: 0, max: 30 * 86400 }),
+      // After a FAILED attempt the cooldown is this instead. A stale-quote
+      // revert is caught by the pre-flight estimate and costs nothing, so
+      // waiting a full day to retry would be the expensive choice; the
+      // two-strike breaker still bounds genuine failures.
+      retryCooldownS: parseIntEnv(source, 'X402_TREASURY_RETRY_COOLDOWN_S', 900, { min: 0, max: 86400 }),
+      dailySwapBudgetAtomic: parseDecimalEnv(source, 'X402_TREASURY_DAILY_SWAP_BUDGET_USDC', '10.00', 6),
+      usdcCeilingAtomic: parseDecimalEnv(source, 'X402_TREASURY_USDC_CEILING', '20.00', 6),
+      checkIntervalS: parseIntEnv(source, 'X402_TREASURY_CHECK_INTERVAL_S', 300, { min: 10, max: 86400 }),
+      // Dust guard: without it a balance hovering one atomic unit above the
+      // ceiling would pay ~63k gas to sweep $0.000001 every interval.
+      minSweepAtomic: parseDecimalEnv(source, 'X402_TREASURY_MIN_SWEEP_USDC', '0.10', 6),
+      // Fee tiers to quote, best fill wins. 500 is the deepest USDC/WETH pool
+      // on Base; 100 is marginally cheaper but ~26x thinner. 10000 is not
+      // allowlisted at all — its 1% fee eats twenty times the sip's overhead.
+      poolFees: String(envFrom(source, 'X402_TREASURY_POOL_FEES', '500,100')).split(',').map((s) => Number(s.trim())),
+      swapDeadlineS: parseIntEnv(source, 'X402_TREASURY_SWAP_DEADLINE_S', 180, { min: 30, max: 3600 }),
+      maxSwapGas: parseBigIntEnv(source, 'X402_TREASURY_MAX_SWAP_GAS', 300000n),
+      maxApproveGas: parseBigIntEnv(source, 'X402_TREASURY_MAX_APPROVE_GAS', 100000n),
+      maxSweepGas: parseBigIntEnv(source, 'X402_TREASURY_MAX_SWEEP_GAS', 150000n),
+      // Refuse to convert revenue when the ETH bought is not worth many times
+      // the gas the conversion costs. Today's ratio is ~2,000x.
+      minEthOutGasRatio: parseIntEnv(source, 'X402_TREASURY_MIN_ETH_OUT_GAS_RATIO', 20, { min: 1, max: 100000 }),
+      maxConsecutiveFailures: parseIntEnv(source, 'X402_TREASURY_MAX_CONSECUTIVE_FAILURES', 2, { min: 1, max: 10 }),
+    };
+  } catch (e) {
+    problems.push(e.message);
+    return { enabled, coldAddress };
+  }
+
+  if (enabled) {
+    // A treasury on a network with no live-verified router/quoter/pool set
+    // would have to guess contract addresses for a swap that spends revenue.
+    const { CONTRACTS } = require('./treasury/uniswap');
+    if (!CONTRACTS[network]) {
+      problems.push(
+        `X402_TREASURY_ENABLED=1 is not supported on X402_NETWORK=${network}: no live-verified Uniswap v3 contract set `
+        + `(supported: ${Object.keys(CONTRACTS).join(', ')})`
+      );
+    }
+  }
+
+  const ALLOWED_FEES = [100, 500, 3000];
+  if (t.poolFees.length === 0 || t.poolFees.some((f) => !ALLOWED_FEES.includes(f))) {
+    problems.push(`X402_TREASURY_POOL_FEES must be a comma list drawn from ${ALLOWED_FEES.join(',')} (got ${t.poolFees.join(',')})`);
+  }
+  if (t.sipMinUsdcAtomic <= 0n) {
+    problems.push('X402_TREASURY_SIP_MIN_USDC must be > 0 (a zero-size sip can only revert)');
+  }
+  if (t.sipUsdcAtomic < t.sipMinUsdcAtomic) {
+    problems.push('X402_TREASURY_SIP_USDC must be >= X402_TREASURY_SIP_MIN_USDC');
+  }
+  if (t.dailySwapBudgetAtomic < t.sipMinUsdcAtomic) {
+    problems.push('X402_TREASURY_DAILY_SWAP_BUDGET_USDC is below X402_TREASURY_SIP_MIN_USDC, so no sip could ever run');
+  }
+  if (t.usdcCeilingAtomic < t.sipMinUsdcAtomic) {
+    problems.push(
+      'X402_TREASURY_USDC_CEILING is below X402_TREASURY_SIP_MIN_USDC: the sweep would drain the wallet past the point '
+      + 'where it can buy its own gas back'
+    );
+  }
+  if (t.ethFloorWei <= 0n) {
+    problems.push('X402_TREASURY_ETH_FLOOR_WEI must be > 0 (a zero floor never triggers a sip)');
+  }
+  if (t.ethFloorWei > 10n ** 18n) {
+    problems.push('X402_TREASURY_ETH_FLOOR_WEI above 1 ETH would sip continuously; the floor is a bootstrap trigger, not a target balance');
+  }
+  if (t.maxSwapGas < 200000n) {
+    // The measured multicall is 165,389 gas; a cap below ~200k leaves no
+    // headroom for a tick-crossing swap and turns every sip into a cap error.
+    problems.push('X402_TREASURY_MAX_SWAP_GAS below 200000 cannot fit the measured 165k-gas swap+unwrap multicall');
+  }
+  return t;
+}
+
+/**
  * Strict, fail-closed configuration for the SELF-HOSTED EVM facilitator
  * (src/facilitator-evm/). Reads the spec's env model:
  *
@@ -337,6 +475,11 @@ function loadEvmFacilitatorConfig(source = process.env) {
       receiptTimeoutMs: parseIntEnv(source, 'X402_RECEIPT_TIMEOUT_MS', 30000, { min: 1000, max: 600000 }),
       receiptPollMs: parseIntEnv(source, 'X402_RECEIPT_POLL_MS', 1000, { min: 50, max: 30000 }),
       expiryMarginSeconds: parseIntEnv(source, 'X402_EXPIRY_MARGIN_SECONDS', 6, { min: 0, max: 3600 }),
+      // "Sweep and sip" treasury (src/treasury/). Default OFF; single-wallet
+      // mode (payTo == facilitator address) refuses to start without it, but
+      // that check needs the derived address and so lives in
+      // createEvmFacilitator via assertTreasuryPolicy.
+      treasury: loadTreasuryConfig(source, { network: slug, problems }),
     };
   } catch (e) {
     problems.push(e.message);
@@ -580,6 +723,7 @@ module.exports = {
   load,
   loadGatewayConfig,
   loadEvmFacilitatorConfig,
+  loadTreasuryConfig,
   decimalToScaled,
   usdToUsdcAtomic,
   usdToTokenAtomic,
