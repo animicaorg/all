@@ -802,6 +802,24 @@ class _SqliteAicfJobStore:
                 conn.execute(ddl)
             except _sqlite3.OperationalError:
                 pass
+        # Backfill: rows written before empty tiers meant "serve everything"
+        # are stranded — claim_next matches an empty list against nothing, so
+        # those workers poll forever and never receive a job. They would only
+        # heal by re-registering, which a running miner may not do for days.
+        # Upgrade them in place to the same default a fresh registration gets.
+        try:
+            cur = conn.execute(
+                "UPDATE workers SET tiers_json = ? "
+                "WHERE tiers_json IS NULL OR tiers_json IN ('[]','', 'null')",
+                (_json.dumps(_DEFAULT_WORKER_TIERS),),
+            )
+            if cur.rowcount:
+                log.info(
+                    "aicf_jobs: backfilled %d worker(s) with empty tiers to %s",
+                    cur.rowcount, ",".join(_DEFAULT_WORKER_TIERS),
+                )
+        except _sqlite3.OperationalError:
+            pass
 
     def _conn(self) -> _sqlite3.Connection:
         conn = getattr(self._tls, "conn", None)
