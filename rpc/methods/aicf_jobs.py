@@ -138,6 +138,11 @@ _TIER_PRICE_PER_KTOK: Dict[str, float] = {
     "elite":    0.05,
 }
 _DEFAULT_TIER = "standard"
+# What a worker advertises when it registers without naming tiers: everything
+# priced. `pipeline` is excluded deliberately — it is a transport capability
+# (downstream stages fetch activations directly), not a pricing tier, and a
+# worker that cannot expose a reachable port must not be routed pipeline work.
+_DEFAULT_WORKER_TIERS: List[str] = ["free", "standard", "premium", "elite"]
 _TIER_LATENCY_MS: Dict[str, int] = {
     "free": 6000,
     "standard": 3000,
@@ -1976,6 +1981,21 @@ async def worker_register(
             tiers.append(_PIPELINE_TIER_LABEL)
         else:
             tiers.append(_resolve_tier(t))
+    # A worker that advertises nothing can never be matched (claim_next
+    # deliberately matches an empty tier list against nothing), so a
+    # registration with no tiers used to mean "poll forever, receive
+    # nothing" — silently. Every already-deployed miner that omits the
+    # field lands here, which is why a live fleet could sit at zero jobs
+    # completed. Default to serving EVERY pricing tier instead: opting in
+    # to the network is the act of registering, and a worker that wants a
+    # narrower slice can still say so explicitly. `pipeline` stays opt-in
+    # because it is a transport mode, not a pricing tier.
+    if not tiers:
+        tiers = list(_DEFAULT_WORKER_TIERS)
+        log.info(
+            "aicf_jobs: worker %s registered with no tiers; defaulting to all (%s)",
+            address, ",".join(tiers),
+        )
     hardware = p.get("hardware") or {}
     if not isinstance(hardware, Mapping):
         raise InvalidParams("workerRegister: 'hardware' must be an object")
