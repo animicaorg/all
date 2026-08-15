@@ -90,7 +90,7 @@ middleware ──POST /verify──► facilitator
 | `X402_NETWORK_EVM` | `eip155:84532` (Base Sepolia) | CAIP-2 network for the USDC lane. Mainnet: `eip155:8453`. |
 | `X402_USDC_ASSET` | per-network well-known USDC | USDC contract address. Verify against Circle's list before enabling. |
 | `X402_BASE_PAYTO` | *(empty — lane off)* | EVM address receiving USDC. |
-| `X402_EVM_FACILITATOR_URL` | `https://x402.org/facilitator` | CDP-compatible facilitator. Mainnet options: `https://api.cdp.coinbase.com/platform/v2/x402`, `https://facilitator.payai.network`. |
+| `X402_EVM_FACILITATOR_URL` | `https://x402.org/facilitator` | Remote facilitator URL (`X402_FACILITATOR_MODE=remote`). Mainnet remote option: `https://facilitator.payai.network`; production goal is `X402_FACILITATOR_MODE=self` (our own `src/facilitator-evm/`). |
 | `X402_NETWORK_SVM` | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet) | CAIP-2 network for the wANM lane. Mainnet: `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`. |
 | `WANM_MINT` | *(empty — lane off)* | wANM SPL mint. **The real mint lives with the solana.animica.org bridge config — never hardcode it.** |
 | `WANM_TREASURY` | *(empty — lane off)* | Owner wallet that receives wANM (`payTo`). |
@@ -125,14 +125,44 @@ curl -i http://127.0.0.1:4656/free/ping     # 200, free
 curl -i http://127.0.0.1:4656/paid/echo     # 402 + PAYMENT-REQUIRED offer
 ```
 
+## Products layer (production entry: `src/server.js`)
+
+`node src/server.js` (binds `127.0.0.1:8742` by default) serves the real
+paid catalog on top of the core; `demo-server.js` stays the dev/smoke
+entry. Everything is config-driven — see `.env.example` for every knob.
+
+| Product | Route(s) | Price (default) | Notes |
+|---|---|---|---|
+| `qrng` | `GET /x402/qrng/draw`, `POST /x402/qrng` | `$0.01` (`X402_QRNG_PRICE_USDC`) | wraps the node's real `rand.quantumRandomBytes`; readiness = an actual health-gated randomness fetch BEFORE any payment is requested; fields pass through verbatim (`attested:false` today — honesty enforced) |
+| `bulk_chain` | `GET /x402/chain/export`, `/x402/chain/blocks`, `/x402/chain/transactions` | `$0.05` (`X402_BULK_CHAIN_PRICE_USDC`) | batched loopback-node reads, ≤1000 blocks / ≤10000 tx rows / byte+time budgets, cursor pagination, NDJSON/JSON + gzip, BigInt-exact amounts as decimal strings |
+| `priority_inference` | `POST /x402/v1/chat/completions` | `$0.10` (`X402_INFERENCE_PRICE_USDC`) | **disabled by default** (`PRIORITY_INFERENCE_ENABLED=0`) and capacity-gated on live `aicf.workerStatus` polling; below the worker floor it never issues a 402 |
+| `echo` | `GET/POST /x402/paid/echo` | `$0.005` | development-only settlement smoke test; off when `X402_ENV=production` unless `X402_ENABLE_ECHO=1` |
+
+* **Discovery**: `GET /x402` and `GET /.well-known/x402` — unpaid,
+  machine-readable `{name, network, asset, products:[{id, path, price,
+  description, available, outputSchema…}]}` with LIVE `available` flags from
+  each product's readiness hook.
+* **Idempotency**: send `Idempotency-Key` with a paid request; the same
+  payment + key that already produced a delivered outcome replays the
+  stored result with no facilitator round-trip and no second charge.
+* **Payment-then-service failure**: settle-first products (bulk, inference)
+  retry once on downstream failure, then return an HMAC-signed error
+  receipt (`X402_RECEIPT_HMAC_KEY`) referencing the settled payment and
+  open an incident row for reconciliation/refund.
+* **Admin CLI**: `bin/animica-x402` reads the DBs directly —
+  `settlements list --status failed`, `payment get <id>`, `revenue --since
+  24h`, `reconcile` (settled rows vs chain receipts via `X402_RPC_URL`),
+  `gas report`, `incidents list|resolve`. `--json` everywhere.
+
 ## Tests
 
 ```sh
 node --test test/
 ```
 
-33 tests, no network: the Solana RPC is mocked and the facilitator/middleware
-servers run on loopback. Covered: 402 shape against the v2 spec fields (and
+No network anywhere: the Solana/EVM/Animica-node RPCs are mocked (the QRNG
+mock replays a captured real node response) and all servers run on
+loopback. Covered: 402 shape against the v2 spec fields (and
 v1 body rendering), verify/settle happy path including a check that the
 broadcast transaction carries a valid fee-payer signature, concurrent
 settles of the same transaction (exactly one may win), Lighthouse guard
@@ -144,10 +174,11 @@ funds, tampered offer terms, and the kill switch.
 
 ## Two-lane strategy (why both)
 
-* **Base-USDC via CDP** is the discoverability lane: x402 agent tooling,
-  the Bazaar (`GET /discovery/resources`) and x402scan all index CDP-network
-  endpoints, and USDC is what agent wallets hold today. It costs a 3rd-party
-  dependency and gives reach.
+* **Base-USDC** is the discoverability lane: x402 agent tooling, the
+  Bazaar (`GET /discovery/resources`) and x402scan all index Base
+  endpoints, and USDC is what agent wallets hold today. Settled either by
+  our own `src/facilitator-evm/` (`X402_FACILITATOR_MODE=self`, the
+  production goal — no third party) or a remote facilitator such as PayAI.
 * **Self-facilitated wANM** is the utility lane: payments land directly in
   the Animica treasury as wrapped ANM with no external facilitator, which
   both dogfoods the solana.animica.org bridge and creates a real ANM demand
@@ -160,13 +191,27 @@ multi-rail, so this is idiomatic, not clever.
 ## Files
 
 ```
-src/config.js       env names, network/CAIP-2 constants, BigInt money math
-src/protocol.js     v2 + v1 wire shapes, header codecs, offer validation
-src/solana.js       base58 / compact-u16 / tx parsing / ed25519 / SPL / RPC
-src/facilitator.js  self-facilitator: /verify /settle /supported + server
-src/middleware.js   the gate: 402 offers, verify -> serve -> settle -> receipt
-src/demo-server.js  /free/ping + /paid/echo ($0.005) behind the flag
-test/               node --test suite (mocked RPC, loopback HTTP)
+src/config.js            env names, CAIP-2 constants, BigInt money math,
+                         gateway + facilitator config loaders (fail closed)
+src/protocol.js          v2 + v1 wire shapes, header codecs, offer validation
+src/middleware.js        the scaffold gate + the §7 facilitator HTTP client
+src/paywall.js           production gate: availability -> 402 -> verify ->
+                         settle -> execute, idempotency, signed error receipts
+src/server.js            production entry: catalog + product routes (:8742)
+src/products/            registry, qrng, bulk-chain, priority-inference, echo
+src/capacity.js          serving-worker gate (aicf.workerStatus polling)
+src/animica-node.js      Animica node JSON-RPC client (BigInt-safe, single-flight)
+src/bech32m.js           anim1… address -> account digest
+src/receipts.js          HMAC-signed machine-readable error receipts
+src/store/index.js       facilitator settlement/replay ledger (better-sqlite3)
+src/store/gateway.js     gateway idempotency + incident store (own DB file)
+src/facilitator-evm/     self-hosted exact-EVM facilitator (Base USDC, EIP-3009)
+src/facilitator.js       legacy SVM (wANM) self-facilitator
+src/solana.js            base58 / compact-u16 / tx parsing / ed25519 / SPL / RPC
+src/demo-server.js       dev/smoke entry: /free/ping + /paid/echo
+bin/animica-x402         operator CLI (settlements, revenue, reconcile, gas,
+                         incidents) — local DBs only
+test/                    node --test suite (mocked RPC, loopback HTTP)
 ```
 
 Design doc: [`docs/x402.md`](../../docs/x402.md) in the repo root.

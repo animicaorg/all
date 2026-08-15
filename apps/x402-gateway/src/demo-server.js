@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Demo for the x402 scaffold. Two routes:
+ * DEV/SMOKE entry for the x402 gateway (the production entry with the real
+ * product registry is src/server.js). Two routes:
  *
  *   GET /free/ping   — free, proves the server is up
- *   GET /paid/echo   — x402-gated at $0.005; echoes method + query back
+ *   GET /paid/echo   — x402-gated at $0.005; echoes method + query back.
+ *                      DEVELOPMENT-ONLY settlement smoke test, not a real
+ *                      product. Disabled when X402_ENV=production unless
+ *                      X402_ENABLE_ECHO=1.
  *
  * Run:   ANM_X402_ENABLED=1 node src/demo-server.js
  *
@@ -64,6 +68,15 @@ function main() {
         return res.end(body);
       }
       if (url.pathname === '/paid/echo') {
+        // Echo is a development-only settlement smoke test. In production
+        // it stays off unless the operator explicitly re-enables it.
+        if (process.env.X402_ENV === 'production' && process.env.X402_ENABLE_ECHO !== '1') {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({
+            error: 'echo_disabled_in_production',
+            detail: 'echo is a development-only smoke test; set X402_ENABLE_ECHO=1 to re-enable',
+          }));
+        }
         return await paidEcho(req, res);
       }
       if (url.pathname === '/metrics') {

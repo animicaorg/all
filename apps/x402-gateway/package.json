@@ -4,12 +4,16 @@
   "version": "0.2.0",
   "description": "Animica x402 payment gateway + self-hosted exact-EVM facilitator (Base USDC, EIP-3009, persistent replay store). Gated behind ANM_X402_ENABLED; deployment is a separate runbook step.",
   "type": "commonjs",
+  "bin": {
+    "animica-x402": "bin/animica-x402"
+  },
   "scripts": {
     "test": "node --test test/",
+    "start": "node src/server.js",
     "start:demo": "node src/demo-server.js",
     "start:facilitator": "node src/facilitator.js",
     "start:facilitator-evm": "node src/facilitator-evm/server.js",
-    "check:syntax": "for f in src/*.js src/facilitator-evm/*.js src/store/*.js test/*.js; do node --check \"$f\" || exit 1; done; echo all js ok"
+    "check:syntax": "for f in src/*.js src/facilitator-evm/*.js src/products/*.js src/store/*.js test/*.js bin/animica-x402; do node --check \"$f\" || exit 1; done; echo all js ok"
   },
   "engines": {
     "node": ">=20.0.0"

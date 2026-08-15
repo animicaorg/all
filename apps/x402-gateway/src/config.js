@@ -148,9 +148,9 @@ function load(overrides = {}) {
     evmFacilitatorUrl: facilitatorMode === 'self'
       ? `http://127.0.0.1:${evmFacilitatorPort}`
       : env('X402_FACILITATOR_URL', env('X402_EVM_FACILITATOR_URL', 'https://x402.org/facilitator')),
-    // mainnet alternatives (operator decision, see README):
-    //   https://api.cdp.coinbase.com/platform/v2/x402   (Coinbase CDP)
+    // mainnet remote alternative (operator decision, see README):
     //   https://facilitator.payai.network               (PayAI)
+    // Production goal is mode=self (our own facilitator-evm server).
 
     // Lane B: wANM (SPL token) via the LOCAL self-facilitator.
     networkSvm,
@@ -321,12 +321,111 @@ function loadEvmFacilitatorConfig(source = process.env) {
   return cfg;
 }
 
+/**
+ * Gateway/product configuration (src/server.js — the production entry that
+ * supersedes demo-server.js). Reuses load() for the payment-lane keys (the
+ * live unit's env names keep working unchanged) and adds the product
+ * registry's knobs. Money knobs are validated fail-closed at load time:
+ * a garbage price refuses startup, it does not fail at request time.
+ *
+ * `source` defaults to process.env; `overrides` win over everything (tests).
+ */
+function loadGatewayConfig(source = process.env, overrides = {}) {
+  const base = load(overrides);
+  const problems = [];
+
+  const priceOf = (name, fallback) => {
+    const v = envFrom(source, name, fallback);
+    try {
+      usdToUsdcAtomic(String(v)); // throws on non-decimal / negative / exponent
+      return String(v);
+    } catch (e) {
+      problems.push(`${name}: ${e.message}`);
+      return fallback;
+    }
+  };
+
+  const envName = envFrom(source, 'X402_ENV', 'development');
+  const echoEnabled = envName !== 'production' || envFrom(source, 'X402_ENABLE_ECHO', '') === '1';
+
+  const walletsRaw = envFrom(source, 'X402_INFERENCE_WORKER_WALLETS', '');
+  const inferenceWorkerWallets = walletsRaw
+    ? walletsRaw.split(',').map((w) => w.trim()).filter(Boolean)
+    : [];
+  for (const w of inferenceWorkerWallets) {
+    if (!/^anim1[a-z0-9]{10,100}$/.test(w)) {
+      problems.push(`X402_INFERENCE_WORKER_WALLETS entry ${JSON.stringify(w)} is not a bech32m anim1 address`);
+    }
+  }
+
+  let cfg;
+  try {
+    cfg = Object.assign({}, base, {
+      env: envName,
+      gatewayBind: envFrom(source, 'X402_GATEWAY_BIND', '127.0.0.1'),
+      gatewayPort: parseIntEnv(source, 'X402_GATEWAY_PORT', 8742, { min: 1, max: 65535 }),
+      gatewayDbPath: envFrom(source, 'X402_GATEWAY_DB_PATH', './state/x402-gateway.db'),
+
+      // Animica node JSON-RPC (loopback ONLY in production — never the
+      // public vhosts; see the chain-data recon).
+      animicaRpcUrl: envFrom(source, 'X402_ANIMICA_RPC_URL', 'http://127.0.0.1:8545/rpc'),
+
+      // Signed error receipts (payment-then-service failure policy). Empty
+      // => an ephemeral per-boot key with a loud warning; production sets it.
+      receiptHmacKey: envFrom(source, 'X402_RECEIPT_HMAC_KEY', ''),
+
+      // Idempotency-Key replay store.
+      idempotencyMaxBodyBytes: parseIntEnv(source, 'X402_IDEMPOTENCY_MAX_BODY_BYTES', 4_000_000, { min: 1024 }),
+      idempotencyTtlSeconds: parseIntEnv(source, 'X402_IDEMPOTENCY_TTL_SECONDS', 7 * 24 * 3600, { min: 60 }),
+
+      // P0 echo — development/settlement-smoke only.
+      echoEnabled,
+
+      // P1 QRNG.
+      qrngEnabled: envFrom(source, 'X402_QRNG_ENABLED', '1') === '1',
+      qrngPriceUsd: priceOf('X402_QRNG_PRICE_USDC', '0.01'),
+      qrngMaxBytes: parseIntEnv(source, 'X402_QRNG_MAX_BYTES', 1024, { min: 1, max: 1048576 }),
+      qrngTimeoutMs: parseIntEnv(source, 'X402_QRNG_TIMEOUT_MS', 5000, { min: 100, max: 60000 }),
+
+      // P2 bulk chain data.
+      bulkChainEnabled: envFrom(source, 'X402_BULK_CHAIN_ENABLED', '1') === '1',
+      bulkChainPriceUsd: priceOf('X402_BULK_CHAIN_PRICE_USDC', '0.05'),
+      bulkMaxBlocks: parseIntEnv(source, 'X402_BULK_MAX_BLOCKS', 1000, { min: 1, max: 10000 }),
+      bulkMaxTxRecords: parseIntEnv(source, 'X402_BULK_MAX_TX_RECORDS', 10000, { min: 1, max: 1000000 }),
+      bulkMaxResponseBytes: parseIntEnv(source, 'X402_BULK_MAX_RESPONSE_BYTES', 16_000_000, { min: 10_000 }),
+      bulkExecTimeoutMs: parseIntEnv(source, 'X402_BULK_EXEC_TIMEOUT_MS', 25000, { min: 1000, max: 120000 }),
+      bulkChunkBlocks: parseIntEnv(source, 'X402_BULK_CHUNK_BLOCKS', 100, { min: 1, max: 500 }),
+      bulkHeadMargin: parseIntEnv(source, 'X402_BULK_HEAD_MARGIN', 6, { min: 0, max: 1000 }),
+
+      // P3 priority inference — flagship LATER; hard-disabled by default and
+      // additionally gated on live serving capacity (see src/capacity.js).
+      priorityInferenceEnabled: envFrom(source, 'PRIORITY_INFERENCE_ENABLED', '0') === '1',
+      priorityInferenceMinServingWorkers: parseIntEnv(source, 'PRIORITY_INFERENCE_MIN_SERVING_WORKERS', 2, { min: 1, max: 1000 }),
+      inferencePriceUsd: priceOf('X402_INFERENCE_PRICE_USDC', '0.10'),
+      inferenceWorkerWallets,
+      inferenceTier: envFrom(source, 'X402_INFERENCE_TIER', 'standard'),
+      inferenceUpstreamUrl: envFrom(source, 'X402_INFERENCE_UPSTREAM_URL', 'http://127.0.0.1:4600/v1/chat/completions'),
+      inferenceTimeoutMs: parseIntEnv(source, 'X402_INFERENCE_TIMEOUT_MS', 180000, { min: 1000, max: 600000 }),
+      inferenceMaxBodyBytes: parseIntEnv(source, 'X402_INFERENCE_MAX_BODY_BYTES', 262144, { min: 1024 }),
+      capacityProbeIntervalMs: parseIntEnv(source, 'X402_CAPACITY_PROBE_INTERVAL_MS', 15000, { min: 1000, max: 300000 }),
+      capacityMaxProbeAgeMs: parseIntEnv(source, 'X402_CAPACITY_MAX_PROBE_AGE_MS', 60000, { min: 1000, max: 3600000 }),
+    });
+  } catch (e) {
+    problems.push(e.message);
+  }
+  if (problems.length) {
+    throw new Error('gateway config invalid (fail closed):\n  - ' + problems.join('\n  - '));
+  }
+  return Object.assign(cfg, overrides);
+}
+
 module.exports = {
   NETWORKS,
   V1_NETWORK_SLUGS,
   USDC_DEFAULTS,
   EVM_NETWORKS,
   load,
+  loadGatewayConfig,
   loadEvmFacilitatorConfig,
   decimalToScaled,
   usdToUsdcAtomic,

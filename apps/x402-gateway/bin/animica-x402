@@ -1,0 +1,301 @@
+#!/usr/bin/env node
+'use strict';
+/**
+ * animica-x402 — local operator CLI. Reads the DBs directly (facilitator
+ * payments ledger + gateway incidents/idempotency store); never a public
+ * endpoint, never prints secrets (the DBs hold none).
+ *
+ *   animica-x402 settlements list [--status settled|failed|pending|submitting|expired] [--limit N]
+ *   animica-x402 payment get <payment_id | authorization_hash | tx_hash>
+ *   animica-x402 revenue [--since 24h|7d|<unix>|<ISO>]
+ *   animica-x402 reconcile [--limit N]      cross-check settled rows vs chain receipts (X402_RPC_URL)
+ *   animica-x402 gas report [--since ...]
+ *   animica-x402 incidents list [--status open|refunded|resolved]
+ *   animica-x402 incidents resolve <incident_id> --status refunded|resolved
+ *
+ * Env: X402_DB_PATH (default ./state/x402.db), X402_GATEWAY_DB_PATH
+ * (default ./state/x402-gateway.db), X402_RPC_URL (reconcile),
+ * X402_SETTLEMENT_ADDRESS (optional: enables the Transfer-log destination
+ * check in reconcile). --json on any command emits machine-readable output.
+ */
+
+const path = require('node:path');
+
+const { atomicToDecimalString } = require(path.join(__dirname, '..', 'src', 'metrics'));
+const usdc = require(path.join(__dirname, '..', 'src', 'facilitator-evm', 'usdc'));
+
+const DB_PATH = process.env.X402_DB_PATH || './state/x402.db';
+const GATEWAY_DB_PATH = process.env.X402_GATEWAY_DB_PATH || './state/x402-gateway.db';
+
+function openDb(dbPath, { writable = false } = {}) {
+  const Database = require('better-sqlite3');
+  try {
+    return new Database(dbPath, writable ? { fileMustExist: true } : { readonly: true, fileMustExist: true });
+  } catch (e) {
+    fail(`cannot open ${dbPath}: ${e.message} (set X402_DB_PATH / X402_GATEWAY_DB_PATH)`);
+  }
+}
+
+function fail(msg) {
+  console.error(`error: ${msg}`);
+  process.exit(1);
+}
+
+function parseArgs(argv) {
+  const args = { _: [], flags: {} };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith('--')) {
+        args.flags[key] = next;
+        i++;
+      } else {
+        args.flags[key] = true;
+      }
+    } else {
+      args._.push(a);
+    }
+  }
+  return args;
+}
+
+/** '24h' | '7d' | '30m' | unix seconds | ISO date -> unix seconds. */
+function parseSince(v, fallbackSec) {
+  if (v === undefined || v === true) return fallbackSec;
+  const rel = /^(\d+)([smhd])$/.exec(String(v));
+  if (rel) {
+    const mult = { s: 1, m: 60, h: 3600, d: 86400 }[rel[2]];
+    return Math.floor(Date.now() / 1000) - Number(rel[1]) * mult;
+  }
+  if (/^\d{9,}$/.test(String(v))) return Number(v);
+  const t = Date.parse(String(v));
+  if (!Number.isNaN(t)) return Math.floor(t / 1000);
+  fail(`cannot parse --since ${JSON.stringify(v)} (want 24h/7d/unix/ISO)`);
+}
+
+function fmtTs(sec) {
+  return sec ? new Date(sec * 1000).toISOString() : '-';
+}
+
+function table(rows, cols) {
+  if (rows.length === 0) return console.log('(no rows)');
+  const widths = cols.map((c) => Math.max(c.length, ...rows.map((r) => String(r[c] ?? '').length)));
+  console.log(cols.map((c, i) => c.padEnd(widths[i])).join('  '));
+  for (const r of rows) console.log(cols.map((c, i) => String(r[c] ?? '').padEnd(widths[i])).join('  '));
+}
+
+function out(args, rows, cols) {
+  if (args.flags.json) console.log(JSON.stringify(rows, null, 2));
+  else table(rows, cols);
+}
+
+// ---------------------------------------------------------------- commands
+
+function cmdSettlements(args) {
+  const db = openDb(DB_PATH);
+  const limit = Number(args.flags.limit || 50);
+  const status = args.flags.status;
+  const rows = status
+    ? db.prepare('SELECT * FROM payments WHERE status = ? ORDER BY created_at DESC LIMIT ?').all(status, limit)
+    : db.prepare('SELECT * FROM payments ORDER BY created_at DESC LIMIT ?').all(limit);
+  out(args, rows.map((r) => ({
+    payment_id: r.payment_id,
+    status: r.status,
+    payer: r.payer,
+    amount_usdc: atomicToDecimalString(BigInt(r.amount), 6),
+    resource: r.resource,
+    tx: r.settlement_tx_hash || '-',
+    created: fmtTs(r.created_at),
+    settled: fmtTs(r.settled_at),
+    error: r.error_reason || '',
+  })), ['payment_id', 'status', 'payer', 'amount_usdc', 'resource', 'tx', 'created', 'settled', 'error']);
+}
+
+function cmdPaymentGet(args) {
+  const id = args._[0];
+  if (!id) fail('usage: animica-x402 payment get <payment_id | authorization_hash | tx_hash>');
+  const db = openDb(DB_PATH);
+  const row = db.prepare(
+    'SELECT * FROM payments WHERE payment_id = ? OR authorization_hash = ? OR settlement_tx_hash = ?'
+  ).get(id, id.toLowerCase(), id.toLowerCase());
+  if (!row) fail(`no payment found for ${id}`);
+  if (args.flags.json) return console.log(JSON.stringify(row, null, 2));
+  for (const [k, v] of Object.entries(row)) {
+    const shown = k === 'amount' ? `${v} (= ${atomicToDecimalString(BigInt(v), 6)} USDC)` :
+      (k === 'created_at' || k === 'settled_at' || k === 'expires_at') ? `${v} (${fmtTs(v)})` : v;
+    console.log(`${k.padEnd(20)} ${shown ?? '-'}`);
+  }
+}
+
+function cmdRevenue(args) {
+  const db = openDb(DB_PATH);
+  const since = parseSince(args.flags.since, 0);
+  const rows = db.prepare(
+    `SELECT resource, COUNT(*) AS n, GROUP_CONCAT(amount) AS amounts
+     FROM payments WHERE status='settled' AND COALESCE(settled_at, created_at) >= ?
+     GROUP BY resource ORDER BY n DESC`
+  ).all(since);
+  let total = 0n;
+  const shaped = rows.map((r) => {
+    let sum = 0n;
+    for (const a of String(r.amounts || '').split(',').filter(Boolean)) sum += BigInt(a);
+    total += sum;
+    return { resource: r.resource || '(none)', settled: r.n, revenue_usdc: atomicToDecimalString(sum, 6) };
+  });
+  out(args, shaped, ['resource', 'settled', 'revenue_usdc']);
+  if (!args.flags.json) {
+    console.log(`\ntotal since ${fmtTs(since)}: ${atomicToDecimalString(total, 6)} USDC (${shaped.reduce((n, r) => n + r.settled, 0)} settlements)`);
+  }
+}
+
+async function rpcCall(url, method, params) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`rpc http ${res.status}`);
+  const body = await res.json();
+  if (body.error) throw new Error(body.error.message || 'rpc error');
+  return body.result;
+}
+
+async function cmdReconcile(args) {
+  const rpcUrl = process.env.X402_RPC_URL;
+  if (!rpcUrl) fail('reconcile needs X402_RPC_URL (an EVM RPC for the settlement chain)');
+  const payTo = process.env.X402_SETTLEMENT_ADDRESS || null;
+  const db = openDb(DB_PATH);
+  const limit = Number(args.flags.limit || 50);
+  const rows = db.prepare("SELECT * FROM payments WHERE status='settled' ORDER BY settled_at DESC LIMIT ?").all(limit);
+  const results = [];
+  let bad = 0;
+  for (const r of rows) {
+    const entry = { payment_id: r.payment_id, tx: r.settlement_tx_hash || '-', verdict: '', detail: '' };
+    try {
+      if (!r.settlement_tx_hash) {
+        entry.verdict = 'MISSING_TX';
+        entry.detail = 'settled row has no settlement_tx_hash';
+        bad++;
+      } else {
+        const receipt = await rpcCall(rpcUrl, 'eth_getTransactionReceipt', [r.settlement_tx_hash]);
+        if (!receipt) {
+          entry.verdict = 'NO_RECEIPT';
+          entry.detail = 'chain has no receipt for this tx (dropped? wrong RPC?)';
+          bad++;
+        } else if (payTo) {
+          const check = usdc.validateSettlementReceipt(receipt, {
+            token: r.asset, payer: r.payer, payTo, value: BigInt(r.amount), nonce: r.auth_nonce || '0x' + '0'.repeat(64),
+          });
+          entry.verdict = check.ok ? 'OK' : 'MISMATCH';
+          entry.detail = check.ok ? 'status+AuthorizationUsed+Transfer all match' : check.reason;
+          if (!check.ok) bad++;
+        } else {
+          // Without X402_SETTLEMENT_ADDRESS we can still check status and
+          // the AuthorizationUsed(payer, nonce) log.
+          const okStatus = receipt.status === '0x1';
+          const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+          const authOk = !r.auth_nonce || logs.some((l) =>
+            Array.isArray(l.topics) && l.topics[0] === usdc.TOPICS.authorizationUsed &&
+            l.topics.length >= 3 && l.topics[2].toLowerCase() === r.auth_nonce.toLowerCase());
+          entry.verdict = okStatus && authOk ? 'OK(partial)' : 'MISMATCH';
+          entry.detail = okStatus
+            ? (authOk ? 'status+nonce ok (set X402_SETTLEMENT_ADDRESS for the full Transfer check)' : 'AuthorizationUsed nonce not found')
+            : 'receipt status is not success';
+          if (!(okStatus && authOk)) bad++;
+        }
+      }
+    } catch (e) {
+      entry.verdict = 'ERROR';
+      entry.detail = e.message;
+      bad++;
+    }
+    results.push(entry);
+  }
+  out(args, results, ['payment_id', 'tx', 'verdict', 'detail']);
+  if (!args.flags.json) console.log(`\nchecked ${results.length} settled payments: ${results.length - bad} ok, ${bad} needing attention`);
+  if (bad > 0) process.exitCode = 1;
+}
+
+function cmdGasReport(args) {
+  const db = openDb(DB_PATH);
+  const since = parseSince(args.flags.since, 0);
+  const rows = db.prepare('SELECT spent_wei, created_at FROM gas_spend WHERE created_at >= ? ORDER BY created_at').all(since);
+  const byDay = new Map();
+  let total = 0n;
+  for (const r of rows) {
+    const day = new Date(r.created_at * 1000).toISOString().slice(0, 10);
+    const cur = byDay.get(day) || { day, settlements: 0, wei: 0n };
+    cur.settlements += 1;
+    cur.wei += BigInt(r.spent_wei);
+    total += BigInt(r.spent_wei);
+    byDay.set(day, cur);
+  }
+  const shaped = [...byDay.values()].map((d) => ({
+    day: d.day, settlements: d.settlements, gas_wei: d.wei.toString(), gas_eth: atomicToDecimalString(d.wei, 18),
+  }));
+  out(args, shaped, ['day', 'settlements', 'gas_wei', 'gas_eth']);
+  if (!args.flags.json) console.log(`\ntotal: ${total.toString()} wei (${atomicToDecimalString(total, 18)} ETH incl. OP-stack L1 data fees) over ${rows.length} entries`);
+}
+
+function cmdIncidents(args) {
+  const sub = args._[0];
+  if (sub === 'resolve') {
+    const id = args._[1];
+    const status = args.flags.status;
+    if (!id || !['refunded', 'resolved'].includes(status)) {
+      fail('usage: animica-x402 incidents resolve <incident_id> --status refunded|resolved');
+    }
+    const db = openDb(GATEWAY_DB_PATH, { writable: true });
+    const r = db.prepare('UPDATE incidents SET status = ? WHERE incident_id = ?').run(status, id);
+    if (r.changes !== 1) fail(`incident ${id} not found`);
+    return console.log(`incident ${id} -> ${status}`);
+  }
+  // default: list
+  const db = openDb(GATEWAY_DB_PATH);
+  const status = args.flags.status;
+  const limit = Number(args.flags.limit || 100);
+  const rows = status
+    ? db.prepare('SELECT * FROM incidents WHERE status = ? ORDER BY created_at DESC LIMIT ?').all(status, limit)
+    : db.prepare('SELECT * FROM incidents ORDER BY created_at DESC LIMIT ?').all(limit);
+  out(args, rows.map((r) => ({
+    incident_id: r.incident_id,
+    status: r.status,
+    kind: r.kind,
+    resource: r.resource,
+    amount: r.amount === null ? '-' : atomicToDecimalString(BigInt(r.amount), 6),
+    payer: r.payer || '-',
+    tx: r.settlement_tx || '-',
+    created: fmtTs(r.created_at),
+    error: (r.error || '').slice(0, 60),
+  })), ['incident_id', 'status', 'kind', 'resource', 'amount', 'payer', 'tx', 'created', 'error']);
+}
+
+function usage() {
+  console.log(`animica-x402 — x402 operator CLI (local DBs only)
+
+  settlements list [--status s] [--limit N]   settlement ledger
+  payment get <id|auth_hash|tx_hash>          one payment, full detail
+  revenue [--since 24h|7d|unix|ISO]           settled revenue per product
+  reconcile [--limit N]                       settled rows vs chain receipts (X402_RPC_URL)
+  gas report [--since ...]                    gas expenditure (incl. L1 data fee)
+  incidents list [--status open]              paid-but-failed ledger (gateway DB)
+  incidents resolve <id> --status refunded|resolved
+  --json on any command for machine output`);
+}
+
+async function main() {
+  const [cmd, sub, ...rest] = process.argv.slice(2);
+  if (cmd === 'settlements' && sub === 'list') return cmdSettlements(parseArgs(rest));
+  if (cmd === 'payment' && sub === 'get') return cmdPaymentGet(parseArgs(rest));
+  if (cmd === 'revenue') return cmdRevenue(parseArgs(sub === undefined ? [] : [sub, ...rest]));
+  if (cmd === 'reconcile') return cmdReconcile(parseArgs(sub === undefined ? [] : [sub, ...rest]));
+  if (cmd === 'gas') return cmdGasReport(parseArgs(rest));
+  if (cmd === 'incidents') return cmdIncidents(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
+  usage();
+  if (cmd !== undefined && cmd !== 'help' && cmd !== '--help') process.exit(1);
+}
+
+main().catch((e) => fail(e.message));
