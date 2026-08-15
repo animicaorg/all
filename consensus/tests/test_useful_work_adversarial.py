@@ -145,9 +145,16 @@ def _gate(imp, block, *, height=HEIGHT, parent_hash=PARENT_HASH):
 
 @pytest.fixture
 def armed(monkeypatch):
-    """Fork armed, enforcing (no shadow)."""
+    """Fork armed, enforcing.
+
+    ANIMICA_USEFUL_WORK_ENFORCE must be set explicitly: mainnet (the chain_id
+    these importers run under) defaults to shadow since 10.2.0, and under shadow
+    every attack below would be "accepted" for the uninteresting reason that
+    nothing is being enforced at all.
+    """
     monkeypatch.setenv("ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT", str(HEIGHT - 1))
     monkeypatch.delenv("ANIMICA_USEFUL_WORK_SHADOW", raising=False)
+    monkeypatch.setenv("ANIMICA_USEFUL_WORK_ENFORCE", "1")
     return monkeypatch
 
 

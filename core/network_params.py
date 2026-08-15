@@ -459,12 +459,20 @@ FORK_VPN_RELAY_REWARDS = "vpn_relay_rewards"
 FORK_IOU_SETTLEMENT = FORK_VPN_RELAY_REWARDS
 
 # FORK_USEFUL_WORK_VERIFY (10.2.0) — VERIFY the useful-work proofs a block carries.
-# DELIBERATELY UNSET ON MAINNET (see ACTIVATION_HEIGHTS_BY_NETWORK below): the
-# activation height is absent, so get_activation_height() returns None and
-# is_fork_active() is False at every height. The rule cannot fire on mainnet until
-# an operator sets ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT. That is the point — the
-# spec wants a SHADOW window first, and a default height would have removed the
-# operator's decision.
+# MAINNET ACTIVATION HEIGHT 75,000 (operator directive 2026-08-15), and mainnet
+# defaults to SHADOW at that height — the gate evaluates every block and logs the
+# verdict, but the verdict is advisory. See _useful_work_shadow() in
+# core/chain/block_import.py for why enforcing is not a safe default here: header
+# receiptsRoot is 0, so the payment-status input is node-local and a snapshot-synced
+# node fails closed where an executing node accepts. Arming the height in shadow is
+# what produces the observation window the rule needs; enforcing without it splits
+# the fleet on the first block that carries a proof.
+#
+# This is NOT "serve or don't mine". The rule is PRESENCE-GATED: a block with no
+# proofs is valid at every height, and today 95,004 of 95,004 mainnet blocks carry
+# proofs: []. So activation changes nothing observable until miners start attaching
+# proofs. Requiring a proof is a different fork and a hard fleet-wide cutover; do
+# not co-locate the two at one height.
 #
 # WHAT IT DOES: at/after H, every proof envelope in an imported block is verified
 # (structure, canonical CBOR, ML-DSA-65 signature with the scheme id pinned by the
@@ -587,27 +595,32 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT. Until sealed, activation cannot mint
         # or change emission — behaviour is byte-identical to no-fork.
         FORK_VPN_RELAY_REWARDS: 50_000,
-        # FORK_USEFUL_WORK_VERIFY is DELIBERATELY ABSENT for mainnet. An absent key
-        # makes get_activation_height() return None and is_fork_active() False at
-        # every height, so the rule is disabled by default and no code path can turn
-        # it on by accident. Enabling it is an explicit, documented operator action:
+        # Useful-work proof verification, armed at the 10.2.0 milestone height
+        # (operator directive 2026-08-15). Two properties make a code-pinned height
+        # safe to ship here, and BOTH are load-bearing:
         #
-        #   ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT=<height>   # arm the gate
-        #   ANIMICA_USEFUL_WORK_SHADOW=1                       # observe-only first
+        #   1. PRESENCE-GATED — a block carrying no proofs is valid at every height,
+        #      and every one of the 95,004 mainnet blocks stored today carries
+        #      proofs: [] under proofsRoot = ZERO32. Activation is therefore a no-op
+        #      against current block production; it starts constraining only when a
+        #      miner chooses to attach evidence.
+        #   2. SHADOW BY DEFAULT ON MAINNET — _useful_work_shadow() in
+        #      core/chain/block_import.py returns True for chain_id 1 unless the
+        #      operator sets ANIMICA_USEFUL_WORK_ENFORCE=1, so an ordinary upgraded
+        #      node LOGS the verdict and accepts. Without this the pinned height
+        #      would make every node enforce a rule whose payment-status input is
+        #      still node-local (headers commit receiptsRoot = 0), and the first
+        #      proof-carrying block would split snapshot-synced nodes from executing
+        #      ones. See consensus/useful_work_verify.py, RESIDUAL WEAKNESSES.
         #
-        # Recommended rollout (see docs/USEFUL_WORK_SHADOW_RUNBOOK.md):
-        #   1. Set the height to a value BELOW the current head with the shadow env
-        #      ON. The gate then evaluates every incoming block immediately and logs;
-        #      because it is presence-gated and live blocks carry no proofs, the
-        #      expected reading is "proofs=0" on every block and zero would-be
-        #      rejections.
-        #   2. Leave it running until the first non-zero proof count appears — that is
-        #      the signal that a miner has upgraded and is attaching real evidence.
-        #   3. Only after a clean window on a fleet that actually attaches proofs,
-        #      unset the shadow env and PIN a future height here in code so every node
-        #      agrees without env configuration.
-        # Do NOT ship a code-pinned mainnet height in the same release that first
-        # introduces the verifier.
+        # So this height buys the observation window, not enforcement. Flipping the
+        # fleet to enforcing is a separate governance action, gated on shadow
+        # telemetry showing a zero rate for payment_status_unknown,
+        # payment_not_in_ancestry and nullifier_scan_incomplete across a full window
+        # — and ultimately on committing receipts in a header root. Runbook:
+        # docs/USEFUL_WORK_SHADOW_RUNBOOK.md. Retune via
+        # ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT.
+        FORK_USEFUL_WORK_VERIFY: 75_000,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {

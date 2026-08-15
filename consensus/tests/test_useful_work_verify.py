@@ -939,8 +939,16 @@ def _gate_block(worker: bytes, proofs):
 
 @pytest.fixture
 def gate_env(monkeypatch):
+    """Arm the gate ENFORCING, which is what the tests below exercise.
+
+    ANIMICA_USEFUL_WORK_ENFORCE is required explicitly because mainnet (the
+    chain_id these importers run under) now defaults to shadow — see
+    _useful_work_shadow(). Without it every "rejects X" assertion would pass
+    vacuously against a gate that logs and accepts.
+    """
     monkeypatch.setenv("ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT", str(HEIGHT - 1))
     monkeypatch.delenv("ANIMICA_USEFUL_WORK_SHADOW", raising=False)
+    monkeypatch.setenv("ANIMICA_USEFUL_WORK_ENFORCE", "1")
     yield monkeypatch
 
 
@@ -1007,9 +1015,18 @@ def test_gate_grandfathered_below_activation_height(worker_keys, requester_diges
     )
 
 
-def test_mainnet_has_no_default_activation_height(monkeypatch):
-    """Shipping a code-pinned mainnet height in the release that introduces the
-    verifier is exactly what the spec forbids."""
+def test_mainnet_arms_at_75000_in_shadow(monkeypatch):
+    """The mainnet height is pinned at 75,000 AND mainnet defaults to shadow.
+
+    Both halves are the safety property, so both are asserted here. A pinned
+    height alone would make every upgraded node ENFORCE a rule whose
+    payment-status input is still node-local (headers commit receiptsRoot = 0),
+    and the first proof-carrying block would split snapshot-synced nodes from
+    executing ones. If someone later flips the mainnet default to enforcing,
+    this test is what should stop them — the prerequisite is committing receipts
+    in a header root, not editing this assertion.
+    """
+    from core.chain.block_import import _useful_work_shadow
     from core.network_params import (
         ACTIVATION_HEIGHTS_BY_NETWORK,
         FORK_USEFUL_WORK_VERIFY,
@@ -1018,11 +1035,31 @@ def test_mainnet_has_no_default_activation_height(monkeypatch):
     )
 
     monkeypatch.delenv("ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT", raising=False)
-    assert FORK_USEFUL_WORK_VERIFY not in ACTIVATION_HEIGHTS_BY_NETWORK[("mainnet", 1)]
-    assert get_activation_height(FORK_USEFUL_WORK_VERIFY, chain_id=1) is None
-    for h in (0, 73_549, 75_000, 10**9):
-        assert is_fork_active(FORK_USEFUL_WORK_VERIFY, h, chain_id=1) is False
-    # …and the env override is the documented way to arm it.
+    monkeypatch.delenv("ANIMICA_USEFUL_WORK_SHADOW", raising=False)
+    monkeypatch.delenv("ANIMICA_USEFUL_WORK_ENFORCE", raising=False)
+
+    assert ACTIVATION_HEIGHTS_BY_NETWORK[("mainnet", 1)][FORK_USEFUL_WORK_VERIFY] == 75_000
+    assert get_activation_height(FORK_USEFUL_WORK_VERIFY, chain_id=1) == 75_000
+    assert is_fork_active(FORK_USEFUL_WORK_VERIFY, 74_999, chain_id=1) is False
+    for h in (75_000, 10**9):
+        assert is_fork_active(FORK_USEFUL_WORK_VERIFY, h, chain_id=1) is True
+
+    # Armed, but advisory: an ordinary mainnet node logs and accepts.
+    assert _useful_work_shadow(1) is True
+    # Enforcing is an explicit, per-node opt-in…
+    monkeypatch.setenv("ANIMICA_USEFUL_WORK_ENFORCE", "1")
+    assert _useful_work_shadow(1) is False
+    # …that an explicit shadow setting still overrides.
+    monkeypatch.setenv("ANIMICA_USEFUL_WORK_SHADOW", "1")
+    assert _useful_work_shadow(1) is True
+
+    # Disposable chains enforce from genesis; nothing here changed that.
+    monkeypatch.delenv("ANIMICA_USEFUL_WORK_SHADOW", raising=False)
+    monkeypatch.delenv("ANIMICA_USEFUL_WORK_ENFORCE", raising=False)
+    assert _useful_work_shadow(2) is False
+    assert is_fork_active(FORK_USEFUL_WORK_VERIFY, 0, chain_id=2) is True
+
+    # The env override still retunes the height.
     monkeypatch.setenv("ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT", "73000")
     assert is_fork_active(FORK_USEFUL_WORK_VERIFY, 73_549, chain_id=1) is True
 

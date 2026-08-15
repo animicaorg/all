@@ -78,6 +78,7 @@ from core.network_params import (
     FORK_SERVICE_CARVE,
     FORK_USEFUL_WORK_VERIFY,
     FORK_VPN_RELAY_REWARDS,
+    MAINNET_PARAMS,
     is_fork_active,
 )
 # FORK_ADDRESS_FREEZE consensus set — imported at MODULE LOAD, deliberately NOT
@@ -542,31 +543,55 @@ def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Op
     return None
 
 
-def _useful_work_shadow() -> bool:
-    """ANIMICA_USEFUL_WORK_SHADOW=1 -> observe-only: log exactly what WOULD be
-    rejected (reason, height, proof index, proof type, Σψ, Θ) and accept anyway.
+def _useful_work_shadow(chain_id: Optional[int] = None) -> bool:
+    """Observe-only: log exactly what WOULD be rejected (reason, height, proof
+    index, proof type, Σψ, Θ) and accept anyway.
 
     Modelled on _pq_hardening_shadow(). Same caveat, stated plainly: a shadow node
     and an enforcing node DISAGREE about a block that carries an invalid proof, so
     this is a rollout instrument for a window in which no such block exists — never
     a permanent per-node setting. The safe sequence is (1) arm the fork height with
-    shadow ON, (2) confirm zero would-be rejections across a real window, (3) unset
-    the env everywhere, (4) only then pin a code height.
+    shadow ON, (2) confirm zero would-be rejections across a real window, (3) only
+    then enforce.
 
-    Why a valve exists here at all, when _verify_block_frozen_addresses_gated
-    deliberately has none: the freeze set is a code constant, so an enforcing node's
-    verdict is knowable in advance and needs no observation window. This rule's
-    verdict depends on proof bodies no miner has ever produced — nothing has ever
-    checked one, so nobody knows what the fleet will actually attach. Observation is
-    the only responsible way to find out, and the fork height defaults to disabled
-    so the valve is not even reachable until an operator arms it.
+    MAINNET DEFAULTS TO SHADOW (10.2.0). The height is now pinned at 75,000, so
+    unlike the disabled-by-default arrangement this valve IS reachable on mainnet
+    and its default decides what an ordinary upgraded node does. Enforcing is not a
+    safe default there, and the reason is not caution — it is
+    ``payment_status_unknown``. Headers commit ``receiptsRoot = 0``, so payment
+    execution status is read from a node-local, best-effort receipt side-table; a
+    node that snapshot-synced past a range answers "unknown" and FAILS CLOSED while
+    a node that executed it accepts. Two honest nodes, opposite verdicts, on a block
+    that carries a proof. Defaulting to shadow makes that verdict advisory, so
+    arming the height produces the observation window the rule needs instead of a
+    partition. See consensus/useful_work_verify.py, RESIDUAL WEAKNESSES.
+
+    Testnet/devnet keep enforcing (the fork is active from genesis there and a split
+    on a disposable chain is the point of having one).
+
+    Precedence: an explicit ANIMICA_USEFUL_WORK_SHADOW wins; then
+    ANIMICA_USEFUL_WORK_ENFORCE=1 opts a mainnet node into enforcing; then the
+    per-network default. Enforcement fleet-wide is a governance action gated on the
+    prerequisites in docs/USEFUL_WORK_SHADOW_RUNBOOK.md — chiefly a zero rate for
+    payment_status_unknown, payment_not_in_ancestry and nullifier_scan_incomplete
+    across a full window — not on this env var alone.
     """
-    return os.getenv("ANIMICA_USEFUL_WORK_SHADOW", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    _TRUE = {"1", "true", "yes", "on"}
+    _FALSE = {"0", "false", "no", "off"}
+
+    raw = os.getenv("ANIMICA_USEFUL_WORK_SHADOW", "").strip().lower()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+
+    if os.getenv("ANIMICA_USEFUL_WORK_ENFORCE", "").strip().lower() in _TRUE:
+        return False
+
+    try:
+        return int(chain_id) == int(MAINNET_PARAMS.chain_id)
+    except (TypeError, ValueError):
+        return False
 
 
 _PQ_BACKEND_WARNED = False
@@ -2219,7 +2244,7 @@ class BlockImporter:
 
         # Fast path with zero imports for the ~100% case (no proofs attached).
         proofs = getattr(block, "proofs", ()) or ()
-        shadow = _useful_work_shadow()
+        shadow = _useful_work_shadow(chain_id)
         if not proofs and not shadow:
             return None
 
