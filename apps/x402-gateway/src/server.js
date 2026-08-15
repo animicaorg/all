@@ -164,10 +164,76 @@ function createGateway({
       + '\n' + commitmentsGauge.render() + indexMetrics + '\n';
   }
 
+  // GET-only endpoints that live outside the product registry.
+  const DISCOVERY_GET = new Set([
+    '/', '/x402', '/.well-known/x402',
+    '/x402/openapi.json', '/openapi.json',
+    '/x402/stats', '/stats',
+    '/x402/healthz', '/healthz',
+    '/metrics',
+  ]);
+
+  // Methods a given path actually answers, for OPTIONS and for the Allow header
+  // on a 405. Derived from the registry rather than hard-coded so a new product
+  // cannot drift out of sync with what we advertise.
+  function allowedMethods(path) {
+    const allow = new Set();
+    if (DISCOVERY_GET.has(path)) allow.add('GET');
+    for (const m of ['GET', 'POST']) {
+      if (registry.find(m, path) || registry.findFree(m, path)) allow.add(m);
+    }
+    if (allow.has('GET')) allow.add('HEAD');
+    if (allow.size) allow.add('OPTIONS');
+    return [...allow].sort();
+  }
+
   async function requestHandler(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname.replace(/\/+$/, '') || '/';
     try {
+      // The API is public and credential-free, so every response is readable
+      // cross-origin. Without the expose-headers the payment challenge and the
+      // settlement receipt — both header-carried — are invisible to a
+      // browser-hosted agent even when the request succeeds.
+      res.setHeader('access-control-allow-origin', '*');
+      res.setHeader('access-control-expose-headers', 'payment-required, payment-response, x-payment-response');
+
+      // HEAD is GET without a body (RFC 9110 9.3.2): same status, same headers.
+      // Indexers and uptime monitors probe with HEAD before they ever send a
+      // GET, and answering 404 there made every POST-only product read as dead
+      // to a crawler — 115 such 404s in the current access log, all from
+      // discovery services. Serve the identical response and drop the body.
+      const isHead = req.method === 'HEAD';
+      if (isHead) {
+        const endBodiless = res.end.bind(res);
+        res.end = () => endBodiless();
+        req.method = 'GET';
+      }
+
+      // OPTIONS answers "what can I do here" without spending a request on a
+      // guess. Browser-hosted agents also need it for CORS preflight before
+      // they may read a 402 challenge at all.
+      if (req.method === 'OPTIONS') {
+        const allow = allowedMethods(path);
+        if (!allow.length) {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          return res.end(JSON.stringify({
+            error: 'not_found',
+            discovery: ['/x402', '/.well-known/x402', '/x402/openapi.json', '/x402/stats'],
+          }));
+        }
+        res.writeHead(204, {
+          allow: allow.join(', '),
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': allow.join(', '),
+          // The payment headers are the whole protocol; a preflight that omits
+          // them makes the 402 unreadable from a browser.
+          'access-control-allow-headers': 'content-type, payment-signature, x-payment, x-request-id',
+          'access-control-expose-headers': 'payment-required, payment-response, x-payment-response',
+          'access-control-max-age': '86400',
+        });
+        return res.end();
+      }
       if (req.method === 'GET' && (path === '/x402' || path === '/.well-known/x402' || path === '/')) {
         const catalog = await registry.catalog();
         // /.well-known/ is a machine location by definition — it never

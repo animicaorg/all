@@ -648,3 +648,80 @@ test('retired echo answers 410 with a forwarding pointer, not 404', async () => 
     await t.close();
   }
 });
+
+/* ------------------------------------------- probe methods: HEAD, OPTIONS -- */
+
+// Indexers and uptime monitors probe with HEAD before they ever send a GET.
+// While HEAD fell through to the 404 branch, every POST-only product read as
+// dead to a crawler that never followed up with a GET.
+test('HEAD mirrors GET on paid routes: same status and headers, empty body', async () => {
+  const t = await buildTestGateway();
+  try {
+    for (const p of ['/x402/qrng/draw', '/x402/random/int', '/x402/chain/balances']) {
+      const head = await request(t.baseUrl, p, { method: 'HEAD' });
+      const get = await request(t.baseUrl, p);
+      assert.equal(head.status, 402, `${p}: HEAD must return the payment challenge`);
+      assert.equal(head.status, get.status, `${p}: HEAD and GET must agree on status`);
+      assert.ok(
+        head.headers.get(protocol.HEADER_PAYMENT_REQUIRED),
+        `${p}: the challenge header is the whole point of the probe`,
+      );
+      assert.equal(head.text, '', `${p}: HEAD carries no body`);
+    }
+  } finally {
+    await t.close();
+  }
+});
+
+test('HEAD works on the discovery surfaces too', async () => {
+  const t = await buildTestGateway();
+  try {
+    for (const p of ['/x402', '/.well-known/x402', '/x402/openapi.json', '/x402/stats', '/x402/healthz']) {
+      const res = await request(t.baseUrl, p, { method: 'HEAD' });
+      assert.equal(res.status, 200, `${p}: HEAD must not 404`);
+      assert.equal(res.text, '', `${p}: HEAD carries no body`);
+    }
+  } finally {
+    await t.close();
+  }
+});
+
+// A browser-hosted agent cannot read a 402 challenge at all without the
+// preflight, because the challenge is header-carried.
+test('OPTIONS advertises the real methods and exposes the payment headers', async () => {
+  const t = await buildTestGateway();
+  try {
+    const post = await request(t.baseUrl, '/x402/random/int', { method: 'OPTIONS' });
+    assert.equal(post.status, 204);
+    const allow = post.headers.get('allow').split(', ');
+    assert.ok(allow.includes('POST'), 'POST-only product must advertise POST');
+    assert.ok(allow.includes('OPTIONS'));
+    assert.equal(post.headers.get('access-control-allow-origin'), '*');
+    assert.match(post.headers.get('access-control-allow-headers'), /payment-signature/);
+    assert.match(post.headers.get('access-control-expose-headers'), /payment-required/);
+
+    const get = await request(t.baseUrl, '/x402/qrng/draw', { method: 'OPTIONS' });
+    assert.equal(get.status, 204);
+    const getAllow = get.headers.get('allow').split(', ');
+    assert.ok(getAllow.includes('GET') && getAllow.includes('HEAD'),
+      'a GET product advertises GET and HEAD');
+
+    // Unknown paths still 404 — OPTIONS must not invent surface area.
+    assert.equal((await request(t.baseUrl, '/x402/nope', { method: 'OPTIONS' })).status, 404);
+  } finally {
+    await t.close();
+  }
+});
+
+test('every response is readable cross-origin', async () => {
+  const t = await buildTestGateway();
+  try {
+    for (const p of ['/x402', '/x402/qrng/draw']) {
+      const res = await request(t.baseUrl, p);
+      assert.equal(res.headers.get('access-control-allow-origin'), '*', `${p}`);
+      assert.match(res.headers.get('access-control-expose-headers'), /payment-required/, `${p}`);
+    }
+  } finally {
+    await t.close();
+  }
+});

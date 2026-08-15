@@ -51,10 +51,10 @@ test('catalog: /x402 and /.well-known/x402 list products with live availability'
     assert.equal(byId.qrng.price, '0.01');
     assert.equal(byId.qrng.price_atomic, '10000');
     assert.equal(byId.bulk_chain.available, true);
-    assert.equal(byId.bulk_chain.price, '0.05');
+    assert.equal(byId.bulk_chain.price, '0.02');
     // priority inference: disabled by default => catalog says available:false
     assert.equal(byId.priority_inference.available, false);
-    assert.equal(byId.priority_inference.price, '0.10');
+    assert.equal(byId.priority_inference.price, '0.02');
     // per-product discovery schema for indexers
     assert.equal(byId.qrng.outputSchema.input.type, 'http');
     assert.ok(byId.bulk_chain.outputSchema.input.queryParams.from);
@@ -288,7 +288,7 @@ test('bulk: paid NDJSON block export — meta/summary lines, stripped duplicatio
     const { first, paid } = await paidRequest(t.baseUrl, '/x402/chain/blocks?from=10&to=13');
     assert.equal(first.status, 402);
     const required = protocol.decodeHeader(first.headers.get('payment-required'));
-    assert.equal(required.accepts[0].amount, '50000'); // $0.05
+    assert.equal(required.accepts[0].amount, '20000'); // $0.02
     assert.equal(paid.status, 200);
     assert.match(paid.headers.get('content-type'), /application\/x-ndjson/);
     const lines = paid.text.trim().split('\n').map((l) => JSON.parse(l));
@@ -298,7 +298,7 @@ test('bulk: paid NDJSON block export — meta/summary lines, stripped duplicatio
     assert.equal(meta.unit, 'nANM');
     assert.equal(meta.chain_id, 1);
     assert.equal(meta.head_height, 50);
-    assert.equal(meta.payment.amount_atomic, '50000');
+    assert.equal(meta.payment.amount_atomic, '20000');
     assert.ok(meta.payment.settlement_tx);
     assert.equal(summary.type, 'summary');
     assert.equal(summary.blocks, 4);
@@ -602,7 +602,7 @@ test('inference: activates at the threshold and proxies with priority headers', 
     });
     assert.equal(first.status, 402);
     const required = protocol.decodeHeader(first.headers.get('payment-required'));
-    assert.equal(required.accepts[0].amount, '100000'); // $0.10
+    assert.equal(required.accepts[0].amount, '20000'); // $0.02
     assert.equal(paid.status, 200);
     assert.equal(paid.json.choices[0].message.content, 'pong');
     // OpenAI shape stays pure (no injected payment field); proof in header

@@ -190,10 +190,10 @@ test('random family: catalog lists all five at spec prices with the free reveal 
     const byId = Object.fromEntries(cat.json.products.map((p) => [p.id, p]));
     assert.equal(byId.random_int.price, '0.01');
     assert.equal(byId.random_int.price_atomic, '10000');
-    assert.equal(byId.random_shuffle.price, '0.02');
-    assert.equal(byId.random_pick.price, '0.02');
-    assert.equal(byId.random_bulk.price, '0.05');
-    assert.equal(byId.random_commit.price, '0.02');
+    assert.equal(byId.random_shuffle.price, '0.01');
+    assert.equal(byId.random_pick.price, '0.01');
+    assert.equal(byId.random_bulk.price, '0.03');
+    assert.equal(byId.random_commit.price, '0.01');
     for (const id of ['random_int', 'random_shuffle', 'random_pick', 'random_bulk', 'random_commit']) {
       assert.equal(byId[id].available, true, `${id} should be available`);
       // input schema so the 402's discovery extension can advertise it
@@ -221,7 +221,7 @@ test('random family: catalog lists all five at spec prices with the free reveal 
     assert.ok(
       BigInt(byId.random_bulk.price_atomic) < BigInt(byId.qrng.price_atomic) * BigInt(minDraws),
       'bulk must be cheaper than the smallest number of single draws it will accept');
-    assert.match(byId.random_bulk.outputSchema.input.bodyFields.draws.description, /6\.\.10/);
+    assert.match(byId.random_bulk.outputSchema.input.bodyFields.draws.description, /4\.\.10/);
 
     // Pre-purchase honesty: the free catalog states the entropy source, so
     // nobody has to pay to discover that it is a software CSPRNG.
@@ -252,10 +252,10 @@ test('random family: every paid route demands payment first (402 with its own pr
   const t = await buildTestGateway();
   const cases = [
     ['/x402/random/int', { min: 1, max: 6 }, '10000'],
-    ['/x402/random/shuffle', { items: [1, 2, 3] }, '20000'],
-    ['/x402/random/pick', { items: [1, 2, 3] }, '20000'],
-    ['/x402/qrng/bulk', {}, '50000'],
-    ['/x402/random/commit', {}, '20000'],
+    ['/x402/random/shuffle', { items: [1, 2, 3] }, '10000'],
+    ['/x402/random/pick', { items: [1, 2, 3] }, '10000'],
+    ['/x402/qrng/bulk', {}, '30000'],
+    ['/x402/random/commit', {}, '10000'],
   ];
   try {
     for (const [path, body, amount] of cases) {
@@ -484,7 +484,7 @@ test('random_bulk: N INDEPENDENT draws (one node call + one attestation each), o
   try {
     const { first, paid } = await post(t.baseUrl, '/x402/qrng/bulk', { draws: 10, bytes: 32 });
     assert.equal(first.status, 402);
-    assert.equal(protocol.decodeHeader(first.headers.get('payment-required')).accepts[0].amount, '50000');
+    assert.equal(protocol.decodeHeader(first.headers.get('payment-required')).accepts[0].amount, '30000');
     assert.equal(paid.status, 200);
     const b = paid.json;
     assert.equal(b.result.count, 10);
@@ -518,12 +518,12 @@ test('random_bulk: N INDEPENDENT draws (one node call + one attestation each), o
 
     // The discount is stated in units that are real: independent draws.
     const p = b.result.pricing;
-    assert.equal(p.price_atomic, '50000');
-    assert.equal(p.price_atomic_per_draw, '5000');
+    assert.equal(p.price_atomic, '30000');
+    assert.equal(p.price_atomic_per_draw, '3000');
     assert.equal(p.single_draw_price_atomic, '10000');
     assert.equal(p.equivalent_single_draw_cost_atomic, '100000');
-    assert.equal(p.savings_atomic, '50000');
-    assert.equal(p.min_draws_for_discount, 6);
+    assert.equal(p.savings_atomic, '70000');
+    assert.equal(p.min_draws_for_discount, 4);
     // ...and it does NOT pretend to be cheaper per byte, because it is not:
     // the cheapest way to buy 320 BYTES (regardless of attestation count) is
     // ceil(320/1024) = 1 single draw at 10000 atomic. The response says so
@@ -543,19 +543,19 @@ test('random_bulk: N INDEPENDENT draws (one node call + one attestation each), o
 test('random_bulk: below the break-even draw count it refuses and names the cheaper endpoint', async () => {
   const t = await buildTestGateway({ handlers: rampHandlers() });
   try {
-    // $0.05 for 1..5 draws is a PREMIUM over 1..5 single $0.01 draws, so it
+    // $0.03 for 1..3 draws is a PREMIUM over 1..3 single $0.01 draws, so it
     // is a 400 before any payment — never a settled "volume discount".
-    for (const draws of [1, 2, 5]) {
+    for (const draws of [1, 2, 3]) {
       const res = await unpaidPost(t.baseUrl, '/x402/qrng/bulk', { draws, bytes: 32 });
       assert.equal(res.status, 400, `draws=${draws} must be refused`);
       assert.equal(res.json.error, 'below_bulk_minimum');
-      assert.equal(res.json.min_draws, 6);
+      assert.equal(res.json.min_draws, 4);
       assert.equal(res.json.cheaper_alternative.endpoint, 'GET /x402/qrng/draw');
       assert.equal(res.json.cheaper_alternative.price_atomic, '10000');
       assert.equal(res.headers.get('payment-required'), null, 'no terms are offered');
     }
-    // 6 draws is the first count that is genuinely cheaper: 50000 < 60000.
-    const ok = await post(t.baseUrl, '/x402/qrng/bulk', { draws: 6, bytes: 32 });
+    // 4 draws is the first count that is genuinely cheaper: 30000 < 40000.
+    const ok = await post(t.baseUrl, '/x402/qrng/bulk', { draws: 4, bytes: 32 });
     assert.equal(ok.paid.status, 200);
     const p = ok.paid.json.result.pricing;
     assert.ok(BigInt(p.price_atomic) < BigInt(p.equivalent_single_draw_cost_atomic));

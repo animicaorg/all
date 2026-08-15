@@ -284,7 +284,7 @@ test('F5: a payment signed for random_shuffle unlocks chain_batch_balances (same
 test('F6: random_bulk can no longer settle a premium under a "discount" label', async () => {
   const t = await buildTestGateway();
   try {
-    // The old PoC: draws=1 for $0.05 against $0.01 for the same thing.
+    // The old PoC: draws=1 for $0.03 against $0.01 for the same thing.
     const res = await request(t.baseUrl, '/x402/qrng/bulk', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -313,7 +313,7 @@ test('F6: random_bulk can no longer settle a premium under a "discount" label', 
     const bulk = cat.json.products.find((x) => x.id === 'random_bulk');
     assert.doesNotMatch(bulk.description, /real per-unit discount/);
     assert.match(bulk.description, /INDEPENDENT/);
-    assert.match(bulk.description, /6\.\.10/);
+    assert.match(bulk.description, /4\.\.10/);
     // ...and the response says plainly which product is cheaper per byte.
     assert.equal(p.per_byte.cheaper_per_byte, 'single_max_draw');
   } finally {
@@ -444,7 +444,7 @@ test('F8: balances settles on a stale head cache and bills a 100%-failed batch a
     assert.equal(t.gw.gatewayStore.listIncidents(null, 100).length, 0);
     assert.equal(paid.json.receipt, undefined);
     const metrics = t.gw.renderMetrics();
-    assert.match(metrics, /x402_revenue_usdc\{product="chain_batch_balances"\}\s+0\.02/,
+    assert.match(metrics, /x402_revenue_usdc\{product="chain_batch_balances"\}\s+0\.01/,
       'revenue is counted for a request that delivered nothing');
   } finally {
     await t.close();
@@ -455,7 +455,7 @@ test('F8: balances settles on a stale head cache and bills a 100%-failed batch a
 // F9 — chain_address_history happily sells a window it can prove is empty.
 // ---------------------------------------------------------------------------
 
-test('F9: history charges $0.05 for a window that provably cannot contain a row', async () => {
+test('F9: history charges $0.02 for a window that provably cannot contain a row', async () => {
   const store = createChainIndexStore(':memory:');
   store.applyBlocks([{ number: 0, hash: '0x0', parentHash: null, timestamp: 1, chainId: 1, transactions: [] }]);
   store.recordTick({ headHeight: 5, atMs: Date.now(), maxLagBlocks: 12 });
