@@ -17,9 +17,13 @@
  */
 
 const cfgMod = require('../config');
-const { createQrngProduct } = require('./qrng');
+const { createQrngProduct, createRandomnessSource } = require('./qrng');
+const { createRandomProducts } = require('./random');
 const { createBulkChainProduct } = require('./bulk-chain');
+const { createChainAddressHistoryProduct } = require('./chain-address-history');
+const { createChainBalancesProduct } = require('./chain-balances');
 const { createPriorityInferenceProduct } = require('./priority-inference');
+const { createIndexHealth } = require('../chain-index');
 
 /** Memoize an async fn for ttlMs (shared across callers, error-transparent). */
 function memoAsync(fn, ttlMs, now = Date.now) {
@@ -76,13 +80,38 @@ function createEchoProduct({ cfg }) {
   };
 }
 
-function createRegistry({ cfg, node, capacity, inferenceFetch, sleep, now = Date.now, availabilityTtlMs = 5000 }) {
+function createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferenceFetch, sleep, now = Date.now, availabilityTtlMs = 5000 }) {
+  // ONE randomness source for the whole family: one node call path, one
+  // health-gated readiness probe (memoized for the same TTL as availability,
+  // so a catalog scrape cannot fan out into six node calls).
+  const randomnessSource = createRandomnessSource({ cfg, node, probeTtlMs: availabilityTtlMs, now });
+
   const products = [
     createEchoProduct({ cfg }),
-    createQrngProduct({ cfg, node }),
+    createQrngProduct({ cfg, node, source: randomnessSource }),
     createBulkChainProduct({ cfg, node, sleep }),
+    // The address-history product cannot exist without its index; without an
+    // index the route is simply absent rather than a paid endpoint that 503s.
+    ...(chainIndex
+      ? [createChainAddressHistoryProduct({
+        cfg,
+        node,
+        chainIndex,
+        indexHealth: createIndexHealth({ cfg, store: chainIndex, node, now }),
+      })]
+      : []),
+    createChainBalancesProduct({ cfg, node }),
     createPriorityInferenceProduct({ cfg, capacity, fetchImpl: inferenceFetch }),
   ];
+
+  // A. The randomness family (int / shuffle / pick / bulk / commit-reveal):
+  // all five derive from the SAME single verified draw path and share the
+  // readiness probe above, so an unhealthy entropy source fails the whole
+  // family closed BEFORE any payment is requested. The commit product needs
+  // the gateway DB for its sealed secrets and its free public reveal route.
+  if (gatewayStore) {
+    products.push(...createRandomProducts({ cfg, node, source: randomnessSource, gatewayStore, now }));
+  }
 
   for (const p of products) {
     p.priceAtomic = cfgMod.usdToUsdcAtomic(p.priceUsd);
@@ -104,6 +133,30 @@ function createRegistry({ cfg, node, capacity, inferenceFetch, sleep, now = Date
       routeIndex.get(`${method} /x402${pathname}`) ||
       null
     );
+  }
+
+  /**
+   * FREE, unpaid product routes (pattern-matched, so ids can ride in the
+   * path). Today that is the commit-reveal disclosure: the whole point of a
+   * commitment is that ANYONE can audit it, so the reveal must never sit
+   * behind a paywall. These bypass the paywall entirely — they take no
+   * payment, emit no 402 and must stay side-effect-light. Only routes of
+   * ENABLED products are indexed.
+   */
+  const freeRoutes = [];
+  for (const p of products) {
+    if (!p.enabled || !Array.isArray(p.freeRoutes)) continue;
+    for (const r of p.freeRoutes) freeRoutes.push({ product: p, route: r });
+  }
+
+  function findFree(method, pathname) {
+    for (const entry of freeRoutes) {
+      if (entry.route.method !== method) continue;
+      // nginx may strip the /x402 prefix when proxying — accept both forms.
+      const params = entry.route.match(pathname) || entry.route.match(`/x402${pathname}`);
+      if (params) return { product: entry.product, route: entry.route, params };
+    }
+    return null;
   }
 
   /**
@@ -142,6 +195,15 @@ function createRegistry({ cfg, node, capacity, inferenceFetch, sleep, now = Date
         mimeType: p.mimeType || 'application/json',
       };
       if (!avail.available && avail.reason) entry.unavailable_reason = avail.reason;
+      if (Array.isArray(p.freeRoutes) && p.freeRoutes.length) {
+        // Advertised so an indexer (and a buyer) can see that part of this
+        // product costs nothing — e.g. the commit-reveal disclosure.
+        entry.free_endpoints = p.freeRoutes.map((r) => ({
+          endpoint: `${r.method} ${r.path}`,
+          price: '0',
+          description: r.description || '',
+        }));
+      }
       if (p.outputSchema) {
         entry.outputSchema = p.outputSchema; // v1/Bazaar-style {input, output}
       }
@@ -150,7 +212,7 @@ function createRegistry({ cfg, node, capacity, inferenceFetch, sleep, now = Date
     return out;
   }
 
-  return { products, find, catalog };
+  return { products, find, findFree, freeRoutes, catalog };
 }
 
 module.exports = { createRegistry, memoAsync };

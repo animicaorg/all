@@ -61,6 +61,7 @@ async function buildGateway({ handlers } = {}) {
   const gw = createGateway({
     cfg, logger: quiet, fetchImpl: nodeFetch, inferenceFetch: nodeFetch,
     facilitatorClientFactory: fac.factory, gatewayStore,
+    chainIndex: null, chainIndexer: null, // no sqlite index file, no walker
     receiptSigner: createReceiptSigner({ secret: 'adv1-secret' }),
     sleep: async () => {}, availabilityTtlMs: 0,
   });

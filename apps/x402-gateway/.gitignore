@@ -6,3 +6,11 @@ state/
 # local env files — secrets live in a 0600 file outside the repo
 .env
 .env.local
+
+# The ROOT .gitignore excludes `chain-*/` (it means on-disk chain DATA
+# directories). That pattern also swallows this app's SOURCE directory
+# src/chain-index/, which would publish fine from the working tree while
+# breaking every fresh clone — the exact failure this repo has hit before.
+# Re-include the directory itself; a negation on files inside would NOT
+# work, because git cannot re-include a path whose parent stays excluded.
+!src/chain-index/

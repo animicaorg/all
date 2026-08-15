@@ -29,7 +29,10 @@ test('catalog: /x402 and /.well-known/x402 list products with live availability'
     assert.equal(a.json.network, 'eip155:8453');
     assert.equal(a.json.asset, t.gw.cfg.usdcAsset);
     const ids = a.json.products.map((p) => p.id).sort();
-    assert.deepEqual(ids, ['bulk_chain', 'echo', 'priority_inference', 'qrng']);
+    assert.deepEqual(ids, [
+      'bulk_chain', 'chain_address_history', 'chain_batch_balances', 'echo', 'priority_inference', 'qrng',
+      'random_bulk', 'random_commit', 'random_int', 'random_pick', 'random_shuffle',
+    ]);
     const byId = Object.fromEntries(a.json.products.map((p) => [p.id, p]));
     assert.equal(byId.qrng.available, true);
     assert.equal(byId.qrng.price, '0.01');

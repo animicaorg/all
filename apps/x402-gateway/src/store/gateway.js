@@ -16,6 +16,16 @@
  *     whose settlement outcome was ambiguous). status open|refunded|resolved
  *     is the operator's reconciliation workflow (bin/animica-x402 incidents).
  *
+ *   random_commitments — the commit-reveal product (random_commit). The paid
+ *     POST stores the sealed secret+salt and the draw that produced them; the
+ *     FREE public GET /x402/random/reveal/{id} discloses them so anyone can
+ *     check commitment == sha3_256(secret||salt). Reveal must be idempotent
+ *     and must never need a payment, so revealed_at is written once (first
+ *     disclosure) and never gates a later read. Rows carry no payment
+ *     material — the commitment is written during the paid request's execute
+ *     phase, BEFORE settlement, so a failed settlement leaves an orphan row
+ *     whose id was never disclosed to anyone; pruning collects it.
+ *
  * Bodies are capped (X402_IDEMPOTENCY_MAX_BODY_BYTES): an oversize result
  * stores a deterministic status reference instead of megabytes of export.
  */
@@ -59,6 +69,23 @@ CREATE TABLE IF NOT EXISTS incidents (
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
 CREATE INDEX IF NOT EXISTS idx_incidents_auth_nonce ON incidents(auth_nonce);
+
+CREATE TABLE IF NOT EXISTS random_commitments (
+  commit_id           TEXT PRIMARY KEY,
+  commitment          TEXT NOT NULL,
+  algorithm           TEXT NOT NULL,
+  kind                TEXT NOT NULL,
+  request_id          TEXT,
+  memo                TEXT,
+  secret_hex          TEXT NOT NULL,
+  salt_hex            TEXT NOT NULL,
+  draw_json           TEXT NOT NULL,
+  reveal_after        INTEGER NOT NULL,
+  created_at          INTEGER NOT NULL,
+  revealed_at         INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_commit_created ON random_commitments(created_at);
+CREATE INDEX IF NOT EXISTS idx_commit_reveal_after ON random_commitments(reveal_after);
 `;
 
 function nowSec() {
@@ -74,6 +101,10 @@ function createGatewayStore(dbPath, { Database, maxBodyBytes = 4_000_000 } = {})
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('busy_timeout = 5000');
+  // The schema is idempotent (CREATE TABLE/INDEX IF NOT EXISTS) and runs on
+  // every open, so adding a TABLE — e.g. random_commitments for the
+  // commit-reveal product — migrates existing DB files by itself. Adding a
+  // COLUMN to an existing table needs the explicit ALTER below.
   db.exec(SCHEMA);
   // Migration for DB files created before the cross-ledger join key existed:
   // auth_nonce (the EIP-3009 authorization nonce) lets an incident be joined
@@ -98,6 +129,13 @@ function createGatewayStore(dbPath, { Database, maxBodyBytes = 4_000_000 } = {})
     listAllIncidents: db.prepare('SELECT * FROM incidents ORDER BY created_at DESC LIMIT ?'),
     getIncident: db.prepare('SELECT * FROM incidents WHERE incident_id = ?'),
     setIncidentStatus: db.prepare('UPDATE incidents SET status = @status WHERE incident_id = @incident_id'),
+    putCommitment: db.prepare(`INSERT INTO random_commitments
+      (commit_id, commitment, algorithm, kind, request_id, memo, secret_hex, salt_hex, draw_json, reveal_after, created_at, revealed_at)
+      VALUES (@commit_id, @commitment, @algorithm, @kind, @request_id, @memo, @secret_hex, @salt_hex, @draw_json, @reveal_after, @created_at, NULL)`),
+    getCommitment: db.prepare('SELECT * FROM random_commitments WHERE commit_id = ?'),
+    markRevealed: db.prepare('UPDATE random_commitments SET revealed_at = @revealed_at WHERE commit_id = @commit_id AND revealed_at IS NULL'),
+    pruneCommitments: db.prepare('DELETE FROM random_commitments WHERE created_at < ?'),
+    countCommitments: db.prepare('SELECT COUNT(*) AS n FROM random_commitments'),
   };
 
   return {
@@ -165,6 +203,48 @@ function createGatewayStore(dbPath, { Database, maxBodyBytes = 4_000_000 } = {})
     setIncidentStatus(id, status) {
       if (!['open', 'refunded', 'resolved'].includes(status)) throw new Error(`bad incident status ${status}`);
       return stmts.setIncidentStatus.run({ incident_id: id, status }).changes === 1;
+    },
+
+    /**
+     * Seal one commitment. `draw` is the whole randomness response (raw
+     * bytes + source/health/attestation) so the free reveal can publish the
+     * full provenance later without a second node call.
+     */
+    putCommitment({ commitId, commitment, algorithm, kind, requestId, memo, secretHex, saltHex, draw, revealAfter, createdAt }) {
+      stmts.putCommitment.run({
+        commit_id: String(commitId),
+        commitment: String(commitment),
+        algorithm: String(algorithm),
+        kind: String(kind),
+        request_id: requestId === undefined || requestId === null ? null : String(requestId),
+        memo: memo === undefined || memo === null ? null : String(memo),
+        secret_hex: String(secretHex),
+        salt_hex: String(saltHex),
+        draw_json: JSON.stringify(draw),
+        reveal_after: Number(revealAfter),
+        created_at: createdAt === undefined ? nowSec() : Number(createdAt),
+      });
+      return commitId;
+    },
+
+    getCommitment(commitId) {
+      return stmts.getCommitment.get(String(commitId)) || null;
+    },
+
+    /** Idempotent: only the FIRST disclosure writes revealed_at. */
+    markCommitmentRevealed(commitId, atSec) {
+      return stmts.markRevealed.run({
+        commit_id: String(commitId),
+        revealed_at: atSec === undefined ? nowSec() : Number(atSec),
+      }).changes === 1;
+    },
+
+    pruneCommitments(ttlSeconds) {
+      return stmts.pruneCommitments.run(nowSec() - Number(ttlSeconds)).changes;
+    },
+
+    countCommitments() {
+      return stmts.countCommitments.get().n;
     },
 
     ping() {

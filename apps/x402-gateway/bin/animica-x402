@@ -12,9 +12,11 @@
  *   animica-x402 gas report [--since ...]
  *   animica-x402 incidents list [--status open|refunded|resolved]
  *   animica-x402 incidents resolve <incident_id> --status refunded|resolved
+ *   animica-x402 index status               address-index backfill/lag
  *
  * Env: X402_DB_PATH (default ./state/x402.db), X402_GATEWAY_DB_PATH
- * (default ./state/x402-gateway.db), X402_RPC_URL (reconcile),
+ * (default ./state/x402-gateway.db), X402_CHAIN_INDEX_DB_PATH
+ * (default ./state/x402-chain-index.db), X402_RPC_URL (reconcile),
  * X402_SETTLEMENT_ADDRESS (optional: enables the Transfer-log destination
  * check in reconcile). --json on any command emits machine-readable output.
  */
@@ -26,6 +28,7 @@ const usdc = require(path.join(__dirname, '..', 'src', 'facilitator-evm', 'usdc'
 
 const DB_PATH = process.env.X402_DB_PATH || './state/x402.db';
 const GATEWAY_DB_PATH = process.env.X402_GATEWAY_DB_PATH || './state/x402-gateway.db';
+const CHAIN_INDEX_DB_PATH = process.env.X402_CHAIN_INDEX_DB_PATH || './state/x402-chain-index.db';
 
 function openDb(dbPath, { writable = false } = {}) {
   const Database = require('better-sqlite3');
@@ -283,6 +286,37 @@ function cmdIncidents(args) {
   })), ['incident_id', 'status', 'kind', 'resource', 'amount', 'payer', 'tx', 'created', 'error']);
 }
 
+/**
+ * Address-index status: the operator's window on the walker that backs
+ * chain_address_history. Read-only. `lag` is measured against the head the
+ * walker last SAW, so a stale last_tick is itself the signal — the product's
+ * own gate re-resolves the live head before it agrees to sell anything.
+ */
+function cmdIndex(args) {
+  const sub = args._[0];
+  if (sub !== undefined && sub !== 'status') fail('usage: animica-x402 index status');
+  const db = openDb(CHAIN_INDEX_DB_PATH);
+  const meta = Object.fromEntries(db.prepare('SELECT key, value FROM meta').all().map((r) => [r.key, r.value]));
+  const indexed = meta.indexed_height === undefined ? -1 : Number(meta.indexed_height);
+  const head = meta.head_height === undefined ? null : Number(meta.head_height);
+  const lastTickMs = meta.last_tick_ms ? Number(meta.last_tick_ms) : 0;
+  const row = {
+    db: CHAIN_INDEX_DB_PATH,
+    indexed_height: indexed,
+    head_height: head === null ? '-' : head,
+    lag: head === null ? '-' : head - indexed,
+    blocks: db.prepare('SELECT COUNT(*) AS n FROM blocks').get().n,
+    rows: db.prepare('SELECT COUNT(*) AS n FROM address_tx').get().n,
+    accounts: db.prepare('SELECT COUNT(DISTINCT digest) AS n FROM address_tx').get().n,
+    caught_up: meta.caught_up_ms ? fmtTs(Math.floor(Number(meta.caught_up_ms) / 1000)) : 'never',
+    last_tick: lastTickMs ? fmtTs(Math.floor(lastTickMs / 1000)) : 'never',
+    last_tick_age_s: lastTickMs ? Math.round((Date.now() - lastTickMs) / 1000) : '-',
+  };
+  out(args, [row], [
+    'indexed_height', 'head_height', 'lag', 'blocks', 'rows', 'accounts', 'caught_up', 'last_tick', 'last_tick_age_s',
+  ]);
+}
+
 function usage() {
   console.log(`animica-x402 — x402 operator CLI (local DBs only)
 
@@ -293,6 +327,7 @@ function usage() {
   gas report [--since ...]                    gas expenditure (incl. L1 data fee)
   incidents list [--status open]              paid-but-failed ledger (gateway DB)
   incidents resolve <id> --status refunded|resolved
+  index status                                address-index backfill/lag (chain_address_history)
   --json on any command for machine output`);
 }
 
@@ -304,6 +339,7 @@ async function main() {
   if (cmd === 'reconcile') return cmdReconcile(parseArgs(sub === undefined ? [] : [sub, ...rest]));
   if (cmd === 'gas') return cmdGasReport(parseArgs(rest));
   if (cmd === 'incidents') return cmdIncidents(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
+  if (cmd === 'index') return cmdIndex(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   usage();
   if (cmd !== undefined && cmd !== 'help' && cmd !== '--help') process.exit(1);
 }

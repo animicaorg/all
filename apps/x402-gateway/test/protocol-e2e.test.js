@@ -76,6 +76,8 @@ async function buildE2E({ rpcOpts = {}, gatewayOverrides = {}, handlers, availab
     fetchImpl: fakeNodeFetch(handlers || chainHandlers()),
     facilitatorClientFactory: (url) => facilitatorClient(url, { fetchImpl: fetch }),
     gatewayStore: createGatewayStore(':memory:'),
+    chainIndex: null, // no address index in the protocol e2e: no sqlite file, no walker
+    chainIndexer: null,
     receiptSigner: createReceiptSigner({ secret: 'e2e-receipt-secret' }),
     sleep: async () => {},
     availabilityTtlMs,

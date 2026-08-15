@@ -11,6 +11,7 @@ const cfgMod = require('../src/config');
 const protocol = require('../src/protocol');
 const { createGateway } = require('../src/server');
 const { createGatewayStore } = require('../src/store/gateway');
+const { createChainIndexStore } = require('../src/chain-index');
 const { createReceiptSigner } = require('../src/receipts');
 
 /**
@@ -172,7 +173,7 @@ const BASE = cfgMod.NETWORKS.BASE_MAINNET;
  * A full gateway over loopback HTTP with everything mocked. Returns
  * { gw, baseUrl, fac, events, close() }.
  */
-async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, receiptSecret = 'test-receipt-secret' } = {}) {
+async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chainIndex, receiptSecret = 'test-receipt-secret' } = {}) {
   const events = [];
   const fac = mockFacilitator({ events });
   const nodeFetch = fakeNodeFetch(handlers || chainHandlers(), { events });
@@ -186,6 +187,9 @@ async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, rece
     wanmMint: '', wanmTreasury: '', wanmFeePayerPubkey: '', wanmUsdPrice: '',
   }, overrides));
   const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } };
+  // ALWAYS in-memory, and the walker is never started: no test may write a
+  // sqlite file or put a single request on the (mocked) node by itself.
+  const index = chainIndex === undefined ? createChainIndexStore(':memory:') : chainIndex;
   const gw = createGateway({
     cfg,
     logger: quiet,
@@ -193,6 +197,8 @@ async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, rece
     inferenceFetch: inferenceFetch || nodeFetch,
     facilitatorClientFactory: fac.factory,
     gatewayStore: createGatewayStore(':memory:'),
+    chainIndex: index,
+    chainIndexer: null,
     receiptSigner: createReceiptSigner({ secret: receiptSecret }),
     sleep: async () => {},
     availabilityTtlMs: 0,
@@ -200,7 +206,7 @@ async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, rece
   await new Promise((resolve) => gw.server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${gw.server.address().port}`;
   return {
-    gw, baseUrl, fac, events,
+    gw, baseUrl, fac, events, chainIndex: index,
     close: () => new Promise((resolve) => { gw.capacity.stop(); gw.server.close(resolve); }),
   };
 }

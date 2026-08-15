@@ -406,6 +406,32 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
       qrngMaxBytes: parseIntEnv(source, 'X402_QRNG_MAX_BYTES', 1024, { min: 1, max: 1048576 }),
       qrngTimeoutMs: parseIntEnv(source, 'X402_QRNG_TIMEOUT_MS', 5000, { min: 100, max: 60000 }),
 
+      // P1b the randomness FAMILY (int/shuffle/pick/bulk/commit-reveal).
+      // Every one of them derives from a single qrng draw, so they share the
+      // qrng timeout/health gate; only the caps and prices live here.
+      randomEnabled: envFrom(source, 'X402_RANDOM_ENABLED', '1') === '1',
+      randomIntPriceUsd: priceOf('X402_RANDOM_INT_PRICE_USDC', '0.01'),
+      randomShufflePriceUsd: priceOf('X402_RANDOM_SHUFFLE_PRICE_USDC', '0.02'),
+      randomPickPriceUsd: priceOf('X402_RANDOM_PICK_PRICE_USDC', '0.02'),
+      randomBulkPriceUsd: priceOf('X402_RANDOM_BULK_PRICE_USDC', '0.05'),
+      randomCommitPriceUsd: priceOf('X402_RANDOM_COMMIT_PRICE_USDC', '0.02'),
+      // Bytes drawn from the node for a DERIVED product. 32 is a full DRNG
+      // seed: the SHA3 counter-mode stream expands it without bound, so a
+      // bigger draw would buy nothing and only bloat the published bytes the
+      // buyer has to re-hash. (random_bulk is different — there the bytes
+      // ARE the product, so it draws draws*bytes.)
+      randomSeedBytes: parseIntEnv(source, 'X402_RANDOM_SEED_BYTES', 32, { min: 16, max: 1024 }),
+      randomMaxInts: parseIntEnv(source, 'X402_RANDOM_MAX_INTS', 1000, { min: 1, max: 100000 }),
+      randomMaxItems: parseIntEnv(source, 'X402_RANDOM_MAX_ITEMS', 10000, { min: 1, max: 1000000 }),
+      randomMaxPicks: parseIntEnv(source, 'X402_RANDOM_MAX_PICKS', 1000, { min: 1, max: 100000 }),
+      randomMaxBodyBytes: parseIntEnv(source, 'X402_RANDOM_MAX_BODY_BYTES', 512_000, { min: 1024 }),
+      randomBulkMaxDraws: parseIntEnv(source, 'X402_RANDOM_BULK_MAX_DRAWS', 10, { min: 1, max: 1000 }),
+      randomMaxDrawBytes: parseIntEnv(source, 'X402_RANDOM_MAX_DRAW_BYTES', 65536, { min: 32, max: 1048576 }),
+      randomCommitMaxDelaySec: parseIntEnv(source, 'X402_RANDOM_COMMIT_MAX_DELAY_SECONDS', 7 * 24 * 3600, { min: 0, max: 365 * 24 * 3600 }),
+      // Retention for sealed/revealed commitments. The free reveal route is
+      // only as good as this window — say it in the 404 body, not in a FAQ.
+      randomCommitTtlSeconds: parseIntEnv(source, 'X402_RANDOM_COMMIT_TTL_SECONDS', 90 * 24 * 3600, { min: 3600 }),
+
       // P2 bulk chain data.
       bulkChainEnabled: envFrom(source, 'X402_BULK_CHAIN_ENABLED', '1') === '1',
       bulkChainPriceUsd: priceOf('X402_BULK_CHAIN_PRICE_USDC', '0.05'),
@@ -415,6 +441,38 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
       bulkExecTimeoutMs: parseIntEnv(source, 'X402_BULK_EXEC_TIMEOUT_MS', 25000, { min: 1000, max: 120000 }),
       bulkChunkBlocks: parseIntEnv(source, 'X402_BULK_CHUNK_BLOCKS', 100, { min: 1, max: 500 }),
       bulkHeadMargin: parseIntEnv(source, 'X402_BULK_HEAD_MARGIN', 6, { min: 0, max: 1000 }),
+
+      // P4 account history — served from the gateway's OWN sqlite address
+      // index (src/chain-index/), because no account-history index exists
+      // anywhere on this box: the node RPC has no history method and the
+      // explorer scans at most 250 blocks / 3.5 s per call.
+      chainIndexEnabled: envFrom(source, 'X402_CHAIN_INDEX_ENABLED', '1') === '1',
+      chainIndexDbPath: envFrom(source, 'X402_CHAIN_INDEX_DB_PATH', './state/x402-chain-index.db'),
+      // Walker politeness — the node serializes ALL RPC on one event loop
+      // shared with miner getwork and wallets (measured: a 1000-block batch
+      // holds it 5.8-8.6 s; 100 blocks ~0.43 s).
+      chainIndexChunkBlocks: parseIntEnv(source, 'X402_CHAIN_INDEX_CHUNK_BLOCKS', 100, { min: 1, max: 500 }),
+      chainIndexChunkPauseMs: parseIntEnv(source, 'X402_CHAIN_INDEX_CHUNK_PAUSE_MS', 50, { min: 0, max: 10000 }),
+      chainIndexPollMs: parseIntEnv(source, 'X402_CHAIN_INDEX_POLL_MS', 15000, { min: 250, max: 600000 }),
+      chainIndexBatchTimeoutMs: parseIntEnv(source, 'X402_CHAIN_INDEX_BATCH_TIMEOUT_MS', 20000, { min: 1000, max: 120000 }),
+      // Never index a block a shallow reorg could still replace.
+      chainIndexHeadMargin: parseIntEnv(source, 'X402_CHAIN_INDEX_HEAD_MARGIN', 6, { min: 0, max: 1000 }),
+      chainIndexReorgRewind: parseIntEnv(source, 'X402_CHAIN_INDEX_REORG_REWIND', 64, { min: 1, max: 100000 }),
+      // Freshness gate: above this lag (or this tick age) the history product
+      // reports available:false and never asks for payment.
+      chainIndexMaxLagBlocks: parseIntEnv(source, 'X402_CHAIN_INDEX_MAX_LAG_BLOCKS', 12, { min: 1, max: 100000 }),
+      chainIndexMaxTickAgeMs: parseIntEnv(source, 'X402_CHAIN_INDEX_MAX_TICK_AGE_MS', 300000, { min: 1000, max: 86400000 }),
+
+      chainHistoryEnabled: envFrom(source, 'X402_CHAIN_HISTORY_ENABLED', '1') === '1',
+      chainHistoryPriceUsd: priceOf('X402_CHAIN_HISTORY_PRICE_USDC', '0.05'),
+      chainHistoryMaxLimit: parseIntEnv(source, 'X402_CHAIN_HISTORY_MAX_LIMIT', 500, { min: 1, max: 10000 }),
+      chainHistoryDefaultLimit: parseIntEnv(source, 'X402_CHAIN_HISTORY_DEFAULT_LIMIT', 100, { min: 1, max: 10000 }),
+
+      // P5 bulk balances — measured ~5 ms/address batched, so 500/request.
+      chainBalancesEnabled: envFrom(source, 'X402_CHAIN_BALANCES_ENABLED', '1') === '1',
+      chainBalancesPriceUsd: priceOf('X402_CHAIN_BALANCES_PRICE_USDC', '0.02'),
+      chainBalancesMaxAddresses: parseIntEnv(source, 'X402_CHAIN_BALANCES_MAX_ADDRESSES', 500, { min: 1, max: 5000 }),
+      chainBalancesTimeoutMs: parseIntEnv(source, 'X402_CHAIN_BALANCES_TIMEOUT_MS', 20000, { min: 1000, max: 120000 }),
 
       // P3 priority inference — flagship LATER; hard-disabled by default and
       // additionally gated on live serving capacity (see src/capacity.js).
@@ -431,6 +489,20 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
     });
   } catch (e) {
     problems.push(e.message);
+  }
+  // The index walker deliberately stops at head - headMargin, so the lag it
+  // reports can never drop below headMargin. A freshness gate at or below
+  // that floor would make the history product permanently unavailable —
+  // refuse the footgun at startup instead of at 3am.
+  if (cfg && cfg.chainIndexMaxLagBlocks <= cfg.chainIndexHeadMargin) {
+    problems.push(
+      `X402_CHAIN_INDEX_MAX_LAG_BLOCKS (${cfg.chainIndexMaxLagBlocks}) must exceed X402_CHAIN_INDEX_HEAD_MARGIN (${cfg.chainIndexHeadMargin}); the index never indexes above head - margin, so the gate could never open`
+    );
+  }
+  if (cfg && cfg.chainHistoryDefaultLimit > cfg.chainHistoryMaxLimit) {
+    problems.push(
+      `X402_CHAIN_HISTORY_DEFAULT_LIMIT (${cfg.chainHistoryDefaultLimit}) exceeds X402_CHAIN_HISTORY_MAX_LIMIT (${cfg.chainHistoryMaxLimit})`
+    );
   }
   if (problems.length) {
     throw new Error('gateway config invalid (fail closed):\n  - ' + problems.join('\n  - '));

@@ -48,8 +48,11 @@ curl -si http://127.0.0.1:8742/x402/qrng/draw | head -5       # 402 offer
              │  402 when down) → 402 offer → tamper-proof match → idempotency│
              │  replay → verify → [preSettle readiness] → settle → execute   │
              │  products/: echo(dev) qrng($0.01) bulk_chain($0.05)           │
+             │             chain_address_history($0.05) balances($0.02)      │
              │             priority_inference($0.10, capacity-gated, OFF)    │
+             │  chain-index/: head-following address index + walker          │
              │  stores: state/x402-gateway.db (idempotency + incidents)      │
+             │          state/x402-chain-index.db (address index, own file)  │
              └───┬───────────────────────────────┬───────────────────────────┘
                  │ x402 v2 §7: /verify /settle    │ JSON-RPC (single-flight,
                  ▼                                ▼  BigInt-safe)
@@ -76,7 +79,14 @@ to any x402-v2-§7 facilitator; the **facilitator** is ours by default
 | id | route(s) | price (default) | mode | notes |
 |---|---|---|---|---|
 | `qrng` | `GET /x402/qrng/draw`, `POST /x402/qrng` | $0.01 `X402_QRNG_PRICE_USDC` | execute-then-settle | wraps the node's real `rand.quantumRandomBytes`; health-gated readiness probe BEFORE any 402; attestation fields pass through verbatim (`attested:false` today — honesty enforced) |
+| `random_int` | `POST /x402/random/int` | $0.01 `X402_RANDOM_INT_PRICE_USDC` | execute-then-settle | uniform ints in `[min,max]`, ≤1,000 per call, **rejection sampling** (documented, no modulo bias); one draw per request, derived |
+| `random_shuffle` | `POST /x402/random/shuffle` | $0.02 `X402_RANDOM_SHUFFLE_PRICE_USDC` | execute-then-settle | Fisher-Yates permutation of your list or of `1..N`, ≤10,000 items; returns the index permutation + the shuffled items |
+| `random_pick` | `POST /x402/random/pick` | $0.02 `X402_RANDOM_PICK_PRICE_USDC` | execute-then-settle | k picks with/without replacement, optional **integer** weights (cumulative-weight search over one uniform draw) — raffles, sortition, A/B splits |
+| `random_bulk` | `POST /x402/qrng/bulk` | $0.05 `X402_RANDOM_BULK_PRICE_USDC` | execute-then-settle | ≤10 segments × ≤1,024 bytes in ONE settlement (5,000 atomic/draw vs 10,000 single = real discount); segments are slices of one attested draw and say so |
+| `random_commit` | `POST /x402/random/commit` + **free** `GET /x402/random/reveal/{id}` | $0.02 `X402_RANDOM_COMMIT_PRICE_USDC` | execute-then-settle | commit-reveal for provably-fair games: `sha3_256(secret‖salt)` now, free public idempotent reveal later (425 while sealed) |
 | `bulk_chain` | `GET /x402/chain/export\|blocks\|transactions` | $0.05 `X402_BULK_CHAIN_PRICE_USDC` | settle-then-execute | ≤1,000 blocks / ≤10,000 tx rows / byte+time budgets, cursor pagination, NDJSON/JSON, gzip; amounts = decimal strings (nANM); loopback node only, chunked + single-flight |
+| `chain_address_history` | `POST /x402/chain/address-history` | $0.05 `X402_CHAIN_HISTORY_PRICE_USDC` | execute-then-settle | full account history from the gateway's OWN head-following sqlite index (`src/chain-index/`); ≤500 rows/call, stable `<as_of>:<height>:<tx_index>` cursor, published direction/ordering/digest derivation; **fails closed (503, no 402) while the index is backfilling, stalled or lagging** |
+| `chain_batch_balances` | `POST /x402/chain/balances` | $0.02 `X402_CHAIN_BALANCES_PRICE_USDC` | settle-then-execute | ≤500 addresses in ONE batched RPC (~5 ms/address), deduped, BigInt-exact nANM decimal strings, per-entry errors instead of a poisoned batch; single lookups stay free |
 | `priority_inference` | `POST /x402/v1/chat/completions` | $0.10 `X402_INFERENCE_PRICE_USDC` | settle-then-execute | **DISABLED by default** (`PRIORITY_INFERENCE_ENABLED=0`) AND capacity-gated on live `aicf.workerStatus` polling; below the worker floor: catalog `available:false`, clear 503, **never a 402** |
 | `echo` | `GET/POST /x402/paid/echo` | $0.005 | execute-then-settle | development-only settlement smoke marker; off when `X402_ENV=production` unless `X402_ENABLE_ECHO=1` |
 
@@ -88,6 +98,66 @@ error receipt** + an incident row (never silently kept money);
 `Idempotency-Key` + same payment replays the stored result with no second
 charge; one delivered success == exactly one settlement; failed/replayed
 payments never count as revenue.
+
+### The randomness family (`src/products/random.js` + `derive.js`)
+
+All five derive from **one** verified `rand.quantumRandomBytes` draw per
+request (never one node call per output item) through the shared source in
+`src/products/qrng.js`, and they share its health-gated readiness probe — a
+sick entropy source refuses the whole family with a 503 and **no 402**.
+
+Every response carries the raw `randomness` bytes, the node's
+`source`/`health`/`attestation` verbatim, the `verification` rules, and a
+`derivation` block with the exact rule, the ordered steps and the stream
+byte-consumption. The derivations are byte-for-byte the canonical Animica
+DRNG (`randomness/qrng/public.py` and its dependency-free JS twin
+`randomness/beacon_api/static/verify.js`), so a buyer recomputes offline —
+and where a stock `verify.js` kind applies, `derivation.recompute` drops
+straight into `AnimicaBeacon.verifyResult()`. `test/random.test.js` pins
+this with golden vectors *and* a live cross-check against that file.
+
+Honesty, unchanged from `qrng`: the source is `software-fallback`
+(os.urandom) with a software signer, so `attested:false` and
+`is_quantum:false` — no description, example or doc here implies hardware
+or quantum attestation.
+
+### The address index (`src/chain-index/`)
+
+`chain_address_history` is the only chain SKU with a real advantage over the
+free surfaces, and the advantage IS the index. Measured 2026-08-15: the node
+RPC has **no** history method at all, and
+`explorer.animica.org/api/address/:bech32` is a live reverse block scan
+capped at 250 blocks / 3.5 s per call — it took 3.54 s to return **zero**
+txs for the chain's most active sender (whose txs sit ~3,000 blocks back).
+So the gateway owns one:
+
+- **store** (`store.js`) — its own sqlite file. `blocks(height PK, hash,
+  parent_hash, timestamp, tx_count)` exists for exact reorg rollback;
+  `address_tx(digest, height, tx_index PK, direction, tx_hash,
+  counterparty, value, tip, gas, kind, block_hash, timestamp)` is the
+  product's page order, so both `asc` and `desc` paging are index scans.
+  Amounts are decimal TEXT — never a JS Number, anywhere.
+- **walker** (`walker.js`) — backfills from genesis (~5–7 min for the
+  ~73k-block chain at the measured 170–230 blocks/s) then follows the head.
+  Politeness is enforced here, not asked of callers: the SAME single-flight
+  node client the bulk export uses (so a backfill can never run concurrently
+  with a paid export), 100-block batches (~0.43 s; a 1,000-block batch would
+  hold the node's single event loop 5.8–8.6 s against miner getwork and
+  wallets), a pause between chunks, an `unref()`'d timer, and **start() only
+  from `main()`** — `createGateway()` never walks, which is why the test
+  suite drives `tick()` explicitly and touches no real node.
+- **gate** (`index.js::createIndexHealth`) — `chain_index_disabled`,
+  `chain_index_node_unreachable`, `chain_index_never_ran`,
+  `chain_index_walker_stalled`, `chain_index_backfilling`,
+  `chain_index_stale`. All are 503 with progress and **never a 402**: a
+  history page from an incomplete index is not stale, it is wrong.
+
+Only blocks at or below `head − X402_CHAIN_INDEX_HEAD_MARGIN` are indexed,
+so `X402_CHAIN_INDEX_MAX_LAG_BLOCKS` must exceed that margin — the config
+refuses to load otherwise, because the gate could never open. A `parentHash`
+break rewinds `X402_CHAIN_INDEX_REORG_REWIND` blocks and re-indexes instead
+of stitching two histories together. Watch it with
+`animica-x402 index status`.
 
 ## Environment
 
@@ -105,7 +175,7 @@ non-allowlisted asset, malformed key, garbage price) refuse to boot.
 | self-hosted facilitator | `X402_NETWORK` (`base`\|`base-sepolia` allowlist), `X402_CHAIN_ID` (must agree), `X402_ASSET` (`USDC` or the exact allowlisted address), `X402_RPC_URL` (+`_FALLBACK_URL`), `X402_SETTLEMENT_ADDRESS` (payTo — server config, never client input), `X402_FACILITATOR_PRIVATE_KEY`, `X402_FACILITATOR_BIND`/`X402_EVM_FACILITATOR_PORT` (127.0.0.1:8743), `X402_DB_PATH` |
 | gas policy | `X402_MAX_GAS_PER_SETTLEMENT` (150k), `X402_MAX_FEE_PER_GAS_WEI` (1 gwei), `X402_DAILY_GAS_BUDGET_WEI` (0=off breaker), `X402_MIN_GAS_BALANCE_WEI` (readyz floor) |
 | confirmation | `X402_CONFIRMATIONS` (2), `X402_RECEIPT_TIMEOUT_MS`, `X402_RECEIPT_POLL_MS`, `X402_EXPIRY_MARGIN_SECONDS` |
-| products | `X402_QRNG_*`, `X402_BULK_*`, `PRIORITY_INFERENCE_ENABLED`, `PRIORITY_INFERENCE_MIN_SERVING_WORKERS`, `X402_INFERENCE_*`, `X402_CAPACITY_*` |
+| products | `X402_QRNG_*`, `X402_RANDOM_*` (`ENABLED`, the five `*_PRICE_USDC`, `SEED_BYTES`, `MAX_INTS`/`MAX_ITEMS`/`MAX_PICKS`/`MAX_BODY_BYTES`, `BULK_MAX_DRAWS`, `MAX_DRAW_BYTES`, `COMMIT_MAX_DELAY_SECONDS`, `COMMIT_TTL_SECONDS`), `X402_BULK_*`, `PRIORITY_INFERENCE_ENABLED`, `PRIORITY_INFERENCE_MIN_SERVING_WORKERS`, `X402_INFERENCE_*`, `X402_CAPACITY_*` |
 | logging/rpc | `X402_LOG_LEVEL`, `X402_LOG_FORMAT`, `X402_RPC_TIMEOUT_MS`, `X402_RPC_RETRIES` |
 
 ## Ops / runbook
@@ -190,6 +260,7 @@ bin/animica-x402 reconcile [--limit N]        # settled rows vs chain receipts (
 bin/animica-x402 gas report [--since 7d]      # incl. OP-stack L1 data fees
 bin/animica-x402 incidents list [--status open]
 bin/animica-x402 incidents resolve <id> --status refunded|resolved
+bin/animica-x402 index status                 # address-index backfill / lag
 ```
 
 Local DBs only, `--json` everywhere. `reconcile` exits 1 if any settled row
@@ -223,6 +294,18 @@ missing guarantee shows up as a missing test rather than as prose:
 | **Products** — QRNG requires payment | `products` 402 with $0.01 terms, `protocol-e2e` §1 |
 | QRNG returns real proof fields | `products` — verbatim `source`/`health`/`attestation` from the live-captured RPC fixture, no fabricated `proof`/`beacon` |
 | bulk limits enforced | `products` block cap, tx-record cap, byte budget, head-margin clamp, cursors |
+| **Address index** — walker is polite and correct | `chain-index` — batches ≤ chunk size with a yield between them, stops at `head − margin`, a failed batch resumes at the last COMMITTED height (no holes), a `parentHash` break rewinds and re-indexes, and nothing touches the node until `tick()` is called |
+| history never sold from a stale index | `chain-index` — `chain_index_never_ran` / `chain_index_stale` / `chain_index_walker_stalled` / `chain_index_node_unreachable` each answer 503 with progress, zero facilitator calls |
+| history cursor correctness | `chain-index` — full desc + asc paging returns every row exactly once, cursor pins its `as_of` snapshot, a cursor ahead of the tip is a 400 pre-payment |
+| history derivation is recomputable | `chain-index` — direction rule (`out`/`in`, a SINGLE `self` row), digest join from `anim1…`, ordering, and the published `derivation` block |
+| balances caps + BigInt safety | `chain-index` — 501 addresses / bad address 400 before any 402; duplicates deduped to one RPC; amounts stay exact decimal strings; one rejected account is per-entry data, not a poisoned settled batch |
+| **Randomness family** — payment required | `random` — all five routes 402 at their registry price with the Bazaar input schema |
+| caps enforced pre-settlement | `random` — int count/range, item caps, weight shape, bulk draws×bytes: 400, no `payment-required`, zero facilitator calls |
+| derivation is recomputable | `random` — golden vectors from `verify.js` + a live cross-check against it + per-response recomputation from the published bytes |
+| rejection sampling is unbiased | `random` — 3,000 draws over a range that does not divide 2^16, plus the documented byte-consumption rule |
+| one draw per request | `random` — 500 integers come from exactly ONE `rand.quantumRandomBytes` call, taken before settlement |
+| honesty fields present | `random` — `source`/`health`/`attestation`/`verification` on every response; `is_quantum:false`, `attested:false` |
+| reveal is free and opens the commitment | `random` — no payment/402/facilitator call, idempotent, `sha3_256(secret‖salt) == commitment`, secret re-derived from the signed draw, 425 while sealed |
 | free APIs unaffected | `gateway` free surfaces, `protocol-e2e` free surfaces (unowned paths 404, unpaid traffic shares one cached readiness probe, paid work stays read-only) |
 | inference refuses payment w/o capacity | `products` disabled / below floor / capacity dropped between 402 and retry |
 | inference activates at threshold | `products` — catalog flips `available:true`, proxies with priority headers |
@@ -271,7 +354,7 @@ decimal strings — no floats anywhere near amounts.
 | `/readyz` false | the `checks` object names the failing leg: `rpc`, `chain_id`, `usdc_domain` (live `DOMAIN_SEPARATOR()` mismatch = wrong token/chain/name), `db`, `gas_balance` (fund the wallet or lower `X402_MIN_GAS_BALANCE_WEI`) |
 | `better-sqlite3` install/segfault | must be **12.11.1** on this Node 20 box — 13.x is Node-22-only and segfaults here; the lockfile pins it, don't "upgrade" |
 | echo 404s in production | by design (`X402_ENV=production`); `X402_ENABLE_ECHO=1` re-enables the smoke marker |
-| catalog shows `available:false` | the `unavailable_reason` field says why: `qrng_entropy_health_failed` / `qrng_rpc_unreachable` (node RPC), `bulk_chain_node_unreachable`, `priority_inference_unavailable` (operator flag off or worker floor unmet — this is the gate working, not a bug) |
+| catalog shows `available:false` | the `unavailable_reason` field says why: `qrng_entropy_health_failed` / `qrng_rpc_unreachable` (node RPC), `bulk_chain_node_unreachable`, `chain_index_backfilling` / `chain_index_stale` / `chain_index_walker_stalled` (the address index is not current — `animica-x402 index status`; the first backfill takes ~5-7 min), `priority_inference_unavailable` (operator flag off or worker floor unmet — this is the gate working, not a bug) |
 | unit fails under systemd with EROFS/EACCES | `state/` doesn't exist — `ReadWritePaths` needs it created before first start (`mkdir -p …/state`, see unit comments) |
 | `paid_service_failed` (502) responses | payment settled, downstream kept failing: the body carries a signed receipt + `incident_id`; reconcile with `bin/animica-x402 incidents list` and refund per docs/x402.md |
 
@@ -296,13 +379,17 @@ src/middleware.js        §7 facilitator HTTP client, accepts/402 builders (+ le
 src/paywall.js           production gate: availability → 402 → verify → settle → execute,
                          idempotency, signed error receipts, incidents
 src/server.js            gateway entry (127.0.0.1:8742): catalog + product routes + /metrics
-src/products/            registry, qrng, bulk-chain, priority-inference, echo, errors
+src/products/            registry, qrng, bulk-chain, chain-address-history,
+                         chain-balances, priority-inference, echo, errors
 src/capacity.js          serving-worker gate (aicf.workerStatus polling, fail-closed)
 src/animica-node.js      node JSON-RPC client (BigInt-safe parse, single-flight)
 src/bech32m.js           anim1… address → account digest
 src/receipts.js          HMAC-SHA256 machine-readable error receipts
 src/store/index.js       facilitator settlement/replay ledger (better-sqlite3, WAL)
 src/store/gateway.js     gateway idempotency + incident store (own DB file)
+src/chain-index/         address index: store.js (blocks + address_tx, reorg-safe),
+                         walker.js (head-following, chunked, single-flight, started
+                         only by main()), index.js (freshness gate for the product)
 src/facilitator-evm/     self-hosted exact-EVM facilitator: evm.js (noble crypto, RLP,
                          EIP-1559), usdc.js (EIP-3009 calldata + receipt-log checks),
                          verify.js, settlement.js (claim→sign→persist→broadcast→confirm,
@@ -311,7 +398,8 @@ src/facilitator-evm/     self-hosted exact-EVM facilitator: evm.js (noble crypto
 src/demo-server.js       dev/smoke entry (what the live unit runs today)
 src/facilitator.js       RETIRED wANM/SVM facilitator (legacy, unconfigured)
 src/solana.js            RETIRED SVM primitives (legacy)
-bin/animica-x402         operator CLI (settlements, revenue, reconcile, gas, incidents)
+bin/animica-x402         operator CLI (settlements, revenue, reconcile, gas, incidents,
+                         index status)
 systemd/                 hardened example units (NOT installed from here)
 nginx/                   animica.dev location set + INSTALL.md (NOT installed from here)
 test/                    node --test suite — 138 tests, all RPC mocked, loopback only

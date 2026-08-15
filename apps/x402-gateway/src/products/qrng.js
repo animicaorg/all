@@ -29,6 +29,12 @@
  * The client-recomputable beacon+draw lane (QUW rounds / `animica beacon
  * serve`) is a documented later upgrade once the beacon sidecar is deployed
  * — see docs/x402.md.
+ *
+ * `createRandomnessSource` below is the ONE node call path for the whole
+ * randomness family (src/products/random.js): int, shuffle, pick, bulk and
+ * commit all buy a single verified draw through it and then derive
+ * deterministically (src/products/derive.js). No product ever calls the node
+ * once per output item, and every product's readiness is the SAME probe.
  */
 
 const { ProductError, ProductUnavailable } = require('./errors');
@@ -53,7 +59,14 @@ function buildVerification(result) {
   };
 }
 
-function createQrngProduct({ cfg, node }) {
+/**
+ * The shared randomness source: ONE verified node draw per request plus the
+ * fail-closed health gate, and ONE memoized readiness probe every product in
+ * the family reuses (a catalog scrape must not fan out into N node calls).
+ *
+ * `probeTtlMs` comes from the registry so tests can disable memoization.
+ */
+function createRandomnessSource({ cfg, node, probeTtlMs = 2000, now = Date.now }) {
   const timeoutMs = cfg.qrngTimeoutMs;
 
   async function fetchRandom(n) {
@@ -74,6 +87,38 @@ function createQrngProduct({ cfg, node }) {
     }
     return result;
   }
+
+  // Readiness = a real (tiny) randomness fetch, health gate included. Never
+  // throws: an unavailable source is a value, so the paywall answers 503
+  // BEFORE any 402 (never charge for a service known unavailable).
+  let at = 0;
+  let cached;
+  let pending = null;
+  function probe() {
+    if (pending) return pending;
+    if (cached !== undefined && now() - at < probeTtlMs) return Promise.resolve(cached);
+    pending = fetchRandom(8)
+      .then(() => ({ available: true }))
+      .catch((e) => ({ available: false, reason: e.reason || 'qrng_unavailable', detail: e.message }))
+      .then((v) => { cached = v; at = now(); pending = null; return v; });
+    return pending;
+  }
+
+  /** Copy through ONLY the honesty fields the RPC actually returned. */
+  function attachHonesty(bodyObj, result) {
+    if (result.source !== undefined) bodyObj.source = result.source;
+    if (result.health !== undefined) bodyObj.health = result.health;
+    if (result.attestation !== undefined) bodyObj.attestation = result.attestation;
+    bodyObj.verification = buildVerification(result);
+    return bodyObj;
+  }
+
+  return { fetchRandom, probe, attachHonesty, buildVerification };
+}
+
+function createQrngProduct({ cfg, node, source }) {
+  const src = source || createRandomnessSource({ cfg, node });
+  const { fetchRandom } = src;
 
   return {
     id: 'qrng',
@@ -105,13 +150,8 @@ function createQrngProduct({ cfg, node }) {
     },
 
     /** Readiness = a real (tiny) randomness fetch, health gate included. */
-    async availability() {
-      try {
-        await fetchRandom(8);
-        return { available: true };
-      } catch (e) {
-        return { available: false, reason: e.reason || 'qrng_unavailable', detail: e.message };
-      }
+    availability() {
+      return src.probe();
     },
 
     /** Param validation happens before any payment is requested. */
@@ -132,19 +172,15 @@ function createQrngProduct({ cfg, node }) {
      */
     async handler(ctx) {
       const result = await fetchRandom(ctx.params.n);
-      const bodyObj = {
+      const bodyObj = src.attachHonesty({
         product: 'qrng',
         randomness: result.bytes_hex,
         encoding: 'hex',
         bytes: result.n,
-      };
-      if (result.source !== undefined) bodyObj.source = result.source;
-      if (result.health !== undefined) bodyObj.health = result.health;
-      if (result.attestation !== undefined) bodyObj.attestation = result.attestation;
-      bodyObj.verification = buildVerification(result);
+      }, result);
       return { status: 200, bodyObj };
     },
   };
 }
 
-module.exports = { createQrngProduct, VERIFY_JS_POINTER };
+module.exports = { createQrngProduct, createRandomnessSource, buildVerification, VERIFY_JS_POINTER };

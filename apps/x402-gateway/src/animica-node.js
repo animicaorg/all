@@ -9,8 +9,12 @@
  *
  *  1. BigInt hazard: in-block tx `value`/`tip` arrive as JSON *numbers* and
  *     live balances already exceed 2^53 — JSON.parse would silently corrupt
- *     them. The raw response text is rewritten to quote those two fields
- *     before parsing, so they surface as exact decimal STRINGS end-to-end.
+ *     them. The raw response text is rewritten to quote those fields before
+ *     parsing, so they surface as exact decimal STRINGS end-to-end. Balance
+ *     keys are covered too: `state.getAddressBalance` returns
+ *     `confirmed_balance` as a decimal string today, but the rank-1 account
+ *     already holds ~4.0e16 nANM, so a node build that ever emitted it as a
+ *     JSON number would corrupt silently rather than loudly.
  *     (The rewrite matches the literal key-colon-digits sequence; no
  *     Animica RPC string field can contain `"value":<digits>` — string
  *     values on this API are hex/bech32/ids.)
@@ -22,7 +26,8 @@
  *     measured to add only contention.
  */
 
-const BIG_MONEY_FIELDS = /"(value|tip)"\s*:\s*(-?\d+)/g;
+const BIG_MONEY_FIELDS =
+  /"(value|tip|balance|confirmed_balance|pending_balance|unconfirmed_balance|total_balance)"\s*:\s*(-?\d+)/g;
 
 class NodeRpcError extends Error {
   constructor(message, { code, method } = {}) {
@@ -94,6 +99,36 @@ function createNodeClient(url, { fetchImpl = fetch, timeoutMs = 5000 } = {}) {
           if (!r) throw new NodeRpcError(`node rpc: batch response missing id ${i}`, { method: c.method });
           if (r.error) throw new NodeRpcError(r.error.message || 'rpc error', { code: r.error.code, method: c.method });
           return r.result;
+        });
+      });
+    },
+
+    /**
+     * Batched call whose per-item failures are DATA, not an exception:
+     * -> [{ok: true, result} | {ok: false, error, code}] aligned with `calls`.
+     *
+     * The strict batch() above is right for block exports, where one bad
+     * block must truncate the whole window at a known cursor. It is wrong for
+     * a fan-out of independent lookups (bulk balances): a single rejected
+     * address would otherwise sink a settled request into the
+     * incident/refund path. A transport failure still throws — that is not a
+     * per-item outcome.
+     */
+    batchSettled(calls, { timeoutMs: budget } = {}) {
+      return enqueue(async () => {
+        if (!Array.isArray(calls) || calls.length === 0) return [];
+        const payload = calls.map((c, i) => ({ jsonrpc: '2.0', id: i, method: c.method, params: c.params || {} }));
+        const out = await post(payload, budget);
+        if (!Array.isArray(out)) {
+          if (out && out.error) throw new NodeRpcError(out.error.message || 'rpc error', { code: out.error.code });
+          throw new NodeRpcError('node rpc: batch response is not an array', {});
+        }
+        const byId = new Map(out.map((r) => [r.id, r]));
+        return calls.map((c, i) => {
+          const r = byId.get(i);
+          if (!r) return { ok: false, error: `batch response missing id ${i}`, code: null };
+          if (r.error) return { ok: false, error: r.error.message || 'rpc error', code: r.error.code ?? null };
+          return { ok: true, result: r.result };
         });
       });
     },
