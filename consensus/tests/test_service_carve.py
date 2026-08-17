@@ -4,9 +4,11 @@ From the activation height a fixed 25% of every block's subsidy is reserved for
 inference/service claims, WITHHELD FROM THE MINER whether or not anything claims
 it (this replaces the self-gating carve where "mine without serving" kept 100%),
 and the foundation-treasury share simultaneously rises 15% -> 25%. The net split
-becomes 50% miner / 25% treasury / 25% inference, and — per the operator's rule —
-whatever inference slice is unclaimed rolls to the foundation treasury, so a block
-where nothing is claimed is 50% miner / 50% treasury.
+becomes 50% miner / 25% treasury / 25% inference. Where the inference slice lands is
+decided by one question — did anyone claim in this block? Nothing claimed: it rolls to
+the foundation treasury, so the block is 50% miner / 50% treasury. ANY claim (10.2.5):
+the WHOLE slice is paid to the claimants pro-rata and the treasury takes no share of it,
+so a provider anchored for a small claim receives the entire carve of that block.
 
 The property that must never break is emission conservation: paid + residual ==
 carve and miner + carve == the pre-carve subsidy. A bug here mints or burns coin
@@ -90,14 +92,47 @@ def test_the_whole_carve_goes_to_treasury_when_nobody_claims_it():
     assert (TREASURY_AMT + carve) * 100 // TOTAL == 50
 
 
-def test_a_claiming_provider_is_paid_and_the_remainder_goes_to_treasury():
+def test_any_claim_pays_the_WHOLE_carve_to_providers():
+    """10.2.5: if a block has inference in it, all of the slice is paid — the
+    treasury takes no share. A 1 ANM claim receives the entire 75 ANM carve."""
     claim = [(PROVIDER, 1_000_000_000)]
     miner, outs, carve = split_carve(
         miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
         anchor_outputs=claim, escrow_address=TREASURY, treasury_address=TREASURY)
-    assert (PROVIDER, 1_000_000_000) in outs
-    assert dict(outs)[TREASURY] == carve - 1_000_000_000
+    assert outs == [(PROVIDER, carve)]         # scaled up from 1 ANM to the full carve
+    assert TREASURY not in dict(outs)          # nothing falls to the treasury
     assert miner == MINER_IN - carve
+
+
+def test_the_whole_carve_is_split_pro_rata_between_claimants():
+    """Claim size sets the split BETWEEN providers, not the total they receive."""
+    other = b"\x55" * 32
+    claim = [(PROVIDER, 3_000_000_000), (other, 1_000_000_000)]   # 3:1
+    miner, outs, carve = split_carve(
+        miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
+        anchor_outputs=claim, escrow_address=TREASURY, treasury_address=TREASURY)
+    d = dict(outs)
+    assert sum(d.values()) == carve            # all of it paid out
+    assert d[PROVIDER] == carve * 3 // 4
+    assert d[other] == carve // 4
+    assert TREASURY not in d
+
+
+def test_scale_up_is_integer_exact_and_deterministic():
+    """The floor remainder must land somewhere fixed, or two honest nodes compute
+    different outputs and the chain splits."""
+    claim = [(PROVIDER, 1), (b"\x55" * 32, 1), (b"\x66" * 32, 1)]   # 75 ANM / 3 has a remainder
+    for _ in range(5):
+        _, outs, carve = split_carve(
+            miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
+            anchor_outputs=claim, escrow_address=TREASURY, treasury_address=TREASURY)
+        assert sum(a for _, a in outs) == carve
+        assert outs == split_carve(
+            miner_reward=MINER_IN, total_subsidy=TOTAL, pct=25,
+            anchor_outputs=claim, escrow_address=TREASURY, treasury_address=TREASURY)[1]
+    # the remainder goes to the FIRST anchor entry, by anchor order
+    assert outs[0][0] == PROVIDER
+    assert outs[0][1] >= outs[1][1]
 
 
 def test_fully_claimed_block_is_50_25_25():
