@@ -317,6 +317,7 @@ class UnifiedConfig:
     run_node: bool = False
     threads: int = 0                   # 0 → miner default
     bittensor_token: Optional[str] = None  # SN51 enrollment token (or env)
+    compute_enabled: bool = False  # opt-in third-party GPU compute (Clore)
 
     def wid(self) -> str:
         return self.worker_id or self.address

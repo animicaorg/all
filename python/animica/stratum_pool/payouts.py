@@ -114,23 +114,41 @@ class PoolPayoutScheduler:
                 errors.append(f"state.getNonce({params!r}) failed: {exc}")
         raise RuntimeError("; ".join(errors))
 
-    def _resolve_payout_budget(self) -> int:
+    def _resolve_payout_budget(self, rpc: Any = None) -> int:
         # Prefer cumulative mined-minus-paid budget so failed sends remain
         # retryable even when no fresh blocks were found in the latest interval.
         budget_getter = getattr(self._metrics, "payout_available_budget", None)
+        budget = 0
         if callable(budget_getter):
             try:
-                return max(0, int(budget_getter()))
+                budget = max(0, int(budget_getter()))
             except Exception:
-                pass
-        return max(
-            0,
-            int(
-                self._metrics.mined_reward_in_window(
-                    window_seconds=self._interval
-                )
-            ),
-        )
+                budget = 0
+        if budget <= 0:
+            budget = max(0, int(
+                self._metrics.mined_reward_in_window(window_seconds=self._interval)))
+
+        # CLAMP to the live wallet balance. payout_available_budget() is a lifetime
+        # ledger figure (mined-minus-paid), which vastly exceeds the actual wallet
+        # once BC3, the treasury carve, fees and prior payouts have drained it. Left
+        # unclamped, the pro-rate proposes full payouts the chain then rejects with
+        # "Insufficient funds", the largest-first ordering retries the biggest one
+        # every cycle, and NOTHING goes out. Capping by real balance lets the pool
+        # pay what it can afford each cycle (scaled across all workers).
+        if rpc is not None and self._wallet_selector:
+            bal = None
+            for params in ([{"address": self._wallet_selector}],
+                           [self._wallet_selector]):
+                try:
+                    res = rpc.request("state.getBalance", params)
+                    bal = int(res, 16) if isinstance(res, str) else int(res)
+                    break
+                except Exception:
+                    continue
+            if bal is not None:
+                # keep a small headroom for fees; never below zero
+                budget = min(budget, max(0, bal - self._max_fee))
+        return budget
 
     @staticmethod
     def _is_retryable_submit_error(exc: Exception) -> bool:
@@ -646,7 +664,7 @@ class PoolPayoutScheduler:
                 sign_transaction_with_rpc_context=sign_transaction_with_rpc_context,
             )
 
-            payout_budget = self._resolve_payout_budget()
+            payout_budget = self._resolve_payout_budget(rpc)
             if payout_budget <= 0:
                 return sent
             due = self._metrics.payout_due_addresses(

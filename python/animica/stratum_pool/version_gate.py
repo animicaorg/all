@@ -24,7 +24,9 @@ from typing import Any, Optional
 # The unified mining + AI-training + AI-serving build ships as 1.0.0.
 UNIFIED_MINER_VERSION = "1.0.0"
 
-_REJECT_REASON = "miner version too old — update to the unified animica miner"
+_REJECT_REASON = ("this pool requires the pip client 10.3.1+. Install: "
+                  "pip install -U animica && sudo animica up  |  guide: "
+                  "https://pool.animica.org/mine")
 
 
 def parse_version(value: Any) -> Optional[tuple[int, ...]]:

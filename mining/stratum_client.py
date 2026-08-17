@@ -287,6 +287,20 @@ class StratumClient:
         #   ANIMICA_AICF_DISABLE=1                 — opt out (pure-PoW only)
         import os as _os
         features: dict = {"framing": self.framing}
+        # Report the installed package version so a pool version-gate can see it.
+        # Without this the subscribe carried no version, extract_version() fell back
+        # to empty, and a pool requiring a minimum rejected EVERY client — including
+        # the current one. Resolve from installed metadata (a real pip install of
+        # 10.3.1 reports "10.3.1"); fall back to the client agent string.
+        try:
+            from importlib.metadata import version as _pkgver
+            features["version"] = str(_pkgver("animica"))
+        except Exception:
+            try:
+                from animica import __version__ as _v  # type: ignore
+                features["version"] = str(_v)
+            except Exception:
+                pass
         if not _os.environ.get("ANIMICA_AICF_DISABLE", "").strip():
             aicf_tiers_env = _os.environ.get("ANIMICA_AICF_TIERS", "").strip()
             tiers_forced = bool(aicf_tiers_env)

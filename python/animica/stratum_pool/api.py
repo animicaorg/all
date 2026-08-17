@@ -182,6 +182,25 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
     async def pool_summary():
         return metrics.pool_summary()
 
+    @app.get("/api/compute/clore-token")
+    async def clore_token(worker: str = "", address: str = "", gpu: str = ""):
+        """Hand a consenting miner a Clore onboarding config priced for its GPU.
+
+        The 10.2.8+ client calls this only after the machine's operator opted in,
+        passing the detected GPU model so the returned config's autoprice is set
+        competitively from the live Clore market (a flat price would leave most
+        cards idle). Returns {"token": null} when unconfigured — the miner then
+        skips enrollment cleanly. See stratum_pool/clore_tokens.py.
+        """
+        from .clore_tokens import assign_token
+        return {"token": assign_token(worker, address, gpu),
+                "price_usd_day": None}
+
+    @app.get("/api/compute/status")
+    async def clore_status():
+        from .clore_tokens import stats
+        return stats()
+
     @app.get("/miners")
     @app.get("/api/miners")
     async def list_miners(page: int = 1, page_size: int = 50):

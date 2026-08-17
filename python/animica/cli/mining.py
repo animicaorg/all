@@ -398,7 +398,17 @@ def _start_aicf_worker(address: str) -> tuple[Callable[[], None], dict]:
                 cfg.integration["aicf"]["endpoint"][network] = override.strip()
             except Exception:  # noqa: BLE001
                 pass
-        worker = AICFWorker(cfg=cfg, address=address)
+        # Honor the operator's model selection from the `animica up` picker.
+        # ANIMICA_AICF_SERVE_TIERS is catalog-vocab (tiny/small/flagship/large),
+        # matching the installed bundle dirs the servable filter checks — NOT
+        # ANIMICA_AICF_TIERS, which is the stratum-vocab (free/standard/premium/
+        # elite) reference-miner var and would make every tier fail
+        # _has_servable_bundle → advertise nothing. Empty/unset ⇒ None ⇒ legacy
+        # hardware-eligible behavior. Restricts advertising so a de-selected but
+        # still-installed tier stops being served.
+        _tsel = os.environ.get("ANIMICA_AICF_SERVE_TIERS", "").strip()
+        _tiers_override = [t.strip() for t in _tsel.split(",") if t.strip()] or None
+        worker = AICFWorker(cfg=cfg, address=address, tiers_override=_tiers_override)
     except AgentRuntimeError as exc:
         stats["reason"] = exc.message if hasattr(exc, "message") else str(exc)
         return (lambda: None), stats

@@ -155,6 +155,19 @@ class StratumPoolServer:
             # re-applies the wire-difficulty floor before every emission.
             session_vardiff_enabled=False,
         )
+        # Wire the version gate into subscribe so a rejected miner receives an
+        # actionable onboarding error in its log (not a silent accept + failing
+        # shares). Uses the same config as the share-level gate.
+        def _subscribe_version_check(features: dict):
+            from . import version_gate
+            v = version_gate.evaluate(
+                features, getattr(config, "min_miner_version", ""),
+                enforce=bool(getattr(config, "require_min_version", False)))
+            return bool(v["ok"]), str(v.get("reason") or "")
+        try:
+            self._server._version_check = _subscribe_version_check
+        except Exception:
+            pass
         # XMR (Monero RandomX) dual-mining infrastructure. Initialised
         # lazily in start() once the pool config has been validated.
         # See python/animica/stratum_pool/xmr.py for the components.

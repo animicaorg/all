@@ -482,6 +482,11 @@ class StratumServer:
         # None (server running standalone, or BC3 disabled) bc3.submit is simply
         # ignored, so the Animica path is unaffected either way.
         self._on_bc3_result: Optional[Callable[..., Any]] = None
+        # Optional version-gate hook: (features) -> (ok, reason). When set and it
+        # returns not-ok, subscribe replies with an actionable onboarding error so
+        # a rejected miner SEES how to fix it in their log, instead of a silent
+        # accept followed by mysteriously-failing shares. Fail-open if unset.
+        self._version_check: Optional[Callable[[dict], Tuple[bool, str]]] = None
         self._on_xmr_result = on_xmr_result
         self._cryptonote_handler = cryptonote_handler
         self._pool_mode = _normalize_pool_mode(
@@ -1741,6 +1746,19 @@ class StratumServer:
             log.info(
                 f"[Stratum] subscribe agent={agent} framing={framing} session={session.session_id}"
             )
+            # Version gate at subscribe: if configured and this client is too old,
+            # reply with an actionable error the miner can read in its log, rather
+            # than accepting and silently failing every share. Fail-open on any
+            # error so a gate misconfig can never break a valid subscribe.
+            if self._version_check is not None:
+                try:
+                    ok_v, reason_v = self._version_check(dict(features))
+                except Exception:
+                    ok_v, reason_v = True, ""
+                if not ok_v:
+                    await self._send(session, make_error(
+                        id_val, -32020, reason_v or "client version too old"))
+                    return
             reply = res_subscribe(
                 id_val,
                 session_id=session.session_id,
