@@ -574,8 +574,74 @@ class StratumClient:
             # task so the reader loop isn't blocked by model generation.
             asyncio.create_task(self._handle_aicf_notify(params))
 
+        elif method == "mining.bc3.notify":
+            # BC3 (BitcoinIII) work dispatched by the pool alongside Animica
+            # work. BC3 uses a different PoW — sha3_256^3 over an 80-byte
+            # Bitcoin header — so it cannot share a hash with Animica; this is
+            # separate work on the same connection. Background task so the
+            # reader loop stays free. Clients that predate this simply fall
+            # through to the log.debug below and ignore BC3 entirely.
+            asyncio.create_task(self._handle_bc3_notify(params))
+
         else:
             log.debug(f"[client] unhandled message: {obj}")
+
+    async def _handle_bc3_notify(self, params: Dict[str, Any]) -> None:
+        """Mine a BC3 job and submit any share back as ``mining.bc3.submit``.
+
+        The pool sends the nine standard Bitcoin ``mining.notify`` fields under
+        ``params["job"]`` plus the extranonce1 it assigned us. Scanning runs in a
+        worker thread: BC3 hashing is pure CPU and would otherwise stall the
+        asyncio reader loop and delay Animica shares.
+        """
+        try:
+            from .bc3 import Bc3Job
+        except Exception as exc:  # pragma: no cover - older/partial installs
+            log.debug(f"[client] bc3 unavailable: {exc}")
+            return
+
+        job_params = params.get("job") or params.get("params")
+        en1_hex = params.get("extranonce1") or ""
+        if not job_params or not en1_hex:
+            log.debug("[client] bc3 notify missing job/extranonce1")
+            return
+
+        try:
+            job = Bc3Job(list(job_params), bytes.fromhex(en1_hex),
+                         float(params.get("shareDiff") or 0.05))
+        except Exception as exc:
+            log.warning(f"[client] bc3 job parse failed: {exc}")
+            return
+
+        en2 = os.urandom(4)
+        window = int(params.get("scanWindow") or 500_000)
+        try:
+            hit = await asyncio.get_running_loop().run_in_executor(
+                None, job.scan, en2, 0, window
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning(f"[client] bc3 scan failed: {exc}")
+            return
+        if hit is None:
+            return
+
+        nonce, digest = hit
+        if job.is_block(digest):
+            log.warning(f"[client] BC3 BLOCK candidate job={job.job_id} nonce={nonce}")
+        await self._send_obj(
+            {
+                "id": None,
+                "method": "mining.bc3.submit",
+                "params": {
+                    "jobId": job.job_id,
+                    "extranonce2": en2.hex(),
+                    "ntime": f"{job.ntime:08x}",
+                    "nonce": f"{nonce:08x}",
+                },
+            }
+        )
 
     async def _handle_aicf_notify(self, params: Dict[str, Any]) -> None:
         """Run inference on the JobSpec and reply with mining.aicf.submit.

@@ -478,6 +478,10 @@ class StratumServer:
         self._submit_hook = submit_hook
         self._on_worker_authorized = on_worker_authorized
         self._on_aicf_result = on_aicf_result
+        # BC3 share handler. Wired by the BC3 job manager at startup; when it is
+        # None (server running standalone, or BC3 disabled) bc3.submit is simply
+        # ignored, so the Animica path is unaffected either way.
+        self._on_bc3_result: Optional[Callable[..., Any]] = None
         self._on_xmr_result = on_xmr_result
         self._cryptonote_handler = cryptonote_handler
         self._pool_mode = _normalize_pool_mode(
@@ -821,6 +825,63 @@ class StratumServer:
                 "[Stratum] xmr.notify job=%s height=%d sessions=%d",
                 job_id, height, sent,
             )
+        return sent
+
+    @staticmethod
+    def bc3_extranonce1(session_id: str) -> bytes:
+        """Stable 4-byte extranonce1 for a session.
+
+        Derived from the session id rather than handed out from a counter so
+        the pool can recompute it when validating a submit without keeping
+        extra per-session state. Distinct sessions get distinct coinbases,
+        which is what keeps their search spaces from colliding.
+        """
+        import hashlib
+        return hashlib.sha256(str(session_id).encode()).digest()[:4]
+
+    async def push_bc3_job(
+        self,
+        *,
+        job_params: list,
+        share_diff: float,
+        height: int,
+        scan_window: int = 500_000,
+    ) -> int:
+        """Broadcast a BC3 job to every authorized session.
+
+        Unlike XMR dual-mining this is NOT feature-gated — BC3 work goes to all
+        miners by operator decision. That is safe for older clients: they have no
+        `mining.bc3.notify` handler, so the message falls through their dispatch
+        to a debug log and is ignored. They keep mining Animica untouched.
+
+        `job_params` is the nine-field Bitcoin mining.notify array
+        [job_id, prevhash, coinb1, coinb2, merkle_branch, version, nbits,
+        ntime, clean_jobs] exactly as `animica.mining.bc3.Bc3Job` expects it.
+        """
+        sent = 0
+        for sess in list(self._sessions.values()):
+            if not sess.authorized:
+                continue
+            payload = {
+                "id": None,
+                "method": Method.BC3_NOTIFY.value,
+                "params": {
+                    "job": list(job_params),
+                    "extranonce1": self.bc3_extranonce1(sess.session_id).hex(),
+                    "shareDiff": float(share_diff),
+                    "scanWindow": int(scan_window),
+                    "height": int(height),
+                },
+            }
+            try:
+                await self._send(sess, payload)
+                sent += 1
+            except Exception as exc:
+                log.warning("[Stratum] bc3 notify drop session=%s: %s",
+                            sess.session_id, exc)
+        if sent:
+            log.info("[Stratum] bc3.notify job=%s height=%d sessions=%d",
+                     job_params[0], height, sent)
         return sent
 
     async def publish_job(
@@ -1890,6 +1951,24 @@ class StratumServer:
                     "mining.aicf.notify is server-push only",
                 ),
             )
+
+        elif method == Method.BC3_SUBMIT:
+            # BC3 share from a 10.2.6+ client. Handed to the BC3 pool callback,
+            # which re-derives the header from its own job state and re-hashes —
+            # the miner's claim is never trusted. BC3 rewards are kept by the
+            # Animica foundation, so this creates no miner payout obligation.
+            if not session.authorized:
+                await self._send(session, make_error(
+                    id_val, RpcErrorCodes.UNAUTHORIZED, "not authorized"))
+                return
+            if self._on_bc3_result is None:
+                log.debug("[Stratum] bc3.submit with no handler configured")
+                return
+            try:
+                await self._on_bc3_result(session, dict(params))
+            except Exception as exc:
+                log.warning("[Stratum] bc3.submit handler failed: %s", exc)
+            return
 
         elif method == Method.AICF_SUBMIT:
             if not session.authorized:

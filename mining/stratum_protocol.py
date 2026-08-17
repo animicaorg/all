@@ -189,6 +189,14 @@ class Method(str, Enum):
     # for the pool-side job manager and RandomX share validator.
     XMR_NOTIFY = "mining.notify_xmr"
     XMR_SUBMIT = "mining.submit_xmr"
+    # BC3 (BitcoinIII) merged revenue mining. BC3's PoW is sha3_256^3 over an
+    # 80-byte Bitcoin header, so it CANNOT share a hash with Animica's
+    # sha3_256(CBOR(header)) — this is separate work carried on the same
+    # connection. BC3_NOTIFY ships the nine standard Bitcoin mining.notify
+    # fields plus our extranonce1; shares come back via BC3_SUBMIT. Clients
+    # older than 10.2.6 have no bc3 module and ignore both. See mining/bc3.py.
+    BC3_NOTIFY = "mining.bc3.notify"
+    BC3_SUBMIT = "mining.bc3.submit"
 
 
 # ---------------------- Dataclasses (schema) ----------------------

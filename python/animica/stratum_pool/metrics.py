@@ -69,6 +69,12 @@ class PoolMetrics:
         self._ena_treasury_address = str(
             getattr(config, "ena_treasury_address", "") or ""
         ).strip()
+        # Retain mode: the skim is deducted from miner credit but never becomes a
+        # payable balance, so it stays in the payout wallet as margin. The skim is
+        # still recorded in accounting_ledger for audit.
+        self._fee_retain_in_wallet = bool(
+            getattr(config, "fee_retain_in_wallet", False)
+        )
         self._ena_fee_worker = "__ena_treasury_fee__"
         self._share_events: Deque[ShareEvent] = deque(maxlen=5000)
         self._block_events: Deque[Dict[str, object]] = deque(maxlen=200)
@@ -1504,14 +1510,18 @@ class PoolMetrics:
         """Credit a skimmed ENA training-treasury fee to the treasury balance."""
         if ena_fee_pps <= 0 and ena_fee_solo <= 0:
             return
-        self._apply_balance_delta(
-            ts=ts,
-            worker=self._ena_fee_worker,
-            address=self._ena_treasury_address,
-            pps_credit=ena_fee_pps,
-            solo_credit=ena_fee_solo,
-            defer_commit=defer_commit,
-        )
+        # The caller has ALREADY subtracted the fee from the miner's credit. In
+        # retain mode we deliberately do not re-credit it to anyone: with no
+        # payable balance created, the ANM simply stays in the payout wallet.
+        if not self._fee_retain_in_wallet:
+            self._apply_balance_delta(
+                ts=ts,
+                worker=self._ena_fee_worker,
+                address=self._ena_treasury_address,
+                pps_credit=ena_fee_pps,
+                solo_credit=ena_fee_solo,
+                defer_commit=defer_commit,
+            )
         self._record_accounting_event(
             ts=ts,
             worker=self._ena_fee_worker,
@@ -1524,6 +1534,7 @@ class PoolMetrics:
                 "from_worker": from_worker,
                 "from_address": from_address,
                 "pool_mode": accounting_mode,
+                "retained_in_wallet": self._fee_retain_in_wallet,
             },
             defer_commit=defer_commit,
         )

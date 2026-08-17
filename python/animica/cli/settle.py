@@ -85,11 +85,53 @@ def get_fork_height(chain_id: int = MAINNET_CHAIN_ID) -> Optional[int]:
 def current_pool_cap_nanm(
     height: int, chain_id: int = MAINNET_CHAIN_ID, params: Optional[dict] = None
 ) -> int:
+    """How much ONE anchor can actually be paid at `height`, in nANM.
+
+    Two regimes, and getting this wrong is expensive in both directions:
+
+      * below FORK_SERVICE_CARVE — the 9.0.0 IOU pool, ``settlement_pool_cap``
+        (50 ANM, decaying with the subsidy);
+      * from FORK_SERVICE_CARVE (75,000 on mainnet) — the carve REPLACES that
+        pool (``core/chain/block_import.py``: the IOU branch is gated on
+        ``not is_fork_active(FORK_SERVICE_CARVE, …)``), and consensus caps an
+        anchor at ``carve_amount(total_block_subsidy, 25)`` = **75 ANM**, not 50.
+
+    Reporting the stale 50 ANM after the fork is not a safety problem — it
+    under-claims, and consensus pays a smaller anchor in full — but it strands
+    25 ANM of every block's carve in the treasury permanently, because the
+    carve does NOT accumulate: whatever an anchor does not claim in the block
+    it lands in is gone (``split_carve`` routes the residual to the treasury).
+
+    This mirrors the same computation ``miner.getBlockTemplate`` does (the
+    10.2.2 carve fix) so the client and the miner agree on one number. This is
+    a CLIENT-side helper only — it is never imported by block application, so
+    it cannot change consensus. The consensus function ``settlement_pool_cap``
+    is deliberately left untouched.
+    """
     from consensus.iou_settlement import settlement_pool_cap
 
     if params is None:
         params = load_consensus_params(chain_id)
-    return settlement_pool_cap(max(1, int(height)), params)
+    h = max(1, int(height))
+
+    try:
+        from consensus.rewards import compute_block_reward, service_carve_pct
+        from consensus.service_carve import carve_amount
+
+        pct = service_carve_pct(h, chain_id=int(chain_id))
+        if pct > 0:
+            # The carve is a share of the WHOLE block subsidy (miner + treasury
+            # + aicf), not of the post-treasury miner slice — so sum every
+            # coinbase output, exactly as block application does.
+            total = sum(int(a) for _, a in compute_block_reward(int(chain_id), h, params))
+            return carve_amount(total, pct)
+    except Exception:
+        # Fall through to the pre-fork pool. This direction is the safe one:
+        # a smaller cap under-claims, it can never request more than consensus
+        # will pay (which would be scaled pro-rata and stall the worker).
+        pass
+
+    return settlement_pool_cap(h, params)
 
 
 def authority_address() -> str:
