@@ -291,16 +291,69 @@ def detect_hardware() -> HardwareProfile:
 # Tier eligibility                                                            #
 # --------------------------------------------------------------------------- #
 
+# Bytes/param by weight precision — for estimating a tier's resident RAM
+# footprint when served on CPU (host memory). total_params_b is in billions, so
+# params_b * bytes_per_param already yields GB (the 1e9 cancels).
+_PRECISION_BYTES = {"bf16": 2.0, "bfloat16": 2.0, "fp16": 2.0, "float16": 2.0,
+                    "fp32": 4.0, "float32": 4.0, "int8": 1.0, "int4": 0.5}
+
+# Host RAM to keep free for the OS + activations/KV-cache after the model is
+# resident, and the largest fraction of total RAM a single model may occupy.
+_CPU_SERVE_RESERVE_GB = 8.0
+_CPU_SERVE_MAX_RAM_FRACTION = 0.70
+
+
+def cpu_serve_enabled() -> bool:
+    """CPU serving of GPU-preferred tiers is opt-in — it's real but slow, so a
+    box only takes it on when the operator asks. Honors ANIMICA_AICF_CPU_SERVE
+    and the legacy FLAGSHIP_ALLOW_CPU_REAL alias."""
+    for var in ("ANIMICA_AICF_CPU_SERVE", "FLAGSHIP_ALLOW_CPU_REAL"):
+        if os.environ.get(var, "").strip().lower() in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def tier_cpu_ram_gb(tier: dict) -> float:
+    """Estimated resident RAM (GB) to load a tier on CPU, incl. ~25% runtime
+    overhead. For MoE tiers this uses total (not active) params — every expert
+    is resident even though only some compute per token."""
+    try:
+        params_b = float(tier.get("total_params_b")
+                         or tier.get("active_params_b") or 0)
+    except (TypeError, ValueError):
+        params_b = 0.0
+    bpp = _PRECISION_BYTES.get(
+        str(tier.get("precision", "fp32")).strip().lower(), 4.0)
+    return params_b * bpp * 1.25
+
+
+def _cpu_ram_safe(ram_gb: float, tier: dict) -> bool:
+    """True when this box's RAM can hold ``tier`` on CPU with safe headroom:
+    the resident footprint must leave at least the reserve free AND stay under
+    a fraction of total RAM, so an optimistic estimate can't OOM the host."""
+    need = tier_cpu_ram_gb(tier)
+    if need <= 0:
+        return False
+    return (ram_gb - need >= _CPU_SERVE_RESERVE_GB
+            and need <= _CPU_SERVE_MAX_RAM_FRACTION * ram_gb)
+
+
 def eligible_tiers(profile: HardwareProfile,
                    catalog: dict) -> list[str]:
     """Return tier ids the machine can plausibly serve, lowest to highest.
 
-    A tier is eligible iff RAM >= min_ram_gb AND at least one GPU's
-    vram_gb >= tier.min_vram_gb (or min_vram_gb is 0, meaning CPU-runnable).
+    A tier is eligible iff RAM >= min_ram_gb AND either at least one GPU's
+    vram_gb >= tier.min_vram_gb, or min_vram_gb is 0 (CPU-runnable). When CPU
+    serving is opted in (see ``cpu_serve_enabled``), a GPU-preferred tier also
+    qualifies on a GPU-less/under-VRAM box IF its estimated CPU footprint fits
+    RAM with safe headroom — so a big-RAM CPU host serves the largest tier that
+    fits (e.g. the MoE flagship), and larger tiers are excluded rather than
+    OOM'd. This is opt-in because CPU inference is real but slow.
     """
     out: list[str] = []
     tiers = catalog.get("tiers") or []
     max_vram = max((g.vram_gb for g in profile.gpus), default=0.0)
+    cpu_serve = cpu_serve_enabled()
     for t in tiers:
         if not isinstance(t, dict):
             continue
@@ -309,9 +362,11 @@ def eligible_tiers(profile: HardwareProfile,
         if profile.ram_gb + 0.5 < min_ram:
             continue
         if min_vram == 0:
-            out.append(str(t["id"]))
+            out.append(str(t["id"]))            # CPU-native tier (e.g. tiny)
         elif max_vram + 0.5 >= min_vram:
-            out.append(str(t["id"]))
+            out.append(str(t["id"]))            # a GPU meets the VRAM floor
+        elif cpu_serve and _cpu_ram_safe(profile.ram_gb, t):
+            out.append(str(t["id"]))            # CPU-served, RAM safely holds it
     return out
 
 

@@ -20,6 +20,81 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 
+def _available_ram_gb() -> float:
+    """Best-effort free host RAM in GB (0.0 when truly unknown ⇒ callers don't
+    block). Covers every platform the CPU-serve path targets so the loader RAM
+    guard is not a silent no-op off Linux:
+
+      psutil → /proc/meminfo (Linux) → GlobalMemoryStatusEx (Windows, real
+      available) → sysctl hw.memsize × 0.6 (macOS: no cheap 'available', so a
+      conservative fraction of total so the guard still fires on oversized loads).
+    """
+    try:
+        import psutil    # type: ignore
+        return float(psutil.virtual_memory().available) / (1024 ** 3)
+    except Exception:    # noqa: BLE001 — psutil optional
+        pass
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return float(line.split()[1]) / (1024 * 1024)
+    except Exception:    # noqa: BLE001 — non-Linux / unreadable
+        pass
+    import platform
+    system = platform.system()
+    if system == "Windows":
+        try:
+            import ctypes
+
+            class _MEMSTATEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            ms = _MEMSTATEX()
+            ms.dwLength = ctypes.sizeof(_MEMSTATEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms)):
+                return float(ms.ullAvailPhys) / (1024 ** 3)
+        except Exception:    # noqa: BLE001
+            pass
+    elif system == "Darwin":
+        try:
+            import subprocess
+            out = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                                 capture_output=True, text=True, timeout=3)
+            total = float(out.stdout.strip())
+            return (total / (1024 ** 3)) * 0.60    # conservative: 60% of total
+        except Exception:    # noqa: BLE001
+            pass
+    return 0.0
+
+
+def _cuda_can_hold(torch, need_gb: float) -> bool:
+    """True if the current CUDA device has free VRAM for a ~need_gb model (10%
+    margin). Unknown VRAM ⇒ True, so a capable GPU is never wrongly refused —
+    the placement try/except in _load_lazy then catches a genuine OOM and falls
+    back to CPU. This is what keeps an under-VRAM GPU off the OOM path."""
+    if need_gb <= 0:
+        return True
+    free_gb = 0.0
+    try:
+        free, _total = torch.cuda.mem_get_info()
+        free_gb = float(free) / (1024 ** 3)
+    except Exception:    # noqa: BLE001 — older torch / driver
+        try:
+            props = torch.cuda.get_device_properties(0)
+            free_gb = float(props.total_memory) / (1024 ** 3)
+        except Exception:    # noqa: BLE001
+            return True    # unknown → let .to() try; OOM-fallback catches it
+    return need_gb <= 0.90 * free_gb
+
+
 # System prompt prepended to every chat turn so off-the-shelf small models
 # (Qwen 0.5B–7B) have factual grounding about Animica instead of replying
 # with a generic "Hello! How can I assist you today?" or "I don't have
@@ -151,21 +226,129 @@ class LocalBundleRunner:
             "fp32": torch.float32,
         }.get(str(self.inference_spec.get("precision", "fp32")),
               torch.float32)
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            str(model_dir), trust_remote_code=bool(
-                self.inference_spec.get("trust_remote_code", False)),
-        )
-        self._model = AutoModelForCausalLM.from_pretrained(
-            str(model_dir),
-            torch_dtype=torch_dtype,
-            trust_remote_code=bool(
-                self.inference_spec.get("trust_remote_code", False)),
-        )
-        device = "cuda" if torch.cuda.is_available() else (
-            "mps" if (hasattr(torch.backends, "mps") and
-                       torch.backends.mps.is_available()) else "cpu")
-        self._model.to(device).eval()
-        self._device = device
+        trust_remote = bool(self.inference_spec.get("trust_remote_code", False))
+        need_gb = self._estimate_resident_gb(model_dir, torch_dtype)
+        # Device selection must account for whether a present GPU can actually
+        # HOLD this model. An under-VRAM GPU (small card + big RAM — the exact
+        # CPU-serve target) must fall back to CPU, not OOM on `.to("cuda")` and
+        # crash the worker. Unknown VRAM ⇒ try the GPU and let the placement
+        # try/except below catch an OOM.
+        cuda = bool(torch.cuda.is_available())
+        mps = (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+        if cuda and _cuda_can_hold(torch, need_gb):
+            device = "cuda"
+        elif mps and not cuda:
+            device = "mps"
+        else:
+            device = "cpu"
+
+        def _cpu_threads() -> None:
+            try:
+                import os as _os
+                torch.set_num_threads(max(1, _os.cpu_count() or 1))
+            except Exception:    # noqa: BLE001 — thread tuning is best-effort
+                pass
+
+        from agent_runtime.errors import BundleError
+        # Wrap the ENTIRE load — tokenizer + weights + device placement. ANY
+        # failure (CPU/GPU OOM during from_pretrained, a corrupt shard, a bad
+        # config, a failing trust_remote_code module, or an OOM at .to()) becomes
+        # a clean BundleError, which the worker's claim loop handles — never a raw
+        # exception that escapes the loop and kills the worker. On any failure the
+        # runner state is reset so a half-loaded model is not cached forever
+        # (which would fail every future job for the tier and leak RAM).
+        try:
+            if device == "cpu":
+                # Refuse before we allocate, so an oversized model errors cleanly
+                # instead of OOM-killing the host.
+                self._guard_cpu_ram(model_dir, torch_dtype)
+                _cpu_threads()
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                str(model_dir), trust_remote_code=trust_remote,
+            )
+            self._model = AutoModelForCausalLM.from_pretrained(
+                str(model_dir),
+                torch_dtype=torch_dtype,
+                trust_remote_code=trust_remote,
+                # Stream shards in during load — avoids the ~2x peak host RAM a
+                # naive load costs, letting a large model load on a RAM-bound box.
+                low_cpu_mem_usage=True,
+            )
+            try:
+                self._model.to(device).eval()
+            except Exception:    # noqa: BLE001 — usually CUDA OOM at placement
+                # A GPU we mis-judged as able to hold the model: relocate to CPU
+                # rather than crash. Weights are already resident in host RAM
+                # (low_cpu_mem_usage), so this only moves the partially-placed
+                # params; if THAT OOMs too, the outer except → clean BundleError.
+                # No _guard_cpu_ram here: the model is already resident, so a full
+                # re-estimate would double-count and could spuriously refuse a
+                # move that actually fits.
+                if device != "cuda":
+                    raise
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:    # noqa: BLE001
+                    pass
+                _cpu_threads()
+                self._model.to("cpu").eval()
+                device = "cpu"
+            self._device = device
+        except BundleError:
+            self._reset()
+            raise
+        except Exception as exc:    # noqa: BLE001 — never let a raw error crash the worker
+            self._reset()
+            raise BundleError(
+                f"failed to load bundle on {device}: {exc}",
+                hint="serve a smaller tier, or free/add memory",
+            ) from exc
+
+    def _reset(self) -> None:
+        """Drop partially-loaded state so the next generate() retries cleanly
+        instead of serving from a poisoned (model set, device None) runner and
+        leaking the resident weights."""
+        self._model = None
+        self._tokenizer = None
+        self._device = None
+
+    def _estimate_resident_gb(self, model_dir: Path, torch_dtype) -> float:
+        """Best-effort resident weight size (GB) from the on-disk shards, plus
+        ~30% for activations/KV-cache. Files already store the served dtype, so
+        their summed size is the resident footprint; scaled up if we load into a
+        wider dtype than the files were saved in (e.g. fp16 files → fp32)."""
+        import torch    # type: ignore
+        weight_bytes = 0
+        for p in Path(model_dir).glob("**/*"):
+            if p.suffix in (".safetensors", ".bin", ".pt", ".pth") and p.is_file():
+                try:
+                    weight_bytes += p.stat().st_size
+                except OSError:
+                    pass
+        gb = weight_bytes / (1024 ** 3)
+        if gb <= 0:
+            return 0.0
+        # If loading into fp32 from half-precision files, weights roughly double.
+        if torch_dtype == torch.float32:
+            gb *= 2.0
+        return gb * 1.30
+
+    def _guard_cpu_ram(self, model_dir: Path, torch_dtype) -> None:
+        """Refuse to load on CPU when free RAM can't hold the model — a clean
+        error beats an OOM kill. No-op when the footprint or free RAM is unknown
+        (never blocks on missing data)."""
+        need = self._estimate_resident_gb(model_dir, torch_dtype)
+        if need <= 0:
+            return
+        avail = _available_ram_gb()
+        if avail > 0 and avail < need:
+            from agent_runtime.errors import BundleError
+            raise BundleError(
+                f"insufficient free RAM to serve this model on CPU: need "
+                f"~{need:.0f} GB (weights + overhead), only ~{avail:.0f} GB "
+                f"free. Serve a smaller tier or free/add memory.",
+                hint="pick a smaller tier, close other processes, or add RAM",
+            )
 
     def generate(self, *, prompt: str, history: list[dict[str, str]],
                  max_output_tokens: int = 1024,
