@@ -415,7 +415,13 @@ class AICFWorker:
             idle_streak = 0
             tier = str(job.get("tier", self.tiers[0]))
             job_id = str(job.get("job_id", ""))
-            prompt = str(job.get("prompt", ""))
+            # The node nests the prompt + sampling under job["spec"]; only the
+            # pipeline path read spec — this chat path read the top level and so
+            # passed an EMPTY prompt to the model (every answer was "I didn't
+            # receive a question"). Read spec first, fall back to top level so
+            # this works against both a nested and a flattened claim response.
+            _spec = job.get("spec") if isinstance(job.get("spec"), dict) else {}
+            prompt = str(_spec.get("prompt", job.get("prompt", "")))
             try:
                 runner = runners.get(tier)
                 if runner is None:
@@ -424,9 +430,11 @@ class AICFWorker:
                 t0 = time.time()
                 text = runner.generate(
                     prompt=prompt, history=[],
-                    max_output_tokens=int(job.get("max_output_tokens", 512)),
-                    temperature=float(job.get("temperature", 0.2)),
-                    top_p=float(job.get("top_p", 0.95)),
+                    max_output_tokens=int(_spec.get("max_output_tokens",
+                                          job.get("max_output_tokens", 512))),
+                    temperature=float(_spec.get("temperature",
+                                      job.get("temperature", 0.2))),
+                    top_p=float(_spec.get("top_p", job.get("top_p", 0.95))),
                 )
                 latency_ms = int((time.time() - t0) * 1000)
                 attestation = {
