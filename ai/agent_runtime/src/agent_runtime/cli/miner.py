@@ -203,6 +203,13 @@ def worker_pull(
                                           help="Expected bundle sha256."),
 ) -> None:
     """Download a flagship bundle by CID and stage it for serving."""
+    # Stage under the CATALOG id so the serving worker (which canonicalizes) finds
+    # it — accept a stratum name ('standard') too. Identity for catalog names.
+    try:
+        from agent_runtime.hardware import canonical_tier
+        tier = canonical_tier(tier)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         path = pull_bundle(cid, tier=tier, verify_sha256=sha256)
     except AgentRuntimeError as exc:

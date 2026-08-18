@@ -306,9 +306,9 @@ def _select_aicf_models(console) -> Optional[list[str]]:
     eligibility and installed state, plus current disk free and projected disk
     after — then serves ONLY the tiers the operator picks. The choice persists
     to ~/.animica/aicf-models.json and drives BOTH what is downloaded
-    (ANIMICA_AICF_AUTOPULL_TIERS) and what the worker advertises
-    (ANIMICA_AICF_TIERS), so a de-selected tier stops being served even if its
-    bundle is still on disk.
+    (ANIMICA_AICF_AUTOPULL_TIERS) and what the worker serves
+    (ANIMICA_AICF_SERVE_TIERS — NOT the stratum-vocab ANIMICA_AICF_TIERS), so a
+    de-selected tier stops being served even if its bundle is still on disk.
 
     Precedence — fail-safe, never blocks a scripted/systemd run:
       explicit env pin  >  stored selection  >  interactive prompt  >  default.
@@ -499,7 +499,13 @@ def _aicf_autopull_tiers(catalog: dict) -> list[str]:
 
     override = os.environ.get("ANIMICA_AICF_AUTOPULL_TIERS", "").strip()
     if override:
-        return [t.strip() for t in override.split(",") if t.strip()]
+        # Normalize any vocabulary (stratum 'standard' etc.) to catalog ids so
+        # the bundle downloads to the dir the serving worker looks in.
+        try:
+            from agent_runtime.hardware import canonical_tiers
+            return canonical_tiers([t.strip() for t in override.split(",") if t.strip()])
+        except Exception:  # noqa: BLE001
+            return [t.strip() for t in override.split(",") if t.strip()]
 
     order = [str(t.get("id")) for t in (catalog.get("tiers") or []) if isinstance(t, dict)]
     try:
@@ -823,6 +829,13 @@ def _ensure_llm_model(caps, components, console) -> None:
     else:
         tier, gb = "tiny", 4.0
     tier = os.environ.get("ANIMICA_AICF_TIER", tier)
+    # Accept any vocabulary (stratum 'standard' etc.) — the bundle dir keys on
+    # the catalog id. Identity for catalog names, so no change to documented use.
+    try:
+        from agent_runtime.hardware import canonical_tier
+        tier = canonical_tier(tier)
+    except Exception:  # noqa: BLE001
+        pass
     repo_override = os.environ.get("ANIMICA_AICF_MODEL", "").strip() or None
 
     try:

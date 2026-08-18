@@ -291,6 +291,72 @@ def detect_hardware() -> HardwareProfile:
 # Tier eligibility                                                            #
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# Tier-name reconciliation                                                    #
+# --------------------------------------------------------------------------- #
+# Historically two disjoint tier vocabularies coexisted: the MODEL CATALOG
+# (tiny/small/flagship/large — the actual bundles a worker loads) and the
+# STRATUM / reference-miner memory tiers (free/standard/premium/elite, plus a
+# legacy 'xl'). Feeding a stratum name into the catalog-based serving path made
+# _has_servable_bundle look for models/<stratum-name>/ which never exists, so
+# the worker advertised nothing. This map collapses everything to the catalog
+# vocabulary (rank-preserving), and every place that looks up / serves / pulls a
+# bundle normalizes through canonical_tier(). Catalog names pass through unchanged.
+TIER_ALIASES = {
+    "free": "tiny",
+    "standard": "small",
+    "premium": "flagship",
+    "elite": "large",
+    "xl": "large",
+}
+
+
+def canonical_tier(name: object) -> str:
+    """Normalize any tier name to the model-catalog vocabulary
+    (tiny/small/flagship/large). Stratum names (free/standard/premium/elite) and
+    legacy aliases map in; catalog/unknown names pass through unchanged."""
+    return TIER_ALIASES.get(str(name).strip().lower(), str(name).strip().lower())
+
+
+def canonical_tiers(names) -> list[str]:
+    """canonical_tier over an iterable, de-duplicated, order preserved."""
+    out: list[str] = []
+    for n in (names or []):
+        c = canonical_tier(n)
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
+# Inverse of TIER_ALIASES: catalog id → the NODE's stratum/chain tier name. The
+# AICF node's job matcher (rpc/methods/aicf_jobs.py::_resolve_tier) only knows
+# free/standard/premium/elite and folds anything else to "standard", so a worker
+# must ADVERTISE (register + claim) in this vocabulary or it silently only ever
+# gets 'standard' jobs. Serving is the opposite direction — the on-disk bundle
+# lives under the CATALOG id (see canonical_tier). This is the bidirectional
+# reconciliation: advertise chain names, load catalog bundles.
+CATALOG_TO_CHAIN = {"tiny": "free", "small": "standard",
+                    "flagship": "premium", "large": "elite"}
+
+
+def chain_tier(name: object) -> str:
+    """Map ANY tier name to the node's stratum/chain vocabulary
+    (free/standard/premium/elite) for advertising/claiming. Accepts catalog or
+    chain names; unknowns (e.g. the synthetic 'pipeline' tier) pass through."""
+    cat = canonical_tier(name)                 # any → catalog
+    return CATALOG_TO_CHAIN.get(cat, cat)      # catalog → chain; identity otherwise
+
+
+def chain_tiers(names) -> list[str]:
+    """chain_tier over an iterable, de-duplicated, order preserved."""
+    out: list[str] = []
+    for n in (names or []):
+        c = chain_tier(n)
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
 # Bytes/param by weight precision — for estimating a tier's resident RAM
 # footprint when served on CPU (host memory). total_params_b is in billions, so
 # params_b * bytes_per_param already yields GB (the 1e9 cancels).

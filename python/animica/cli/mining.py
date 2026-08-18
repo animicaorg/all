@@ -2259,7 +2259,9 @@ def setup(
         )
         from agent_runtime.config import load_config
         from agent_runtime.errors import AgentRuntimeError, BundleError
-        from agent_runtime.hardware import attach_eligible_tiers, detect_hardware
+        from agent_runtime.hardware import (
+            attach_eligible_tiers, canonical_tiers, detect_hardware,
+        )
     except Exception as exc:  # noqa: BLE001
         typer.secho(
             f"Error: agent_runtime is not installed ({exc}). "
@@ -2299,7 +2301,13 @@ def setup(
     if tiers:
         override = [t.strip() for t in tiers.split(",") if t.strip()]
         report["tiers_requested"] = override
-    resolved_tiers = resolve_tiers(profile, dict(cfg.model_catalog), override=override)
+    # resolve_tiers() now emits the node's CHAIN vocab (free/standard/premium/
+    # elite) — correct for ADVERTISING, but `setup` DOWNLOADS bundles, which live
+    # under CATALOG-vocab dirs (models/tiny|small|flagship|large) and whose
+    # base_model/CID helpers key on catalog ids. Canonicalize back to catalog so
+    # every tier actually resolves a bundle (chain names would all be skipped).
+    resolved_tiers = canonical_tiers(
+        resolve_tiers(profile, dict(cfg.model_catalog), override=override))
 
     cache_root_raw = (
         cfg.integration.get("aicf", {}).get("miner_cache_dir")
