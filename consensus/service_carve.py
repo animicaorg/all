@@ -2,7 +2,7 @@
 
 The rule in one line: from the activation height the miner subsidy loses a fixed
 percentage whether or not any service provider claims it, and settlement anchors decide
-only whether that slice reaches providers or falls to escrow.
+only whether that slice reaches providers or the treasury — all of it, either way.
 
 Why not "pay miners who serve": nothing in a block can prove a miner served inference.
 There is no on-chain worker keyring, no job ids, no result hashes, and `header.extra` is
@@ -22,18 +22,24 @@ provably emission-conserving and is worth reading on its own:
 so paid + residual == carve exactly, and miner + carve == the pre-carve miner slice.
 Nothing is minted, nothing is burned, and there is no floating point anywhere.
 
-WHERE THE RESIDUAL GOES depends on whether anything was owed, because the two cases mean
-different things and the operator specified them separately:
+WHERE THE CARVE GOES is decided by ONE question — did any provider claim in this block?
 
-  * NO inference requests settled in the block (paid == 0) — nobody is owed anything, so
-    the slice is operator revenue and goes to the FOUNDATION TREASURY. This is the common
-    case today and the operator's stated rule.
-  * Requests settled but did not consume the slice (0 < paid < carve) — the remainder is
-    owed to providers, so it holds at the DEDICATED SERVICE ESCROW address.
+  * NO inference claimed (paid == 0) — nobody is owed anything, so the slice is operator
+    revenue and goes to the FOUNDATION TREASURY. This is the common case today.
+  * ANY inference claimed (paid > 0) — the WHOLE slice is paid to the claiming providers,
+    pro-rata by claim size. Nothing is held back and nothing falls to the treasury.
 
-"Escrow" is used in its literal sense: it holds only value that is owed to someone. That
-distinction is also what makes the escrow balance readable — it rises only when providers
-were active, so it never has to be disentangled from ordinary treasury movement.
+That second rule is deliberate (10.2.5): the carve is inference money, so once a block
+has a provider in it the treasury takes no part of it. It replaces an earlier middle case
+where a partial claim sent the remainder to a "service escrow" — which resolves to the
+treasury address anyway, making it indistinguishable from revenue on-chain, and leaving
+providers paid less than the block reserved for them.
+
+The practical consequence, stated plainly because it is large: a provider anchored for a
+small claim receives the whole carve of that block, not the claim. Claim SIZE therefore
+sets the pro-rata split BETWEEN providers, not the total they receive. The settlement
+authority decides who appears in an anchor, so it — not this function — is what bounds
+payouts to what was actually earned.
 
 THE BASE MATTERS. The carve is 25% OF THE BLOCK, so it is measured against the
 reconstructed pre-split subsidy (miner + treasury + aicf), not against the post-treasury
@@ -82,13 +88,17 @@ def split_carve(
 
     `anchor_outputs` are the already-capped, already-scaled settlement outputs for this
     block — whatever `scale_settlement_outputs` produced. They are trusted to be within
-    the cap; this function only ensures they never exceed the carve, and routes whatever
-    is left to the correct residual account.
+    the cap; this function ensures they never exceed the carve and then decides where the
+    whole carve lands.
 
     An empty or absent anchor set is the ordinary case today and is NOT an error: nothing
     was owed, so the whole carve goes to `treasury_address`, and the miner still loses it.
-    That is the point. When some — but not all — of the slice was claimed, the remainder is
-    owed to providers and holds at `escrow_address` instead.
+    That is the point.
+
+    If ANY entry claims, the returned outputs are the anchor entries SCALED UP to consume
+    the entire carve pro-rata — so `sum(outputs) == carve` in both branches, and a
+    provider receives more than it asked for. `escrow_address` is consequently no longer
+    a destination; it is retained only so existing callers keep working.
 
     `treasury_address` defaults to `escrow_address` only so existing callers keep working;
     consensus always passes it explicitly.
@@ -122,14 +132,39 @@ def split_carve(
 
     residual = carve - paid
     if residual > 0:
-        # Nothing owed -> treasury (operator revenue). Something owed but unclaimed ->
-        # escrow (held for providers). See the module docstring; this one branch is the
-        # whole difference between the two accounts.
         if paid == 0:
+            # NOTHING CLAIMED — nobody is owed anything, so the slice is operator
+            # revenue and goes to the FOUNDATION TREASURY. The miner still loses it.
             dest = treasury_address if treasury_address is not None else escrow_address
+            outputs.append((bytes(dest), residual))
         else:
-            dest = escrow_address
-        outputs.append((bytes(dest), residual))
+            # ANY CLAIM — the whole slice is paid to the claiming providers,
+            # pro-rata by claim size. Nothing is held back in escrow and nothing
+            # falls to the treasury on a block that had inference in it.
+            #
+            # This is the "if any inference, all of it is paid" rule. The carve is
+            # inference money: once a block has a provider in it, the treasury has
+            # no share of it. It also removes the old middle case, where a partial
+            # claim quietly sent the remainder to an "escrow" that resolves to the
+            # treasury address anyway — indistinguishable on-chain from revenue.
+            #
+            # Integer-only and deterministic: each provider's top-up is
+            # floor(residual * amt / paid), and the floor remainder (< len(outputs)
+            # base units) goes to the FIRST anchor entry, which is fixed by the
+            # anchor's own ordering. No float, no map iteration order, no tie-break
+            # on address bytes — two honest nodes must produce identical outputs.
+            topped: List[Output] = []
+            distributed = 0
+            for addr, amt in outputs:
+                extra = (residual * amt) // paid
+                topped.append((addr, amt + extra))
+                distributed += extra
+            leftover = residual - distributed
+            if leftover > 0:
+                first_addr, first_amt = topped[0]
+                topped[0] = (first_addr, first_amt + leftover)
+            outputs = topped
+            paid = carve
 
     total = sum(a for _, a in outputs)
     if total != carve:

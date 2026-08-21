@@ -6,6 +6,14 @@ set -eu
 : "${ANIMICA_RUNTIME_UID:=${ANIMICA_UID:-10001}}"
 : "${ANIMICA_RUNTIME_GID:=${ANIMICA_GID:-10001}}"
 : "${ANIMICA_VOLUME_STRATEGY:=named}"
+# Report the version this tree actually RUNS. The runtime here was hand-patched
+# up to 10.4.4 (consensus/, core/, execution/, coretx/, mempool/, vm_py/, l2/ and
+# rpc/ are byte-identical to tag v10.4.4), but nothing told the node so: with no
+# override core.version fell through to DEFAULT_VERSION and it reported "0.1.0",
+# while python/pyproject.toml still said 9.7.1. Both were labels, not behaviour.
+# An explicit ANIMICA_VERSION in the environment still wins over this default.
+: "${ANIMICA_VERSION:=10.4.4}"
+export ANIMICA_VERSION
 
 export HOME="${HOME:-${ANIMICA_DATA_DIR}}"
 CHAIN_DIR="${ANIMICA_DATA_DIR%/}/chain-${ANIMICA_CHAIN_ID}"

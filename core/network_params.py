@@ -458,6 +458,72 @@ FORK_VPN_RELAY_REWARDS = "vpn_relay_rewards"
 # Readable 9.0.0 alias (same fork key, same height, same env override).
 FORK_IOU_SETTLEMENT = FORK_VPN_RELAY_REWARDS
 
+# FORK_USEFUL_WORK_VERIFY (10.2.0) — VERIFY the useful-work proofs a block carries.
+# MAINNET ACTIVATION HEIGHT 75,000 (operator directive 2026-08-15), and mainnet
+# defaults to SHADOW at that height — the gate evaluates every block and logs the
+# verdict, but the verdict is advisory. See _useful_work_shadow() in
+# core/chain/block_import.py for why enforcing is not a safe default here: header
+# receiptsRoot is 0, so the payment-status input is node-local and a snapshot-synced
+# node fails closed where an executing node accepts. Arming the height in shadow is
+# what produces the observation window the rule needs; enforcing without it splits
+# the fleet on the first block that carries a proof.
+#
+# This is NOT "serve or don't mine". The rule is PRESENCE-GATED: a block with no
+# proofs is valid at every height, and today 95,004 of 95,004 mainnet blocks carry
+# proofs: []. So activation changes nothing observable until miners start attaching
+# proofs. Requiring a proof is a different fork and a hard fleet-wide cutover; do
+# not co-locate the two at one height.
+#
+# WHAT IT DOES: at/after H, every proof envelope in an imported block is verified
+# (structure, canonical CBOR, ML-DSA-65 signature with the scheme id pinned by the
+# VERIFIER not read from the proof, miner==worker, requester!=worker, receipt
+# freshness against an ancestor anchor, single-use nullifier, payment reference) and
+# Σψ is recomputed under code-committed policy caps. An invalid proof rejects the
+# block. See consensus/useful_work_verify.py.
+#
+# WHAT IT DOES *NOT* DO — read this before planning step (3):
+#   1. It NEVER REQUIRES A PROOF. A block carrying zero proofs is valid at every
+#      height, forever. This rule is PRESENCE-GATED, exactly like
+#      FORK_QUANTUM_BEACON: it only constrains blocks that DO carry proofs. Live
+#      mainnet blocks carry zero proofs in 95,004 of 95,004 stored blocks (recon
+#      2026-08-15), so activating this alone is a no-op on today's fleet and CANNOT
+#      halt it. "A block MUST carry a verified AI proof" is a SEPARATE, later fork —
+#      that one is a 100% hard cutover and must not be co-located with this height.
+#   2. It NEVER GRANTS ψ CREDIT. Live acceptance is `header_hash <= target(Θ)`
+#      (core/chain/block_import._pow_sanity), i.e. S = H(u) with Σψ == 0. Crediting
+#      Σψ toward Θ would RELAX the work requirement and would require a matching
+#      change on the miner side; that is out of scope here and would be a split.
+#      The recomputed Σψ and the S = H(u) + Σψ ≥ Θ relationship are computed and
+#      LOGGED for telemetry, never used to accept a block that PoW rejected. This
+#      gate can only ever REJECT (tighten), never admit.
+#   3. It cannot make self-dealing impossible. See the "residual weakness" docstring
+#      in consensus/useful_work_verify.py — a permissionless miner can always fund a
+#      second identity. The design goal is a priced floor, not a barrier.
+#   4. IT DOES NOT FORCE REAL INFERENCE, and cannot in this shape. Check 2 requires
+#      worker == coinbase, so the receipt is ALWAYS self-signed by the miner; a
+#      miner running a null worker satisfies every check with a fabricated
+#      outputDigest. That is asserted by a regression test
+#      (consensus/tests/test_useful_work_adversarial.py::
+#      test_forged_proof_for_zero_inference_is_accepted) precisely so it cannot be
+#      quietly re-described as "serve or don't mine". Do not present it that way to
+#      operators or miners.
+#
+# ENFORCEMENT PREREQUISITE (not yet met, 2026-08-15): payment execution status is
+# read from the node-local receipt side-table because headers commit
+# receiptsRoot = 0, so the outcome of a transfer is not chain-derived. The verifier
+# fails closed with `payment_status_unknown`, which is safe while the gate is
+# disabled or observe-only but would split an enforcing fleet between nodes that
+# executed a range and nodes that snapshot-synced past it. Fix that (commit
+# receipts in a header root, or replace the payment check) before enforcing.
+#
+# SHADOW SWITCH: ANIMICA_USEFUL_WORK_SHADOW=1 makes the gate observe-only (log the
+# would-be rejection with reason/height/proof index/type, accept anyway), modelled on
+# ANIMICA_PQ_HARDENING_SHADOW. A shadow node and an enforcing node DISAGREE about a
+# block carrying an invalid proof, so the shadow valve is a rollout tool for a window
+# in which no such block exists — never a permanent per-node setting. Run shadow
+# until the logs show a real fleet attaching well-formed proofs, THEN unset it.
+FORK_USEFUL_WORK_VERIFY = "useful_work_verify"
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
     # This MUST match on every node — the live node and every operator's pip install
@@ -529,6 +595,32 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # ANIMICA_FORK_VPN_RELAY_REWARDS_HEIGHT. Until sealed, activation cannot mint
         # or change emission — behaviour is byte-identical to no-fork.
         FORK_VPN_RELAY_REWARDS: 50_000,
+        # Useful-work proof verification, armed at the 10.2.0 milestone height
+        # (operator directive 2026-08-15). Two properties make a code-pinned height
+        # safe to ship here, and BOTH are load-bearing:
+        #
+        #   1. PRESENCE-GATED — a block carrying no proofs is valid at every height,
+        #      and every one of the 95,004 mainnet blocks stored today carries
+        #      proofs: [] under proofsRoot = ZERO32. Activation is therefore a no-op
+        #      against current block production; it starts constraining only when a
+        #      miner chooses to attach evidence.
+        #   2. SHADOW BY DEFAULT ON MAINNET — _useful_work_shadow() in
+        #      core/chain/block_import.py returns True for chain_id 1 unless the
+        #      operator sets ANIMICA_USEFUL_WORK_ENFORCE=1, so an ordinary upgraded
+        #      node LOGS the verdict and accepts. Without this the pinned height
+        #      would make every node enforce a rule whose payment-status input is
+        #      still node-local (headers commit receiptsRoot = 0), and the first
+        #      proof-carrying block would split snapshot-synced nodes from executing
+        #      ones. See consensus/useful_work_verify.py, RESIDUAL WEAKNESSES.
+        #
+        # So this height buys the observation window, not enforcement. Flipping the
+        # fleet to enforcing is a separate governance action, gated on shadow
+        # telemetry showing a zero rate for payment_status_unknown,
+        # payment_not_in_ancestry and nullifier_scan_incomplete across a full window
+        # — and ultimately on committing receipts in a header root. Runbook:
+        # docs/USEFUL_WORK_SHADOW_RUNBOOK.md. Retune via
+        # ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT.
+        FORK_USEFUL_WORK_VERIFY: 75_000,
     },
     # Testnet + devnet enforce from genesis (no legacy history to grandfather).
     ("testnet", 2): {
@@ -544,6 +636,10 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,
         FORK_VM_EXEC: 0,
+        # Safe from genesis because the rule is presence-gated: a block with no
+        # proofs is never rejected, and testnet/devnet have no proof-carrying
+        # history to grandfather. This is where the verifier gets exercised.
+        FORK_USEFUL_WORK_VERIFY: 0,
     },
     ("devnet", 1337): {
         FORK_PQ_HARDENING: 0,
@@ -558,6 +654,9 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,
         FORK_VM_EXEC: 0,
+        # See the testnet note above: presence-gated, so genesis activation is inert
+        # until a block actually carries a proof.
+        FORK_USEFUL_WORK_VERIFY: 0,
     },
 }
 

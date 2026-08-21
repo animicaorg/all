@@ -43,8 +43,27 @@ def _get_ena_state(ctx: Any):
 
 
 def _get_chain_state(ctx: Any):
-    state = getattr(ctx, "state", None)
-    return state
+    """The state DB, or None.
+
+    The `ctx` injected into a handler is ``rpc.jsonrpc.Context`` — a per-request
+    TRANSPORT object (request/received_at_ms/client/headers). It has never
+    carried a database handle. Those live on ``rpc.deps.RpcContext`` and are
+    reached through ``deps.get_ctx()``, which is what every working namespace
+    does (see rpc/methods/state.py). Reading state off the transport ctx is why
+    this returned None on every deployed node. The passed ctx stays as a
+    fallback for embeddings/tests that supply a real RpcContext.
+    """
+    try:
+        from rpc import deps
+
+        state = getattr(deps.get_ctx(), "state_db", None)
+        if state is not None:
+            return state
+    except Exception:  # context not initialised (tests, tooling) — fall through
+        pass
+    if ctx is None:
+        return None
+    return getattr(ctx, "state_db", None) or getattr(ctx, "state", None)
 
 
 def _decode_hex_or_bytes(val: str, name: str) -> bytes:

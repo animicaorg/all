@@ -2109,6 +2109,15 @@ async def worker_claim_next_job(
         "job_id": job.job_id,
         "spec": dict(job.spec),
         "tier": job.tier,
+        # Flatten prompt + sampling to the TOP LEVEL too: the single-worker chat
+        # path reads job["prompt"]/max_output_tokens/temperature/top_p top-level
+        # (only the pipeline path reads job["spec"][...]). Without these the
+        # worker passed an EMPTY prompt and every answer was "I didn't receive a
+        # question". Additive + backward-compatible.
+        "prompt": job.spec.get("prompt", ""),
+        "max_output_tokens": job.spec.get("max_output_tokens", 512),
+        "temperature": job.spec.get("temperature", 0.2),
+        "top_p": job.spec.get("top_p", 0.95),
         "estimated_cost_animica": job.estimated_cost,
         "claim_expires_at": job.claim_expires_at,
     }

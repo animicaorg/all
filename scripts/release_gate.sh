@@ -10,6 +10,7 @@
 #   3. import sweep of animica.cli.* + key packages (no broken/paste-in modules)
 #   4. clean-venv install + `pip check` (no broken requirements)
 #   5. CLI smoke: --version, --help, up --plan, wallet new --label smoke
+#   5b. vendored-artifact parity: the security code in the wheel matches git
 #   6. pyflakes undefined-name count (informational)
 set -uo pipefail
 
@@ -81,6 +82,35 @@ if "$VENV/bin/pip" install -q "$WHEEL" >/dev/null 2>&1; then
   "$VENV/bin/animica" wallet new --label smoke >/dev/null 2>&1 && ok "animica wallet new --label smoke" || bad "animica wallet new"
 else
   bad "pip install failed"
+fi
+
+note "5b. vendored-artifact parity: security code must match git, not the disk"
+# hatch_build.py vendors ../rpc/ from LOCAL DISK, so a published artifact can
+# silently differ from the committed tree in either direction. That is exactly
+# how the wallet-RPC path-confinement and fail-closed IP check shipped in the
+# 9.0.0-9.0.4 tarballs (as an uncommitted working-tree edit) and then vanished
+# from 9.0.5 onward while `git diff` between the tags stayed empty
+# (animicaorg/all#1867). Assert the built artifact carries them.
+_VW="$TMP/rpc/methods/wallet.py"
+if [ -f "$_VW" ]; then
+  if grep -q "Confine any client-supplied wallet_file" "$_VW"; then
+    ok "artifact: wallet_file path confinement present"
+  else
+    bad "artifact: wallet_file PATH CONFINEMENT MISSING (see animicaorg/all#1867)"
+  fi
+  if grep -q "Fail CLOSED" "$_VW"; then
+    ok "artifact: _is_local_ip fails closed"
+  else
+    bad "artifact: _is_local_ip FAILS OPEN (see animicaorg/all#1867)"
+  fi
+  # And the artifact must not have drifted from the committed source at all.
+  if git -C "$ROOT" show HEAD:rpc/methods/wallet.py 2>/dev/null | diff -q - "$_VW" >/dev/null 2>&1; then
+    ok "artifact: rpc/methods/wallet.py is byte-identical to HEAD"
+  else
+    bad "artifact: rpc/methods/wallet.py DIFFERS from committed HEAD (built from a dirty tree?)"
+  fi
+else
+  bad "artifact: rpc/methods/wallet.py not vendored into the wheel"
 fi
 
 note "6. pyflakes undefined-name (informational)"

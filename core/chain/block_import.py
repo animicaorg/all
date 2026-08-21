@@ -76,7 +76,9 @@ from core.network_params import (
     FORK_PQ_HARDENING,
     FORK_ROOT_COMMITMENT,
     FORK_SERVICE_CARVE,
+    FORK_USEFUL_WORK_VERIFY,
     FORK_VPN_RELAY_REWARDS,
+    MAINNET_PARAMS,
     is_fork_active,
 )
 # FORK_ADDRESS_FREEZE consensus set — imported at MODULE LOAD, deliberately NOT
@@ -492,9 +494,21 @@ def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Op
     - txsRoot closes the 'same PoW header, different tx set -> silent divergence'
       hole (ANM-C03).
     - proofsRoot closes proof-swapping: the block's proofs must match what the PoW
-      header committed. This is ANM-C04's *implementable* slice; full PoIES
-      useful-work *validity* verification (validate_block) needs the proofs/ verifier
-      package, which does not exist in-tree — see SECURITY_6.0.0_STATUS.md.
+      header committed. That is a *binding* check only: it proves the proof set is
+      the one the header committed, never that any proof is valid.
+
+    UPDATED 2026-08-15 (this comment previously said the PoIES verifier "does not
+    exist in-tree"). Proof VALIDITY is now checked, separately and behind its own
+    fork: see _verify_block_useful_work_gated below and
+    consensus/useful_work_verify.py. The claim the old comment made was accurate
+    about `proofs/` — that package still does not import (five of six verifiers
+    raise ImportError at load, and `proofs.ai.verify_ai_body` validates one body
+    shape and then reads a disjoint one, so it can never succeed) and
+    `consensus.validator.validate_block` is not usable as-is because it derives its
+    supported work types from `importlib.util.find_spec` at validation time, making
+    acceptance depend on which modules happen to be installed on each node. What is
+    new is a purpose-built pure verifier for the AI slice; the rest of the proof
+    types remain unverifiable and are therefore REJECTED when present.
     """
     if not is_fork_active(FORK_ROOT_COMMITMENT, height, chain_id=chain_id):
         return None
@@ -527,6 +541,343 @@ def _verify_block_txs_root_gated(block: Block, height: int, chain_id: int) -> Op
                 f"header={bytes(committed_pr).hex()[:16]}"
             )
     return None
+
+
+def _useful_work_shadow(chain_id: Optional[int] = None) -> bool:
+    """Observe-only: log exactly what WOULD be rejected (reason, height, proof
+    index, proof type, Σψ, Θ) and accept anyway.
+
+    Modelled on _pq_hardening_shadow(). Same caveat, stated plainly: a shadow node
+    and an enforcing node DISAGREE about a block that carries an invalid proof, so
+    this is a rollout instrument for a window in which no such block exists — never
+    a permanent per-node setting. The safe sequence is (1) arm the fork height with
+    shadow ON, (2) confirm zero would-be rejections across a real window, (3) only
+    then enforce.
+
+    MAINNET DEFAULTS TO SHADOW (10.2.0). The height is now pinned at 75,000, so
+    unlike the disabled-by-default arrangement this valve IS reachable on mainnet
+    and its default decides what an ordinary upgraded node does. Enforcing is not a
+    safe default there, and the reason is not caution — it is
+    ``payment_status_unknown``. Headers commit ``receiptsRoot = 0``, so payment
+    execution status is read from a node-local, best-effort receipt side-table; a
+    node that snapshot-synced past a range answers "unknown" and FAILS CLOSED while
+    a node that executed it accepts. Two honest nodes, opposite verdicts, on a block
+    that carries a proof. Defaulting to shadow makes that verdict advisory, so
+    arming the height produces the observation window the rule needs instead of a
+    partition. See consensus/useful_work_verify.py, RESIDUAL WEAKNESSES.
+
+    Testnet/devnet keep enforcing (the fork is active from genesis there and a split
+    on a disposable chain is the point of having one).
+
+    Precedence: an explicit ANIMICA_USEFUL_WORK_SHADOW wins; then
+    ANIMICA_USEFUL_WORK_ENFORCE=1 opts a mainnet node into enforcing; then the
+    per-network default. Enforcement fleet-wide is a governance action gated on the
+    prerequisites in docs/USEFUL_WORK_SHADOW_RUNBOOK.md — chiefly a zero rate for
+    payment_status_unknown, payment_not_in_ancestry and nullifier_scan_incomplete
+    across a full window — not on this env var alone.
+    """
+    _TRUE = {"1", "true", "yes", "on"}
+    _FALSE = {"0", "false", "no", "off"}
+
+    raw = os.getenv("ANIMICA_USEFUL_WORK_SHADOW", "").strip().lower()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+
+    if os.getenv("ANIMICA_USEFUL_WORK_ENFORCE", "").strip().lower() in _TRUE:
+        return False
+
+    try:
+        return int(chain_id) == int(MAINNET_PARAMS.chain_id)
+    except (TypeError, ValueError):
+        return False
+
+
+_PQ_BACKEND_WARNED = False
+
+
+def _warn_if_pq_backend_missing(probe) -> None:
+    """Log LOUDLY, once, if this build cannot verify ML-DSA-65 at all.
+
+    A missing PQ backend makes every proof fail with the same verdict on this
+    node and on no other — a silent, permanent divergence dressed up as ordinary
+    invalid signatures. The verifier already reports it with its own reason
+    string (`worker_sig_backend_unavailable`); this makes it impossible to miss
+    in the logs the first time a proof-carrying block arrives, because the fix is
+    "reinstall the vendored PQ package", not "ban that peer". This repo has
+    shipped exactly this failure before: packages that publish fine to PyPI from
+    the working tree and break every fresh clone.
+    """
+    global _PQ_BACKEND_WARNED
+    if _PQ_BACKEND_WARNED:
+        return
+    try:
+        ok = bool(probe())
+    except Exception:  # pragma: no cover - defensive
+        ok = False
+    if ok:
+        _PQ_BACKEND_WARNED = True
+        return
+    _PQ_BACKEND_WARNED = True
+    log.error(
+        "useful_work: ML-DSA-65 backend UNAVAILABLE on this build — every AI "
+        "work proof will be rejected as worker_sig_backend_unavailable on this "
+        "node only. This is a BUILD DEFECT (missing "
+        "animica._vendor.dilithium_py_v2), not a bad block. Do not enable "
+        "enforcement until it is fixed."
+    )
+
+
+class _ImporterChainView:
+    """ChainView adapter for consensus/useful_work_verify, derived from the block's
+    OWN ANCESTRY and from nothing else.
+
+    Every earlier version of this class leaked node-local state into an acceptance
+    decision, which is the class of bug that splits a chain rather than merely
+    rejecting a block. The three leaks and their fixes:
+
+    * ``payment()`` read ``block_db.get_transaction_by_hash`` — a global,
+      canonical-height index that is never deleted on reorg, is written
+      best-effort inside a swallow-all ``except``, and is not written at all by a
+      node running without a state DB. A payment on an ORPHANED fork satisfied a
+      proof on the canonical chain. Now: one bounded walk over this block's own
+      ancestors reads their tx sets directly.
+    * ``payment()`` never read the receipt, so a TRANSFER that REVERTED for
+      insufficient balance — moving nothing and paying no fee, because the balance
+      check fires before the fee debit — satisfied the "the requester paid" check.
+      Now: the receipt side-table is consulted and anything that is not SUCCESS is
+      reported as such. (See ``PAYMENT_STATUS_UNKNOWN`` below: this is the one
+      remaining per-node input and it is a hard blocker for enforcement.)
+    * ``nullifier_seen()`` consulted an in-memory ``MemoryNullifierStore`` built
+      per importer instance. It was written for side-chain blocks that never
+      became canonical, never unwound on reorg, emptied by a restart, and empty on
+      a snapshot-synced node — so an ordinary orphan made two honest nodes
+      disagree about acceptance. Now: replay is decided by re-deriving the tags
+      from ancestor proof bodies inside the same walk, which is self-unwinding
+      (a detached branch is simply not an ancestor) and restart-independent.
+
+    The walk covers ``[height - window, height - 1]`` where ``window`` is
+    ``policy.payment_max_age`` (64). That width is exactly sufficient for the
+    replay check — see the completeness argument in the verifier's module
+    docstring, check 5 — and it bounds verification cost at 64 block reads for a
+    proof-carrying block, which is ~0% of blocks today.
+
+    The walk is performed at most once per instance and only when a proof is
+    actually present (the gate's fast path returns before constructing this for
+    the empty case), so an ordinary block pays nothing for it.
+    """
+
+    __slots__ = (
+        "_block_db",
+        "_parent_hash",
+        "_height",
+        "_window",
+        "_chain_id",
+        "_policy",
+        "_walked",
+        "_hash_by_height",
+        "_tx_rows",
+        "_spent_nullifiers",
+        "_complete",
+    )
+
+    def __init__(
+        self,
+        *,
+        block_db,
+        parent_hash: bytes,
+        height: int,
+        chain_id: int,
+        policy,
+    ):
+        self._block_db = block_db
+        self._parent_hash = bytes(parent_hash)
+        self._height = int(height)
+        self._chain_id = int(chain_id)
+        self._policy = policy
+        self._window = max(int(policy.anchor_window), int(policy.payment_max_age))
+        self._walked = False
+        self._hash_by_height: Dict[int, bytes] = {}
+        self._tx_rows: Dict[bytes, tuple] = {}
+        self._spent_nullifiers: set[bytes] = set()
+        # True only when the whole window was traversed (or genesis was reached).
+        # A pruned/missing body anywhere in it makes every ancestry answer
+        # untrustworthy, and "could not check" must never read as "not found".
+        self._complete = False
+
+    # ── the single bounded ancestry walk ────────────────────────────────────
+
+    def _walk(self) -> None:
+        if self._walked:
+            return
+        self._walked = True
+        from consensus.useful_work_verify import block_ai_work_nullifiers
+
+        lo = max(0, self._height - self._window)
+        cur_hash = self._parent_hash
+        cur_height = self._height - 1
+        complete = True
+        while cur_height >= lo:
+            self._hash_by_height[cur_height] = cur_hash
+            block = None
+            try:
+                block = self._block_db.get_block_by_hash(cur_hash)
+            except Exception:
+                block = None
+            header = getattr(block, "header", None) if block is not None else None
+            if header is None:
+                try:
+                    header = self._block_db.get_header_by_hash(cur_hash)
+                except Exception:
+                    header = None
+            if header is None:
+                # Cannot even continue the walk: the ancestry is unreadable.
+                complete = False
+                break
+            if block is None:
+                # Header present, body pruned. Hash lookups below this point stay
+                # correct, but tx-inclusion and nullifier answers do not.
+                complete = False
+            else:
+                for idx, tx in enumerate(getattr(block, "txs", ()) or ()):
+                    try:
+                        txh = _tx_hash_for_index(tx)
+                    except Exception:
+                        continue
+                    if not txh:
+                        continue
+                    # The walk runs high->low, so a later assignment is a LOWER
+                    # height. Overwriting therefore keeps the earliest inclusion,
+                    # which is the conservative choice if a chain ever contained
+                    # the same tx hash twice (it should not; replay protection
+                    # lives in the mempool and in the salt).
+                    self._tx_rows[bytes(txh)] = (cur_height, idx, cur_hash, tx)
+                try:
+                    for tag in block_ai_work_nullifiers(
+                        block, chain_id=self._chain_id, policy=self._policy
+                    ):
+                        self._spent_nullifiers.add(bytes(tag))
+                except Exception:  # pragma: no cover - the helper is total
+                    complete = False
+            if cur_height == 0:
+                break
+            parent = getattr(header, "parentHash", None)
+            if not isinstance(parent, (bytes, bytearray)) or len(parent) != 32:
+                complete = False
+                break
+            cur_hash = bytes(parent)
+            cur_height -= 1
+        self._complete = complete
+
+    # ── ChainView ───────────────────────────────────────────────────────────
+
+    def ancestor_hash_at(self, height: int) -> Optional[bytes]:
+        """Header hash of THIS block's ancestor at ``height``.
+
+        Deliberately not ``block_db.get_canonical_hash()``: during a reorg the
+        canonical index and the block's own ancestry differ, and only the
+        ancestry is a property of the block being validated. Memoized by the
+        walk, so eight proofs cost one traversal rather than eight.
+        """
+        target = int(height)
+        if target < 0 or target > self._height - 1:
+            return None
+        if target < self._height - self._window:
+            # Outside the window this class is allowed to answer for. The
+            # verifier's anchor window is narrower, so a legitimate proof never
+            # asks; anything that does is out of policy anyway.
+            return None
+        self._walk()
+        return self._hash_by_height.get(target)
+
+    def payment(self, tx_hash: bytes):
+        from consensus.useful_work_verify import PaymentRecord
+
+        self._walk()
+        row = self._tx_rows.get(bytes(tx_hash))
+        if row is None:
+            return None
+        inc_height, _idx, _blk_hash, tx = row
+        try:
+            unsigned = getattr(tx, "unsigned", None)
+            if unsigned is None:
+                return None
+            if int(getattr(unsigned, "kind", -1)) != int(TxKind.TRANSFER):
+                return None
+            sender = getattr(unsigned, "sender", None)
+            payload = getattr(unsigned, "payload", None)
+            to = getattr(payload, "to", None) if payload is not None else None
+            amount = int(getattr(payload, "amount", 0) or 0) if payload is not None else 0
+            if not isinstance(sender, (bytes, bytearray)) or len(sender) != 32:
+                return None
+            if not isinstance(to, (bytes, bytearray)) or len(to) != 32:
+                return None
+        except Exception:
+            return None
+
+        status = self._receipt_status(bytes(tx_hash))
+        return PaymentRecord(
+            sender=bytes(sender),
+            to=bytes(to),
+            amount=amount,
+            height=int(inc_height),
+            status=status,
+            # Found by walking this block's own parent chain, so ancestry is
+            # established by construction rather than asserted.
+            in_ancestry=True,
+        )
+
+    def _receipt_status(self, tx_hash: bytes) -> str:
+        """SUCCESS / not-SUCCESS / unknown, from the receipt side-table.
+
+        THE ONE REMAINING PER-NODE INPUT. Headers commit ``receiptsRoot = 0``, so
+        execution outcome is not on-chain and cannot be re-derived from a block
+        body; the only source is ``b"\\x25" || tx_hash``, written best-effort by
+        ``BlockImporter._persist_receipts``. A node that snapshot-synced past the
+        range, or whose write was swallowed, answers ``unknown`` and the verifier
+        fails closed. That is safe while the gate is observe-only or disabled and
+        is a HARD PREREQUISITE to fix before enforcement — see the runbook.
+        """
+        from consensus.useful_work_verify import (
+            PAYMENT_EXECUTED,
+            PAYMENT_FAILED,
+            PAYMENT_STATUS_UNKNOWN,
+        )
+
+        kv = getattr(self._block_db, "kv", None)
+        if kv is None:
+            return PAYMENT_STATUS_UNKNOWN
+        try:
+            raw = kv.get(b"\x25" + bytes(tx_hash))
+        except Exception:
+            return PAYMENT_STATUS_UNKNOWN
+        if raw is None:
+            return PAYMENT_STATUS_UNKNOWN
+        try:
+            from core.types.receipt import Receipt as _Receipt, ReceiptStatus as _RS
+
+            rec = _Receipt.from_cbor(bytes(raw))
+        except Exception:
+            return PAYMENT_STATUS_UNKNOWN
+        try:
+            return PAYMENT_EXECUTED if int(rec.status) == int(_RS.SUCCESS) else PAYMENT_FAILED
+        except Exception:  # pragma: no cover - defensive
+            return PAYMENT_STATUS_UNKNOWN
+
+    def nullifier_used_in_ancestry(self, nullifier: bytes) -> Optional[bool]:
+        """True/False from the ancestry scan; None when it could not complete."""
+        self._walk()
+        if not self._complete:
+            return None
+        return bytes(nullifier) in self._spent_nullifiers
+
+
+def _tx_hash_for_index(tx) -> bytes:
+    """Canonical tx hash, matching what the receipt side-table is keyed by."""
+    from mempool.tx_hash import tx_hash_bytes as _tx_hash_bytes
+
+    return _tx_hash_bytes(tx)
 
 
 def _scan_block_frozen_addresses(block: Block, height: int) -> Optional[str]:
@@ -859,6 +1210,14 @@ class BlockImporter:
         # _init_fork_choice_from_db, so this is the source of truth that is
         # re-applied after every rebuild and short-circuits re-import.
         self._invalid_blocks: set[bytes] = set()
+        # FORK_USEFUL_WORK_VERIFY holds NO per-importer replay state by design.
+        # An earlier revision kept a MemoryNullifierStore here; it was written for
+        # side-chain blocks that never became canonical, never unwound on reorg,
+        # was emptied by a restart, and was absent on a snapshot-synced node — so
+        # an ordinary orphan made two honest nodes disagree about ACCEPTANCE, not
+        # merely about replay. Replay is now decided by re-deriving the tags from
+        # the block's own ancestors inside _ImporterChainView, which is
+        # self-unwinding and identical on every node holding the same chain.
         # Store full params dict for reward calculation (includes monetary.issuance)
         # If not provided, try to load from spec/params.yaml
         self.full_params_dict = full_params_dict
@@ -1582,6 +1941,32 @@ class BlockImporter:
                     ImportErrorCode.INVALID, height, h, False, f"quantum_beacon: {beacon_error}"
                 )
 
+            # FORK_USEFUL_WORK_VERIFY (C04 slice): verify the useful-work proofs
+            # the block carries — structure, ML-DSA-65 signature with the scheme
+            # pinned by the verifier, miner==worker, requester!=miner, receipt
+            # freshness against an ancestor anchor, a paid requester, and a
+            # single-use nullifier — and recompute Σψ under code-committed policy
+            # caps. Presence-gated (a block with no proofs is always valid) and
+            # DISABLED on mainnet by default; ANIMICA_USEFUL_WORK_SHADOW=1 makes it
+            # observe-only. Runs last among the gates so cheaper structural checks
+            # reject first and the coinbase identity used by the worker==miner
+            # comparison has already survived _validate_coinbase_outputs_nonzero.
+            useful_work_error = self._verify_block_useful_work_gated(
+                block=block,
+                header=header,
+                header_hash=h,
+                parent_hash=parent_hash,
+                height=height,
+            )
+            if useful_work_error is not None:
+                return ImportResult(
+                    ImportErrorCode.INVALID,
+                    height,
+                    h,
+                    False,
+                    f"useful_work: {useful_work_error}",
+                )
+
             # Persist header & block
             self._store_header(height, h, header)
             self._store_block(h, block)
@@ -1820,6 +2205,136 @@ class BlockImporter:
                     },
                 )
             return f"pow check failed: {e}"
+        return None
+
+    def _verify_block_useful_work_gated(
+        self,
+        *,
+        block: Block,
+        header: Header,
+        header_hash: bytes,
+        parent_hash: bytes,
+        height: int,
+    ) -> Optional[str]:
+        """FORK_USEFUL_WORK_VERIFY: verify the useful-work proofs a block carries.
+
+        Returns a rejection reason or None. Grandfathered below the activation
+        height, which is UNSET on mainnet by default — this gate cannot fire there
+        until an operator sets ANIMICA_FORK_USEFUL_WORK_VERIFY_HEIGHT.
+
+        PRESENCE-GATED: a block with no proofs is accepted at every height. It is
+        also a pure TIGHTENING — the recomputed Σψ is logged, never fed back into
+        acceptance, so this can only reject a block PoW already accepted and can
+        never admit one PoW rejected. Making Σψ count toward Θ would relax the work
+        requirement and needs a matching miner-side change; that is a separate fork.
+
+        Shadow mode (ANIMICA_USEFUL_WORK_SHADOW=1) logs the identical verdict and
+        returns None.
+
+        There is no nullifier STORE to write. Replay is decided by re-deriving the
+        tags from this block's own ancestors (see _ImporterChainView), so a shadow
+        node and an enforcing node compute the same answer from the same chain,
+        a detached branch unwinds itself, and a restart or a snapshot-restore
+        changes nothing. The earlier in-memory store did none of those and turned
+        an ordinary orphan into a permanent partition.
+        """
+        chain_id = int(self.params.chain_id)
+        if not is_fork_active(FORK_USEFUL_WORK_VERIFY, height, chain_id=chain_id):
+            return None
+
+        # Fast path with zero imports for the ~100% case (no proofs attached).
+        proofs = getattr(block, "proofs", ()) or ()
+        shadow = _useful_work_shadow(chain_id)
+        if not proofs and not shadow:
+            return None
+
+        try:
+            from consensus.useful_work_verify import (
+                POLICY_V1,
+                BlockContext,
+                block_miner_digest,
+                pq_backend_available,
+                verify_block_useful_work,
+            )
+        except Exception as e:  # pragma: no cover - a broken build, not a bad block
+            reason = f"verifier_unavailable:{type(e).__name__}:{e}"
+            log.error("useful_work: verifier import failed", extra={"height": height})
+            if shadow:
+                return None
+            # Fail-closed. This is a per-node input in a consensus decision and
+            # therefore a split risk; it is reachable only on a build where the
+            # verifier does not import, which the operator must fix before
+            # enforcing. The distinct reason string makes it obvious in logs.
+            return reason
+
+        _warn_if_pq_backend_missing(pq_backend_available)
+
+        miner_digest, miner_reason = block_miner_digest(block)
+        chain_view = _ImporterChainView(
+            block_db=self.block_db,
+            parent_hash=parent_hash,
+            height=height,
+            chain_id=chain_id,
+            policy=POLICY_V1,
+        )
+        ctx = BlockContext(
+            chain_id=chain_id,
+            height=int(height),
+            parent_hash=bytes(parent_hash),
+            header_hash=bytes(header_hash),
+            theta_micro=int(_weight_micro_of(header, None, self.params)),
+            poies_policy_root=bytes(getattr(header, "poiesPolicyRoot", b"") or b""),
+            miner_digest=miner_digest,
+            chain=chain_view,
+            policy=POLICY_V1,
+        )
+
+        try:
+            report = verify_block_useful_work(block, ctx)
+        except Exception as e:  # pragma: no cover - the verifier is total by design
+            log.error(
+                "useful_work: verifier raised (treated as reject)",
+                extra={"height": height, "error": f"{type(e).__name__}: {e}"},
+            )
+            if shadow:
+                return None
+            return f"verifier_error:{type(e).__name__}"
+
+        reason = report.reason
+        if reason is None and proofs and miner_reason is not None:
+            # Only matters when proofs are present: an unattributable block that
+            # carries none is untouched by this rule.
+            reason = f"miner:{miner_reason}"
+
+        if shadow:
+            # Observe-only. Log unconditionally when proofs are present (the first
+            # non-zero proof count is the go/no-go signal step (3) is waiting on),
+            # and at debug when there are none.
+            extra = report.log_extra()
+            extra["shadow"] = True
+            extra["would_reject"] = reason is not None
+            if reason is not None:
+                log.error(
+                    "useful_work SHADOW: block would be rejected (observe-only): %s",
+                    reason,
+                    extra=extra,
+                )
+            elif proofs:
+                log.warning("useful_work SHADOW: block carries proofs (accepted)", extra=extra)
+            else:
+                log.debug("useful_work SHADOW: no proofs", extra=extra)
+            return None
+
+        if reason is not None:
+            log.warning("useful_work: rejecting block: %s", reason, extra=report.log_extra())
+            return reason
+
+        # Nothing to record: the tags this block spends become visible to every
+        # descendant automatically, because the replay check re-derives them from
+        # ancestor bodies. State that has to be written is state that has to be
+        # unwound, and the unwind is what the previous design got wrong.
+        if proofs:
+            log.info("useful_work: verified block proofs", extra=report.log_extra())
         return None
 
     def _tx_hash(self, tx: Tx) -> bytes:
