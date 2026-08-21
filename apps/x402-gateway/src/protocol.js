@@ -119,10 +119,46 @@ function validatePaymentRequirements(a) {
  * top-level resource object -> per-accepts `resource` string URL, and carries
  * description/mimeType per entry.
  */
+/**
+ * Render an accepts array into the shape DISCOVERY INDEXERS parse — the same
+ * one toV1Body emits on the wire: `maxAmountRequired` (not `amount`), a
+ * per-entry `resource` URL, description/mimeType and the Bazaar-style
+ * outputSchema. Catalog entries built any other way are unparseable to a
+ * validator, which is how a catalog of 24 live products can be reported as
+ * "0 valid resources".
+ */
+function toDiscoveryAccepts(accepts, { resource, description, mimeType, outputSchema }) {
+  return (accepts || []).map((a) => ({
+    scheme: a.scheme,
+    // v1 slug where one exists (`base`), CAIP-2 otherwise (`animica:1`).
+    network: V1_NETWORK_SLUGS[a.network] || a.network,
+    network_caip2: a.network,
+    maxAmountRequired: a.amount,
+    asset: a.asset,
+    payTo: a.payTo,
+    resource,
+    description: description || '',
+    mimeType: mimeType || 'application/json',
+    outputSchema: outputSchema || null,
+    maxTimeoutSeconds: a.maxTimeoutSeconds,
+    extra: a.extra || undefined,
+  }));
+}
+
 function toV1Body(paymentRequired, outputSchema) {
+  // The v2 `extensions` block is descriptive, not payment-critical, and v1 has
+  // no slot for it — so it was being dropped on the floor for every v1 client.
+  // One field survives that trim deliberately: the FREE TRIAL. A first-contact
+  // agent decides buy-or-skip at the 402 and mostly will not go and fetch the
+  // catalog to look for a sample; if the offer does not say "you can try this
+  // for nothing", the trial may as well not exist. Unknown top-level keys are
+  // ignored by v1 clients, so this is additive and cannot break a payer.
+  const animica = (paymentRequired.extensions && paymentRequired.extensions.animica) || null;
+  const freeTrial = animica && animica.free_trial ? animica.free_trial : null;
   return {
     x402Version: 1,
     error: paymentRequired.error || 'Payment required',
+    ...(freeTrial ? { freeTrial } : {}),
     accepts: paymentRequired.accepts.map((a) => ({
       scheme: a.scheme,
       network: V1_NETWORK_SLUGS[a.network] || a.network,
@@ -215,6 +251,7 @@ function buildSettlementResponse({ success, transaction, network, payer, errorRe
 }
 
 module.exports = {
+  toDiscoveryAccepts,
   HEADER_PAYMENT_REQUIRED,
   HEADER_PAYMENT_SIGNATURE,
   HEADER_PAYMENT_RESPONSE,

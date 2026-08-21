@@ -603,12 +603,37 @@ function freeOperation({ product, route, l }) {
     path: templated,
     method: route.method.toLowerCase(),
     op: {
-      operationId: `${product.id}_free_${route.method.toLowerCase()}`,
-      summary: `${product.title || product.id} — free disclosure`,
+      // Include the PATH, not just the method: a product may expose more than
+      // one free route (forecast has both a record lookup and its published
+      // calibration) and `<id>_free_get` collides between them, producing an
+      // OpenAPI document with duplicate operationIds that generators reject.
+      operationId: `${product.id}_free_${route.method.toLowerCase()}_${route.path
+        .replace(/\{[^}]*\}/g, '')
+        .replace(/[^a-z0-9]+/gi, '_')
+        .replace(/^_|_$/g, '')}`,
+      // A route may name itself. Falling back to the PARENT product's title is
+      // right for a product's own disclosure route (random_commit's reveal) and
+      // wrong the moment a product carries free routes that are their own
+      // thing: every Paid Crawl endpoint was published to the directories as
+      // "Crawl pass (small) — free disclosure", because they all hang off the
+      // pass product. The summary is what an indexer shows a buyer, so a route
+      // that knows its own name gets to use it.
+      summary: route.title || `${product.title || product.id} — free disclosure`,
       description: `${route.description || 'Free, unpaid endpoint.'}\n\nNo payment is ever requested here.`,
       tags: [TAGS[product.id] || 'products'],
       parameters: params,
-      responses: {
+      // A free POST route takes a body like any other, and publishing no schema
+      // for it is the same defect the paid side already fixed: an agent reading
+      // this document cannot call the endpoint at all. Five live Paid Crawl
+      // routes — the whole operator-onboarding path — were undocumented here.
+      // Emitted from the route's own declaration, so it cannot invent fields.
+      ...(route.bodyFields ? { requestBody: requestBodyFrom({ bodyFields: route.bodyFields }) } : {}),
+      // The 200 body and the reveal-specific 425 belong to random_commit, not
+      // to free routes in general — emitting them everywhere told indexers that
+      // /x402/crawl/decide answers with a RandomReveal and can be "still
+      // sealed". Opt in with `revealSemantics: true`; everything else gets an
+      // honest generic shape.
+      responses: route.revealSemantics ? {
         200: {
           description: 'Disclosed.',
           content: { 'application/json': { schema: { $ref: '#/components/schemas/RandomReveal' } } },
@@ -619,6 +644,19 @@ function freeOperation({ product, route, l }) {
         },
         404: {
           description: 'No such commitment (or it aged out of the retention window).',
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+        },
+      } : {
+        200: {
+          description: 'OK. Free, unpaid response.',
+          content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } },
+        },
+        400: {
+          description: 'The request was malformed. Nothing was charged, because nothing here is ever charged.',
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+        },
+        404: {
+          description: 'No such resource.',
           content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
         },
       },

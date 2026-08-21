@@ -93,6 +93,11 @@ function links(cfg) {
     catalog: `${base}/x402`,
     wellKnown: `${base}/.well-known/x402`,
     openapi: `${base}/x402/openapi.json`,
+    // The Paid Crawl protocol document. Named here because every other entry
+    // in this catalog costs money: without it, an agent acting for a WEBSITE
+    // OWNER can see the passes for sale and has no way to discover that
+    // setting up the selling side is free.
+    paidCrawl: `${base}/.well-known/paid-crawl`,
     stats: `${base}/x402/stats`,
     health: `${base}/x402/healthz`,
     docFor: (productId) => `${base}/x402#${anchorFor(productId)}`,
@@ -120,6 +125,7 @@ function identity(cfg) {
       catalog: l.catalog,
       well_known: l.wellKnown,
       openapi: l.openapi,
+      paid_crawl: l.paidCrawl,
       stats: l.stats,
     },
   };

@@ -37,16 +37,29 @@ const crypto = require('node:crypto');
 
 const cfgMod = require('./config');
 const protocol = require('./protocol');
-const { facilitatorClient, buildAccepts, buildPaymentRequiredForRoute } = require('./middleware');
+const { facilitatorClient, buildAccepts, buildPaymentRequiredForRoute, evmAuthHeaderFor } = require('./middleware');
+const { buildCdpBazaarExtension } = require('./facilitator-cdp/bazaar');
 const { Counter } = require('./metrics');
 const { newRequestId } = require('./logging');
-const { ProductError, ProductUnavailable } = require('./products/errors');
+const { ProductError, ProductUnavailable, teachingError } = require('./products/errors');
+const { parseCreditToken, voucherIdOf, atomicToUsd } = require('./products/credits');
 
 const MAX_IDEM_KEY_LEN = 200;
 const DEFAULT_MAX_BODY = 64 * 1024;
 
 function sha256Hex(s) {
   return crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function suppliedInputKeys(ctx, url) {
+  const keys = [];
+  if (isPlainObject(ctx.json)) keys.push(...Object.keys(ctx.json));
+  for (const k of url.searchParams.keys()) keys.push(k);
+  return keys;
 }
 
 function readBody(req, maxBytes) {
@@ -81,15 +94,47 @@ function createPaywall({
   facilitatorClientFactory,
   now = Date.now,
 }) {
-  const makeFacilitator = facilitatorClientFactory || ((url) => facilitatorClient(url, { fetchImpl }));
+  // THIS is the client that verifies and settles a real payment. It MUST carry
+  // the facilitator credentials — building it without them yields a gateway
+  // that boots clean, quotes every 402 correctly, and 401s on every settlement.
+  const evmAuthHeader = evmAuthHeaderFor(cfg);
+  const makeFacilitator = facilitatorClientFactory
+    || ((url) => facilitatorClient(url, { fetchImpl, authHeader: evmAuthHeader, logger }));
   const extra = {
     idempotentReplays: new Counter('x402_idempotent_replays_total', 'Paid requests answered from the Idempotency-Key store (no new charge)'),
     incidents: new Counter('x402_incidents_total', 'Settled payments whose downstream service failed (signed receipt issued)'),
+    creditSpends: new Counter('x402_credit_spends_total', 'Paid requests served from a prepaid credit voucher (no on-chain settlement, no gas)'),
+    creditRefunds: new Counter('x402_credit_refunds_total', 'Credit debits reversed because the service failed or the caller was refused'),
   };
+
+  // The ANM lane is settled IN-PROCESS rather than through a facilitator
+  // HTTP service: there is nothing to delegate. The payer already signed the
+  // transaction and pays their own fee, so settling is "submit it and watch
+  // for execution" against the local node — no custody, no gas budget, no
+  // separate process to keep in sync.
+  let anmFacilitator = null;
+  function anmFacilitatorLazy() {
+    if (!anmFacilitator) {
+      const { createAnmFacilitator } = require('./facilitator-anm');
+      const { createNodeClient } = require('./animica-node');
+      const { toAccountDigestHex } = require('./bech32m');
+      anmFacilitator = createAnmFacilitator({
+        cfg,
+        node: anmNode || (anmNode = createNodeClient(cfg.animicaRpcUrl, { fetchImpl })),
+        store: gatewayStore,
+        toAccountDigestHex,
+        now,
+        logger,
+      });
+    }
+    return anmFacilitator;
+  }
+  let anmNode = null;
 
   function facilitatorFor(network) {
     if (network.startsWith('eip155:')) return makeFacilitator(cfg.evmFacilitatorUrl);
     if (network.startsWith('solana:')) return makeFacilitator(cfg.svmFacilitatorUrl);
+    if (network.startsWith('animica:')) return anmFacilitatorLazy();
     throw new Error(`no facilitator for network ${network}`);
   }
 
@@ -114,6 +159,16 @@ function createPaywall({
       // landing page. Purely descriptive — nothing a payer must parse.
       productId: product.id,
       productName: product.title || product.id,
+      // Free trial, if this product has one. Carried into the 402's descriptive
+      // metadata so an agent meeting the paywall for the first time learns it
+      // can evaluate the service for nothing BEFORE deciding to pay — the whole
+      // point is that the decision to buy should not have to be made blind.
+      trialPath: product.trialLimitPerDay ? `${product.path}/trial` : null,
+      trialLimitPerDay: product.trialLimitPerDay || 0,
+      // The trial mirrors the paid route's METHOD — a GET product's trial is a
+      // GET. Carried explicitly because the gate route is a flat descriptor and
+      // does not keep the product's route list.
+      trialMethod: (product.routes && product.routes[0] && product.routes[0].method) || 'POST',
     };
     // Pre-purchase honesty in the offer itself: the randomness products
     // publish the entropy source they last observed (software-fallback /
@@ -177,6 +232,9 @@ function createPaywall({
    *     becomes a signed receipt + incident instead of a bare 500.
    */
   function buildDelivery({ product, out, settlement, wireVersion, paymentMeta }) {
+    // Runs inside the PRE-FLIGHT rehearsal, so an unusable envelope is caught
+    // before anything settles on-chain rather than after.
+    assertDeliverable(product, out);
     const { headers: sHeaders, v2 } = settlementHeaders(settlement, wireVersion);
     let body = out.body;
     let contentType = (out.headers && out.headers['content-type']) || product.mimeType || 'application/json';
@@ -189,6 +247,42 @@ function createPaywall({
     const headers = Object.assign({}, out.headers, sHeaders, { 'content-type': contentType });
     if (out.headers && out.headers['content-encoding']) headers['content-encoding'] = out.headers['content-encoding'];
     return { status: out.status || 200, headers, body, v2 };
+  }
+
+  /**
+   * Delivery for a credit-funded call. Mirrors buildDelivery, minus the x402
+   * settlement headers: no payment settled on-chain for this response, so it
+   * must not carry a settlement header claiming one did. The credit facts ride
+   * on their own x-animica-credit-* headers and in the body's payment block.
+   */
+  /**
+   * A handler must return { bodyObj } or { body }. Returning the payload bare
+   * — which reads perfectly naturally — produced a 200 with an EMPTY body on a
+   * fully charged call: `out` was truthy, so no failure path fired, and the
+   * caller paid for nothing. Throwing here routes it into the existing
+   * serialization-failure branch, which refunds credit and settles nobody.
+   */
+  function assertDeliverable(product, out) {
+    if (out && (out.bodyObj !== undefined || out.body !== undefined)) return;
+    throw new Error(
+      `product ${product.id} returned an envelope with neither bodyObj nor body `
+      + '(a handler must return { status, bodyObj }, not the payload on its own)'
+    );
+  }
+
+  function buildCreditDelivery({ product, out, creditMeta, creditHeaders }) {
+    assertDeliverable(product, out);
+    let body = out.body;
+    let contentType = (out.headers && out.headers['content-type']) || product.mimeType || 'application/json';
+    if (out.bodyObj !== undefined) {
+      const obj = out.bodyObj;
+      if (product.injectPayment !== false) obj.payment = creditMeta;
+      body = JSON.stringify(obj);
+      contentType = 'application/json';
+    }
+    const headers = Object.assign({}, out.headers, creditHeaders, { 'content-type': contentType });
+    if (out.headers && out.headers['content-encoding']) headers['content-encoding'] = out.headers['content-encoding'];
+    return { status: out.status || 200, headers, body };
   }
 
   /**
@@ -223,12 +317,39 @@ function createPaywall({
     return send(res, d.status, d.headers, d.body);
   }
 
-  function countSettled(product, matched, started) {
+  function countSettled(product, matched, started, settlement) {
     metrics.settlementsTotal.inc({ product: product.id });
     if (matched.asset === cfg.usdcAsset) {
       metrics.revenueUsdc.inc({ product: product.id }, BigInt(matched.amount));
     }
     metrics.paymentLatencySeconds.observe({ product: product.id }, (now() - started) / 1000);
+
+    // A THIRD-PARTY facilitator writes no ledger we can read. Our own writes
+    // every settlement to its payments DB, which is what the settlements /
+    // revenue / reconcile commands report from — so the moment settlement moved
+    // to CDP those went blind and an operator would read "no sales since
+    // yesterday" while money was arriving. Record what we can see ourselves.
+    // Bookkeeping must never fail a paid request that already succeeded.
+    if (cfg.facilitatorMode === 'remote' && gatewayStore
+        && typeof gatewayStore.recordRemoteSettlement === 'function'
+        && settlement && settlement.success !== false) {
+      try {
+        gatewayStore.recordRemoteSettlement({
+          settledAt: now(),
+          product: product.id,
+          resource: product.path || null,
+          payer: settlement.payer || null,
+          tx: settlement.transaction || null,
+          network: matched.network,
+          asset: matched.asset,
+          amountAtomic: matched.amount,
+          priceUsd: product.priceUsd,
+          facilitator: cfg.evmFacilitatorUrl,
+        });
+      } catch (e) {
+        log.warn && log.warn('remote_settlement_record_failed', { error: e.message });
+      }
+    }
   }
 
   /** The full gate for one matched product route. */
@@ -276,33 +397,50 @@ function createPaywall({
     // 1. Param validation: caps and shape problems answer 400 BEFORE any
     //    payment is requested — never sell a request we know is invalid.
     //
-    //    EXCEPTION for discovery: a request carrying NO payment is a probe,
-    //    and the 402 IS the advertisement. x402 indexers (and any agent
-    //    meeting the endpoint for the first time) probe blind — no body, or a
-    //    bare GET — and a 400 there makes the product invisible: it never
-    //    learns the price, asset or schema because it never sees the offer.
-    //    So an unpaid request always gets the 402; validation still runs
-    //    before settlement for anything that actually carries payment, which
-    //    is what keeps "never charge for a request we will refuse" true.
-    //    A BARE PROBE is the exception, and only a bare one: no payment, no
-    //    body, no query. That is what an indexer or a first-contact agent
-    //    sends, and answering it 400 makes the product invisible — it never
-    //    learns the price, asset or input schema, because it never sees the
-    //    offer. A request that DID supply input and got it wrong still gets
-    //    the 400, which is the more useful answer for a caller that is
-    //    genuinely trying.
+    //    EXCEPTION — a BARE PROBE, and only a bare one: no funding, no input
+    //    of any kind. The 402 IS the advertisement — it is the only surface
+    //    carrying the price, the asset, the free trial and the input schema —
+    //    so answering a blind probe 400 makes a live product read as broken.
+    //    The x402 trust monitor (x402-observer, x402.fuchss.app/trust) sends
+    //    exactly `{}` and was getting 400 "missing required field" 92 times a
+    //    day across four products, scoring live paid endpoints as erroring.
+    //
+    //    A caller that supplied SOMETHING and got it wrong still gets the 400:
+    //    quoting a price for a request we would refuse would be dishonest, and
+    //    the specific error is the more useful answer. What that 400 must not
+    //    be is a dead end — see teachingError, which puts the schema and the
+    //    price into every refusal. ZeroBot (zero.xyz/bot) POSTed
+    //    /x402/classify 77 times over two days against a 400 that named one
+    //    missing field and quoted nothing; it had nothing to correct towards.
+    //
+    //    Anything carrying funding — a payment header or a credit voucher —
+    //    validates in full, which is what keeps "never take value for a
+    //    request we will refuse" true.
     const carriesPayment = Boolean(
       req.headers[protocol.HEADER_PAYMENT_SIGNATURE] || req.headers[protocol.HEADER_X_PAYMENT]);
-    const bareProbe = !carriesPayment
-      && !(ctx.rawBody && ctx.rawBody.length)
-      && Array.from(url.searchParams.keys()).length === 0;
+    // A voucher spend is funding too and obeys the same rule as a payment.
+    const carriesFunding = carriesPayment || Boolean(parseCreditToken(req.headers));
+    // A non-empty body we could not parse into a JSON object is a real error,
+    // not a probe: the caller sent something and it was unusable as input.
+    const unusableBody = Boolean(ctx.rawBody && ctx.rawBody.length) && !isPlainObject(ctx.json);
+    const bareProbe = !carriesFunding
+      && !unusableBody
+      && suppliedInputKeys(ctx, url).length === 0;
+
+    const gateRoute = gateRouteOf(product, route.path);
+
+    // Carried into the 402 so the offer says why the request as sent was not
+    // usable. Without it a first-contact caller gets a bare "Payment required"
+    // and cannot tell a paywall from a rejection.
+    let offerReason = null;
     try {
       ctx.params = product.validate ? product.validate(ctx) : {};
     } catch (e) {
       if (!(e instanceof ProductError)) throw e;
       if (!bareProbe) {
-        return sendJson(res, e.status, e.body || { error: 'invalid_request', detail: e.message });
+        return sendJson(res, e.status, teachingError(product, e.body || { error: 'invalid_request', detail: e.message }));
       }
+      offerReason = e.message;
       ctx.params = {}; // advertise instead: fall through to the 402
     }
 
@@ -318,11 +456,203 @@ function createPaywall({
       return sendJson(res, 503, avail.body || { error: avail.reason || `${product.id}_unavailable`, detail: avail.detail });
     }
 
-    const gateRoute = gateRouteOf(product, route.path);
+    // gateRoute was built before validation (it is pure) so a refusal can
+    // quote the same price and schema the offer would.
     const accepts = buildAccepts(gateRoute, cfg);
     if (accepts.length === 0) {
       log.error && log.error('no_payment_lanes', {});
       return sendJson(res, 503, { error: 'x402_unconfigured' });
+    }
+
+    // Idempotency-Key is parsed here rather than at step 5 because the credit
+    // path below needs it too, and a key must mean the same thing whichever
+    // way the call is funded.
+    const idemKeyRawEarly = req.headers['idempotency-key'];
+    const idemKeyEarly = idemKeyRawEarly === undefined ? null : String(idemKeyRawEarly);
+    if (idemKeyEarly !== null && (idemKeyEarly.length === 0 || idemKeyEarly.length > MAX_IDEM_KEY_LEN)) {
+      return sendJson(res, 400, { error: 'bad_idempotency_key', detail: `Idempotency-Key must be 1..${MAX_IDEM_KEY_LEN} chars` });
+    }
+
+    // 2b. PREPAID CREDIT REDEMPTION.
+    //
+    // Placed deliberately AFTER validate() and after the availability gate,
+    // so a credit spend obeys exactly the same two rules a payment does: we
+    // never take value for a request we are about to refuse, and we never
+    // serve (or charge for) a product that is currently unavailable.
+    //
+    // Placed BEFORE the facilitator, because the whole point of a voucher is
+    // that these calls never touch the chain: no verify, no settle, no gas.
+    // A credit-funded response therefore carries NO x402 settlement header —
+    // nothing settled on-chain, and claiming otherwise on the wire would be a
+    // lie to the client. It gets its own header channel instead.
+    const creditToken = (cfg.creditsEnabled && product.creditable !== false && gatewayStore)
+      ? parseCreditToken(req.headers)
+      : null;
+    if (creditToken) {
+      const voucherId = voucherIdOf(creditToken);
+      const priceAtomic = BigInt(product.priceAtomic);
+
+      // Readiness re-check immediately before the debit — the same mandatory
+      // pre-settle hook the payment path runs. A product that cannot serve
+      // must not spend anyone's balance discovering that.
+      try {
+        ctx.pinned = product.preSettle ? await product.preSettle(ctx) : {};
+      } catch (e) {
+        if (e instanceof ProductError) return sendJson(res, e.status, e.body || { error: 'unavailable', detail: e.message });
+        if (e instanceof ProductUnavailable) return sendJson(res, 503, { error: e.reason, detail: e.message });
+        return sendJson(res, 503, { error: `${product.id}_unavailable`, detail: e.message });
+      }
+
+      const debit = gatewayStore.debitVoucher({
+        voucherId,
+        amountAtomic: priceAtomic.toString(),
+        product: product.id,
+        resource: route.path,
+        requestId,
+        now: now(),
+      });
+
+      if (!debit.ok) {
+        // A voucher that cannot pay is NOT an error state — it just means
+        // this call has to be paid for directly. Answer the ordinary 402 so
+        // the agent can settle on-chain without a second round trip, and say
+        // in a header why the credit did not apply.
+        log.info && log.info('credit_declined', { reason: debit.reason });
+        return send402(res, gateRoute, `prepaid credit not applied: ${debit.reason}`, {
+          'x-animica-credit-status': debit.reason,
+          'x-animica-credit-balance': debit.balanceBefore || '0',
+          'x-animica-credit-required': priceAtomic.toString(),
+        });
+      }
+
+      extra.creditSpends && extra.creditSpends.inc({ product: product.id });
+
+      const creditMeta = {
+        method: 'prepaid_credit',
+        voucher_id: voucherId,
+        price_usd: product.priceUsd,
+        amount_atomic: priceAtomic.toString(),
+        currency: 'USDC',
+        balance_after_atomic: debit.balanceAfter,
+        balance_after_usdc: atomicToUsd(debit.balanceAfter),
+        settlement: 'none — served from prepaid credit; no on-chain settlement and no gas was spent for this call',
+      };
+      const creditHeaders = {
+        'x-animica-credit-status': 'spent',
+        'x-animica-credit-spent': priceAtomic.toString(),
+        'x-animica-credit-balance': debit.balanceAfter,
+      };
+
+      // Idempotency works here too, keyed on the voucher rather than a
+      // payment fingerprint: same key + same voucher = the stored outcome,
+      // never a second debit.
+      const creditFingerprint = `credit:${voucherId}`;
+      if (idemKeyEarly !== null) {
+        const row = gatewayStore.getIdempotent(idemKeyEarly, creditFingerprint);
+        if (row) {
+          // The debit above already happened, so give it straight back —
+          // a replay must not cost the holder a second call.
+          gatewayStore.refundVoucher({
+            voucherId, amountAtomic: priceAtomic.toString(),
+            product: product.id, resource: route.path, requestId, now: now(),
+          });
+          if (row.resource !== route.path) {
+            return sendJson(res, 409, {
+              error: 'idempotency_key_conflict',
+              detail: 'this Idempotency-Key + voucher was already used for a different resource',
+              resource: row.resource,
+            });
+          }
+          return replay(res, product, row);
+        }
+      }
+
+      // Identify the buyer on the CREDITS path too. There is no EVM payer
+      // here — the buyer is a prepaid voucher — but a product that records who
+      // bought something (the Paid Crawl licence) must not silently produce a
+      // receipt with no buyer just because they paid with credits instead of
+      // on-chain. The voucher id is the durable identifier we actually have.
+      ctx.payer = `voucher:${voucherId}`;
+
+      let out = null;
+      let lastErr = null;
+      for (let attempt = 1; attempt <= 2 && !out; attempt++) {
+        try {
+          out = await product.handler(ctx);
+        } catch (e) {
+          lastErr = e;
+          if (e instanceof ProductError) {
+            // Caller's fault, discovered late. Refund: they asked for
+            // something we refused, so they keep their credit.
+            gatewayStore.refundVoucher({
+              voucherId, amountAtomic: priceAtomic.toString(),
+              product: product.id, resource: route.path, requestId, now: now(),
+            });
+            return sendJson(res, e.status, e.body || { error: 'invalid_request', detail: e.message }, {
+              'x-animica-credit-status': 'refunded',
+            });
+          }
+          if (e.retryable !== true || attempt === 2) break;
+          log.warn && log.warn('downstream_retry_credit', { attempt, error: e.message });
+        }
+      }
+
+      if (!out) {
+        // THE ADVANTAGE OF CREDIT OVER SETTLEMENT: an on-chain payment
+        // cannot be un-sent, so a failure there becomes a signed receipt and
+        // an incident row for manual refund. A debit CAN be reversed, so the
+        // holder is simply made whole, automatically, right now.
+        const refund = gatewayStore.refundVoucher({
+          voucherId, amountAtomic: priceAtomic.toString(),
+          product: product.id, resource: route.path, requestId, now: now(),
+        });
+        log.error && log.error('credit_call_failed_refunded', {
+          error: lastErr && lastErr.message, refunded: refund.ok,
+        });
+        return sendJson(res, 502, {
+          error: 'service_failed',
+          detail: lastErr ? lastErr.message : 'the service did not produce a result',
+          credit_refunded: refund.ok,
+          balance_atomic: refund.balanceAfter || null,
+          note: refund.ok
+            ? 'your credit was refunded in full — you were not charged for this call'
+            : 'the refund did not apply; contact the operator with this request id',
+          request_id: requestId,
+        }, { 'x-animica-credit-status': refund.ok ? 'refunded' : 'refund_failed' });
+      }
+
+      let d;
+      try {
+        d = buildCreditDelivery({ product, out, creditMeta, creditHeaders });
+      } catch (e) {
+        const refund = gatewayStore.refundVoucher({
+          voucherId, amountAtomic: priceAtomic.toString(),
+          product: product.id, resource: route.path, requestId, now: now(),
+        });
+        return sendJson(res, 500, {
+          error: 'response_serialization_failed',
+          detail: e.message,
+          credit_refunded: refund.ok,
+        });
+      }
+      if (idemKeyEarly !== null) {
+        gatewayStore.putIdempotent({
+          idemKey: idemKeyEarly,
+          paymentFingerprint: creditFingerprint,
+          resource: route.path,
+          status: d.status,
+          contentType: d.headers['content-type'],
+          contentEncoding: d.headers['content-encoding'] || null,
+          body: d.body,
+          settlementHeader: null,
+          settlementTx: null,
+        });
+      }
+      log.info && log.info('credit_request_served', {
+        product: product.id, voucher: voucherId.slice(0, 12),
+        balance_after: debit.balanceAfter, latency_ms: now() - started,
+      });
+      return send(res, d.status, d.headers, d.body);
     }
 
     // 3. Inbound payment (or the 402 that asks for one).
@@ -333,7 +663,12 @@ function createPaywall({
       if (e instanceof protocol.PaymentParseError) return send402(res, gateRoute, e.message);
       throw e;
     }
-    if (!parsed) return send402(res, gateRoute);
+    if (!parsed) {
+      // A first-contact caller whose input we could not use gets the offer AND
+      // the reason, so the 402 is self-correcting rather than a bare paywall.
+      return send402(res, gateRoute,
+        offerReason ? `Payment required. Your request as sent is not usable: ${offerReason}` : undefined);
+    }
     const { wireVersion, paymentPayload } = parsed;
 
     // 4. The client must have accepted terms WE offered, verbatim. The
@@ -365,11 +700,7 @@ function createPaywall({
     //    The stored row is bound to its resource: replaying at a DIFFERENT
     //    endpoint (possible when two products share a price and therefore
     //    byte-identical accepts) is a 409, never another product's body.
-    const idemKeyRaw = req.headers['idempotency-key'];
-    const idemKey = idemKeyRaw === undefined ? null : String(idemKeyRaw);
-    if (idemKey !== null && (idemKey.length === 0 || idemKey.length > MAX_IDEM_KEY_LEN)) {
-      return sendJson(res, 400, { error: 'bad_idempotency_key', detail: `Idempotency-Key must be 1..${MAX_IDEM_KEY_LEN} chars` });
-    }
+    const idemKey = idemKeyEarly;   // parsed and validated above
     if (idemKey) {
       const row = gatewayStore.getIdempotent(idemKey, fingerprint);
       if (row) {
@@ -393,9 +724,32 @@ function createPaywall({
     } catch (e) {
       return send402(res, gateRoute, e.message);
     }
+    // What this resource IS, for a facilitator that indexes what it settles.
+    // Rebuilt from the same function that produced the 402, so the metadata a
+    // directory records and the metadata we advertised cannot drift apart —
+    // and derived from our route, never from the payer's payload.
+    //
+    // The `bazaar` key is OVERRIDDEN with CDP's dialect. Our 402 publishes that
+    // key in the shape x402scan and 402 Index read (field descriptors), which
+    // is how all 44 products got listed there; CDP reads the same key expecting
+    // example values plus a validating JSON Schema, and rejects the descriptor
+    // form as "invalid discovery configuration" while settling the payment
+    // anyway. Both consumers get the shape they parse — see facilitator-cdp/bazaar.js.
+    let discovery;
+    try {
+      const offered = buildPaymentRequiredForRoute(gateRoute, cfg);
+      let extensions = offered.extensions;
+      const cdpBazaar = buildCdpBazaarExtension(gateRoute);
+      if (cdpBazaar) extensions = Object.assign({}, extensions, { bazaar: cdpBazaar });
+      discovery = { resource: offered.resource, extensions };
+    } catch (e) {
+      // Discovery is a marketing concern; a payment in flight is not. If the
+      // descriptive block cannot be built, settle without it.
+      log.warn && log.warn('discovery_metadata_build_failed', { error: e.message });
+    }
     let verdict;
     try {
-      verdict = await fc.verify(paymentPayload, matched);
+      verdict = await fc.verify(paymentPayload, matched, discovery);
     } catch (e) {
       log.error && log.error('facilitator_verify_unreachable', { error: e.message });
       return sendJson(res, 502, { error: 'facilitator_unreachable' });
@@ -405,6 +759,14 @@ function createPaywall({
       return send402(res, gateRoute, verdict.invalidReason || 'payment invalid');
     }
     const payer = verdict.payer;
+    // The verified payer address, available to the product's own handler.
+    // execute-then-settle runs the handler BEFORE settlement, so a product
+    // that needs to record who bought something cannot wait for
+    // ctx.settlement — it would always see null. (Observed: every Paid Crawl
+    // licence was issued with "payer": null, which is most of the value of a
+    // provenance receipt.) Verification already established this address, so
+    // it is known and trustworthy at handler time.
+    ctx.payer = payer || null;
     const paymentBase = {
       network: matched.network,
       asset: matched.asset,
@@ -415,7 +777,11 @@ function createPaywall({
 
     async function settleNow() {
       try {
-        return await fc.settle(paymentPayload, matched);
+        // The third argument is the verify verdict. The EVM facilitator
+        // ignores it; the ANM lane uses it to avoid decoding the same
+        // transaction twice (and to settle exactly what it verified). The
+        // fourth is the discovery metadata a remote facilitator indexes from.
+        return await fc.settle(paymentPayload, matched, verdict, discovery);
       } catch (e) {
         // Transport failure mid-settle: the outcome is UNKNOWN (the tx may
         // land). settleFailed() below treats this exactly like a
@@ -643,7 +1009,7 @@ function createPaywall({
       }
       const settlement = await settleNow();
       if (!settlement.success) return settleFailed(settlement);
-      countSettled(product, matched, started);
+      countSettled(product, matched, started, settlement);
       ctx.settlement = settlement;
       const paymentMeta = Object.assign({}, paymentBase, { settlement_tx: settlement.transaction, payer: settlement.payer || payer || undefined });
       log.info && log.info('paid_request_served', { payer, amount: matched.amount, settlement_tx: settlement.transaction, status: out.status || 200, latency_ms: now() - started });
@@ -667,7 +1033,7 @@ function createPaywall({
 
     const settlement = await settleNow();
     if (!settlement.success) return settleFailed(settlement);
-    countSettled(product, matched, started);
+    countSettled(product, matched, started, settlement);
     ctx.settlement = settlement;
     ctx.paymentMeta = Object.assign({}, paymentBase, { settlement_tx: settlement.transaction, payer: settlement.payer || payer || undefined });
 

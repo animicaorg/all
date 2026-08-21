@@ -158,6 +158,22 @@ function load(overrides = {}) {
     );
   }
 
+  // A CDP facilitator URL without credentials is the worst of both worlds: the
+  // gateway boots, health checks pass, every 402 is quoted normally, and then
+  // EVERY settlement fails 401. Refuse at boot instead — the same class of
+  // silent-break as the payTo mismatch that took settlement down in August.
+  if (facilitatorMode === 'remote' && /(^|\.)cdp\.coinbase\.com/i.test(remoteFacilitatorUrl)) {
+    const id = env('X402_CDP_API_KEY_ID', '');
+    const secret = env('X402_CDP_API_KEY_SECRET', '');
+    if (!id || !secret) {
+      throw new Error(
+        'X402_FACILITATOR_URL points at the CDP facilitator, which authenticates every /verify and '
+        + '/settle with a JWT signed by a CDP API key. Set X402_CDP_API_KEY_ID and '
+        + 'X402_CDP_API_KEY_SECRET, or this gateway would quote payments it can never settle.'
+      );
+    }
+  }
+
   const cfg = {
     enabled: env('ANM_X402_ENABLED', '0') === '1',
 
@@ -174,9 +190,43 @@ function load(overrides = {}) {
     // option is PayAI (https://facilitator.payai.network); there is no
     // default remote and no implicit third party.
     facilitatorMode,
+
+    // ---------------------------------------------------------------------
+    // CDP FACILITATOR CREDENTIALS (mode=remote against CDP).
+    //
+    // Operator-authorised 2026-08-19: route all endpoints through the CDP
+    // facilitator so the catalog gets indexed into the Bazaar. Indexing is a
+    // side effect of THAT facilitator settling a payment for an endpoint that
+    // advertises Bazaar metadata, so settling elsewhere and being listed there
+    // are mutually exclusive. This reverses the original self-hosted-only rule
+    // deliberately; see src/facilitator-cdp/auth.js.
+    //
+    // Unset by default. mode stays `self` unless explicitly changed, so a
+    // missing credential can never silently route money to a third party.
+    cdpApiKeyId: env('X402_CDP_API_KEY_ID', ''),
+    cdpApiKeySecret: env('X402_CDP_API_KEY_SECRET', ''),
+    // Bazaar metadata in the 402 challenge. This is what makes an endpoint
+    // indexable at all — without it the facilitator settles the payment and
+    // indexes nothing.
+    cdpBazaarDiscoverable: env('X402_CDP_BAZAAR_DISCOVERABLE', '1') === '1',
+
     evmFacilitatorPort,
     networkEvm,
     usdcAsset: env('X402_USDC_ASSET', USDC_DEFAULTS[networkEvm] || ''),
+    // The asset's EIP-712 domain, advertised in the accepts entry as `extra`.
+    //
+    // Our own facilitator knows this from its network table, so it never needed
+    // to be on the wire. A REMOTE facilitator does not: CDP rejects a
+    // verification with "missing EIP-712 domain name/version in
+    // requirements.extra" because it cannot rebuild the signing digest without
+    // it. It is the same constant for every product, so adding it does not
+    // change payment binding between routes.
+    usdcDomainName: env('X402_USDC_DOMAIN_NAME',
+      (Object.values(EVM_NETWORKS).find((n) => n.caip2 === networkEvm) || {}).usdc?.name || 'USD Coin'),
+    usdcDomainVersion: env('X402_USDC_DOMAIN_VERSION',
+      (Object.values(EVM_NETWORKS).find((n) => n.caip2 === networkEvm) || {}).usdc?.version || '2'),
+    usdcDecimals: parseInt(env('X402_USDC_DECIMALS',
+      String((Object.values(EVM_NETWORKS).find((n) => n.caip2 === networkEvm) || {}).usdc?.decimals || 6)), 10),
     basePayTo: env('X402_BASE_PAYTO', ''), // EVM address that receives USDC
     evmFacilitatorUrl: facilitatorMode === 'self'
       ? `http://127.0.0.1:${evmFacilitatorPort}`
@@ -813,10 +863,563 @@ function loadGatewayConfig(source = process.env, overrides = {}) {
       inferenceWorkerWallets,
       inferenceTier: envFrom(source, 'X402_INFERENCE_TIER', 'standard'),
       inferenceUpstreamUrl: envFrom(source, 'X402_INFERENCE_UPSTREAM_URL', 'http://127.0.0.1:4600/v1/chat/completions'),
+      // Optional bearer for the upstream. Unset => no auth header is sent.
+      inferenceUpstreamKey: envFrom(source, 'X402_INFERENCE_UPSTREAM_KEY', ''),
+      // Degraded-delivery circuit breaker. The capacity gate reads chain
+      // metadata only (registered / last_seen / tiers) and cannot see that a
+      // worker fails to load a model — so real delivery failures feed back
+      // here and withhold the product instead of charging for an apology.
+      inferenceBreakerTrips: parseIntEnv(source, 'X402_INFERENCE_BREAKER_TRIPS', 2, { min: 1, max: 100 }),
+      inferenceBreakerCooldownMs: parseIntEnv(source, 'X402_INFERENCE_BREAKER_COOLDOWN_MS', 300000, { min: 1000 }),
       inferenceTimeoutMs: parseIntEnv(source, 'X402_INFERENCE_TIMEOUT_MS', 180000, { min: 1000, max: 600000 }),
       inferenceMaxBodyBytes: parseIntEnv(source, 'X402_INFERENCE_MAX_BODY_BYTES', 262144, { min: 1024 }),
       capacityProbeIntervalMs: parseIntEnv(source, 'X402_CAPACITY_PROBE_INTERVAL_MS', 15000, { min: 1000, max: 300000 }),
       capacityMaxProbeAgeMs: parseIntEnv(source, 'X402_CAPACITY_MAX_PROBE_AGE_MS', 60000, { min: 1000, max: 3600000 }),
+
+      // Paid media rendering (image / video / audio) via the GPU-miner queue.
+      // Priced per cost family, not per kind: a 5 s video is not an image.
+      // Enabled by default — unlike priority inference, the media queue has
+      // had renderers online continuously, and the per-kind gate below refuses
+      // the sale on its own the moment that stops being true.
+      mediaEnabled: envFrom(source, 'X402_MEDIA_ENABLED', '1') === '1',
+      mediaImagePriceUsd: priceOf('X402_MEDIA_IMAGE_PRICE_USDC', '0.10'),
+      mediaVideoPriceUsd: priceOf('X402_MEDIA_VIDEO_PRICE_USDC', '0.50'),
+      mediaAudioPriceUsd: priceOf('X402_MEDIA_AUDIO_PRICE_USDC', '0.20'),
+      // One online renderer for the requested kind is a real renderer; the
+      // inference floor of 2 exists because that pool is one machine deep and
+      // flaps. Raise this if paid renders start queueing behind free ones.
+      mediaMinRenderers: parseIntEnv(source, 'X402_MEDIA_MIN_RENDERERS', 1, { min: 1, max: 100 }),
+      mediaCapabilitiesUrl: envFrom(source, 'X402_MEDIA_CAPABILITIES_URL', 'https://animica.dev/api/mkt/v1/media/capabilities'),
+      mediaSubmitUrl: envFrom(source, 'X402_MEDIA_SUBMIT_URL', 'https://animica.dev/api/mkt/v1/media/jobs'),
+      // Used to absolutise the queue's relative poll_url for a remote agent.
+      mediaPublicBase: envFrom(source, 'X402_MEDIA_PUBLIC_BASE', 'https://animica.dev'),
+      mediaProbeTimeoutMs: parseIntEnv(source, 'X402_MEDIA_PROBE_TIMEOUT_MS', 8000, { min: 500, max: 60000 }),
+      mediaSubmitTimeoutMs: parseIntEnv(source, 'X402_MEDIA_SUBMIT_TIMEOUT_MS', 30000, { min: 1000, max: 120000 }),
+      mediaProbeIntervalMs: parseIntEnv(source, 'X402_MEDIA_PROBE_INTERVAL_MS', 20000, { min: 1000, max: 300000 }),
+      // The queue accepts 12 MB (up to 6 images for i2v); mirror that so a
+      // caller is not rejected here with a different limit than the free path.
+      mediaMaxBodyBytes: parseIntEnv(source, 'X402_MEDIA_MAX_BODY_BYTES', 12 * 1024 * 1024, { min: 1024 }),
+      mediaMaxProbeAgeMs: parseIntEnv(source, 'X402_MEDIA_MAX_PROBE_AGE_MS', 90000, { min: 1000, max: 3600000 }),
+
+      // Free trials — let an agent evaluate before it pays. Caps are per client
+      // per UTC day and are sized to what a product costs US to serve, not to
+      // what it sells for: a node read is nearly free, a GPU render is not.
+      // 0 disables the trial route for that family entirely.
+      trialsEnabled: envFrom(source, 'X402_TRIALS_ENABLED', '1') === '1',
+      // Deterministic node/index reads — cheap, and the most useful to sample
+      // because the agent is really checking response shape and freshness.
+      trialLimitCheap: parseIntEnv(source, 'X402_TRIAL_LIMIT_CHEAP', 5, { min: 0, max: 1000 }),
+      // Entropy draws: cheap to serve but each one consumes a real attested
+      // draw, so a smaller allowance.
+      trialLimitRandom: parseIntEnv(source, 'X402_TRIAL_LIMIT_RANDOM', 3, { min: 0, max: 1000 }),
+      // Inference: a community GPU spends real seconds on this.
+      trialLimitInference: parseIntEnv(source, 'X402_TRIAL_LIMIT_INFERENCE', 1, { min: 0, max: 100 }),
+      // Media: minutes of GPU time per call. One per day is a customer
+      // acquisition cost, not a service tier.
+      trialLimitMedia: parseIntEnv(source, 'X402_TRIAL_LIMIT_MEDIA', 1, { min: 0, max: 100 }),
+      // Two, not one: an audit reaches a third-party origin, and a transient
+      // failure there burns a trial. One free call would lock a prospect out
+      // for 24 hours over a network blip on someone else's server.
+      trialLimitSolve: parseIntEnv(source, 'X402_TRIAL_LIMIT_SOLVE', 2, { min: 0, max: 100 }),
+      trialLimitMeshProbe: parseIntEnv(source, 'X402_TRIAL_LIMIT_MESH_PROBE', 3, { min: 0, max: 100 }),
+      trialLimitMeshFind: parseIntEnv(source, 'X402_TRIAL_LIMIT_MESH_FIND', 3, { min: 0, max: 100 }),
+      // Analytics trials are the cheapest way for a merchant to see their own
+      // pricing position, which is the single most persuasive sample this
+      // gateway can give away — but each one costs an AICF narration call.
+      trialLimitAnalytics: parseIntEnv(source, 'X402_TRIAL_LIMIT_ANALYTICS', 2, { min: 0, max: 100 }),
+      trialLimitGeoFix: parseIntEnv(source, 'X402_TRIAL_LIMIT_GEO_FIX', 1, { min: 0, max: 100 }),
+      trialLimitGeoAudit: parseIntEnv(source, 'X402_TRIAL_LIMIT_GEO_AUDIT', 2, { min: 0, max: 100 }),
+      trialUsageTtlSeconds: parseIntEnv(source, 'X402_TRIAL_USAGE_TTL_S', 7 * 86400, { min: 86400 }),
+
+      // =====================================================================
+      // ANM-NATIVE SETTLEMENT LANE
+      //
+      // On Base we sponsor the gas for every settlement (~$0.0018 spent /
+      // $0.0042 reserved measured), which puts a hard ~$0.0084 floor under
+      // every USDC price here. On Animica the PAYER pays the fee from their
+      // own balance and the gateway spends nothing, so that floor does not
+      // exist on this lane. That is what funds the ANM discount below — it is
+      // a real cost we avoid, not a promotion.
+      //
+      // NETWORK ID: `animica:1`, never `eip155:1`. This chain's chainId is 1,
+      // and an agent that read `eip155:1` would try to pay on ETHEREUM
+      // MAINNET and lose the money. The genesis hash is published with it.
+      // =====================================================================
+      anmLaneEnabled: envFrom(source, 'X402_ANM_ENABLED', '1') === '1',
+      anmNetworkId: envFrom(source, 'X402_ANM_NETWORK_ID', 'animica:1'),
+      anmChainId: parseIntEnv(source, 'X402_ANM_CHAIN_ID', 1, { min: 1 }),
+      anmGenesisHash: envFrom(source, 'X402_ANM_GENESIS_HASH', '0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de'),
+      // Where ANM payments land. Defaults to the foundation treasury, read
+      // from consensus/rewards.py — NEVER retype this from memory, the
+      // elided forms in notes do not checksum.
+      anmPayTo: envFrom(source, 'X402_ANM_PAY_TO', 'anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga'),
+      // The "further discount for paying in ANM". Funded by the gas we do not
+      // spend on this lane. Applied to the USD price before conversion.
+      anmDiscountPercent: parseIntEnv(source, 'X402_ANM_DISCOUNT_PCT', 25, { min: 0, max: 90 }),
+      anmSettleTimeoutMs: parseIntEnv(source, 'X402_ANM_SETTLE_TIMEOUT_MS', 45000, { min: 1000, max: 300000 }),
+      anmPollIntervalMs: parseIntEnv(source, 'X402_ANM_POLL_INTERVAL_MS', 1500, { min: 250, max: 30000 }),
+      anmMaxFutureBlocks: parseIntEnv(source, 'X402_ANM_MAX_FUTURE_BLOCKS', 10, { min: 0, max: 1000 }),
+      // ANM/USD reference feed. A STALE feed refuses to quote rather than
+      // guessing — the rule Animica Pay already learned the hard way.
+      anmPricePath: envFrom(source, 'X402_ANM_PRICE_PATH', '/var/www/animica.org/anm-price.json'),
+      anmPriceMaxAgeSeconds: parseIntEnv(source, 'X402_ANM_PRICE_MAX_AGE_S', 900, { min: 60, max: 86400 }),
+
+      // =====================================================================
+      // PREPAID CREDITS — one settlement, then N gas-free calls.
+      // =====================================================================
+      creditsEnabled: envFrom(source, 'X402_CREDITS_ENABLED', '1') === '1',
+      creditsPriceUsd: priceOf('X402_CREDITS_PRICE_USDC', '0.50'),
+      // The bonus IS the settlement gas we do not spend on calls 2..N.
+      creditsBonusPct: parseIntEnv(source, 'X402_CREDITS_BONUS_PCT', 10, { min: 0, max: 100 }),
+      creditsTtlDays: parseIntEnv(source, 'X402_CREDITS_TTL_DAYS', 365, { min: 1, max: 3650 }),
+
+      // =====================================================================
+      // ANM 402 SCAN — a public directory of x402 services that settle in
+      // ANM. Anyone may register; every listing is PROBED, and a listing that
+      // stops answering a real 402 is marked dead rather than quietly kept.
+      // =====================================================================
+      scanEnabled: envFrom(source, 'X402_SCAN_ENABLED', '1') === '1',
+      scanProbeTimeoutMs: parseIntEnv(source, 'X402_SCAN_PROBE_TIMEOUT_MS', 10000, { min: 1000, max: 60000 }),
+      scanRegisterPerHour: parseIntEnv(source, 'X402_SCAN_REGISTER_PER_HOUR', 10, { min: 1, max: 1000 }),
+      scanRecheckIntervalMs: parseIntEnv(source, 'X402_SCAN_RECHECK_INTERVAL_MS', 3600000, { min: 60000 }),
+      scanMaxServices: parseIntEnv(source, 'X402_SCAN_MAX_SERVICES', 10000, { min: 10 }),
+
+      // =====================================================================
+      // ANM ADOPTION BOUNTY — paid to operators who open THEIR products to
+      // ANM-native x402. Denominated in USD and converted at the NonKYC rate
+      // at claim time, so the incentive keeps its value as ANM moves.
+      //
+      // TWO GATES, both load-bearing:
+      //  1. TREASURY SOLVENCY. A claim is only accepted when the treasury can
+      //     actually cover it plus everything already reserved. The program
+      //     stops accepting rather than promising what it cannot pay.
+      //  2. HUMAN PAYOUT. This gateway holds no treasury key and never will.
+      //     A verified claim is RESERVED; an operator signs the transfer.
+      //     Auto-paying on a probe would be trivially farmable — anyone can
+      //     serve a static 402 document.
+      // =====================================================================
+      bountyEnabled: envFrom(source, 'X402_BOUNTY_ENABLED', '1') === '1',
+      // 'open'   = anyone may claim while the budget lasts
+      // 'closed' = claims are accepted and verified but need explicit
+      //            operator approval before they are reserved
+      bountyMode: (envFrom(source, 'X402_BOUNTY_MODE', 'closed') === 'open') ? 'open' : 'closed',
+      bountyAmountUsd: priceOf('X402_BOUNTY_AMOUNT_USD', '1.00'),
+      bountyTreasuryAddress: envFrom(source, 'X402_BOUNTY_TREASURY', 'anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga'),
+      // Keep a reserve so the bounty programme can never drain the treasury.
+      bountyTreasuryReserveAnm: envFrom(source, 'X402_BOUNTY_TREASURY_RESERVE_ANM', '10000'),
+      bountyMaxClaims: parseIntEnv(source, 'X402_BOUNTY_MAX_CLAIMS', 100, { min: 0, max: 100000 }),
+      bountyOnePerDomain: envFrom(source, 'X402_BOUNTY_ONE_PER_DOMAIN', '1') === '1',
+
+      // =====================================================================
+      // NEW PRODUCTS
+      // =====================================================================
+      // Web fetch/extract — URL to clean text. SSRF rules are NOT optional
+      // here: this endpoint takes an attacker-supplied URL by design.
+      fetchEnabled: envFrom(source, 'X402_FETCH_ENABLED', '1') === '1',
+      fetchPriceUsd: priceOf('X402_FETCH_PRICE_USDC', '0.004'),
+      fetchTimeoutMs: parseIntEnv(source, 'X402_FETCH_TIMEOUT_MS', 15000, { min: 1000, max: 60000 }),
+      fetchMaxBytes: parseIntEnv(source, 'X402_FETCH_MAX_BYTES', 2_000_000, { min: 1024 }),
+      fetchMaxRedirects: parseIntEnv(source, 'X402_FETCH_MAX_REDIRECTS', 3, { min: 0, max: 10 }),
+
+      // GEO / agent-legibility audit — is this site readable and citable by AI
+      // agents at all? Deterministic: it fetches a handful of well-known paths
+      // and re-probes the homepage as each named AI crawler. No inference.
+      geoAuditEnabled: envFrom(source, 'X402_GEO_AUDIT_ENABLED', '1') === '1',
+      // Static fallback only, used until the first dynamic-pricing tick; the live
+      // price is 7x the Base settlement floor (see DYN_MULT).
+      geoAuditPriceUsd: priceOf('X402_GEO_AUDIT_PRICE_USDC', '0.006'),
+      // Per-request timeout. A slow origin must not hold a connection open for
+      // the whole budget on one probe.
+      geoAuditTimeoutMs: parseIntEnv(source, 'X402_GEO_AUDIT_TIMEOUT_MS', 12000, { min: 1000, max: 60000 }),
+      // Whole-audit wall clock. ~16 requests go out; without a ceiling a tarpit
+      // origin turns one paid call into a held worker.
+      geoAuditBudgetMs: parseIntEnv(source, 'X402_GEO_AUDIT_BUDGET_MS', 45000, { min: 5000, max: 180000 }),
+      geoAuditMaxBytes: parseIntEnv(source, 'X402_GEO_AUDIT_MAX_BYTES', 1_500_000, { min: 1024 }),
+      // How many probes may be in flight against ONE origin. Auditing a site is
+      // not a licence to hammer it.
+      geoAuditConcurrency: parseIntEnv(source, 'X402_GEO_AUDIT_CONCURRENCY', 4, { min: 1, max: 12 }),
+
+      // GEO fix — emits deployable llms.txt / robots.txt / JSON-LD. Costs more
+      // than the audit: it verifies every link it will publish, then makes one
+      // fenced model call for the prose.
+      geoFixEnabled: envFrom(source, 'X402_GEO_FIX_ENABLED', '1') === '1',
+      geoFixPriceUsd: priceOf('X402_GEO_FIX_PRICE_USDC', '0.007'),
+      geoFixBudgetMs: parseIntEnv(source, 'X402_GEO_FIX_BUDGET_MS', 90000, { min: 5000, max: 240000 }),
+      geoFixDefaultLinks: parseIntEnv(source, 'X402_GEO_FIX_DEFAULT_LINKS', 20, { min: 1, max: 100 }),
+      geoFixMaxLinks: parseIntEnv(source, 'X402_GEO_FIX_MAX_LINKS', 40, { min: 1, max: 200 }),
+
+      // Paid Crawl — website owners charge AI crawlers for access.
+      // FREE FOR SITE OPERATORS BY DESIGN: registration, the decision
+      // endpoint, verification and earnings are all unpaid routes. Revenue
+      // comes from the crawler buying a pass, never from the site. Do not
+      // add a price knob for the operator side without re-reading why.
+      crawlEnabled: envFrom(source, 'X402_CRAWL_ENABLED', '1') === '1',
+      // The site keeps this share of every billed crawl; the rest is the
+      // gateway fee. 9000 bps = the "you keep 90%" on the public page, so
+      // changing it changes a published promise.
+      crawlOperatorShareBps: parseIntEnv(source, 'X402_CRAWL_OPERATOR_SHARE_BPS', 9000, { min: 0, max: 10000 }),
+      crawlPassPriceUsd: priceOf('X402_CRAWL_PASS_PRICE_USDC', '0.010'),
+      // Forward-confirmed reverse DNS is what separates a real Googlebot from
+      // a forged one. Disabling it makes every search-crawler claim
+      // unverifiable, which means spoofs inherit the free lane — only turn it
+      // off if this host cannot do outbound DNS at all.
+      crawlVerifyRdns: envFrom(source, 'X402_CRAWL_VERIFY_RDNS', '1') === '1',
+      // Unknown-User-Agent triage runs on AICF workers (who are paid in ANM
+      // for it) and is advisory only — see products/crawl-triage.js.
+      crawlTriageEnabled: envFrom(source, 'X402_CRAWL_TRIAGE_ENABLED', '1') === '1',
+      crawlTriageIntervalMs: parseIntEnv(source, 'X402_CRAWL_TRIAGE_INTERVAL_MS', 15 * 60 * 1000, { min: 60_000 }),
+      crawlTriageBatch: parseIntEnv(source, 'X402_CRAWL_TRIAGE_BATCH', 10, { min: 1, max: 100 }),
+      // Post-quantum crawl licences (ML-DSA-65). The key is generated once and
+      // persisted 0600: a per-boot key would silently invalidate every licence
+      // issued before the last restart, which is the one thing a provenance
+      // receipt may never do.
+      crawlLicenceKeyPath: envFrom(source, 'X402_CRAWL_LICENCE_KEY', ''),
+      crawlLicenceConcurrency: parseIntEnv(source, 'X402_CRAWL_LICENCE_CONCURRENCY', 2, { min: 1, max: 16 }),
+
+      // x402 Mesh — a merged, scored index of the whole x402 economy
+      // (Coinbase Bazaar + 402index), answering who an agent should buy from.
+      meshEnabled: envFrom(source, 'X402_MESH_ENABLED', '1') === '1',
+      meshFindPriceUsd: priceOf('X402_MESH_FIND_PRICE_USDC', '0.006'),
+      // The index is harvested once and cached; a search must never fan out
+      // into 150 upstream requests.
+      meshCacheTtlMs: parseIntEnv(source, 'X402_MESH_CACHE_TTL_MS', 6 * 3600 * 1000, { min: 60_000 }),
+      meshFetchTimeoutMs: parseIntEnv(source, 'X402_MESH_FETCH_TIMEOUT_MS', 20000, { min: 1000, max: 120000 }),
+      // Pages per directory. 200 x 100 covers Bazaar's ~15k whole; 402index is
+      // ~95k and deliberately truncated — its long tail is unpriced and
+      // unschema'd, so the marginal row adds a name and nothing actionable.
+      meshMaxPages: parseIntEnv(source, 'X402_MESH_MAX_PAGES', 200, { min: 1, max: 2000 }),
+      meshMaxResults: parseIntEnv(source, 'X402_MESH_MAX_RESULTS', 50, { min: 1, max: 200 }),
+      // Pause between directory pages. Harvesting 200 pages back-to-back got us
+      // a 429 from 402index — we were the impolite client. The index has a
+      // multi-hour TTL, so a slower build costs nothing and stops us being
+      // rate-limited into an incomplete picture.
+      meshDirectoryPageDelayMs: parseIntEnv(source, 'X402_MESH_PAGE_DELAY_MS', 300, { min: 0, max: 10000 }),
+      meshDirectoryRetries: parseIntEnv(source, 'X402_MESH_PAGE_RETRIES', 2, { min: 0, max: 6 }),
+      // 402index is rate-limited per minute and its long tail is thin data —
+      // 19% priced, 0% with schemas — while Bazaar is fully priced. So we take
+      // a smaller slice of it far more slowly. Our own probe harvester now
+      // produces better facts than either directory publishes anyway.
+      meshIndex402MaxPages: parseIntEnv(source, 'X402_MESH_402INDEX_MAX_PAGES', 50, { min: 0, max: 1000 }),
+      meshIndex402PageDelayMs: parseIntEnv(source, 'X402_MESH_402INDEX_PAGE_DELAY_MS', 1200, { min: 0, max: 30000 }),
+
+      // x402 Solve — compile a goal into a priced plan of real calls. PLANS
+      // ONLY: it never spends. Execution would mean holding a funded wallet and
+      // paying strangers inside a model-driven loop, which is an explicit
+      // decision with a hard cap behind it, not a default.
+      solveEnabled: envFrom(source, 'X402_SOLVE_ENABLED', '1') === '1',
+      solvePriceUsd: priceOf('X402_SOLVE_PRICE_USDC', '0.008'),
+      solveMaxSteps: parseIntEnv(source, 'X402_SOLVE_MAX_STEPS', 6, { min: 1, max: 12 }),
+      solveDefaultBudgetUsd: envFrom(source, 'X402_SOLVE_DEFAULT_BUDGET_USD', '1.00'),
+      solveMaxBudgetUsd: envFrom(source, 'X402_SOLVE_MAX_BUDGET_USD', '100'),
+      // Minimum share of a capability's words a candidate must actually cover
+      // before it can be planned. Without this the planner answered "verify
+      // company legitimacy" with an email-address validator.
+      solveMinCoverage: Number(envFrom(source, 'X402_SOLVE_MIN_COVERAGE', '0.5')),
+
+      // ---------------------------------------------------------------------
+      // x402 ANALYTICS ENGINE — statistics over the same merged index the Mesh
+      // maintains, with the interpretation written by AICF.
+      //
+      // Prices sit at the same multiple as the other index-backed products:
+      // the work is arithmetic over a cached index plus at most one model call,
+      // and these are meant to be bought before a pricing or purchase decision
+      // rather than in volume.
+      analyticsEnabled: envFrom(source, 'X402_ANALYTICS_ENABLED', '1') === '1',
+      analyticsMarketPriceUsd: priceOf('X402_ANALYTICS_MARKET_PRICE_USDC', '0.008'),
+      analyticsPricePriceUsd: priceOf('X402_ANALYTICS_PRICE_PRICE_USDC', '0.008'),
+      analyticsPeersPriceUsd: priceOf('X402_ANALYTICS_PEERS_PRICE_USDC', '0.008'),
+      // Share of the query's distinct words a listing must actually contain
+      // before it counts as part of a segment. Same floor, and the same
+      // reasoning, as the solve planner: BM25 always returns a best match, and
+      // a distribution computed over "best of 31,000" is not a distribution of
+      // anything a buyer asked about.
+      analyticsMinCoverage: Number(envFrom(source, 'X402_ANALYTICS_MIN_COVERAGE', '0.5')),
+      // Below this many comparables the endpoints REFUSE to compute a
+      // percentile and say why. A percentile over four rows renders identically
+      // to a percentile over four thousand, and merchants price against it.
+      analyticsMinComparables: parseIntEnv(source, 'X402_ANALYTICS_MIN_COMPARABLES', 8, { min: 2, max: 1000 }),
+      // Trend history: at most one observation per segment per interval, so a
+      // popular segment cannot turn the history table into a request log.
+      analyticsSnapshotMinIntervalMs: parseIntEnv(source, 'X402_ANALYTICS_SNAPSHOT_MIN_INTERVAL_MS', 3600_000, { min: 0 }),
+      analyticsHistoryLimit: parseIntEnv(source, 'X402_ANALYTICS_HISTORY_LIMIT', 500, { min: 2, max: 5000 }),
+
+      // ---------------------------------------------------------------------
+      // AICF — Animica's OWN inference network, as distinct from the pool /v1
+      // that every other product here calls.
+      //
+      // THE DISTINCTION IS THE POINT. cfg.utilityInferenceUrl points at the
+      // pool API, which maps `anm-fast-8b` onto a local ollama process on this
+      // box. AICF is the on-chain fabric: the node queues a job, a registered
+      // worker claims it, and that worker is PAID IN ANM for serving it. A
+      // product that advertises Animica's own inference network has to mean the
+      // second thing.
+      //
+      // The bridge in front of AICF falls back to the pool when no worker
+      // claims a job, and reports that by naming the model that actually
+      // answered instead of echoing the one requested. `createAicfEngine`
+      // reads exactly that signal and reports provenance per call, so a buyer
+      // is never told AICF served a request that it did not. Measured on this
+      // host 2026-08-19: a request for `animica-chat` came back as
+      // `anm-fast-8b`, i.e. the fallback served it.
+      aicfEnabled: envFrom(source, 'X402_AICF_ENABLED', '1') === '1',
+      aicfUrl: envFrom(source, 'X402_AICF_URL', 'http://127.0.0.1:4600/v1/chat/completions'),
+      aicfHealthUrl: envFrom(source, 'X402_AICF_HEALTH_URL', 'http://127.0.0.1:4600/v1/models'),
+      // The NETWORK model, not a pool catalog id. Requesting a pool id here
+      // would make the provenance check meaningless, since a fallback answer
+      // would echo it back and look like an AICF serve.
+      aicfModel: envFrom(source, 'X402_AICF_MODEL', 'animica-chat'),
+      aicfKey: envFrom(source, 'X402_AICF_KEY', ''),
+      // AICF is a job queue with a claim step, not a local socket: a worker
+      // claiming and then loading a model routinely takes tens of seconds. A
+      // short timeout here would guarantee we only ever see the fallback.
+      aicfTimeoutMs: parseIntEnv(source, 'X402_AICF_TIMEOUT_MS', 150_000, { min: 1000, max: 600_000 }),
+      aicfMaxTokens: parseIntEnv(source, 'X402_AICF_MAX_TOKENS', 400, { min: 32, max: 4096 }),
+      // What the bridge falls back to, used ONLY to detect the one ambiguous
+      // case: aicfModel configured to the same string the bridge falls back to,
+      // which is reported as indeterminate rather than resolved in our favour.
+      aicfFallbackModelHint: envFrom(source, 'X402_AICF_FALLBACK_MODEL_HINT', 'anm-fast-8b'),
+
+      // ---------------------------------------------------------------------
+      // OUTBOUND SPENDING (POST /x402/buy). Off by default, and off unless a
+      // DEDICATED key is configured. The address that settles our incoming
+      // payments is passed separately purely so the payer can REFUSE to be it:
+      // one confused purchase must not be able to drain the float every
+      // product settles through.
+      // ---------------------------------------------------------------------
+      execEnabled: envFrom(source, 'X402_EXEC_ENABLED', '0') === '1',
+      execPrivateKey: envFrom(source, 'X402_EXEC_PRIVATE_KEY', ''),
+      execFeeUsd: priceOf('X402_EXEC_FEE_USDC', '0.01'),
+      execTimeoutMs: parseIntEnv(source, 'X402_EXEC_TIMEOUT_MS', 30000, { min: 1000, max: 120000 }),
+      // Deliberately small. These are the numbers that decide how much a bug
+      // can cost, so they start where a bug is affordable.
+      execMaxPerCallUsd: Number(envFrom(source, 'X402_EXEC_MAX_PER_CALL_USD', '0.10')),
+      execMaxPerDayUsd: Number(envFrom(source, 'X402_EXEC_MAX_PER_DAY_USD', '1.00')),
+
+      // The schema harvester: probe indexed resources WITHOUT paying, so a 402
+      // becomes the merchant's own statement of price and request shape.
+      // Background work (index warm-up at boot, periodic probe sweeps). Tests
+      // turn this OFF: leaving it on made every test gateway fire a real
+      // harvest against two third-party directories, which is slow, flaky and
+      // rude to them.
+      meshBackgroundEnabled: envFrom(source, 'X402_MESH_BACKGROUND', '1') === '1',
+      meshHarvestEnabled: envFrom(source, 'X402_MESH_HARVEST_ENABLED', '1') === '1',
+      meshProbePriceUsd: priceOf('X402_MESH_PROBE_PRICE_USDC', '0.005'),
+      meshProbeTimeoutMs: parseIntEnv(source, 'X402_MESH_PROBE_TIMEOUT_MS', 12000, { min: 1000, max: 60000 }),
+      meshProbeUserAgent: envFrom(source, 'X402_MESH_PROBE_UA',
+        'AnimicaMeshProbe/1.0 (+https://animica.dev/x402/mesh/find; unpaid discovery probe, no side effects)'),
+      // Serial per host with a gap between probes. One merchant listing forty
+      // endpoints must not receive forty simultaneous requests from us.
+      meshProbeHostDelayMs: parseIntEnv(source, 'X402_MESH_PROBE_HOST_DELAY_MS', 1500, { min: 0, max: 60000 }),
+      // Re-probe cadence. Prices and schemas change slowly; hammering does not
+      // make them change faster.
+      meshProbeTtlMs: parseIntEnv(source, 'X402_MESH_PROBE_TTL_MS', 7 * 86400 * 1000, { min: 60_000 }),
+      // A sweep is a slow background sip, not a crawl: serving traffic wins.
+      meshSweepIntervalMs: parseIntEnv(source, 'X402_MESH_SWEEP_INTERVAL_MS', 15 * 60 * 1000, { min: 30_000 }),
+      meshSweepBudgetMs: parseIntEnv(source, 'X402_MESH_SWEEP_BUDGET_MS', 5 * 60 * 1000, { min: 5_000 }),
+      meshSweepMaxProbes: parseIntEnv(source, 'X402_MESH_SWEEP_MAX_PROBES', 400, { min: 1, max: 20000 }),
+      meshSweepConcurrency: parseIntEnv(source, 'X402_MESH_SWEEP_CONCURRENCY', 8, { min: 1, max: 64 }),
+
+      // Batch embeddings via the local all-MiniLM-L6-v2 in the deploy indexer.
+      embedEnabled: envFrom(source, 'X402_EMBED_ENABLED', '1') === '1',
+      embedPriceUsd: priceOf('X402_EMBED_PRICE_USDC', '0.004'),
+      embedUrl: envFrom(source, 'X402_EMBED_URL', 'http://127.0.0.1:4630'),
+      embedMaxTexts: parseIntEnv(source, 'X402_EMBED_MAX_TEXTS', 256, { min: 1, max: 4096 }),
+      embedMaxCharsPerText: parseIntEnv(source, 'X402_EMBED_MAX_CHARS', 8192, { min: 64 }),
+      embedTimeoutMs: parseIntEnv(source, 'X402_EMBED_TIMEOUT_MS', 30000, { min: 1000, max: 120000 }),
+
+      // Ask-a-URL: one-shot RAG over a single page (fetch -> chunk -> embed
+      // -> retrieve -> answer). Nothing is stored.
+      askUrlEnabled: envFrom(source, 'X402_ASK_URL_ENABLED', '1') === '1',
+      askUrlPriceUsd: priceOf('X402_ASK_URL_PRICE_USDC', '0.008'),
+      askUrlInferenceUrl: envFrom(source, 'X402_ASK_URL_INFERENCE_URL', 'http://127.0.0.1:4000/v1'),
+      askUrlApiKey: envFrom(source, 'X402_ASK_URL_API_KEY', ''),
+      askUrlModel: envFrom(source, 'X402_ASK_URL_MODEL', 'anm-fast-8b'),
+      askUrlTimeoutMs: parseIntEnv(source, 'X402_ASK_URL_TIMEOUT_MS', 45000, { min: 1000, max: 120000 }),
+      askUrlMaxTokens: parseIntEnv(source, 'X402_ASK_URL_MAX_TOKENS', 600, { min: 32, max: 4096 }),
+      askUrlChunkChars: parseIntEnv(source, 'X402_ASK_URL_CHUNK_CHARS', 1200, { min: 200, max: 8000 }),
+      // Overlap so a fact straddling a chunk boundary stays retrievable.
+      askUrlChunkOverlap: parseIntEnv(source, 'X402_ASK_URL_CHUNK_OVERLAP', 200, { min: 0, max: 2000 }),
+      askUrlMaxChunks: parseIntEnv(source, 'X402_ASK_URL_MAX_CHUNKS', 120, { min: 1, max: 1000 }),
+      askUrlTopK: parseIntEnv(source, 'X402_ASK_URL_TOP_K', 4, { min: 1, max: 20 }),
+      // Below this similarity we DECLINE rather than let the model improvise.
+      // 0.25 matches the floor the Deploy product settled on after 0.30
+      // rejected a legitimate single-chunk page.
+      askUrlMinScore: envFrom(source, 'X402_ASK_URL_MIN_SCORE', '0.25'),
+
+      // On-chain notarisation: anchor a digest, get a proof.
+      notarizeEnabled: envFrom(source, 'X402_NOTARIZE_ENABLED', '1') === '1',
+      notarizePriceUsd: priceOf('X402_NOTARIZE_PRICE_USDC', '0.006'),
+      notarizeNamespace: envFrom(source, 'X402_NOTARIZE_NAMESPACE', 'x402-notary'),
+      notarizeTimeoutMs: parseIntEnv(source, 'X402_NOTARIZE_TIMEOUT_MS', 20000, { min: 1000, max: 120000 }),
+
+      // Addressable blob storage over the same DA layer.
+      blobEnabled: envFrom(source, 'X402_BLOB_ENABLED', '1') === '1',
+      blobPriceUsd: priceOf('X402_BLOB_PRICE_USDC', '0.006'),
+      blobNamespace: envFrom(source, 'X402_BLOB_NAMESPACE', 'x402-blobs'),
+      blobMaxBytes: parseIntEnv(source, 'X402_BLOB_MAX_BYTES', 1048576, { min: 1024, max: 8388608 }),
+      // Refuse new writes while the DA volume is nearly full: taking payment
+      // to store something we may fail to write is exactly the case the
+      // codebase's own rule forbids.
+      blobMinFreeBytes: envFrom(source, 'X402_BLOB_MIN_FREE_BYTES', '1073741824'),
+
+      // Notarised forecasts. The ANCHOR is the product: if the record cannot
+      // be committed the sale does not happen, so this shares the DA gate.
+      forecastEnabled: envFrom(source, 'X402_FORECAST_ENABLED', '1') === '1',
+      forecastPriceUsd: priceOf('X402_FORECAST_PRICE_USDC', '0.009'),
+      forecastNamespace: envFrom(source, 'X402_FORECAST_NAMESPACE', 'x402-forecast'),
+      forecastTimeoutMs: parseIntEnv(source, 'X402_FORECAST_TIMEOUT_MS', 20000, { min: 1000, max: 120000 }),
+      forecastMarketTimeoutMs: parseIntEnv(source, 'X402_FORECAST_MARKET_TIMEOUT_MS', 10000, { min: 1000, max: 60000 }),
+      forecastInferenceUrl: envFrom(source, 'X402_FORECAST_INFERENCE_URL', 'http://127.0.0.1:4000/v1/chat/completions'),
+      forecastInferenceKey: envFrom(source, 'X402_FORECAST_INFERENCE_KEY', envFrom(source, 'X402_ASK_URL_API_KEY', '')),
+      forecastModel: envFrom(source, 'X402_FORECAST_MODEL', 'anm-fast-8b'),
+      forecastInferenceTimeoutMs: parseIntEnv(source, 'X402_FORECAST_INFERENCE_TIMEOUT_MS', 45000, { min: 1000, max: 180000 }),
+      // Background scoring sweep: markets settle, so forecasts get graded.
+      forecastResolveIntervalMs: parseIntEnv(source, 'X402_FORECAST_RESOLVE_INTERVAL_MS', 1800000, { min: 60000 }),
+      // Below this, report NO market rather than pair a forecast with a market
+      // about something else — a wrong pairing in a permanent record is worse
+      // than no pairing at all.
+      forecastMinRelevance: envFrom(source, 'X402_FORECAST_MIN_RELEVANCE', '0.45'),
+
+      // =====================================================================
+      // ANIMICA EXECUTE — the flagship: pay once, get a verified result.
+      // Built on capabilities already proven here. Verification is honest
+      // about having ONE inference backend; see execute.js.
+      // =====================================================================
+      executeEnabled: envFrom(source, 'X402_EXECUTE_ENABLED', '1') === '1',
+      executePriceUsd: priceOf('X402_EXECUTE_PRICE_USDC', '0.02'),
+      executeNamespace: envFrom(source, 'X402_EXECUTE_NAMESPACE', 'x402-execute'),
+      executeInferenceUrl: envFrom(source, 'X402_EXECUTE_INFERENCE_URL', 'http://127.0.0.1:4000/v1/chat/completions'),
+      executeHealthUrl: envFrom(source, 'X402_EXECUTE_HEALTH_URL', 'http://127.0.0.1:4000/v1/models'),
+      executeInferenceKey: envFrom(source, 'X402_EXECUTE_INFERENCE_KEY', envFrom(source, 'X402_ASK_URL_API_KEY', '')),
+      executeModel: envFrom(source, 'X402_EXECUTE_MODEL', 'anm-fast-8b'),
+      executeInferenceTimeoutMs: parseIntEnv(source, 'X402_EXECUTE_INFERENCE_TIMEOUT_MS', 60000, { min: 1000, max: 300000 }),
+      executeTimeoutMs: parseIntEnv(source, 'X402_EXECUTE_TIMEOUT_MS', 20000, { min: 1000, max: 120000 }),
+      executeMaxTokens: parseIntEnv(source, 'X402_EXECUTE_MAX_TOKENS', 900, { min: 32, max: 8192 }),
+      executeMaxTaskChars: parseIntEnv(source, 'X402_EXECUTE_MAX_TASK_CHARS', 4000, { min: 16 }),
+      executeContextChars: parseIntEnv(source, 'X402_EXECUTE_CONTEXT_CHARS', 12000, { min: 500 }),
+      // Samples taken at quality:"verified". More samples measure stability
+      // better but cost real GPU seconds, so this is bounded.
+      executeVerifiedSamples: parseIntEnv(source, 'X402_EXECUTE_VERIFIED_SAMPLES', 3, { min: 2, max: 7 }),
+      executeSignTimeoutMs: parseIntEnv(source, 'X402_EXECUTE_SIGN_TIMEOUT_MS', 15000, { min: 1000 }),
+      executeMaxConcurrentSign: parseIntEnv(source, 'X402_EXECUTE_MAX_CONCURRENT_SIGN', 4, { min: 1, max: 32 }),
+      // Optional deterministic receipt key. Unset => a fresh keypair per
+      // receipt, which still proves integrity of THAT receipt but gives no
+      // continuity of identity across receipts; the response ships the public
+      // key either way so a verifier is never left guessing.
+      executeSignSeed: envFrom(source, 'X402_EXECUTE_SIGN_SEED', ''),
+
+      // Free web crawler (animica.dev/crawl) — replaces the agent swarm.
+      // Free because it costs us one fetch and one short model call, and it
+      // is the honest demonstration of the paid fetch/ask products.
+      freeCrawlEnabled: envFrom(source, 'X402_FREE_CRAWL_ENABLED', '1') === '1',
+      freeCrawlPerDay: parseIntEnv(source, 'X402_FREE_CRAWL_PER_DAY', 25, { min: 0, max: 10000 }),
+      freeCrawlMaxChars: parseIntEnv(source, 'X402_FREE_CRAWL_MAX_CHARS', 20000, { min: 500 }),
+      freeCrawlMaxChunks: parseIntEnv(source, 'X402_FREE_CRAWL_MAX_CHUNKS', 80, { min: 1, max: 500 }),
+      freeCrawlTopK: parseIntEnv(source, 'X402_FREE_CRAWL_TOP_K', 4, { min: 1, max: 10 }),
+      freeCrawlMaxTokens: parseIntEnv(source, 'X402_FREE_CRAWL_MAX_TOKENS', 500, { min: 32, max: 4096 }),
+
+      // =====================================================================
+      // AGENT UTILITY API — the cheap cognition layer (extract/classify/
+      // entities/json-repair/injection/rerank/route). Small-model work whose
+      // product is the GUARANTEED OUTPUT SHAPE, not the model.
+      //
+      // A per-call price cannot go below the Base settlement floor, so
+      // high-volume use is meant to run on prepaid credits (no gas per call)
+      // or the ANM lane (payer pays their own fee). See utility.js.
+      // =====================================================================
+      utilityEnabled: envFrom(source, 'X402_UTILITY_ENABLED', '1') === '1',
+      utilityPriceUsd: priceOf('X402_UTILITY_PRICE_USDC', '0.003'),
+      utilityInferenceUrl: envFrom(source, 'X402_UTILITY_INFERENCE_URL', 'http://127.0.0.1:4000/v1/chat/completions'),
+      utilityHealthUrl: envFrom(source, 'X402_UTILITY_HEALTH_URL', 'http://127.0.0.1:4000/v1/models'),
+      utilityInferenceKey: envFrom(source, 'X402_UTILITY_INFERENCE_KEY', envFrom(source, 'X402_ASK_URL_API_KEY', '')),
+      utilityModel: envFrom(source, 'X402_UTILITY_MODEL', 'anm-fast-8b'),
+      utilityTimeoutMs: parseIntEnv(source, 'X402_UTILITY_TIMEOUT_MS', 45000, { min: 1000, max: 180000 }),
+      utilityMaxTokens: parseIntEnv(source, 'X402_UTILITY_MAX_TOKENS', 1200, { min: 64, max: 8192 }),
+      utilityMaxInputChars: parseIntEnv(source, 'X402_UTILITY_MAX_INPUT_CHARS', 40000, { min: 100 }),
+
+      // Post-quantum signature verification (ML-DSA-65 and friends).
+      pqEnabled: envFrom(source, 'X402_PQ_ENABLED', '1') === '1',
+      pqVerifyPriceUsd: priceOf('X402_PQ_VERIFY_PRICE_USDC', '0.004'),
+      pqMaxMessageBytes: parseIntEnv(source, 'X402_PQ_MAX_MESSAGE_BYTES', 1_000_000, { min: 32 }),
+      // The verifier is Python. Each call spawns the repo venv with a FIXED
+      // script and JSON on stdin — never argv, never a shell.
+      pqPythonBin: envFrom(source, 'X402_PQ_PYTHON', '/root/animica/.venv/bin/python'),
+      pqPythonPath: envFrom(source, 'X402_PQ_PYTHONPATH', '/root/animica/python'),
+      pqTimeoutMs: parseIntEnv(source, 'X402_PQ_TIMEOUT_MS', 10000, { min: 500, max: 60000 }),
+      // "One process per request" is a DoS primitive without a ceiling.
+      pqMaxConcurrent: parseIntEnv(source, 'X402_PQ_MAX_CONCURRENT', 4, { min: 1, max: 64 }),
+
+      // Signed ANM price attestation.
+      oracleEnabled: envFrom(source, 'X402_ORACLE_ENABLED', '1') === '1',
+      oraclePriceUsd: priceOf('X402_ORACLE_PRICE_USDC', '0.004'),
+      // OPTIONAL secp256k1 key for price attestations. Unset => attestations
+      // are returned UNSIGNED and say so; we never claim an attestation we
+      // cannot actually make (same rule as the randomness attested:false).
+      oraclePrivateKey: envFrom(source, 'X402_ORACLE_PRIVATE_KEY', ''),
+
+      // Holder snapshot / rich list for airdrops.
+      snapshotEnabled: envFrom(source, 'X402_SNAPSHOT_ENABLED', '1') === '1',
+      snapshotPriceUsd: priceOf('X402_SNAPSHOT_PRICE_USDC', '0.007'),
+      snapshotMaxHolders: parseIntEnv(source, 'X402_SNAPSHOT_MAX_HOLDERS', 1000, { min: 1, max: 100000 }),
+
+      // Mempool / network telemetry feed.
+      mempoolEnabled: envFrom(source, 'X402_MEMPOOL_ENABLED', '1') === '1',
+      mempoolPriceUsd: priceOf('X402_MEMPOOL_PRICE_USDC', '0.004'),
+
+      // Block-reward share leases, sold against the TREASURY's 25% of every
+      // block (50/25/25 miner/treasury/inference after the 75,000 fork).
+      // DISABLED BY DEFAULT: a paid share of future block rewards is more
+      // securities-flavoured than a spot sale, not less, and that is an
+      // operator decision rather than a default.
+      leaseEnabled: envFrom(source, 'X402_LEASE_ENABLED', '0') === '1',
+      leasePriceUsd: priceOf('X402_LEASE_PRICE_USDC', '0.50'),
+      leaseDiscountPercent: parseIntEnv(source, 'X402_LEASE_DISCOUNT_PCT', 10, { min: 0, max: 90 }),
+      leaseTreasurySharePct: parseIntEnv(source, 'X402_LEASE_TREASURY_SHARE_PCT', 25, { min: 1, max: 100 }),
+      // Hard ceiling on how much of the treasury's own share may be sold
+      // across ALL overlapping leases. Oversubscription must be impossible.
+      leaseMaxSoldPct: parseIntEnv(source, 'X402_LEASE_MAX_SOLD_PCT', 50, { min: 1, max: 100 }),
+      // Average ANM the treasury receives per block. Default 75 = 25% of the
+      // 300 ANM subsidy after the 75,000 fork (50/25/25 miner/treasury/
+      // inference). VERIFY THIS before enabling the product: it is the basis
+      // of every quote, and the chain does not expose the subsidy over RPC.
+      leaseTreasuryAnmPerBlock: envFrom(source, 'X402_LEASE_TREASURY_ANM_PER_BLOCK', '75'),
+      leaseMinBlocks: parseIntEnv(source, 'X402_LEASE_MIN_BLOCKS', 100, { min: 1 }),
+      leaseMaxBlocks: parseIntEnv(source, 'X402_LEASE_MAX_BLOCKS', 10000, { min: 1 }),
+
+      // Clean egress. DISABLED BY DEFAULT: abuse lands on our IPs and our
+      // abuse desk, which is an operator decision.
+      dvpnEnabled: envFrom(source, 'X402_DVPN_ENABLED', '0') === '1',
+      dvpnPriceUsd: priceOf('X402_DVPN_PRICE_USDC', '0.05'),
+
+      // =====================================================================
+      // TREASURY RECYCLER — x402 USDC revenue -> ANM.
+      //
+      // DISABLED and KEYLESS by default. It never reuses the facilitator's
+      // private key; without its own key it can plan but cannot move funds.
+      //
+      // X402_RECYCLE_DEPOSIT_NETWORK has NO DEFAULT on purpose. EVM addresses
+      // are identical across chains, so a Base transfer to a BEP20 deposit
+      // address confirms and is never credited — silent, unrecoverable loss.
+      // The operator must state the network, and it must match the chain.
+      // =====================================================================
+      recycleEnabled: envFrom(source, 'X402_RECYCLE_ENABLED', '0') === '1',
+      recycleChainId: parseIntEnv(source, 'X402_RECYCLE_CHAIN_ID', 8453, { min: 1 }),
+      recycleSourceAddress: envFrom(source, 'X402_RECYCLE_SOURCE', envFrom(source, 'X402_BASE_PAYTO', '')),
+      recycleDepositAddress: envFrom(source, 'X402_RECYCLE_DEPOSIT_ADDRESS', ''),
+      recycleDepositNetwork: envFrom(source, 'X402_RECYCLE_DEPOSIT_NETWORK', ''),
+      recycleHasKey: envFrom(source, 'X402_RECYCLE_PRIVATE_KEY', '') !== '',
+      // Leave enough USDC behind to cover in-flight refunds/incidents.
+      recycleReserveAtomic: envFrom(source, 'X402_RECYCLE_RESERVE_ATOMIC', '0'),
+      // The exchange minimum is 1 USDC.
+      recycleMinDepositAtomic: envFrom(source, 'X402_RECYCLE_MIN_DEPOSIT_ATOMIC', '1000000'),
+      recycleMaxPerRunAtomic: envFrom(source, 'X402_RECYCLE_MAX_PER_RUN_ATOMIC', '50000000'),
+      // Until a first deposit is confirmed credited, every run is capped here.
+      recycleDepositConfirmed: envFrom(source, 'X402_RECYCLE_DEPOSIT_CONFIRMED', '0') === '1',
+      recycleTestAmountAtomic: envFrom(source, 'X402_RECYCLE_TEST_ATOMIC', '1000000'),
+      recycleMarket: envFrom(source, 'X402_RECYCLE_MARKET', 'ANM_USDT'),
+      recycleApiBase: envFrom(source, 'X402_RECYCLE_API_BASE', 'https://api.nonkyc.io/api/v2'),
+      recycleApiKey: envFrom(source, 'X402_RECYCLE_API_KEY', ''),
+      recycleApiSecret: envFrom(source, 'X402_RECYCLE_API_SECRET', ''),
     });
   } catch (e) {
     problems.push(e.message);

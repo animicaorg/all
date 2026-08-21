@@ -43,8 +43,14 @@ test('catalog: /x402 and /.well-known/x402 list products with live availability'
     assert.equal(a.json.discovery.openapi, `${t.gw.cfg.resourceBaseUrl}/x402/openapi.json`);
     const ids = a.json.products.map((p) => p.id).sort();
     assert.deepEqual(ids, [
-      'bulk_chain', 'chain_address_history', 'chain_batch_balances', 'echo', 'priority_inference', 'qrng',
-      'random_bulk', 'random_commit', 'random_int', 'random_pick', 'random_shuffle',
+      'analytics_market', 'analytics_peers', 'analytics_price',
+      'ask_url', 'blob_put', 'bulk_chain', 'chain_address_history', 'chain_batch_balances',
+      'classify', 'crawl_pass', 'crawl_pass_10', 'crawl_pass_100', 'credits_buy', 'echo', 'embed_batch', 'entities', 'execute',
+      'extract_structured', 'fetch_extract', 'forecast_notarized', 'geo_audit', 'geo_fix', 'holder_snapshot',
+      'injection_scan', 'json_repair', 'media_audio', 'media_image', 'media_video',
+      'mempool_feed', 'mesh_find', 'mesh_probe', 'notarize', 'pq_verify', 'price_oracle', 'priority_inference', 'qrng',
+      'random_bulk', 'random_commit', 'random_int', 'random_pick', 'random_shuffle', 'rerank',
+      'route_action', 'solve_plan', 'tier_standards',
     ]);
     const byId = Object.fromEntries(a.json.products.map((p) => [p.id, p]));
     assert.equal(byId.qrng.available, true);
@@ -608,8 +614,12 @@ test('inference: activates at the threshold and proxies with priority headers', 
     // OpenAI shape stays pure (no injected payment field); proof in header
     assert.equal(paid.json.payment, undefined);
     assert.ok(paid.headers.get('payment-response'));
-    assert.equal(upstreamCalls.length, 1);
-    assert.equal(upstreamCalls[0].headers['x-animica-priority'], 'x402-paid');
+    // Count INFERENCE calls only. The media product's capability probe shares
+    // this same fetch impl and fires once at registry build, so a bare length
+    // check here counts unrelated traffic.
+    const inferCalls = upstreamCalls.filter((c) => String(c.url).includes('/v1/chat/completions'));
+    assert.equal(inferCalls.length, 1);
+    assert.equal(inferCalls[0].headers['x-animica-priority'], 'x402-paid');
     assert.equal(t.fac.calls.settle.length, 1);
   } finally {
     await t.close();
@@ -698,4 +708,60 @@ test('capacity: probe staleness fails closed; ms timestamps normalize; pipeline 
   assert.equal(gate.available(), true);
   clock += 61_000; // probe older than maxProbeAgeMs (60s default)
   assert.equal(gate.available(), false, 'stale probe must fail closed');
+});
+
+// ---------------------------------------------------------------------------
+// Embedding batch limits.
+//
+// The embedding service rejects anything over 64 texts, or any text over 8000
+// chars, with a 400. Both RAG products chunk a page and embedded every chunk in
+// one call, so a 1200-char chunker turned any page past ~75KB into a request
+// that could not succeed: the free crawler and the PAID /x402/web/ask both
+// failed on ordinary pages while every unit test passed, because no test ever
+// used more than a handful of chunks. These pin the splitting.
+// ---------------------------------------------------------------------------
+
+test('embedBatched splits requests to the service limit and preserves order', async () => {
+  const { embedBatched, EMBED_MAX_BATCH } = require('../src/products/ask-url');
+  const batches = [];
+  const fetchImpl = async (_url, init) => {
+    const { texts } = JSON.parse(init.body);
+    batches.push(texts.length);
+    // Echo an identifiable vector per text so ordering is checkable.
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ vectors: texts.map((t) => [Number(String(t).replace(/\D/g, '')) || 0]) }),
+    };
+  };
+  const inputs = Array.from({ length: 150 }, (_, i) => `t${i}`);
+  const out = await embedBatched(inputs, { cfg: { embedUrl: 'http://e', embedTimeoutMs: 5000 }, fetchImpl });
+
+  assert.equal(out.length, 150, 'every input must come back');
+  assert.ok(batches.every((n) => n <= EMBED_MAX_BATCH), `no batch may exceed ${EMBED_MAX_BATCH}: ${batches}`);
+  assert.deepEqual(batches, [64, 64, 22]);
+  assert.deepEqual(out[0], [0], 'first vector must map to the first input');
+  assert.deepEqual(out[149], [149], 'order must survive batching');
+});
+
+test('embedBatched clamps oversized texts instead of letting the service 400', async () => {
+  const { embedBatched, EMBED_MAX_CHARS } = require('../src/products/ask-url');
+  let seen = null;
+  const fetchImpl = async (_url, init) => {
+    seen = JSON.parse(init.body).texts;
+    return { ok: true, status: 200, json: async () => ({ vectors: seen.map(() => [1]) }) };
+  };
+  await embedBatched(['x'.repeat(EMBED_MAX_CHARS * 3)], {
+    cfg: { embedUrl: 'http://e', embedTimeoutMs: 5000 }, fetchImpl,
+  });
+  assert.equal(seen[0].length, EMBED_MAX_CHARS, 'a long chunk must be clamped, not rejected downstream');
+});
+
+test('embedBatched surfaces a service failure instead of returning short results', async () => {
+  const { embedBatched } = require('../src/products/ask-url');
+  const fetchImpl = async () => ({ ok: false, status: 400, json: async () => ({ error: 'nope' }) });
+  await assert.rejects(
+    () => embedBatched(['a'], { cfg: { embedUrl: 'http://e', embedTimeoutMs: 5000 }, fetchImpl }),
+    /embedding service HTTP 400/,
+  );
 });

@@ -173,13 +173,27 @@ const BASE = cfgMod.NETWORKS.BASE_MAINNET;
 
 /**
  * A full gateway over loopback HTTP with everything mocked. Returns
- * { gw, baseUrl, fac, events, close() }.
+ * { gw, baseUrl, fac, events, store, close() }.
  */
-async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chainIndex, settlementStats, receiptSecret = 'test-receipt-secret' } = {}) {
+async function buildTestGateway({ overrides = {}, envSource = {}, handlers, inferenceFetch, chainIndex, settlementStats, receiptSecret = 'test-receipt-secret' } = {}) {
+  // No test may reach a third-party directory. The Mesh index warm-up and its
+  // probe sweeps are real network work against Bazaar and 402index; leaving
+  // them on would make the suite slow, flaky and dependent on someone else's
+  // uptime. Tests that exercise the Mesh inject their own fetch instead.
+  envSource = { X402_MESH_BACKGROUND: '0', ...envSource };
   const events = [];
   const fac = mockFacilitator({ events });
   const nodeFetch = fakeNodeFetch(handlers || chainHandlers(), { events });
-  const cfg = cfgMod.loadGatewayConfig({}, Object.assign({
+  // The ANM lane is off by default in tests for the same reason as the SVM
+  // lane, plus one more: its price is read from a file on the HOST
+  // (/var/www/animica.org/anm-price.json), so leaving it on would make the
+  // suite depend on production state and behave differently on a machine
+  // where that file is absent or stale. ANM-lane tests opt in by passing
+  // X402_ANM_ENABLED:'1' as the env source.
+  // NOTE: this must go in the ENV SOURCE, not overrides — config.js derives
+  // these flags from env AFTER spreading overrides, so an override loses.
+  const testStore = createGatewayStore(':memory:');
+  const cfg = cfgMod.loadGatewayConfig(Object.assign({ X402_ANM_ENABLED: '0' }, envSource), Object.assign({
     enabled: true,
     networkEvm: BASE,
     usdcAsset: cfgMod.USDC_DEFAULTS[BASE],
@@ -192,6 +206,7 @@ async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chai
     settlementDbPath: path.join(os.tmpdir(), 'x402-tests-no-such-ledger.db'),
     // never offer the SVM lane in these tests
     wanmMint: '', wanmTreasury: '', wanmFeePayerPubkey: '', wanmUsdPrice: '',
+
   }, overrides));
   const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } };
   // ALWAYS in-memory, and the walker is never started: no test may write a
@@ -203,7 +218,7 @@ async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chai
     fetchImpl: nodeFetch,
     inferenceFetch: inferenceFetch || nodeFetch,
     facilitatorClientFactory: fac.factory,
-    gatewayStore: createGatewayStore(':memory:'),
+    gatewayStore: testStore,
     chainIndex: index,
     chainIndexer: null,
     settlementStats,
@@ -214,7 +229,7 @@ async function buildTestGateway({ overrides = {}, handlers, inferenceFetch, chai
   await new Promise((resolve) => gw.server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${gw.server.address().port}`;
   return {
-    gw, baseUrl, fac, events, chainIndex: index,
+    gw, baseUrl, fac, events, chainIndex: index, store: testStore,
     close: () => new Promise((resolve) => { gw.capacity.stop(); gw.server.close(resolve); }),
   };
 }

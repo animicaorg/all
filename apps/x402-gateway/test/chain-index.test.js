@@ -535,8 +535,12 @@ test('history: caps and bad input answer 400 BEFORE any payment is requested', a
     assert.equal(badAddr.status, 400);
     assert.equal(badAddr.json.error, 'invalid_address');
 
+    // An EMPTY object is absent input, not bad input — it is exactly what a
+    // discovery probe sends, so it gets the 402 OFFER rather than a 400. The
+    // x402 trust monitor POSTs {} and was scoring these products as erroring.
+    // Genuinely bad input (above and below) still answers 400 before payment.
     const noAddr = await post({});
-    assert.equal(noAddr.status, 400);
+    assert.equal(noAddr.status, 402);
 
     const badCursor = await post({ address: ADDR_A, cursor: 'nonsense' });
     assert.equal(badCursor.status, 400);

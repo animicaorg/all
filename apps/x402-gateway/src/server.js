@@ -36,6 +36,8 @@ const { createNodeClient } = require('./animica-node');
 const { createCapacityGate } = require('./capacity');
 const { createRegistry } = require('./products/registry');
 const { createGatewayStore } = require('./store/gateway');
+const { createScanService } = require('./scan');
+const { createAnmPrice } = require('./anm-price');
 const { createChainIndexStore, createChainIndexer } = require('./chain-index');
 const { createReceiptSigner } = require('./receipts');
 const { createPaywall } = require('./paywall');
@@ -129,7 +131,26 @@ function createGateway({
     });
   }
 
-  const registry = createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferenceFetch: inferenceFetch || fetchImpl, sleep, now, availabilityTtlMs });
+  const registry = createRegistry({ cfg, node, capacity, chainIndex, gatewayStore, inferenceFetch: inferenceFetch || fetchImpl, sleep, now, availabilityTtlMs, logger });
+
+  // ANM 402 Scan + the adoption bounty. Every route it serves is FREE, so it
+  // is mounted beside the discovery endpoints rather than in the paid product
+  // registry — charging for discovery would defeat what it is for.
+  const scanAnmPrice = createAnmPrice({ path: cfg.anmPricePath, maxAgeSeconds: cfg.anmPriceMaxAgeSeconds, now });
+  const scan = createScanService({ cfg, gatewayStore, node, fetchImpl, now, logger });
+
+  // Dynamic pricing: peg every paid product to a small multiple (5–8x; 3x for
+  // the standard inference tier) of the live Base settlement gas cost. Runs in
+  // the background; on any RPC/feed failure prices stay at their static values.
+  if (String(process.env.X402_DYNAMIC_PRICING || '') === '1') {
+    try {
+      const { startDynamicPricing } = require('./dynamic-pricing');
+      startDynamicPricing({ products: registry.products, cfg, cfgMod, fetchImpl, logger });
+      logger.info('x402_dynamic_pricing_enabled', {});
+    } catch (e) {
+      logger.warn('x402_dynamic_pricing_init_failed', { error: String(e && e.message || e) });
+    }
+  }
   const paywall = createPaywall({ cfg, registry, gatewayStore, receiptSigner, metrics, logger, fetchImpl, facilitatorClientFactory, now });
   // Read-only view of the facilitator's settlement ledger for GET /x402/stats.
   // Opened lazily on first use, so a gateway on a host where the facilitator
@@ -187,7 +208,20 @@ function createGateway({
     return [...allow].sort();
   }
 
-  async function requestHandler(req, res) {
+  function _readBodyCapped(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let n = 0;
+    req.on('data', (c) => {
+      n += c.length;
+      if (n > maxBytes) { req.destroy(); reject(new Error('body too large')); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+async function requestHandler(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname.replace(/\/+$/, '') || '/';
     try {
@@ -234,13 +268,27 @@ function createGateway({
         });
         return res.end();
       }
-      if (req.method === 'GET' && (path === '/x402' || path === '/.well-known/x402' || path === '/')) {
+      // Catalog aliases. These are not invented: they are the paths x402
+      // indexers and crawlers ACTUALLY request against this host, taken from
+      // the nginx 404 log (x402-services.json, /x402.json, /api/x402). A 404
+      // on a discovery path is the same failure as the old HEAD-probe 404s —
+      // the crawler concludes there is nothing here and moves on, and we stay
+      // invisible to exactly the audience we want.
+      const CATALOG_ALIASES = new Set([
+        '/x402', '/', '/x402.json', '/api/x402',
+        '/.well-known/x402', '/.well-known/x402.json', '/.well-known/x402-services.json',
+      ]);
+      if (req.method === 'GET' && CATALOG_ALIASES.has(path)) {
         const catalog = await registry.catalog();
         // /.well-known/ is a machine location by definition — it never
         // negotiates. /x402 does: a browser (Accept: text/html) gets the
         // landing page, an agent or curl gets the catalog. ?format= wins over
         // both, which is what the health-check script and humans use.
-        const wantHtml = path !== '/.well-known/x402' && prefersHtml(req, url);
+        // `.json` and the well-known path always return JSON — some discovery
+        // indexers probe `/.well-known/x402.json` specifically, so it must not
+        // negotiate to HTML.
+        const isWellKnown = path.startsWith('/.well-known/') || path === '/x402.json' || path === '/api/x402';
+        const wantHtml = !isWellKnown && prefersHtml(req, url);
         if (wantHtml) {
           const html = renderLanding({ cfg, catalog, products: registry.products, now });
           res.writeHead(200, {
@@ -261,6 +309,11 @@ function createGateway({
         const doc = buildOpenApi({ cfg, catalog, products: registry.products });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60' });
         return res.end(JSON.stringify(doc, null, 2));
+      }
+      // Directory + bounty (all free). Placed before the product registry so a
+      // /x402/scan path can never be mistaken for a paid route.
+      if (path.startsWith('/x402/scan') || path.startsWith('/x402/bounty')) {
+        if (await scan.handle(req, res, url, path, scanAnmPrice)) return undefined;
       }
       if (req.method === 'GET' && (path === '/x402/stats' || path === '/stats')) {
         const body = JSON.stringify(stats.snapshot(), null, 2);
@@ -296,18 +349,59 @@ function createGateway({
       // the entire point of publishing a commitment.
       const free = registry.findFree(req.method, path);
       if (free) {
+        // Free/trial POST routes bypass the paywall, which is where ctx.json is
+        // built. Without parsing the body here, a POST product's validate()
+        // (which reads ctx.json) 400s on every trial. Parse it for POST/PUT so
+        // the free-trial hook actually works for inference/chain/media.
+        let rawBody = null, json = null;
+        if (req.method === 'POST' || req.method === 'PUT') {
+          try {
+            // A free route may need a bigger body than the product it hangs
+            // off: /x402/crawl/licence/verify carries a 3.3KB ML-DSA-65
+            // signature plus a 2KB public key (~11KB of JSON) while its parent
+            // pass product caps at 4KB. Inheriting the parent's cap made every
+            // real verification 502 — the endpoint worked perfectly on a small
+            // hand-made payload and failed on every genuine one.
+            rawBody = await _readBodyCapped(req, (free.route && free.route.maxBodyBytes)
+              || (free.product && free.product.maxBodyBytes) || (64 * 1024));
+            if (String(req.headers['content-type'] || '').includes('application/json') && rawBody && rawBody.length) {
+              try { json = JSON.parse(rawBody.toString('utf8')); } catch (_e) { json = null; }
+            }
+          } catch (_e) { rawBody = null; json = null; }
+        }
         const out = await free.route.handler({
           method: req.method,
           url,
           query: url.searchParams,
           headers: req.headers,
+          // Free routes may be quota-limited per client, and clientKey falls
+          // back to the socket address when no proxy header is present.
+          remoteAddress: (req.socket && req.socket.remoteAddress) || null,
           params: free.params,
           product: free.product,
+          rawBody,
+          json,
         });
         const headers = Object.assign({ 'content-type': out.bodyObj !== undefined ? 'application/json' : (out.contentType || 'application/json') }, out.headers);
         res.writeHead(out.status || 200, headers);
         return res.end(out.bodyObj !== undefined ? JSON.stringify(out.bodyObj) : (out.body || ''));
       }
+      // A free route that exists under a DIFFERENT method answers 405 with
+      // Allow, never 404. (Observed: a crawler GET on /x402/qrng/bulk/trial,
+      // a POST-only trial, got a 404 and would reasonably conclude the trial
+      // does not exist.)
+      const freeOther = registry.findFreeAnyMethod && registry.findFreeAnyMethod(path);
+      if (freeOther) {
+        res.writeHead(405, { 'content-type': 'application/json', allow: freeOther.route.method });
+        return res.end(JSON.stringify({
+          error: 'method_not_allowed',
+          detail: `this endpoint exists but takes ${freeOther.route.method}, not ${req.method}`,
+          endpoint: `${freeOther.route.method} ${freeOther.route.path}`,
+          description: freeOther.route.description || undefined,
+          catalog: '/.well-known/x402',
+        }, null, 2));
+      }
+
       // RETIRED routes get 410 with a forwarding pointer, not a bare 404.
       // The demo echo was registered with an x402 indexer before the real
       // products existed, so uptime monitors and cached agent configs still
@@ -315,18 +409,51 @@ function createGateway({
       // a trust monitor then publishes about the whole origin. 410 is the
       // status that means "deliberately gone", and the body hands the caller
       // the live catalog so a machine can re-target itself without a human.
+      //
+      // THE BODY IS NOT ENOUGH (2026-08-20). x402-observer polls this route
+      // ~once per sweep and has done so for days, which means nothing it read
+      // in our JSON body persuaded it to stop — uptime monitors classify on
+      // status and headers, and most never parse an error body at all. So the
+      // retirement is also stated in the standard header vocabulary a monitor
+      // already understands: Deprecation (RFC 9745) and Sunset (RFC 8594) say
+      // WHEN, and the Link relations say WHERE TO GO INSTEAD. Together they
+      // are the machine-readable form of "this is intentional, here is the
+      // successor" — the same claim the body makes, in the place a crawler
+      // actually looks. Cache-Control lets a well-behaved monitor stop asking.
       const RETIRED = {
-        '/x402/paid/echo': 'the echo route was a settlement smoke test, never a product',
+        '/x402/paid/echo': {
+          reason: 'the echo route was a settlement smoke test, never a product',
+          // The instant it stopped being served in production: the release
+          // that defaulted X402_ENABLE_ECHO off. Not the date we started
+          // saying so — a Sunset in the future would be a lie about a route
+          // that is already gone.
+          goneAtMs: Date.UTC(2026, 7, 15, 1, 3, 28),
+          successor: '/x402/qrng/draw',
+        },
       };
-      const retiredReason = RETIRED[path] || RETIRED[`/x402${path}`];
-      if (retiredReason) {
-        res.writeHead(410, { 'content-type': 'application/json' });
+      const retired = RETIRED[path] || RETIRED[`/x402${path}`];
+      if (retired) {
+        const goneAtSec = Math.floor(retired.goneAtMs / 1000);
+        res.writeHead(410, {
+          'content-type': 'application/json',
+          // RFC 9745: a structured-field Date, i.e. "@" + unix seconds.
+          deprecation: `@${goneAtSec}`,
+          // RFC 8594: an IMF-fixdate in the past — already withdrawn.
+          sunset: new Date(retired.goneAtMs).toUTCString(),
+          link: [
+            `<${retired.successor}>; rel="successor-version"`,
+            '</.well-known/x402>; rel="index"',
+            '</x402/openapi.json>; rel="service-desc"',
+          ].join(', '),
+          'cache-control': 'public, max-age=86400',
+        });
         return res.end(JSON.stringify({
           error: 'gone',
-          detail: retiredReason,
+          detail: retired.reason,
+          gone_at: new Date(retired.goneAtMs).toISOString(),
           catalog: '/.well-known/x402',
           openapi: '/x402/openapi.json',
-          suggested: '/x402/qrng/draw',
+          suggested: retired.successor,
         }));
       }
       res.writeHead(404, { 'content-type': 'application/json' });

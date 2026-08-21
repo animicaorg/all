@@ -172,9 +172,39 @@ function cmdRevenue(args) {
     total += sum;
     return { resource: r.resource || '(none)', settled: r.n, revenue_usdc: atomicToDecimalString(sum, 6) };
   });
-  out(args, shaped, ['resource', 'settled', 'revenue_usdc']);
+  // Payments settled by a THIRD-PARTY facilitator are not in our payments
+  // ledger — that DB is written by OUR facilitator, and since 2026-08-19 the
+  // USDC lane settles at CDP. Without this the command reports the last
+  // self-settled payment and reads as "nothing has sold since", which is the
+  // opposite of the truth. Shown as a separate section because the two are not
+  // the same kind of record: there is no gas accounting for a remote
+  // settlement, because we no longer pay the gas.
+  let remote = [];
+  try {
+    const gdb = openDb(GATEWAY_DB_PATH);
+    remote = gdb.prepare(
+      `SELECT product, resource, COUNT(*) AS n, SUM(CAST(amount_atomic AS INTEGER)) AS atomic
+       FROM remote_settlements WHERE settled_at >= ?
+       GROUP BY product ORDER BY atomic DESC`
+    ).all(Math.floor(since / 1000));
+  } catch { /* table absent on a gateway that never used a remote facilitator */ }
+
+  const remoteTotal = remote.reduce((n, r) => n + BigInt(r.atomic || 0), 0n);
+  const remoteShaped = remote.map((r) => ({
+    resource: `${r.resource || r.product} (remote)`,
+    settled: r.n,
+    revenue_usdc: atomicToDecimalString(BigInt(r.atomic || 0), 6),
+  }));
+
+  out(args, shaped.concat(remoteShaped), ['resource', 'settled', 'revenue_usdc']);
   if (!args.flags.json) {
-    console.log(`\ntotal since ${fmtTs(since)}: ${atomicToDecimalString(total, 6)} USDC (${shaped.reduce((n, r) => n + r.settled, 0)} settlements)`);
+    const localCount = shaped.reduce((n, r) => n + r.settled, 0);
+    const remoteCount = remote.reduce((n, r) => n + r.n, 0);
+    console.log(`\nself-settled  since ${fmtTs(since)}: ${atomicToDecimalString(total, 6)} USDC (${localCount} settlements)`);
+    if (remoteCount) {
+      console.log(`remote-settled since ${fmtTs(since)}: ${atomicToDecimalString(remoteTotal, 6)} USDC (${remoteCount} settlements, no local gas)`);
+    }
+    console.log(`TOTAL         since ${fmtTs(since)}: ${atomicToDecimalString(total + remoteTotal, 6)} USDC (${localCount + remoteCount} settlements)`);
   }
 }
 
@@ -341,6 +371,122 @@ function cmdIndex(args) {
  * world-readable at GET /x402/random/reveal/{id}, so printing them here
  * reveals nothing new. `list` never prints them at all.
  */
+/**
+ * PROMO CREDIT VOUCHERS.
+ *
+ * The friction on a first x402 call is not the half-cent price — it is
+ * everything in front of it: install a client, fund a wallet with USDC on
+ * Base, implement EIP-3009 signing. That is a two-hour integration to
+ * evaluate a $0.005 API, and nobody does it on spec. A voucher collapses it
+ * to one HTTP header.
+ *
+ * These vouchers are minted by the OPERATOR, not bought, so they carry no
+ * settlement_tx and are labelled `promo:*` — the ledger must never suggest
+ * money arrived that did not. They are otherwise identical to purchased
+ * credit and spend through the same debit path.
+ */
+function cmdCredits(args) {
+  const sub = args._[0];
+  const crypto = require('node:crypto');
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  if (sub === 'mint') {
+    const usd = String(args.flags.value || '0.25');
+    if (!/^\d+(\.\d{1,6})?$/.test(usd)) fail('--value must be a decimal USD amount, e.g. 0.25');
+    const count = Number(args.flags.count || 1);
+    if (!Number.isInteger(count) || count < 1 || count > 100) fail('--count must be 1..100');
+    const days = Number(args.flags.days || 90);
+    const label = args.flags.label ? String(args.flags.label) : 'promo';
+    // USD -> atomic USDC (6dp), integer math only.
+    const [w, f = ''] = usd.split('.');
+    const atomic = BigInt(w) * 1000000n + BigInt((f + '000000').slice(0, 6));
+    if (atomic <= 0n) fail('--value must be greater than zero');
+
+    const db = openDb(GATEWAY_DB_PATH, { writable: true });
+    const ins = db.prepare(`INSERT INTO credit_vouchers
+      (voucher_id, label, minted_atomic, bonus_atomic, balance_atomic, payer, settlement_tx,
+       created_at, expires_at, revoked, last_used_at, spend_count)
+      VALUES (@voucher_id, @label, @minted_atomic, '0', @balance_atomic, NULL, NULL,
+       @created_at, @expires_at, 0, NULL, 0)`);
+    const minted = [];
+    for (let i = 0; i < count; i++) {
+      const token = 'anmc_' + crypto.randomBytes(32).toString('base64url');
+      const voucherId = crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+      ins.run({
+        voucher_id: voucherId,
+        label: `promo:${label}${count > 1 ? '#' + (i + 1) : ''}`,
+        minted_atomic: atomic.toString(),
+        balance_atomic: atomic.toString(),
+        created_at: nowSec,
+        expires_at: nowSec + days * 86400,
+      });
+      minted.push({ token, voucherId });
+    }
+    db.close();
+
+    if (args.flags.json) {
+      return console.log(JSON.stringify({ minted: minted.map((m) => ({ token: m.token, voucher_id: m.voucherId })), value_usd: usd, expires_days: days }, null, 2));
+    }
+    console.log(`minted ${count} voucher(s) worth $${usd} each, valid ${days} days\n`);
+    for (const m of minted) {
+      console.log('─'.repeat(78));
+      console.log(`token      ${m.token}`);
+      console.log(`voucher_id ${m.voucherId.slice(0, 16)}…   (this is what the DB stores; the token is not)`);
+      console.log(`
+Try it — no wallet, no gas, no x402 client:
+
+  curl -s -X POST https://animica.dev/x402/web/fetch \\
+    -H 'content-type: application/json' \\
+    -H 'X-Animica-Credits: ${m.token}' \\
+    -d '{"url":"https://example.com"}'
+
+  # balance + full spend history, free:
+  curl -s https://animica.dev/x402/credits/balance \\
+    -H 'X-Animica-Credits: ${m.token}'
+
+Spends on any of the 24 paid products: https://animica.dev/.well-known/x402
+`);
+    }
+    console.log('─'.repeat(78));
+    console.log('The token is shown ONCE and stored only as its SHA-256 hash — save it now.');
+    return undefined;
+  }
+
+  if (sub === 'list') {
+    const db = openDb(GATEWAY_DB_PATH);
+    const rows = db.prepare(`SELECT voucher_id, label, minted_atomic, balance_atomic, spend_count,
+        created_at, expires_at, revoked, settlement_tx
+        FROM credit_vouchers ORDER BY created_at DESC LIMIT ?`).all(Number(args.flags.limit || 50));
+    db.close();
+    if (args.flags.json) return console.log(JSON.stringify(rows, null, 2));
+    if (!rows.length) return console.log('no vouchers');
+    console.log('voucher_id        label                 minted     balance    spends  origin   expires');
+    for (const r of rows) {
+      console.log([
+        r.voucher_id.slice(0, 16),
+        String(r.label || '').padEnd(20).slice(0, 20),
+        atomicToDecimalString(r.minted_atomic, 6).padStart(9),
+        atomicToDecimalString(r.balance_atomic, 6).padStart(10),
+        String(r.spend_count).padStart(6),
+        (r.settlement_tx ? 'paid' : 'promo').padEnd(7),
+        fmtTs(r.expires_at) + (r.revoked ? '  REVOKED' : ''),
+      ].join(' '));
+    }
+    return undefined;
+  }
+
+  if (sub === 'revoke') {
+    const id = args._[1];
+    if (!id) fail('usage: animica-x402 credits revoke <voucher_id>');
+    const db = openDb(GATEWAY_DB_PATH, { writable: true });
+    const r = db.prepare('UPDATE credit_vouchers SET revoked = 1 WHERE voucher_id = ?').run(String(id));
+    db.close();
+    return console.log(r.changes === 1 ? `revoked ${id}` : `no voucher ${id}`);
+  }
+
+  return fail('usage: animica-x402 credits mint [--value 0.25] [--count N] [--label name] [--days 90] | list | revoke <voucher_id>');
+}
+
 function cmdCommitments(args) {
   const sub = args._[0];
   const nowSec = Math.floor(Date.now() / 1000);
@@ -639,6 +785,10 @@ function usage() {
   commitments list [--state sealed|open|revealed]   commit-reveal ledger (random_commit)
   commitments get <commit_id>                 one commitment (secret withheld while sealed)
   commitments prune [--older-than 90d]        drop old commitments
+  credits mint [--value 0.25] [--count N] [--label name] [--days 90]
+                                              mint PROMO vouchers (operator, not bought)
+  credits list [--limit N]                    vouchers, with paid vs promo origin
+  credits revoke <voucher_id>                 disable a voucher
   treasury status                             sweep-and-sip policy, breaker state, totals
   treasury history [--kind sip|sweep|approve] sip/sweep ledger
   treasury reconcile                          resolve in-flight treasury txs from the chain
@@ -657,6 +807,7 @@ async function main() {
   if (cmd === 'gas') return cmdGasReport(parseArgs(rest));
   if (cmd === 'incidents') return cmdIncidents(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   if (cmd === 'index') return cmdIndex(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
+  if (cmd === 'credits') return cmdCredits(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   if (cmd === 'commitments') return cmdCommitments(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   if (cmd === 'treasury') return cmdTreasury(parseArgs([sub, ...rest].filter((x) => x !== undefined)));
   usage();

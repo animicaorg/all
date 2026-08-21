@@ -29,6 +29,7 @@ const path = require('node:path');
 const cfgMod = require('../src/config');
 const protocol = require('../src/protocol');
 const { createStore } = require('../src/store');
+const { createGatewayStore } = require('../src/store/gateway');
 const { createSettlementStats, pathOfResource } = require('../src/discovery/stats');
 const { buildTestGateway, request } = require('./gateway-helpers');
 
@@ -56,6 +57,9 @@ test('catalog: spec §1 identity + every product generated from the registry', a
       catalog: `${base}/x402`,
       well_known: `${base}/.well-known/x402`,
       openapi: `${base}/x402/openapi.json`,
+      // Named here so an agent acting for a WEBSITE OWNER can find the free
+      // half of Paid Crawl; every other entry in this catalog costs money.
+      paid_crawl: `${base}/.well-known/paid-crawl`,
       stats: `${base}/x402/stats`,
     });
 
@@ -302,6 +306,46 @@ test('landing: an unhealthy backend flips the page to unavailable', async () => 
 
 /* ------------------------------------------------------------- openapi -- */
 
+// Every POST operation must publish a body schema. A free POST route is still a
+// POST route: `freeOperation` never emitted one, so five live Paid Crawl
+// endpoints — register, verify, decide, licence, licence/verify, the whole
+// operator-onboarding path — and all 27 POST trials were in the document with
+// no way to construct a call. Whitelisted: the two paid routes that genuinely
+// take no body (their input is query params).
+test('openapi: every POST operation that takes a body publishes its schema', async () => {
+  const t = await buildTestGateway();
+  try {
+    const doc = (await request(t.baseUrl, '/x402/openapi.json')).json;
+    const NO_BODY = new Set(['/x402/oracle/price', '/x402/chain/mempool']);
+    const missing = [];
+    for (const [p, item] of Object.entries(doc.paths)) {
+      for (const [m, op] of Object.entries(item)) {
+        if (m !== 'post' && m !== 'put') continue;
+        if (NO_BODY.has(p)) continue;
+        if (!op.requestBody || !op.requestBody.content['application/json'].schema.properties) missing.push(`${m.toUpperCase()} ${p}`);
+      }
+    }
+    assert.deepEqual(missing, [], `POST operations with no body schema: ${missing.join(', ')}`);
+  } finally {
+    await t.close();
+  }
+});
+
+// A trial documents the PAID route's input, because that is what it accepts.
+test('openapi: a POST trial publishes the same body schema as the product it samples', async () => {
+  const t = await buildTestGateway();
+  try {
+    const doc = (await request(t.baseUrl, '/x402/openapi.json')).json;
+    const paid = doc.paths['/x402/random/int'].post.requestBody.content['application/json'].schema;
+    const trial = doc.paths['/x402/random/int/trial'].post.requestBody.content['application/json'].schema;
+    assert.deepEqual(Object.keys(trial.properties).sort(), Object.keys(paid.properties).sort());
+    assert.deepEqual(trial.required, paid.required);
+  } finally {
+    await t.close();
+  }
+});
+
+
 /** Collect every $ref in the document. */
 function refsOf(node, out = []) {
   if (Array.isArray(node)) node.forEach((n) => refsOf(n, out));
@@ -497,7 +541,13 @@ test('402: every paid route carries descriptive metadata + a documentation URL',
 // `discovery` is the name to build against; `bazaar` exists only because
 // x402scan and other deployed indexers key on it. They must never drift — an
 // indexer reading either one has to learn the same thing about the endpoint.
-test('402: discovery and bazaar extensions carry byte-identical content', async () => {
+// The two keys were byte-identical until 2026-08-20 and a guard test enforced
+// it. That was wrong: CDP is the only consumer of `bazaar`, its indexer CRAWLS
+// the published 402, and it rejects the descriptor dialect outright — its free
+// validator answers `bazaar.schema: missing`, `parse: schema is invalid`,
+// `simulation: rejected (invalid discovery configuration)`, `index: null`.
+// Sending a valid declaration only on the facilitator call is not enough.
+test('402: bazaar carries CDPs dialect, discovery carries the neutral one', async () => {
   const t = await buildTestGateway();
   try {
     for (const p of ['/x402/qrng/draw', '/x402/random/int', '/x402/chain/export']) {
@@ -505,10 +555,30 @@ test('402: discovery and bazaar extensions carry byte-identical content', async 
       assert.equal(res.status, 402, p);
       const required = protocol.decodeHeader(res.headers.get(protocol.HEADER_PAYMENT_REQUIRED));
       const neutral = required.extensions.discovery;
-      const alias = required.extensions.bazaar;
+      const bazaar = required.extensions.bazaar;
       assert.ok(neutral, `${p}: missing the vendor-neutral discovery extension`);
-      assert.ok(alias, `${p}: missing the bazaar compatibility alias`);
-      assert.deepEqual(neutral, alias, `${p}: the two discovery keys have drifted`);
+      assert.ok(bazaar, `${p}: missing the bazaar extension`);
+
+      // The neutral key keeps the FIELD DESCRIPTORS, which is the form built
+      // against and the form `accepts[].outputSchema` mirrors.
+      assert.ok(neutral.info.input, `${p}: neutral block lost its input`);
+
+      // The bazaar key must satisfy CDP's required preflight checks, all of
+      // which are structural and therefore assertable here rather than only
+      // against the live validator.
+      assert.ok(bazaar.info, `${p}: bazaar.info — required check`);
+      assert.ok(bazaar.info.input, `${p}: bazaar.info.input — required check`);
+      assert.equal(bazaar.info.input.type, 'http', `${p}: bazaar.info.input.type — required check`);
+      assert.ok(bazaar.info.input.method, `${p}: bazaar.info.input.method — required check`);
+      assert.ok(bazaar.schema, `${p}: bazaar.schema — the check that was failing`);
+      assert.equal(bazaar.schema.$schema, 'https://json-schema.org/draft/2020-12/schema');
+      // The schema must describe `info`, not the request body — describing the
+      // body is the documented way to fail `parse` with "schema is invalid".
+      assert.ok(bazaar.schema.properties.input, `${p}: schema must describe info, not the body`);
+      assert.deepEqual(bazaar.schema.required, ['input']);
+      // Descriptors must NOT leak into the CDP block: info holds values.
+      assert.equal(JSON.stringify(bazaar.info).includes('"required":true'), false,
+        `${p}: descriptor form leaked into the CDP dialect`);
     }
   } finally {
     await t.close();
@@ -523,7 +593,16 @@ test('402: descriptive metadata never becomes a mandatory protocol field', async
     const res = await request(t.baseUrl, '/x402/qrng/draw');
     const required = protocol.decodeHeader(res.headers.get('payment-required'));
     protocol.validatePaymentRequirements(required.accepts[0]);
-    assert.equal(required.accepts[0].extra, undefined);
+    // DISCOVERY metadata must never reach an accepts entry — that is the
+    // property under test, and it is why the bazaar/discovery blocks live on
+    // the challenge instead.
+    assert.equal(required.accepts[0].extensions, undefined);
+    assert.equal(required.accepts[0].description, undefined);
+    // `extra` IS present and is NOT descriptive: it carries the asset's EIP-712
+    // domain, without which a remote facilitator cannot rebuild the signing
+    // digest (CDP rejects verification outright). It is identical for every
+    // product, so it still cannot make two routes' terms differ.
+    assert.deepEqual(Object.keys(required.accepts[0].extra).sort(), ['decimals', 'name', 'version']);
 
     const { paidRequest } = require('./gateway-helpers');
     const { paid } = await paidRequest(t.baseUrl, '/x402/qrng/draw');
@@ -633,19 +712,108 @@ test('stats: an absent ledger reports unknown instead of a confident zero', asyn
   }
 });
 
-test('stats: a remote facilitator says so rather than counting a local file', () => {
-  const cfg = cfgMod.loadGatewayConfig({}, {
+/** A remote-mode config pointed at `gatewayDbPath`. */
+function remoteCfg(gatewayDbPath) {
+  return cfgMod.loadGatewayConfig({}, {
     facilitatorMode: 'remote',
     networkEvm: cfgMod.NETWORKS.BASE_MAINNET,
     usdcAsset: cfgMod.USDC_DEFAULTS[cfgMod.NETWORKS.BASE_MAINNET],
     resourceBaseUrl: 'https://animica.dev',
     settlementDbPath: '/dev/null',
+    gatewayDbPath,
   });
-  const stats = createSettlementStats({ cfg, registry: { products: [] } });
+}
+
+// A remote facilitator writes no ledger we can read, but the gateway records
+// every settlement it observes. Reporting `available:false` there told the
+// uptime and trust crawlers that discovered us we know nothing about our own
+// sales — while the observed record sat right there, populated.
+test('stats: a remote facilitator is counted from the observed settlement record', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'x402-remote-stats-'));
+  const gwPath = path.join(dir, 'x402-gateway.db');
+  const nowSec = Math.floor(Date.now() / 1000);
+  try {
+    const gw = createGatewayStore(gwPath);
+    const settle = (product, atSec) => gw.recordRemoteSettlement({
+      settledAt: atSec * 1000,
+      product,
+      resource: `/x402/${product}`,
+      payer: '0x' + 'ab'.repeat(20),
+      tx: '0x' + Math.random().toString(16).slice(2).padEnd(64, '0'),
+      network: 'eip155:8453',
+      asset: '0x' + '22'.repeat(20),
+      amountAtomic: '10000',
+      priceUsd: '0.01',
+      facilitator: 'https://api.cdp.coinbase.com/platform/v2/x402',
+    });
+    settle('qrng', nowSec - 60);
+    settle('qrng', nowSec - 120);
+    settle('qrng', nowSec - 3 * 86_400);
+    settle('crawl_pass', nowSec - 60);
+    // A product id the registry does not know is bucketed, never echoed —
+    // the same rule the client-supplied resource column gets.
+    settle('<script>alert(1)</script>', nowSec - 60);
+    gw.close();
+
+    const registry = { products: [
+      { id: 'qrng', routes: [{ path: '/x402/qrng/draw' }] },
+      { id: 'crawl_pass', routes: [{ path: '/x402/crawl/pass' }] },
+    ] };
+    const stats = createSettlementStats({ cfg: remoteCfg(gwPath), registry });
+    const s = stats.snapshot();
+
+    assert.equal(s.available, true, 'an observed record is a fact, not an unknown');
+    assert.equal(s.source, 'gateway-observed-remote-settlements');
+    assert.equal(s.settled_by, 'external-facilitator');
+    assert.equal(s.settlements.settled_total, 5);
+    assert.equal(s.settlements.settled_24h, 4);
+    const byId = Object.fromEntries(s.products.map((p) => [p.id, p]));
+    assert.equal(byId.qrng.settled_total, 3);
+    assert.equal(byId.qrng.settled_24h, 2);
+    assert.equal(byId.crawl_pass.settled_total, 1);
+    assert.equal(byId.other.settled_total, 1);
+    assert.doesNotMatch(JSON.stringify(s), /<script>/i, 'unknown product ids are bucketed, never echoed');
+    // Aggregate only, exactly as in self mode: the payer and tx we DO hold
+    // must not leak just because a different table holds them.
+    const hexes = [...JSON.stringify(s).matchAll(/0x[0-9a-fA-F]{10,}/g)].map((m) => m[0]);
+    assert.deepEqual(hexes, [s.asset_address]);
+    stats.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Zero observed settlements is a fact a live observer can state. Refusing to
+// state it is what made the endpoint useless to a trust crawler.
+test('stats: a remote facilitator with no sales yet reports an honest zero', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'x402-remote-empty-'));
+  const gwPath = path.join(dir, 'x402-gateway.db');
+  try {
+    createGatewayStore(gwPath).close();
+    const stats = createSettlementStats({ cfg: remoteCfg(gwPath), registry: { products: [] } });
+    const s = stats.snapshot();
+    assert.equal(s.available, true);
+    assert.equal(s.settlements.settled_total, 0);
+    assert.equal(s.settlements.first_settled_at, null);
+    assert.deepEqual(s.products, []);
+    stats.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// "We cannot see" and "nothing sold" are different answers and must stay so.
+test('stats: a remote facilitator with no gateway DB still reports unknown', () => {
+  const stats = createSettlementStats({
+    cfg: remoteCfg('/nonexistent/x402-gateway.db'),
+    registry: { products: [] },
+  });
   const s = stats.snapshot();
   assert.equal(s.available, false);
-  assert.equal(s.reason, 'external_facilitator');
+  assert.equal(s.reason, 'settlement_store_empty');
   assert.equal(s.settlements, null);
+  // the identity facts are still published, so the endpoint stays useful
+  assert.equal(s.network, 'base');
 });
 
 test('stats: resource paths are normalised before the product lookup', () => {
@@ -667,6 +835,20 @@ test('retired echo answers 410 with a forwarding pointer, not 404', async () => 
     assert.equal(res.json.error, 'gone');
     assert.equal(res.json.catalog, '/.well-known/x402');
     assert.ok(res.json.suggested, 'points at a live product');
+
+    // An uptime monitor classifies on status and headers and generally never
+    // reads the body, so the retirement has to be stated in the vocabulary it
+    // already parses — otherwise it keeps polling and keeps scoring us down.
+    assert.match(res.headers.get('deprecation'), /^@\d+$/, 'RFC 9745 structured-field Date');
+    const sunset = res.headers.get('sunset');
+    assert.ok(sunset, 'RFC 8594 Sunset states when it went away');
+    assert.ok(Date.parse(sunset) < Date.now(), 'already withdrawn: the date must be in the past');
+    // The Deprecation instant and the Sunset date are the same event.
+    assert.equal(Number(res.headers.get('deprecation').slice(1)) * 1000, Date.parse(sunset));
+    const link = res.headers.get('link');
+    assert.match(link, /rel="successor-version"/, 'a machine can re-target itself from headers alone');
+    assert.ok(link.includes(`<${res.json.suggested}>`), 'header and body name the same successor');
+    assert.match(link, /rel="index"/);
   } finally {
     await t.close();
   }

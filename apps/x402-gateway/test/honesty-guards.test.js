@@ -44,34 +44,145 @@ function shippedFiles() {
 
 const CODE_AND_CONFIG = (p) => /\/(src|nginx|systemd|bin)\/|\.env\.example$/.test(p);
 
-test('no Coinbase dependency, name or URL survives anywhere in the shipped tree', () => {
-  const offences = [];
+// SETTLEMENT INDEPENDENCE — REVERSED BY THE OPERATOR 2026-08-19.
+//
+// This guard used to assert that no third-party facilitator could ever settle.
+// The operator directed the opposite ("switch all endpoints through the cdp
+// facilitator") after we measured that we appear in ZERO of 15,125 Bazaar
+// resources, and that the Bazaar indexes an endpoint only after the CDP
+// facilitator itself settles a payment for it. Being listed there and settling
+// elsewhere are mutually exclusive, so the property had to go to buy the
+// listing. That was their call, made with the trade-off stated.
+//
+// What is still worth guarding, and what these tests now assert:
+//   1. Third-party settlement is only ever reached when NAMED EXPLICITLY in
+//      configuration. No default, no fallback, no implicit third party.
+//   2. Pointing at CDP without credentials is refused AT BOOT, because a
+//      gateway that quotes payments it cannot settle passes every health check
+//      while failing every payment.
+//   3. Discovery metadata stays OUT of the money path — see the third test.
+const DISCOVERY_ONLY = /discovery\/resources/;
+
+/**
+ * `cfgMod.load()` reads process.env directly (its `overrides` argument does not
+ * feed the env helper), so these set and restore real environment variables.
+ */
+function withEnv(vars, fn) {
+  const saved = {};
+  for (const [k, v] of Object.entries(vars)) {
+    saved[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test('third-party settlement is reachable only when explicitly configured', () => {
+  // The default must still be ours, with nothing set.
+  withEnv({
+    X402_FACILITATOR_MODE: undefined,
+    X402_FACILITATOR_URL: undefined,
+    X402_EVM_FACILITATOR_URL: undefined,
+    X402_CDP_API_KEY_ID: undefined,
+    X402_CDP_API_KEY_SECRET: undefined,
+  }, () => {
+    const cfg = cfgMod.load();
+    assert.equal(cfg.facilitatorMode, 'self');
+    assert.equal(cfg.evmFacilitatorUrl, `http://127.0.0.1:${cfg.evmFacilitatorPort}`);
+    assert.equal(cfg.cdpApiKeyId, '');
+    assert.equal(cfg.cdpApiKeySecret, '');
+  });
+
+  // remote mode still requires an explicitly named URL — never a default.
+  withEnv({
+    X402_FACILITATOR_MODE: 'remote',
+    X402_FACILITATOR_URL: undefined,
+    X402_EVM_FACILITATOR_URL: undefined,
+  }, () => {
+    assert.throws(() => cfgMod.load(), /requires X402_FACILITATOR_URL/,
+      'remote mode must refuse to guess a facilitator');
+  });
+});
+
+test('a CDP facilitator URL without credentials is refused at boot, not at payment time', () => {
+  // The failure this prevents: every 402 quoted normally, every settle 401,
+  // health checks green. Same silent-break class as the payTo mismatch that
+  // took settlement down in August.
+  withEnv({
+    X402_FACILITATOR_MODE: 'remote',
+    X402_FACILITATOR_URL: 'https://api.cdp.coinbase.com/platform/v2/x402',
+    X402_EVM_FACILITATOR_URL: undefined,
+    X402_CDP_API_KEY_ID: undefined,
+    X402_CDP_API_KEY_SECRET: undefined,
+  }, () => {
+    assert.throws(() => cfgMod.load(), /X402_CDP_API_KEY_ID/,
+      'pointing at CDP without a key must not boot');
+  });
+
+  withEnv({
+    X402_FACILITATOR_MODE: 'remote',
+    X402_FACILITATOR_URL: 'https://api.cdp.coinbase.com/platform/v2/x402',
+    X402_EVM_FACILITATOR_URL: undefined,
+    X402_CDP_API_KEY_ID: 'id',
+    X402_CDP_API_KEY_SECRET: 'secret',
+  }, () => {
+    const ok = cfgMod.load();
+    assert.equal(ok.facilitatorMode, 'remote');
+    assert.equal(ok.evmFacilitatorUrl, 'https://api.cdp.coinbase.com/platform/v2/x402');
+  });
+});
+
+test('discovery metadata never becomes part of payment binding', () => {
+  // `protocol.requirementsEqual` compares accepts entries by canonical JSON to
+  // decide whether a presented payment matches this route's offer. Anything
+  // route-specific inside an accepts entry therefore becomes a payment-binding
+  // rule. Putting Bazaar metadata there once made two same-priced products
+  // non-interchangeable — which LOOKS like a security win but silently ties a
+  // money property to a discovery flag, so turning discovery off would reopen
+  // the hole with no test failing. Discovery metadata rides on the challenge,
+  // never on an accepts entry.
+  const mw = fs.readFileSync(path.join(APP, 'src', 'middleware.js'), 'utf8');
+  const fn = /function buildAccepts\(route, cfg\)[\s\S]*?\n\}/.exec(mw);
+  assert.ok(fn, 'buildAccepts must remain findable');
+  assert.doesNotMatch(fn[0], /bazaar|discoverable|discovery/i,
+    'no discovery metadata may appear inside an accepts entry');
+});
+
+test('no Coinbase SDK is pulled into the money path', () => {
+  // Settlement moved to their facilitator; the dependency surface did not.
+  // The JWT is implemented against the documented format with node:crypto in
+  // src/facilitator-cdp/auth.js — three audited dependencies stay three.
+  const pkg = JSON.parse(fs.readFileSync(path.join(APP, 'package.json'), 'utf8'));
+  const deps = Object.keys(pkg.dependencies || {});
+  assert.deepEqual(deps.filter((d) => /coinbase/i.test(d)), []);
+  assert.equal(deps.length, 3, `dependency surface grew to ${deps.length}: ${deps.join(', ')}`);
   for (const file of shippedFiles()) {
     const text = fs.readFileSync(file, 'utf8');
-    const rel = path.relative(APP, file);
-    text.split('\n').forEach((line, i) => {
-      const where = `${rel}:${i + 1}`;
-      // 1. No third-party facilitator/service URLs, ever — this is the one
-      //    that silently settles real money somewhere else.
-      if (/https?:\/\/[^\s"')]*(coinbase|x402\.org|cdp\.)/i.test(line)) {
-        offences.push(`${where}: third-party service URL — ${line.trim()}`);
-      }
-      // 2. "CDP" as a product name is out per the standing directive; the
-      //    neutral phrasing is "x402 v2 §7-compatible" / "x402 discovery
-      //    indexers". (CDP inside a longer word is not a hit.)
-      if (/\bCDP\b/.test(line)) {
-        offences.push(`${where}: CDP reference — ${line.trim()}`);
-      }
-      // 3. The word may appear ONLY as the negative claim in the two status
-      //    docs; never in code, config or deployment files.
-      if (/coinbase/i.test(line)) {
-        if (CODE_AND_CONFIG(file) || !/no Coinbase/i.test(line)) {
-          offences.push(`${where}: Coinbase mention — ${line.trim()}`);
-        }
-      }
-    });
+    assert.doesNotMatch(text, /require\(['"]@coinbase\/|from ['"]@coinbase\//,
+      `${path.relative(APP, file)} imports a Coinbase SDK`);
   }
-  assert.deepEqual(offences, [], offences.join('\n'));
+});
+
+test('the Bazaar directory is used read-only, and only for discovery', () => {
+  const mesh = fs.readFileSync(path.join(APP, 'src', 'products', 'mesh-index.js'), 'utf8');
+  assert.match(mesh, /discovery\/resources/, 'the Bazaar URL must be the discovery endpoint');
+  const meshRuntime = fs.readFileSync(path.join(APP, 'src', 'products', 'mesh.js'), 'utf8');
+  // Exactly one function in the Mesh runtime reaches a directory. Assert on
+  // THAT function rather than pattern-matching the whole file, which cannot
+  // distinguish a prose mention of "Bazaar" from a write to it.
+  const fn = /async function fetchJson\([\s\S]*?\n  \}/.exec(meshRuntime);
+  assert.ok(fn, 'fetchJson is the only directory caller and must remain findable');
+  assert.doesNotMatch(fn[0], /method\s*:/, 'the directory fetch must not set a method — GET only');
+  assert.doesNotMatch(fn[0], /body\s*:/, 'the directory fetch must not send a body');
+  const callers = meshRuntime.match(/fetchImpl\(/g) || [];
+  assert.equal(callers.length, 1, 'only fetchJson may call out; a second call site needs its own review');
 });
 
 test('the "self-hosted by default" claim in README/docs is what the config actually does', () => {
@@ -100,14 +211,29 @@ test('the entropy trust model is knowable for FREE, before paying', async () => 
     assert.equal(qrng.entropy.is_quantum, false);
     assert.equal(qrng.entropy.attested, false);
 
-    // 2. the 402 offer itself, in the discovery extension an indexer reads
+    // 2. the 402 offer itself, in the discovery extension an indexer reads.
+    //    This lives under `discovery`, the vendor-neutral key that carries our
+    //    full descriptor block. It is deliberately NOT asserted on `bazaar`:
+    //    since 2026-08-20 that key carries CDP's dialect, whose `info` must
+    //    validate against a sibling schema, so it holds input/output and
+    //    nothing else. The disclosure must stay free and pre-purchase — which
+    //    key it rides on is an encoding detail, so the test follows it rather
+    //    than pinning the gateway to a shape a consumer rejects.
     const res = await request(t.baseUrl, '/x402/qrng/draw');
     assert.equal(res.status, 402);
     const protocol = require('../src/protocol');
     const required = protocol.decodeHeader(res.headers.get('payment-required'));
-    assert.equal(required.extensions.bazaar.info.entropy.is_quantum, false);
-    assert.equal(required.extensions.bazaar.info.entropy.attested, false);
-    assert.equal(required.extensions.bazaar.info.entropy.source, 'software-fallback');
+    assert.equal(required.extensions.discovery.info.entropy.is_quantum, false);
+    assert.equal(required.extensions.discovery.info.entropy.attested, false);
+    assert.equal(required.extensions.discovery.info.entropy.source, 'software-fallback');
+
+    // 2b. And the DESCRIPTION carries it too, in plain words. This is the field
+    //     every directory copies into its listing, so it is the one place the
+    //     trust model reaches a buyer who never reads an extension block at all.
+    //     Without this, moving the disclosure between extension keys could
+    //     quietly remove it from every catalog that lists us.
+    assert.match(qrng.description, /is_quantum=false/);
+    assert.match(qrng.description, /attested=false/);
 
     // 3. and no description anywhere in the tree promises the opposite
     for (const p of cat.json.products) {

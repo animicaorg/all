@@ -1,0 +1,101 @@
+#!/usr/bin/env node
+'use strict';
+/**
+ * cdp-preflight — prove CDP credentials work BEFORE any payment depends on them.
+ *
+ * WHY THIS EXISTS. Switching `X402_FACILITATOR_MODE` to remote against CDP puts
+ * a third party in the settlement path for every USDC payment. If the JWT is
+ * wrong — wrong key half pasted, EC signature encoded as DER instead of raw
+ * r||s, clock skew past the 2-minute expiry — the gateway still boots, still
+ * quotes every 402 correctly, still passes every health check, and fails EVERY
+ * settlement with a 401. That is the exact silent-break shape that took
+ * settlement down in August when only one of the two payTo variables was
+ * changed. So: verify the credential in isolation first, with no money moving.
+ *
+ * It reads the same env the gateway does, mints a real token, and calls the
+ * facilitator's read-only /supported. Nothing is settled and nothing is spent.
+ *
+ *   X402_CDP_API_KEY_ID=... X402_CDP_API_KEY_SECRET=... bin/cdp-preflight
+ *
+ * Exit 0 means the credential is good and Base is a supported network. Any
+ * other exit means DO NOT switch traffic yet.
+ */
+
+const { cdpAuthProvider, mintJwt } = require('../src/facilitator-cdp/auth');
+
+const URL_ = process.env.X402_FACILITATOR_URL || 'https://api.cdp.coinbase.com/platform/v2/x402';
+const ID = process.env.X402_CDP_API_KEY_ID || '';
+const SECRET = process.env.X402_CDP_API_KEY_SECRET || '';
+const WANT_NETWORK = process.env.X402_NETWORK_EVM || 'eip155:8453';
+
+function fail(msg, hint) {
+  console.error(`FAIL: ${msg}`);
+  if (hint) console.error(`      ${hint}`);
+  process.exit(1);
+}
+
+(async () => {
+  if (!ID) fail('X402_CDP_API_KEY_ID is not set');
+  if (!SECRET) fail('X402_CDP_API_KEY_SECRET is not set');
+
+  // 1. The key parses and signs at all. This catches the overwhelmingly most
+  //    likely operator error — pasting the key ID where the secret goes — with
+  //    a message that names which half is wrong.
+  let token;
+  try {
+    token = mintJwt({ apiKeyId: ID, apiKeySecret: SECRET, method: 'GET', url: `${URL_.replace(/\/$/, '')}/supported` });
+  } catch (e) {
+    fail(`could not mint a token: ${e.message}`,
+      'X402_CDP_API_KEY_SECRET must be the SECRET (base64 Ed25519, or a PEM EC key) — not the key id.');
+  }
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+  console.log('token minted   alg=%s  kid=%s  uri=%s  ttl=%ds',
+    JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString('utf8')).alg,
+    ID.slice(0, 24) + (ID.length > 24 ? '…' : ''), claims.uris[0], claims.exp - claims.nbf);
+
+  // 2. The far side accepts it. This is the half that cannot be tested locally.
+  const url = `${URL_.replace(/\/$/, '')}/supported`;
+  const auth = cdpAuthProvider({ cdpApiKeyId: ID, cdpApiKeySecret: SECRET });
+  let res;
+  try {
+    res = await fetch(url, { headers: { authorization: auth('GET', url) }, signal: AbortSignal.timeout(20_000) });
+  } catch (e) {
+    fail(`could not reach ${url}: ${e.message}`);
+  }
+  const body = await res.text();
+
+  if (res.status === 401 || res.status === 403) {
+    fail(`the facilitator REJECTED our credentials (HTTP ${res.status})`,
+      'Do NOT switch traffic: every settlement would fail this way while health checks stay green.\n'
+      + `      Response: ${body.slice(0, 300)}`);
+  }
+  if (!res.ok) fail(`HTTP ${res.status} from ${url}`, body.slice(0, 300));
+
+  let json = null;
+  try { json = JSON.parse(body); } catch { /* reported below */ }
+  if (!json) fail('the facilitator answered 200 with a body we cannot parse', body.slice(0, 300));
+
+  console.log('credential ACCEPTED by %s', new URL(url).host);
+
+  // 3. Base must actually be settleable, or the switch quotes a lane the
+  //    facilitator will not take.
+  const kinds = Array.isArray(json.kinds) ? json.kinds : (Array.isArray(json) ? json : []);
+  const networks = [...new Set(kinds.map((k) => k && (k.network || k.chain)).filter(Boolean))];
+  if (networks.length) {
+    console.log('supported networks: %s', networks.join(', '));
+    const ok = networks.some((n) => String(n).toLowerCase() === WANT_NETWORK.toLowerCase()
+      || String(n).toLowerCase() === 'base');
+    if (!ok) {
+      fail(`${WANT_NETWORK} is not in the supported list`,
+        'Switching would quote a lane this facilitator will not settle.');
+    }
+    console.log('%s is supported.', WANT_NETWORK);
+  } else {
+    console.log('note: /supported returned no recognisable network list; inspect it by hand:');
+    console.log(body.slice(0, 400));
+  }
+
+  console.log('\nPREFLIGHT PASSED. The credential works and nothing was spent.');
+  console.log('Next: settle ONE real payment before switching all traffic —');
+  console.log('  node paid-test.js   (pays real USDC; start with a single endpoint)');
+})().catch((e) => fail(e.message));

@@ -795,6 +795,11 @@ function createRandomProducts({ cfg, node, source, gatewayStore, now = Date.now 
       method: 'GET',
       path: '/x402/random/reveal/{commit_id}',
       description: 'FREE public reveal: secret, salt, raw draw and attestation for a commitment. No payment, ever. Idempotent.',
+      // This is the route the generic free-route OpenAPI shape was written
+      // around: a RandomReveal body and a 425 "still sealed". Opting in keeps
+      // that documentation here, where it is true, instead of on every free
+      // route in the catalogue.
+      revealSemantics: true,
       match(pathname) {
         const m = REVEAL_PATH_RE.exec(pathname);
         return m ? { commit_id: m[1] } : null;

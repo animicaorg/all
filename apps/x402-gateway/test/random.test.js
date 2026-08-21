@@ -383,13 +383,22 @@ test('random_shuffle: the 1..N form, and the caps that refuse before payment', a
       { items: new Array(10001).fill(0) }, // over the item cap
       { items: [] },                        // empty
       { n: 3, items: [1, 2, 3] },           // both forms
-      {},                                    // neither form
+      // NOTE: {} is NOT in this list. An empty object is absent input, not
+      // bad input — it is what a discovery probe sends, and it now receives
+      // the 402 offer. Asserted separately below.
       { n: 0 },
     ]) {
       const res = await unpaidPost(t.baseUrl, '/x402/random/shuffle', body);
       assert.equal(res.status, 400, JSON.stringify(body).slice(0, 60));
       assert.equal(res.headers.get('payment-required'), null);
     }
+
+    // A bare {} probe must see the OFFER, not a validation error: the x402
+    // trust monitor sends exactly this, and a 400 makes a live paid product
+    // read as broken on a public uptime score.
+    const probe = await unpaidPost(t.baseUrl, '/x402/random/shuffle', {});
+    assert.equal(probe.status, 402);
+    assert.ok(probe.headers.get('payment-required'), 'the probe learns the price');
     assert.equal(t.fac.calls.settle.length, 1); // only the successful shuffle
   } finally {
     await t.close();
@@ -723,6 +732,60 @@ test('random_commit: two commits never collide and caps refuse before payment', 
       assert.equal(res.status, 400, JSON.stringify(body).slice(0, 50));
       assert.equal(res.headers.get('payment-required'), null);
     }
+  } finally {
+    await t.close();
+  }
+});
+
+// A validation refusal must not be a DEAD END. Refusing is correct — we do not
+// quote a price for a request we would reject — but a 400 that names one
+// missing field and nothing else leaves a caller with nothing to correct
+// towards: observed live, one agent (ZeroBot) POSTed the same wrong body to
+// /x402/classify 77 times over two days and never learned either the schema or
+// the price. Every refusal now carries the published input schema and price.
+// Still a refusal, so still NO `payment-required` header and no facilitator
+// call — this is additive information, not an offer.
+test('a validation 400 carries the input schema and the price, so a caller can self-correct', async () => {
+  const t = await buildTestGateway({ handlers: chainHandlers() });
+  try {
+    for (const [path, body, field] of [
+      ['/x402/random/int', { min: 10, max: 1 }, 'min'],          // recognised keys, bad values
+      ['/x402/random/pick', { items: ['a'], replace: 'yes' }, 'items'],
+      ['/x402/random/commit', { memo: 42 }, 'memo'],
+    ]) {
+      const res = await unpaidPost(t.baseUrl, path, body);
+      assert.equal(res.status, 400, path);
+      assert.equal(res.headers.get('payment-required'), null, path);
+      // the schema it should have written to, verbatim from the same block the
+      // 402, the catalog and the OpenAPI are built from
+      assert.ok(res.json.input_schema, `${path} must publish its input schema`);
+      assert.equal(res.json.input_schema.method, 'POST', path);
+      assert.ok(res.json.input_schema.bodyFields[field], `${path} names ${field}`);
+      // and what it would have cost, so the caller can decide whether to retry
+      assert.match(String(res.json.price_usd), /^\d+\.\d+$/, path);
+      assert.equal(res.json.catalog, '/.well-known/x402', path);
+      // the product's own diagnosis is never overwritten by the enrichment
+      assert.ok(res.json.error, path);
+    }
+    assert.equal(t.fac.calls.verify.length, 0, 'a refusal never reaches the facilitator');
+    assert.equal(t.fac.calls.settle.length, 0);
+  } finally {
+    await t.close();
+  }
+});
+
+// The bare probe keeps its own answer: no input at all is ABSENT input, not bad
+// input, and it gets the offer. The 402 now also says why the request as sent
+// was unusable, so an indexer learns the shape from the refusal too.
+test('a bare probe still gets the 402, and the offer names what was missing', async () => {
+  const t = await buildTestGateway({ handlers: chainHandlers() });
+  try {
+    const res = await unpaidPost(t.baseUrl, '/x402/random/int', {});
+    assert.equal(res.status, 402);
+    assert.ok(res.headers.get('payment-required'), 'the probe learns the price');
+    assert.match(res.json.error, /^Payment required\./);
+    assert.match(res.json.error, /not usable/);
+    assert.equal(t.fac.calls.verify.length, 0);
   } finally {
     await t.close();
   }

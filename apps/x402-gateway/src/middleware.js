@@ -28,33 +28,107 @@
  */
 
 const cfgMod = require('./config');
+const { cdpAuthProvider, toStandardV2Payload } = require('./facilitator-cdp/auth');
+const { buildCdpBazaarExtension } = require('./facilitator-cdp/bazaar');
+const { createAnmPrice } = require('./anm-price');
 const protocol = require('./protocol');
 const { links, networkFacts, PROVIDER } = require('./discovery/links');
 
 /** POST to a facilitator, x402 v2 §7 contract. */
-function facilitatorClient(baseUrl, { fetchImpl = fetch, timeoutMs = 20_000, settleTimeoutMs } = {}) {
+/**
+ * The Authorization provider for the EVM facilitator, or null.
+ *
+ * EXPORTED AND USED BY EVERY CALL SITE ON PURPOSE. There are two places that
+ * build an EVM facilitator client — this module and `paywall.js` — and only the
+ * paywall's is on the path a paid request actually takes. Wiring auth into one
+ * of them produced a gateway that passed preflight, booted clean, logged
+ * `facilitator_mode: remote`, and then 401'd on the first real payment because
+ * the client doing the verifying had no credentials attached. Same shape as the
+ * two-payTo-variables incident: a second construction site nobody updated.
+ * Anything needing a facilitator auth header calls THIS.
+ */
+function evmAuthHeaderFor(cfg) {
+  return cfg.facilitatorMode === 'remote' ? cdpAuthProvider(cfg) : null;
+}
+
+function facilitatorClient(baseUrl, { fetchImpl = fetch, timeoutMs = 20_000, settleTimeoutMs, authHeader = null, logger = null } = {}) {
   // Settling waits for an on-chain receipt + confirmations — it legitimately
   // runs far past a verify's budget. A settle clipped by a short client
   // timeout looks failed while the tx lands anyway (the money moves and the
   // resource is withheld), so it gets its own generous deadline.
   const settleBudget = settleTimeoutMs || Math.max(timeoutMs, 75_000);
+  // A remote facilitator may require per-request authorisation (CDP mints a
+  // JWT bound to the exact method+URI). The header is built PER CALL from the
+  // URL being requested rather than once at construction, because a token
+  // minted for /verify must not be usable against /settle.
+  function headersFor(method, url) {
+    const h = { 'content-type': 'application/json' };
+    if (authHeader) h.authorization = authHeader(method, url);
+    return h;
+  }
+
   async function post(path, body, budget = timeoutMs) {
-    const res = await fetchImpl(baseUrl.replace(/\/$/, '') + path, {
+    const url = baseUrl.replace(/\/$/, '') + path;
+    const res = await fetchImpl(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: headersFor('POST', url),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(budget),
     });
-    if (!res.ok) throw new Error(`facilitator ${path} http ${res.status}`);
+    // A 401/403 from a remote facilitator is a CREDENTIAL failure, not an
+    // outage, and it fails every payment identically. Name it, or the operator
+    // reads "facilitator settle http 401" as the service being down.
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        `facilitator ${path} http ${res.status}: rejected our credentials. `
+        + 'Check X402_CDP_API_KEY_ID / X402_CDP_API_KEY_SECRET — every payment fails while health checks stay green.'
+      );
+    }
+    if (!res.ok) {
+      // Carry the facilitator's own message. A bare "http 400" says the request
+      // was rejected but not WHY, and the why is the only actionable part when
+      // a third-party facilitator disagrees with our payload shape.
+      let detail = '';
+      try { detail = (await res.text()).slice(0, 400).replace(/\s+/g, ' ').trim(); } catch { /* body already consumed */ }
+      throw new Error(`facilitator ${path} http ${res.status}${detail ? `: ${detail}` : ''}`);
+    }
+    // THE ONLY FEEDBACK CHANNEL FOR DISCOVERY. A facilitator that indexes our
+    // resource reports what it did with each extension in `EXTENSION-RESPONSES`
+    // (base64 JSON, keyed by extension name). Nothing else tells us whether the
+    // Bazaar block was accepted, rejected or ignored — settlement succeeds
+    // identically either way, which is exactly how a catalog can be invisible
+    // for days while every payment works. Logged, never enforced: a facilitator
+    // that omits the header (CDP did not emit it as of 2026-08-20, see
+    // x402-foundation/x402#2112) must not fail a payment that settled.
+    const extHeader = res.headers && res.headers.get && res.headers.get('extension-responses');
+    if (extHeader && logger && logger.info) {
+      let decoded = null;
+      try { decoded = JSON.parse(Buffer.from(extHeader, 'base64').toString('utf8')); } catch { /* logged raw below */ }
+      logger.info('facilitator_extension_responses', {
+        path,
+        responses: decoded || String(extHeader).slice(0, 400),
+      });
+    }
     return res.json();
   }
+  // A remote facilitator validates the payload strictly against the published
+  // x402 schema; our own tolerates (and uses) our extra `resource` key. Only
+  // the remote path is normalised — see toStandardV2Payload. The same call
+  // carries our discovery metadata, which is how the resource gets indexed.
+  const wire = authHeader ? toStandardV2Payload : ((p) => p);
+
   return {
-    verify: (paymentPayload, paymentRequirements) =>
-      post('/verify', { x402Version: 2, paymentPayload, paymentRequirements }),
-    settle: (paymentPayload, paymentRequirements) =>
-      post('/settle', { x402Version: 2, paymentPayload, paymentRequirements }, settleBudget),
+    verify: (paymentPayload, paymentRequirements, discovery) =>
+      post('/verify', { x402Version: 2, paymentPayload: wire(paymentPayload, discovery), paymentRequirements }),
+    // `verdict` is the verify result: the EVM/CDP lane has no use for it (the
+    // ANM facilitator does), so it is accepted and ignored here to keep one
+    // call signature across lanes. `discovery` trails it for the same reason.
+    settle: (paymentPayload, paymentRequirements, verdict, discovery) =>
+      post('/settle', { x402Version: 2, paymentPayload: wire(paymentPayload, discovery), paymentRequirements }, settleBudget),
     supported: async () => {
-      const res = await (fetchImpl)(baseUrl.replace(/\/$/, '') + '/supported', {
+      const url = baseUrl.replace(/\/$/, '') + '/supported';
+      const res = await (fetchImpl)(url, {
+        headers: authHeader ? { authorization: authHeader('GET', url) } : undefined,
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) throw new Error(`facilitator /supported http ${res.status}`);
@@ -68,6 +142,27 @@ function facilitatorClient(baseUrl, { fetchImpl = fetch, timeoutMs = 20_000, set
  * configuration is complete — a half-configured lane in an accepts array is
  * an invitation to pay an address nobody controls.
  */
+/**
+ * ANM/USD feed, built once per process. Cached inside the module (30s) so
+ * building an accepts array is a memory read, not a file read per 402.
+ */
+// Keyed by the settings that define the feed, NOT a bare singleton: a single
+// shared instance would pin the FIRST config it ever saw, so a changed path or
+// staleness limit would be silently ignored for the life of the process.
+const anmPriceCache = new Map();
+function anmPriceFor(cfg) {
+  const key = `${cfg.anmPricePath}|${cfg.anmPriceMaxAgeSeconds}`;
+  let inst = anmPriceCache.get(key);
+  if (!inst) {
+    inst = createAnmPrice({
+      path: cfg.anmPricePath,
+      maxAgeSeconds: cfg.anmPriceMaxAgeSeconds,
+    });
+    anmPriceCache.set(key, inst);
+  }
+  return inst;
+}
+
 function buildAccepts(route, cfg) {
   const accepts = [];
   if (cfg.basePayTo && cfg.usdcAsset) {
@@ -78,6 +173,15 @@ function buildAccepts(route, cfg) {
       asset: cfg.usdcAsset,
       payTo: cfg.basePayTo,
       maxTimeoutSeconds: cfg.maxTimeoutSeconds,
+      // The asset's EIP-712 domain. A remote facilitator cannot rebuild the
+      // signing digest without it (CDP: "missing EIP-712 domain name/version in
+      // requirements.extra"); our own knows it from its network table. Constant
+      // across every product, so it does not affect payment binding.
+      extra: {
+        name: cfg.usdcDomainName,
+        version: cfg.usdcDomainVersion,
+        decimals: cfg.usdcDecimals,
+      },
     });
   }
   // The wANM/SVM lane is RETIRED (the bridge was abandoned 2026-08-15) and its
@@ -98,6 +202,48 @@ function buildAccepts(route, cfg) {
       extra: { feePayer: cfg.wanmFeePayerPubkey },
     });
   }
+  // ANM-NATIVE LANE. The payer signs a TRANSFER and pays the chain fee out of
+  // their own balance, so this gateway sponsors NO gas for these settlements
+  // — unlike the Base lane, where we do. That avoided cost is what funds the
+  // discount; it is a real saving passed on, not a promotion.
+  //
+  // FAIL CLOSED ON A STALE RATE: if the ANM/USD feed is stale or unreadable
+  // the lane is simply NOT OFFERED. Quoting a live payment at a dead rate is
+  // the failure mode this whole module refuses; the USDC lane is unaffected,
+  // so a stopped price timer degrades the offer instead of taking it down.
+  if (cfg.anmLaneEnabled && cfg.anmPayTo) {
+    const q = anmPriceFor(cfg).usdToNanm(route.priceUsd, { discountPercent: cfg.anmDiscountPercent });
+    if (q.ok) {
+      accepts.push({
+        scheme: 'exact',
+        // `animica:1`, NEVER `eip155:1` — this chain's id is 1 and an agent
+        // reading eip155:1 would pay on Ethereum mainnet and lose the money.
+        network: cfg.anmNetworkId,
+        amount: q.nanm.toString(),
+        asset: 'ANM',
+        payTo: cfg.anmPayTo,
+        maxTimeoutSeconds: cfg.maxTimeoutSeconds,
+        extra: {
+          native: true,
+          decimals: 9,
+          unit: 'nANM',
+          chain_id: cfg.anmChainId,
+          genesis_hash: cfg.anmGenesisHash,
+          discount_percent: cfg.anmDiscountPercent,
+          price_display: `${q.anm_display} ANM`,
+          usd_equivalent: q.usd_after_discount,
+          usd_list_price: route.priceUsd,
+          rate_usd_per_anm: String(q.usd_per_anm),
+          rate_source: q.source,
+          rate_observed_at: q.observed_at,
+          rate_side: 'bid',
+          how_to_pay:
+            'Sign a TRANSFER of at least `amount` nANM to payTo on Animica (chainId 1) and send the signed raw transaction as payload.rawTransaction. You pay the chain fee; we submit it. Because we sponsor no gas on this lane, it is priced ' + cfg.anmDiscountPercent + '% below the USDC price.',
+        },
+      });
+    }
+  }
+
   return accepts;
 }
 
@@ -130,6 +276,20 @@ function describeRoute(route, cfg, accepts) {
     provider: PROVIDER,
     x402_version: 2,
   };
+  // Tell a first-contact agent it can try before it buys. This rides in the
+  // 402 itself rather than only in the catalog because the 402 is the moment
+  // the buy/skip decision is actually made — an agent that has to go and fetch
+  // the catalog to discover a free sample will usually just skip instead.
+  if (route.trialPath) {
+    out.free_trial = {
+      endpoint: `${route.trialMethod || 'POST'} ${route.trialPath}`,
+      url: l.urlFor(route.trialPath),
+      price: '0',
+      limit_per_day: route.trialLimitPerDay,
+      note: 'Same code and same response shape as the paid endpoint. No payment, no payment headers. '
+          + 'Quota is per client per UTC day; when it is spent this endpoint says so and points back here.',
+    };
+  }
   if (terms) {
     out.terms = {
       scheme: terms.scheme,
@@ -151,20 +311,58 @@ function buildPaymentRequiredForRoute(route, cfg, error) {
   // BEFORE paying — today the randomness family's live `entropy` block
   // (source, is_quantum, attested), so the trust model is in the offer.
   //
-  // Emitted under TWO keys with identical content. `discovery` is the
-  // vendor-neutral name and is the one to build against. `bazaar` is a
-  // compatibility alias: that is the key x402scan and other existing indexers
-  // parse today, and dropping it would make our input/output schemas invisible
-  // to them. It names a JSON shape, not a service — this gateway calls no
-  // third-party discovery API and self-hosts its facilitator. Retire the alias
-  // once the indexers that matter read `discovery`.
+  // Emitted under TWO keys with DIFFERENT dialects, because two consumers read
+  // them and they do not agree on a shape.
+  //
+  //   `discovery`  vendor-neutral, and the one to build against: field
+  //                DESCRIPTORS (bodyFields: {limit: {type, required,
+  //                description}}), plus whatever `bazaarExtra` a product adds.
+  //   `bazaar`     CDP's dialect, because CDP is the only consumer that reads
+  //                this key: example VALUES plus a sibling `schema` that `info`
+  //                is validated against. See facilitator-cdp/bazaar.js.
+  //
+  // THE TWO WERE IDENTICAL UNTIL 2026-08-20, and a guard test enforced it. That
+  // was wrong, and provably so: CDP's own free validator
+  // (POST /platform/v2/x402/validate — no auth, no payment) answers
+  // `bazaar.schema: FAIL — missing`, `parse: FAIL — schema is invalid`,
+  // `simulation: rejected (invalid discovery configuration)`, `index: null` for
+  // every endpoint that serves the descriptor form under this key. CDP's
+  // indexer CRAWLS the published 402; sending it a valid declaration only on
+  // the facilitator call is not enough.
+  //
+  // Nothing else reads `bazaar`: x402scan registers from our OpenAPI document,
+  // and 402 Index stores a self-registered record carrying no input schema at
+  // all (verified against both directories' live records the same day, with all
+  // 44 of our products listed). The descriptor form callers do read stays where
+  // it has always been — `accepts[].outputSchema` in the v1 body — untouched.
   if (route.outputSchema || route.bazaarExtra) {
     const info = Object.assign(
       route.outputSchema ? { input: route.outputSchema.input, output: route.outputSchema.output } : {},
       route.bazaarExtra || {}
     );
-    extensions.discovery = { info };
-    extensions.bazaar = { info };
+    const discoveryBlock = cfg.cdpBazaarDiscoverable ? { info, discoverable: true } : { info };
+    extensions.discovery = discoveryBlock;
+    // `discoverable` is what makes the CDP facilitator INDEX this endpoint into
+    // the Bazaar after it settles a payment for it — advertising the schema is
+    // not enough on its own. Operator-authorised 2026-08-19 along with the move
+    // to their facilitator; see src/facilitator-cdp/auth.js for why the two go
+    // together.
+    //
+    // It rides on the CHALLENGE-level extension, deliberately NOT inside each
+    // accepts entry. `protocol.requirementsEqual` compares accepts entries by
+    // canonical JSON to decide whether a presented payment matches this
+    // route's offer, so anything route-specific placed in an accepts entry
+    // silently becomes part of payment binding — making a security property
+    // depend on a discovery flag. Keep discovery metadata out of the money path.
+    //
+    // CDP's dialect, built from the same declared fields. Falls back to the
+    // neutral block only if the product declares no input shape at all — an
+    // unparseable declaration is still better than no declaration, because
+    // `has_bazaar_extension` is itself one of the checks.
+    const cdpBlock = buildCdpBazaarExtension(route);
+    extensions.bazaar = cdpBlock
+      ? (cfg.cdpBazaarDiscoverable ? Object.assign({ discoverable: true }, cdpBlock) : cdpBlock)
+      : discoveryBlock;
   }
   const described = describeRoute(route, cfg, accepts);
   if (described) extensions.animica = described;
@@ -186,8 +384,15 @@ function createX402Gate(options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const logger = options.logger || console;
 
+  const evmAuthHeader = evmAuthHeaderFor(cfg);
+
   function facilitatorFor(network) {
-    if (network.startsWith('eip155:')) return facilitatorClient(cfg.evmFacilitatorUrl, { fetchImpl });
+    // The ANM-native lane never leaves this box: no third-party facilitator
+    // settles `animica:1`, so it stays on our own facilitator regardless of
+    // what the EVM lane is configured to use.
+    if (network.startsWith('eip155:')) {
+      return facilitatorClient(cfg.evmFacilitatorUrl, { fetchImpl, authHeader: evmAuthHeader });
+    }
     if (network.startsWith('solana:')) return facilitatorClient(cfg.svmFacilitatorUrl, { fetchImpl });
     throw new Error(`no facilitator for network ${network}`);
   }
@@ -317,4 +522,5 @@ function createX402Gate(options = {}) {
   return { cfg, gate, buildAccepts: (route) => buildAccepts(route, cfg), buildPaymentRequiredForRoute: (route, error) => buildPaymentRequiredForRoute(route, cfg, error), facilitatorClient };
 }
 
-module.exports = { createX402Gate, facilitatorClient, buildAccepts, buildPaymentRequiredForRoute };
+module.exports = {
+  evmAuthHeaderFor, createX402Gate, facilitatorClient, buildAccepts, buildPaymentRequiredForRoute };

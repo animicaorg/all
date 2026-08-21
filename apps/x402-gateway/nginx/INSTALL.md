@@ -34,13 +34,17 @@ Two differences to be aware of during the cutover:
 
 ```sh
 # 1. http{}-context rate-limit zones (REQUIRED — limit_req_zone is not
-#    allowed inside server{}; the snippet documents the exact lines):
-cat > /etc/nginx/conf.d/animica-x402-zones.conf <<'EOF'
-# x402 rate limits: one bucket per client IP (10m ~ 160k IPs of state).
-limit_req_zone $binary_remote_addr zone=x402_catalog:10m rate=5r/s;
-limit_req_zone $binary_remote_addr zone=x402_paid:10m    rate=2r/s;
-limit_req_zone $binary_remote_addr zone=x402_bulk:10m    rate=12r/m;
-EOF
+#    allowed inside server{}). COPY THE FILE; do not retype the rates.
+#
+#    This step used to inline the zone lines here, and that copy went stale:
+#    it said catalog rate=5r/s (the real value is 300r/s, sized against a
+#    measured 115 req/s agent sweep) and it omitted the x402_probe and
+#    x402_crawl_gate zones entirely — which every location block references,
+#    so `nginx -t` fails outright and no reload is possible. The rates carry
+#    their own measurement notes in the file; read those before changing them,
+#    and see test/nginx-rate-floors.test.js for the floors they must not drop
+#    below.
+cp nginx/animica-x402-zones.conf /etc/nginx/conf.d/animica-x402-zones.conf
 
 # 2. the location set:
 cp nginx/animica-dev-x402.conf /etc/nginx/snippets/animica-dev-x402.conf

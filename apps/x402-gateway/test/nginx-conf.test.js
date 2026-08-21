@@ -170,7 +170,15 @@ test('nginx: the free reveal keeps its own cheap block, and the facilitator is n
 
   // Discovery is free and cached; healthz is trivial.
   assert.equal(selectLocation(locations, '/x402').uri, '/x402');
-  assert.equal(selectLocation(locations, '/.well-known/x402').uri, '/.well-known/x402');
+  // Assert the BEHAVIOUR, not the literal directive: the deployed snippet
+  // matches both /.well-known/x402 and /.well-known/x402.json with one regex
+  // location, and pinning the exact uri string here is what let the repo copy
+  // drift behind the deployed one in the first place.
+  for (const p of ['/.well-known/x402', '/.well-known/x402.json']) {
+    const l = selectLocation(locations, p);
+    assert.ok(l, `${p} must be routed by its own location, not the catch-all`);
+    assert.match(String(l.proxyPass), /8742/, `${p} must reach the gateway`);
+  }
 
   // The facilitator (127.0.0.1:8743) must never be reachable through nginx.
   for (const l of locations) {

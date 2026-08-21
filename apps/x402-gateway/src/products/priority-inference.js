@@ -34,7 +34,74 @@
 
 const { ProductError } = require('./errors');
 
-function createPriorityInferenceProduct({ cfg, capacity, fetchImpl = fetch }) {
+/**
+ * THE BRIDGE APOLOGISES WITH HTTP 200.
+ *
+ * When every AICF worker that claims a job returns a stub (a provider that
+ * could not load a model), the chat bridge gives up after its budget and
+ * answers 200 with a plain-language fallback in `choices[0].message.content`.
+ * Passing that through as a delivered result means a payer is CHARGED FOR AN
+ * APOLOGY — the precise thing this codebase's rule forbids ("never take money
+ * for a service known unavailable"). A 200 is not proof of service.
+ *
+ * These markers are the bridge's own fallback text and the worker stub
+ * prefixes it cycles on. Matching is deliberately narrow: it must never
+ * misclassify a genuine answer that merely discusses model loading, so it
+ * anchors on the fallback's distinctive opening rather than loose keywords.
+ */
+const DEGRADED_MARKERS = [
+  'The Animica AI network couldn\'t complete your request',
+  'wasn\'t able to load a language model',
+];
+
+function degradedAnswer(text) {
+  if (!text) return null;
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return null;              // not JSON: let the caller decide
+  }
+  const content = body && body.choices && body.choices[0]
+    && body.choices[0].message && body.choices[0].message.content;
+  if (typeof content !== 'string') return null;
+  const head = content.slice(0, 400);
+  for (const m of DEGRADED_MARKERS) {
+    if (head.includes(m)) return content.slice(0, 200);
+  }
+  return null;
+}
+
+function createPriorityInferenceProduct({ cfg, capacity, fetchImpl = fetch, now = Date.now }) {
+  /**
+   * Circuit breaker over the DEGRADED-ANSWER signal.
+   *
+   * The capacity gate can only see what the chain reports — registered, fresh
+   * last_seen, advertised tier. A worker satisfying all three can still fail
+   * to load a model and return a stub, and that is exactly the state observed
+   * on 2026-08-18: one worker advertising `standard`, live, and unable to
+   * serve. Advertising through that is how a catalog says available:true for
+   * something that cannot be delivered.
+   *
+   * So actual delivery failures feed back into availability: after
+   * `X402_INFERENCE_BREAKER_TRIPS` degraded answers the product reports
+   * unavailable for a cooldown, which stops the catalog advertising it AND
+   * stops the paywall taking money for it. One genuine answer clears it.
+   */
+  const breaker = {
+    fails: 0,
+    openUntil: 0,
+    trip() {
+      this.fails += 1;
+      if (this.fails >= Number(cfg.inferenceBreakerTrips)) {
+        this.openUntil = now() + Number(cfg.inferenceBreakerCooldownMs);
+      }
+    },
+    reset() { this.fails = 0; this.openUntil = 0; },
+    open() { return now() < this.openUntil; },
+    retryInSeconds() { return Math.max(0, Math.ceil((this.openUntil - now()) / 1000)); },
+  };
+
   function gateBody() {
     const snap = capacity.snapshot();
     return {
@@ -79,6 +146,17 @@ function createPriorityInferenceProduct({ cfg, capacity, fetchImpl = fetch }) {
 
     /** Catalog + gate availability: operator flag AND live capacity. */
     async availability() {
+      // Delivery reality beats chain metadata: if recent paid calls came back
+      // as the network's degraded fallback, the product is NOT available no
+      // matter what the workers advertise.
+      if (breaker.open()) {
+        return {
+          available: false,
+          reason: 'inference_network_degraded',
+          detail:
+            `every provider that recently claimed a job failed to load a model, so this product is withheld for ${breaker.retryInSeconds()}s rather than charging for an apology. It restores automatically as soon as one real answer is served.`,
+        };
+      }
       if (capacity.available()) {
         const snap = capacity.snapshot();
         return { available: true, serving_workers: snap.serving_workers, required: snap.required };
@@ -144,9 +222,78 @@ function createPriorityInferenceProduct({ cfg, capacity, fetchImpl = fetch }) {
       try {
         res = await fetchImpl(cfg.inferenceUpstreamUrl, {
           method: 'POST',
-          headers: {
+          headers: Object.assign({
             'content-type': 'application/json',
             'x-animica-priority': 'x402-paid',
+            'x-request-id': ctx.requestId || '',
+          // An upstream that requires a key (e.g. the pool's /v1) gets one.
+          // Optional: unset means the header is simply absent, so an
+          // unauthenticated upstream is unaffected.
+          }, cfg.inferenceUpstreamKey ? { authorization: `Bearer ${cfg.inferenceUpstreamKey}` } : {}),
+          body: ctx.rawBody,
+          signal: AbortSignal.timeout(cfg.inferenceTimeoutMs),
+        });
+      } catch (e) {
+        const err = new Error(`inference upstream unreachable: ${e.message}`);
+        err.retryable = true;
+        throw err;
+      }
+      const text = await res.text();
+      if (res.status >= 500) {
+        const err = new Error(`inference upstream ${res.status}`);
+        err.retryable = true;
+        throw err;
+      }
+      // A 200 carrying the bridge's degraded-network fallback is NOT a
+      // delivered service. Refuse it: in settle-then-execute this becomes a
+      // signed receipt + incident (refundable) instead of a paid apology, and
+      // it trips the breaker below so we stop advertising and stop charging.
+      const degraded = degradedAnswer(text);
+      if (degraded) {
+        breaker.trip();
+        const err = new Error(
+          `the inference network could not serve this request (every provider that claimed it failed to load a model): ${degraded}`
+        );
+        err.retryable = false;
+        throw err;
+      }
+      breaker.reset();
+      // Upstream 4xx = the service answering a malformed request
+      // deterministically; passed through with the settlement header.
+      return {
+        status: res.status,
+        headers: { 'content-type': res.headers && res.headers.get ? (res.headers.get('content-type') || 'application/json') : 'application/json' },
+        body: text,
+      };
+    },
+  };
+}
+
+
+// Standard-tier inference sold through x402 — the cheaper, non-priority lane.
+// Reuses the priority product's proven availability/settle/handler wiring; only
+// the identity, endpoint, tier header and (dynamic) price differ. Forwards with
+// x-animica-tier: standard so the upstream serves the standard tier.
+function createTierStandardsProduct(deps) {
+  const base = createPriorityInferenceProduct(deps);
+  const cfg = deps.cfg;
+  const fetchImpl = deps.fetchImpl || fetch;
+  return Object.assign({}, base, {
+    id: 'tier_standards',
+    title: 'Tier Standards inference',
+    description:
+      'Standard-tier chat/completions (OpenAI-compatible), served by Animica\'s network. Cheaper than priority, standard latency — priced at 3x settlement gas.',
+    path: '/x402/v1/standard/chat/completions',
+    routes: [{ method: 'POST', path: '/x402/v1/standard/chat/completions' }],
+    priceUsd: cfg.inferencePriceUsd, // the dynamic pricer overrides this to 3x gas
+    async handler(ctx) {
+      let res;
+      try {
+        res = await fetchImpl(cfg.inferenceUpstreamUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-animica-tier': 'standard',
             'x-request-id': ctx.requestId || '',
           },
           body: ctx.rawBody,
@@ -163,15 +310,13 @@ function createPriorityInferenceProduct({ cfg, capacity, fetchImpl = fetch }) {
         err.retryable = true;
         throw err;
       }
-      // Upstream 4xx = the service answering a malformed request
-      // deterministically; passed through with the settlement header.
       return {
         status: res.status,
         headers: { 'content-type': res.headers && res.headers.get ? (res.headers.get('content-type') || 'application/json') : 'application/json' },
         body: text,
       };
     },
-  };
+  });
 }
 
-module.exports = { createPriorityInferenceProduct };
+module.exports = { createPriorityInferenceProduct, createTierStandardsProduct };

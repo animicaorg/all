@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+#
+# cdp-switch — move the USDC lane onto the CDP facilitator, safely.
+#
+# WHY A SCRIPT AND NOT FOUR MANUAL EDITS. The failure mode here is silent: a
+# gateway with bad or missing CDP credentials boots fine, quotes every 402
+# correctly, passes every health check, and fails EVERY settlement with a 401.
+# That is the same shape as the August payTo incident, where changing one of two
+# variables broke all paid settlement while everything looked green. So this
+# script refuses to change anything until the credential has been PROVEN against
+# the live facilitator, backs up the env file, and verifies the catalog after.
+#
+# Usage:
+#   X402_CDP_API_KEY_ID=<uuid> X402_CDP_API_KEY_SECRET=<base64-or-PEM> bin/cdp-switch
+#   bin/cdp-switch --rollback     # restore the previous env file and restart
+#
+# Reads the secret from the environment, never from argv — argv is visible in
+# the process table to every user on the box.
+
+set -euo pipefail
+
+ENV_FILE=/etc/animica-x402.env
+BACKUP_DIR=/root/x402-backups
+APP=/root/animica/apps/x402-gateway
+CDP_URL=https://api.cdp.coinbase.com/platform/v2/x402
+STAMP=$(date +%s)
+
+cd "$APP"
+
+say()  { printf '%s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+
+# --- rollback ---------------------------------------------------------------
+if [ "${1:-}" = "--rollback" ]; then
+  latest=$(ls -1t "$BACKUP_DIR"/animica-x402.env.pre-cdp.* 2>/dev/null | head -1 || true)
+  [ -n "$latest" ] || fail "no pre-CDP backup found in $BACKUP_DIR"
+  say "restoring $latest -> $ENV_FILE"
+  cp "$ENV_FILE" "$BACKUP_DIR/animica-x402.env.rollback-from.$STAMP"
+  cp "$latest" "$ENV_FILE"
+  systemctl restart animica-x402
+  sleep 5
+  systemctl is-active --quiet animica-x402 || fail "gateway did not come back up"
+  say "rolled back. facilitator mode is whatever that backup had (normally self)."
+  exit 0
+fi
+
+# --- preconditions ----------------------------------------------------------
+[ -n "${X402_CDP_API_KEY_ID:-}" ]     || fail "X402_CDP_API_KEY_ID is not set in the environment"
+[ -n "${X402_CDP_API_KEY_SECRET:-}" ] || fail "X402_CDP_API_KEY_SECRET is not set in the environment"
+[ -w "$ENV_FILE" ] || fail "$ENV_FILE is not writable"
+mkdir -p "$BACKUP_DIR"
+
+case "$X402_CDP_API_KEY_SECRET" in
+  *"$X402_CDP_API_KEY_ID"*) fail "the secret contains the key id — you have pasted the same value twice" ;;
+esac
+
+# --- 1. prove the credential BEFORE touching anything -----------------------
+say "== 1/5  preflight (nothing is spent, nothing is changed)"
+X402_FACILITATOR_URL="$CDP_URL" bin/cdp-preflight \
+  || fail "preflight failed — NOT switching. The gateway is untouched and still settling for itself."
+
+# --- 2. tests still green ---------------------------------------------------
+say
+say "== 2/5  test suite"
+npm test --silent >/tmp/cdp-switch-tests.log 2>&1 \
+  || { tail -20 /tmp/cdp-switch-tests.log; fail "tests failed — NOT switching"; }
+grep -E '^# (tests|pass|fail)' /tmp/cdp-switch-tests.log || true
+
+# --- 3. back up and write ---------------------------------------------------
+say
+say "== 3/5  backing up $ENV_FILE"
+cp "$ENV_FILE" "$BACKUP_DIR/animica-x402.env.pre-cdp.$STAMP"
+say "   -> $BACKUP_DIR/animica-x402.env.pre-cdp.$STAMP"
+
+# systemd EnvironmentFile has NO inline comments — a trailing "# note" becomes
+# part of the VALUE. Every line written here is bare KEY=VALUE, deliberately.
+tmp=$(mktemp); chmod 600 "$tmp"
+grep -vE '^(X402_FACILITATOR_MODE|X402_FACILITATOR_URL|X402_EVM_FACILITATOR_URL|X402_CDP_API_KEY_ID|X402_CDP_API_KEY_SECRET)=' \
+  "$ENV_FILE" > "$tmp"
+{
+  echo "X402_FACILITATOR_MODE=remote"
+  echo "X402_FACILITATOR_URL=$CDP_URL"
+  echo "X402_CDP_API_KEY_ID=$X402_CDP_API_KEY_ID"
+  echo "X402_CDP_API_KEY_SECRET=$X402_CDP_API_KEY_SECRET"
+} >> "$tmp"
+cat "$tmp" > "$ENV_FILE"
+rm -f "$tmp"
+chmod 600 "$ENV_FILE"
+say "   wrote mode=remote, url=$CDP_URL, + credentials (0600)"
+
+# --- 4. restart -------------------------------------------------------------
+say
+say "== 4/5  restarting"
+systemctl restart animica-x402
+sleep 6
+systemctl is-active --quiet animica-x402 || {
+  say "gateway did NOT start — rolling back automatically"
+  cp "$BACKUP_DIR/animica-x402.env.pre-cdp.$STAMP" "$ENV_FILE"
+  systemctl restart animica-x402
+  fail "gateway refused to boot with CDP settings; rolled back. Check: journalctl -u animica-x402 -n 40"
+}
+
+# --- 5. verify what the live gateway now says -------------------------------
+say
+say "== 5/5  verifying the live catalog"
+# Piped, NOT passed as argv: the catalog is ~600KB and a 41-product body blows
+# past ARG_MAX ("Argument list too long"), which failed this step on the first
+# real run while the switch itself had already succeeded.
+curl -sf -m 20 http://127.0.0.1:8742/x402 > /tmp/cdp-switch-catalog.json \
+  || fail "catalog did not answer after restart"
+node -e '
+const fs = require("fs");
+const d = JSON.parse(fs.readFileSync("/tmp/cdp-switch-catalog.json", "utf8"));
+console.log("   products:", (d.products || []).length);
+console.log("   pay_to  :", d.pay_to);
+'
+rm -f /tmp/cdp-switch-catalog.json
+
+say
+say "SWITCHED. The USDC lane now settles through the CDP facilitator."
+say "The ANM lane (animica:1) still settles on our own facilitator — nothing else does."
+say
+say "NOT YET PROVEN, and the whole point of the exercise:"
+say "  a) that a real payment settles through them — run: node paid-test.js"
+say "     (start with ONE endpoint; a burst also trips the public Base RPC rate limit)"
+say "  b) that settling actually causes Bazaar indexing. x402 issue #2112 documents"
+say "     8 successful CDP settlements that were never indexed. Check afterwards:"
+say "     curl -s 'https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources?limit=100' | grep -c animica"
+say
+say "Undo at any time: bin/cdp-switch --rollback"

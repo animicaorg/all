@@ -56,7 +56,10 @@ async function buildE2E({ rpcOpts = {}, gatewayOverrides = {}, handlers, availab
   const facServer = createEvmFacilitatorServer(sc.facilitator);
   const facUrl = await listen(facServer);
 
-  const cfg = cfgMod.loadGatewayConfig({}, Object.assign({
+  // ANM lane off: this test asserts the Base USDC lane specifically, and the
+  // ANM lane's price comes from a host file, which would make the assertion
+  // machine-dependent. See gateway-helpers.js for the same reasoning.
+  const cfg = cfgMod.loadGatewayConfig({ X402_ANM_ENABLED: '0' }, Object.assign({
     enabled: true,
     networkEvm: BASE,
     // The gateway advertises exactly what the facilitator will accept;
@@ -187,6 +190,9 @@ test('protocol e2e: an unpaid request is answered 402 with signable Base USDC te
       asset: e2e.sc.cfg.asset,
       payTo: e2e.sc.cfg.settlementAddress,
       maxTimeoutSeconds: 60,
+      // The asset's EIP-712 domain. Payment-critical, not descriptive: a
+      // remote facilitator cannot rebuild the signing digest without it.
+      extra: { name: 'USD Coin', version: '2', decimals: 6 },
     });
     // the v1 body rides along for legacy clients
     assert.equal(res.json.x402Version, 1);

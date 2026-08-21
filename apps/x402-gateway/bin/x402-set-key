@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#
+# Store a private key without it touching shell history, the process table,
+# your terminal, or this repo.
+#
+# WHAT THIS PROTECTS AGAINST, and how:
+#
+#   - shell history   : the key is read from the terminal, never typed as an
+#                       argument, so no shell ever records it.
+#   - `ps` / /proc    : it is passed to node on STDIN, never in argv. Anything
+#                       in argv is world-readable on this box for as long as
+#                       the process lives.
+#   - your screen     : `read -s` disables echo, and the key is never printed
+#                       back. Only the derived ADDRESS is shown.
+#   - the wrong key   : the address is derived and checked against the one you
+#                       expect BEFORE anything is written. A typo fails loudly
+#                       instead of silently storing a key for a wallet you do
+#                       not control.
+#   - stray copies    : umask 077 before the write, file forced to 0600, and
+#                       the directory to 0700.
+#
+# Usage:  sudo bin/x402-set-key <0xExpectedAddress> <ENV_VAR_NAME> [dest-file]
+#
+set -euo pipefail
+
+EXPECT="${1:-}"
+VAR="${2:-}"
+DEST="${3:-/etc/animica/x402-keys.env}"
+EVM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/facilitator-evm/evm.js"
+
+if [[ -z "$EXPECT" || -z "$VAR" ]]; then
+  echo "usage: $0 <0xExpectedAddress> <ENV_VAR_NAME> [dest-file]" >&2
+  exit 64
+fi
+if [[ ! "$EXPECT" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+  echo "error: '$EXPECT' is not a 20-byte 0x address" >&2
+  exit 64
+fi
+if [[ ! "$VAR" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+  echo "error: '$VAR' is not a valid environment variable name" >&2
+  exit 64
+fi
+[[ -f "$EVM" ]] || { echo "error: cannot find $EVM" >&2; exit 69; }
+
+# Keep this invocation out of the history file of whatever shell sourced us.
+unset HISTFILE 2>/dev/null || true
+
+printf 'Paste the private key for %s\n' "$EXPECT" >&2
+printf 'Input is hidden and is not echoed, logged, or stored anywhere but the destination file.\n' >&2
+printf 'key: ' >&2
+IFS= read -rs KEY || { echo >&2; echo "aborted" >&2; exit 130; }
+printf '\n' >&2
+
+# Derive the address. The key goes in on STDIN so it never appears in argv.
+set +e
+ADDR="$(printf '%s' "$KEY" | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => { d += c; }).on("end", () => {
+    const evm = require(process.argv[1]);
+    const k = d.trim().replace(/^0x/, "");
+    if (!/^[0-9a-fA-F]{64}$/.test(k)) {
+      process.stderr.write("not a 32-byte hex private key\n");
+      process.exit(2);
+    }
+    process.stdout.write(evm.privateKeyToAddress(Buffer.from(k, "hex")));
+  });
+' "$EVM" 2>&1)"
+RC=$?
+set -e
+
+if [[ $RC -ne 0 ]]; then
+  KEY=""; unset KEY
+  echo "error: $ADDR" >&2
+  exit 65
+fi
+
+if [[ "${ADDR,,}" != "${EXPECT,,}" ]]; then
+  KEY=""; unset KEY
+  echo "REFUSED: that key controls $ADDR, not $EXPECT." >&2
+  echo "Nothing was written. Storing a key for the wrong wallet is how funds go somewhere you cannot reach." >&2
+  exit 65
+fi
+
+umask 077
+install -d -m 700 "$(dirname "$DEST")"
+TMP="$(mktemp "$(dirname "$DEST")/.key.XXXXXX")"
+trap 'rm -f "$TMP"' EXIT
+
+# Preserve any other variables already in the file; replace only this one.
+if [[ -f "$DEST" ]]; then
+  grep -v "^${VAR}=" "$DEST" > "$TMP" || true
+fi
+printf '%s=%s\n' "$VAR" "$KEY" >> "$TMP"
+KEY=""; unset KEY
+
+chmod 600 "$TMP"
+mv -f "$TMP" "$DEST"
+trap - EXIT
+chown root:root "$DEST" 2>/dev/null || true
+
+printf '\nStored %s in %s (mode %s, owner %s)\n' \
+  "$VAR" "$DEST" "$(stat -c '%a' "$DEST")" "$(stat -c '%U' "$DEST")" >&2
+printf 'Verified: the key controls %s\n' "$ADDR" >&2
+printf '\nNothing reads this file yet. Wire it in deliberately when you are ready.\n' >&2
