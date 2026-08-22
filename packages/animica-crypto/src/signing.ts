@@ -245,7 +245,3 @@ export function verify(
   */
 }
 
-/**
- * Export buildSignBytes for use in transaction signing
- */
-export { buildSignBytes };

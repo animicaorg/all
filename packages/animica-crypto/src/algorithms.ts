@@ -4,8 +4,10 @@
 export enum AlgorithmId {
   /** CRYSTALS-Dilithium3 (ML-DSA-65) - 128-bit security */
   DILITHIUM3 = 0x1001,
-  /** SPHINCS+ SHAKE-128s - 128-bit security */
+  /** SPHINCS+ SHAKE-128s - 128-bit security (legacy, stranded) */
   SPHINCS_SHAKE_128S = 0x1002,
+  /** ML-DSA-65 (FIPS 204) - the only signature scheme mainnet accepts for new transactions */
+  ML_DSA_65 = 0x1003,
   /** Kyber768 KEM (for P2P only) */
   KYBER768 = 0x2001
 }
@@ -47,6 +49,15 @@ export function getAlgorithmInfo(alg: AlgorithmId | string): AlgorithmInfo {
         signatureLength: 7856,
         securityLevel: 128
       };
+    case AlgorithmId.ML_DSA_65:
+      return {
+        id: 0x1003,
+        name: 'ml_dsa_65',
+        publicKeyLength: 1952,
+        secretKeyLength: 4032,
+        signatureLength: 3309,
+        securityLevel: 128
+      };
     case AlgorithmId.KYBER768:
       return {
         id: 0x2001,
@@ -57,7 +68,7 @@ export function getAlgorithmInfo(alg: AlgorithmId | string): AlgorithmInfo {
         securityLevel: 128
       };
     default:
-      throw new Error(`Unknown algorithm ID: 0x${algId.toString(16)}`);
+      throw new Error(`Unknown algorithm ID: 0x${(algId as number).toString(16)}`);
   }
 }
 

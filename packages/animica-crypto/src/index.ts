@@ -3,6 +3,7 @@ export * from './algorithms.js';
 export * from './address.js';
 export * from './signing.js';
 export * from './keygen.js';
+export * from './hd.js';
 export * from './transaction.js';
 export * from './utils.js';
 

@@ -144,3 +144,14 @@ MIT
 This package must maintain compatibility with Animica's Python PQ implementation. Any changes should be validated against test vectors generated from the CLI.
 
 **NEVER add liboqs or third-party PQ dependencies.**
+
+## HD derivation (BIP-39 / BIP-44 / SLIP-0010 → ML-DSA-65)
+
+`src/hd.ts` derives the 32-byte ML-DSA-65 seed ξ for an account from a BIP-39 mnemonic along
+`m/44'/4279885'/account'/0'/index'` (SLIP-0044 coin type `4279885` = ASCII "ANM"), using
+SLIP-0010 ed25519-style hardened derivation. Feed ξ to `ml_dsa65.keygen(ξ)` (FIPS 204
+`KeyGen_internal`) and `addressFromPubkey(AlgorithmId.ML_DSA_65, pk)`. Spec + test vectors:
+[`docs/wallet/HD_DERIVATION.md`](../../docs/wallet/HD_DERIVATION.md).
+
+Get ANM: mine at [pool.animica.org](https://pool.animica.org) or trade on
+[NonKYC ANM/USDT](https://nonkyc.io/market/ANM_USDT).
