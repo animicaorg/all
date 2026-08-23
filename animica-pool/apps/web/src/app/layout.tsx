@@ -42,7 +42,7 @@ const POOL: SiteConfig = {
     "Run mining and AI with a single command (animica up): SHA3 proof-of-work, ENA useful-work, train-together pools, serve-while-train, an OpenAI-compatible API, and Bittensor on qualified GPUs — all paid in ANM.",
   nav: [
     ["/mine", "Mine"],
-    ["/serve", "Serve & Earn"],
+    ["/serve", "Serve"],
     ["/compute/", "GPU Compute"],
     ["/training-pools", "Training Pools"],
     ["/about-ena", "ENA"],

@@ -47,7 +47,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 DEFAULT_RPC = "https://rpc.animica.org/rpc"
 TIERS = ["free", "standard"]
@@ -335,6 +335,43 @@ def is_charging(st: Optional[Dict[str, Any]]) -> bool:
 
 # ── Helpers shared with the browser worker ───────────────────────────────────
 
+_B32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def _bech32_polymod(values: List[int]) -> int:
+    gen = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
+    chk = 1
+    for v in values:
+        b = chk >> 25
+        chk = ((chk & 0x1FFFFFF) << 5) ^ v
+        for i in range(5):
+            if (b >> i) & 1:
+                chk ^= gen[i]
+    return chk
+
+
+def is_valid_anim_address(addr: str) -> bool:
+    """Real bech32m (BIP-350) validation for anim1… addresses. This matters: workers may
+    register ANY string, but settlement anchors can only pay valid addresses — a typo'd
+    one would accrue IOUs that can never be paid out."""
+    a = (addr or "").strip()
+    if a != a.lower() and a != a.upper():
+        return False
+    s2 = a.lower()
+    pos = s2.rfind("1")
+    if not s2.startswith("anim1") or pos != 4 or len(s2) < pos + 7:
+        return False
+    hrp = s2[:pos]
+    data = []
+    for ch in s2[pos + 1:]:
+        d = _B32_CHARSET.find(ch)
+        if d == -1:
+            return False
+        data.append(d)
+    expand = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+    return _bech32_polymod(expand + data) == 0x2BC830A3
+
+
 def clamp_prompt(p: str, max_chars: int = PROMPT_CLAMP_CHARS) -> str:
     """Keep the head (instructions) and the tail (recent history + the question)."""
     if len(p) <= max_chars:
@@ -362,9 +399,17 @@ def serve(args) -> int:
     address = args.address.strip()
     if not address:
         raise SystemExit("--address is required (the anim1… wallet your earnings credit)")
-    if not address.startswith("anim1"):
-        log(f"WARNING: {address!r} does not look like an anim1… wallet address; "
-            "earnings credit whatever ID you register — an unknown ID can never be paid out.")
+    if not is_valid_anim_address(address):
+        if getattr(args, "allow_any_address", False):
+            log(f"WARNING: {address!r} is NOT a valid bech32m anim1… address — settlement "
+                "anchors can never pay it. Serving anyway because --allow-any-address is set.")
+        else:
+            raise SystemExit(
+                f"REFUSING: {address!r} fails the bech32m checksum, so the settlement anchors "
+                "can NEVER pay it — earnings would accrue to a black hole. Paste the exact "
+                "anim1… address from your wallet (animica.org/wallet), or pass "
+                "--allow-any-address if you really mean it."
+            )
 
     backend = pick_backend(args)
     hw = hardware_info(backend.name, args.model)
@@ -504,6 +549,8 @@ def cli(argv: Optional[List[str]] = None) -> int:
                     help=f"hard output cap (default {MAX_OUTPUT_CAP})")
     ap.add_argument("--charge-only", action="store_true",
                     help="pause while unplugged (Termux:API required)")
+    ap.add_argument("--allow-any-address", action="store_true",
+                    help="serve even if --address fails bech32m validation (earnings will be unpayable)")
     ap.add_argument("--rpc", default=os.environ.get("ANIMICA_SERVE_RPC", DEFAULT_RPC),
                     help=f"node RPC url (default {DEFAULT_RPC})")
     ap.add_argument("--version", action="version", version=f"animica-serve {__version__}")

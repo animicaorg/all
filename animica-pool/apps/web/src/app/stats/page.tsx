@@ -1,6 +1,42 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+
+function fmtCountdown(s: number): string {
+  if (!isFinite(s) || s < 0) s = 0;
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+// Live per-second payout countdown, re-seeded whenever the API value changes.
+function usePayoutCountdown(seconds: number | undefined, enabled: boolean): number | null {
+  const [remaining, setRemaining] = useState<number | null>(null);
+  useEffect(() => {
+    if (!enabled || seconds == null) { setRemaining(null); return; }
+    setRemaining(seconds);
+    const id = setInterval(() => setRemaining((r) => (r == null ? null : Math.max(0, r - 1))), 1000);
+    return () => clearInterval(id);
+  }, [seconds, enabled]);
+  return remaining;
+}
+
+// Aggregate AICF worker-fleet stats straight from the node (CORS is open).
+// "phones_online" = the browser Serve&Earn page (webllm) + Termux thin workers.
+async function getWorkerCount(): Promise<any | null> {
+  try {
+    const r = await fetch("https://rpc.animica.org/rpc", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "aicf.workerCount", params: { online_window_s: 900 } }),
+    });
+    const j = await r.json();
+    return j?.result ?? null;
+  } catch {
+    return null;
+  }
+}
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -21,9 +57,17 @@ function hr(h: number): string {
 
 export default function StatsPage() {
   const { data: pool } = useQuery({ queryKey: ["pool-summary"], queryFn: () => getJson<any>("/api/mining/pool-summary"), refetchInterval: 15000 });
-  const { data: xmr } = useQuery({ queryKey: ["xmr-summary"], queryFn: () => getJson<any>("/api/pool/xmr/summary"), refetchInterval: 30000 });
+  // /api/pool/network carries the scope + sample-size + role fields. The old
+  // xmr-summary query was removed: XMR dual-mining was switched off and
+  // monerod removed on 2026-07-16, so that endpoint is gone (404).
+  const { data: net } = useQuery({ queryKey: ["pool-network"], queryFn: () => getJson<any>("/api/pool/network"), refetchInterval: 30000 });
   const { data: blocks } = useQuery({ queryKey: ["recent-blocks"], queryFn: () => getJson<any>("/api/blocks/recent"), refetchInterval: 30000 });
   const { data: rev } = useQuery({ queryKey: ["rev-pub"], queryFn: () => getJson<any>("/api/revenue/public") });
+  const { data: wc } = useQuery({ queryKey: ["aicf-worker-count"], queryFn: getWorkerCount, refetchInterval: 30000 });
+  const payoutCountdown = usePayoutCountdown(
+    pool?.payout_countdown_seconds != null ? Number(pool.payout_countdown_seconds) : undefined,
+    Boolean(pool?.payouts_enabled),
+  );
 
   const blockItems: any[] = blocks?.items ?? blocks?.recent_blocks ?? [];
 
@@ -39,77 +83,119 @@ export default function StatsPage() {
         </p>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Network hashrate" value={hr(Number(pool?.network_hashrate_hps ?? 0))} />
-        <Stat label="Active miners" value={String(pool?.num_miners ?? pool?.miners ?? 0)} />
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        {/* Called "network" only while this pool demonstrably finds ~all
+            blocks (pool_block_share_pct >= 95). The API derives that label
+            from measured block share, so it degrades honestly. */}
+        <Stat
+          label={net?.hashrate_scope === "network_equivalent" ? "Network hashrate" : "Pool hashrate"}
+          value={hr(Number(pool?.network_hashrate_hps ?? 0))}
+          note={net?.pool_block_share_pct != null ? `pool finds ${net.pool_block_share_pct}% of blocks` : undefined}
+        />
+        {/* Machines that submitted an ACCEPTED SHARE recently — proof of work,
+            not socket presence. num_miners counts stratum sockets and once
+            read 838 for a single IP holding 835 idle ones. */}
+        <Stat label="Mining machines" value={net?.active_machines != null ? String(net.active_machines) : "—"} />
+        {/* Live from aicf.workerCount on the node: every registered inference worker
+            seen in the last 15 min — full nodes AND the phone/browser lanes
+            (pool.animica.org/serve + the animica-serve Termux worker). */}
+        <Stat
+          label="Serving inference"
+          value={wc?.online != null ? String(wc.online) : net?.inference_workers_serving != null ? String(net.inference_workers_serving) : "—"}
+          note={wc ? `${wc.phones_online ?? 0} phone/browser · ${Number(wc.jobs_completed_total ?? 0).toLocaleString()} jobs all-time` : undefined}
+        />
         <Stat label="Blocks found" value={String(pool?.blocks_found_total ?? 0)} />
-        <Stat label="ANM price" value={rev?.prices?.anmUsd ? `$${Number(rev.prices.anmUsd)}` : "—"} />
+        <Stat label="ANM price" value={rev?.prices?.anmUsd ? `$${Number(rev.prices.anmUsd).toFixed(8).replace(/0+$/, "")}` : "—"} />
+        <Stat label="Next payout" value={!pool?.payouts_enabled ? "paused" : payoutCountdown != null ? fmtCountdown(payoutCountdown) : "—"} />
       </section>
 
       <p className="-mt-4 text-xs text-white/40">
         {pool?.hashrate_source === "reported"
           ? `Live miner-reported (${pool?.reporting_miners ?? 0} reporting)`
           : "Estimated from share work (no miners reporting yet)"}
+        {net?.hashrate_scope === "network_equivalent" ? (
+          <> · Measured from share work. This pool found{" "}
+            <strong className="text-white/70">{net?.pool_blocks_in_window ?? "—"} of {net?.chain_blocks_in_window ?? "—"}</strong>{" "}
+            blocks in the last 24h ({net?.pool_block_share_pct}%), so pool and network are the same population and this
+            is the chain-wide figure. The node&rsquo;s Θ-derived estimate
+            {net?.node_theta_hashrate_hps ? <> ({hr(Number(net.node_theta_hashrate_hps))})</> : null} cannot be
+            reconciled with that and overstates by ~95×.
+            {net?.unseen_hashrate_bound_pct != null && (
+              <> Any miner submitting shares to no pool that also found no block would be invisible here; with{" "}
+                {net?.pool_blocks_in_window} blocks and none found elsewhere, that is under{" "}
+                <strong className="text-white/70">{net.unseen_hashrate_bound_pct}%</strong> of network hash (95% conf).
+                Miners that <em>do</em> submit shares are counted whether or not they ever find a block.</>
+            )}</>
+        ) : (
+          <> · Counts shares submitted to <em>this pool</em> only — it finds {net?.pool_block_share_pct ?? "—"}% of
+            blocks, so solo and direct miners are not represented here.</>
+        )}
       </p>
 
-      {pool?.hashrate_source !== "reported" && (
-        <section className="grid gap-4 sm:grid-cols-3">
-          <Stat label="Network hashrate 1m" value={hr(Number(pool?.hashrate_raw_1m ?? 0))} sub />
-          <Stat label="Network hashrate 15m" value={hr(Number(pool?.hashrate_raw_15m ?? 0))} sub />
-          <Stat label="Network hashrate 1h" value={hr(Number(pool?.hashrate_raw_1h ?? 0))} sub />
-        </section>
-      )}
-
-      {(() => {
-        const pm = xmr?.projected_monero;
-        const pmHps = Number(pm?.projected_monero_hps ?? 0);
-        const threads = Number(pm?.est_cpu_threads ?? 0);
+      {pool?.hashrate_source !== "reported" && (() => {
+        // A window with no accepted shares is NOT 0 H/s — it is no sample. At
+        // the current share rate the 1m window is usually empty, and printing
+        // "0 H/s" there reads as "the network stopped".
+        const n = net?.hashrate_window_samples ?? {};
+        const scopeWord = net?.hashrate_scope === "network_equivalent" ? "Network" : "Pool";
+        const win = (label: string, hps: any, samples: any) => {
+          const c = Number(samples ?? 0);
+          return (
+            <Stat
+              key={label}
+              label={`${scopeWord} hashrate ${label}`}
+              value={c > 0 ? hr(Number(hps ?? 0)) : "no samples"}
+              sub
+              note={c > 0 ? `${c} share${c === 1 ? "" : "s"}` : "no shares in window"}
+            />
+          );
+        };
         return (
-          <section className="card">
-            <h2 className="font-medium text-neon-violet">Projected Monero (XMR) hashrate</h2>
-            <p className="mt-1 text-xs text-white/40">
-              Estimate of the RandomX hashrate this fleet could produce if every miner also dual-mined Monero — derived
-              from the Animica (SHA3) network hashrate via a per-thread conversion. Assumes CPU miners; an upper bound.
-            </p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-3 text-sm">
-              <Row label="Projected RandomX" value={hr(pmHps)} />
-              <Row label="Est. CPU threads" value={threads >= 1 ? threads.toFixed(0) : threads.toFixed(2)} />
-              <Row label="From Animica net" value={hr(Number(pool?.network_hashrate_hps ?? 0))} />
-            </div>
+          <section className="grid gap-4 sm:grid-cols-3">
+            {win("1m", pool?.hashrate_raw_1m, n.m1)}
+            {win("15m", pool?.hashrate_raw_15m, n.m15)}
+            {win("1h", pool?.hashrate_raw_1h, n.h1)}
           </section>
         );
       })()}
 
-      {xmr?.enabled && (() => {
-        const height = Number(xmr.monerod_height ?? 0);
-        const target = Number(xmr.monerod_target ?? 0);
-        // monerod reports target_height=0 once caught up; treat synced as 100%.
-        const pct = xmr.monerod_synced ? 100 : target > height && target > 0 ? (height / target) * 100 : height > 0 ? 100 : 0;
-        return (
-          <section className="card">
-            <h2 className="font-medium text-neon-violet">Monero (XMR) dual-mining</h2>
-            <div className="mt-3 space-y-1">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-white/60">monerod sync</span>
-                <span className={`font-medium ${xmr.monerod_synced ? "text-neon-green" : "text-neon-violet"}`}>
-                  {pct.toFixed(pct >= 100 ? 0 : 2)}%{xmr.monerod_synced ? " · synced" : ""}
-                </span>
-              </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
-                <div className={`h-full rounded-full ${xmr.monerod_synced ? "bg-neon-green" : "bg-neon-violet"}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
-              </div>
-              {target > 0 && (
-                <p className="text-xs text-white/40">block {height.toLocaleString()} / {target.toLocaleString()}</p>
-              )}
-            </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-3 text-sm">
-              <Row label="XMR miners" value={String(xmr.active_miners ?? 0)} />
-              <Row label="XMR blocks" value={String(xmr.blocks_found ?? 0)} />
-              <Row label="monerod height" value={height ? height.toLocaleString() : "—"} />
-            </div>
-          </section>
-        );
-      })()}
+      {/* Who is actually contributing, split by role. Monero panels removed:
+          XMR dual-mining was switched off and monerod removed 2026-07-16, so
+          "projected RandomX" advertised a capability that does not exist. */}
+      <section className="card">
+        <h2 className="font-medium text-neon-violet">Network participation</h2>
+        <p className="mt-1 text-xs text-white/40">
+          Counted from work actually done, not from connections held open. A machine counts when it submits an
+          accepted share; a worker counts as serving inference when its wallet has a fresh heartbeat and advertises
+          a live tier.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+          <Row label="Mining machines" value={net?.active_machines != null ? String(net.active_machines) : "—"} />
+          <Row label="Mining wallets" value={net?.active_machine_addresses != null ? String(net.active_machine_addresses) : "—"} />
+          <Row label="Serving inference" value={net?.inference_workers_serving != null ? String(net.inference_workers_serving) : "—"} />
+          <Row
+            label="Mining + inference"
+            value={net?.dual_role_machines != null ? `${net.dual_role_machines} machines · ${net.dual_role_addresses ?? 0} wallets` : "—"}
+          />
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3 text-sm">
+          <Row label="Mining only" value={net?.mining_only_addresses != null ? `${net.mining_only_addresses} wallets` : "—"} />
+          <Row label="Inference only" value={net?.inference_only_addresses != null ? `${net.inference_only_addresses} wallets` : "—"} />
+          <Row
+            label="Named rigs"
+            value={net?.active_machines_named != null ? `${net.active_machines_named} of ${net.active_machines ?? 0}` : "—"}
+          />
+        </div>
+        <p className="mt-3 text-[11px] text-white/35">
+          Machines are counted over the last {net?.active_machines_window_seconds ? Math.round(Number(net.active_machines_window_seconds) / 60) : 15} minutes.
+          A rig that sends no name is identified by its session, so it can be counted again after a reconnect —
+          &ldquo;named rigs&rdquo; shows how much of the count is immune to that.
+          {net?.inference_wallets_configured != null && (
+            <> Inference is measured across {net.inference_wallets_configured} configured wallet{Number(net.inference_wallets_configured) === 1 ? "" : "s"}.</>
+          )}
+        </p>
+      </section>
+
 
       <section className="space-y-4">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-neon-green/80">Recent blocks</h2>
@@ -150,11 +236,14 @@ export default function StatsPage() {
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: boolean }) {
+function Stat({ label, value, sub, note }: { label: string; value: string; sub?: boolean; note?: string }) {
   return (
     <div className="card">
       <p className="text-xs font-medium uppercase tracking-wide text-white/45">{label}</p>
       <p className={`mt-2 font-semibold tracking-tight ${sub ? "text-xl text-white" : "text-3xl text-neon-blue"}`}>{value}</p>
+      {/* Sample size / provenance under a number, so a reader can tell a real
+          zero from an empty measurement window. */}
+      {note ? <p className="mt-1 text-[11px] text-white/35">{note}</p> : null}
     </div>
   );
 }

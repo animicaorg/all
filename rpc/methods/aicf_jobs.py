@@ -2080,6 +2080,59 @@ async def worker_earnings(
     }
 
 
+@method(
+    "aicf.workerCount",
+    desc="Aggregate stats over registered AICF workers (no addresses enumerated)",
+    aliases=("aicf_workerCount",),
+)
+async def worker_count(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    """Public, aggregate-only view of the worker fleet for dashboards
+    (pool.animica.org/stats shows "phones serving" from this). Buckets by the
+    self-reported hardware.engine: "webllm" = the browser Serve&Earn page
+    (phones + desktops), "animica-serve" = the Termux/CLI thin worker (its
+    hardware.termux flag separates actual phones), everything else = full
+    nodes (animica up). No addresses are enumerated — per-address data stays
+    behind aicf.workerStatus(address), which requires knowing the address."""
+    p = dict(params or {})
+    online_window = float(p.get("online_window_s") or 300.0)
+    online_window = max(30.0, min(online_window, 86400.0))
+    now = time.time()
+    workers = _STORE.all_workers()
+    total = len(workers)
+    online = 0
+    engines: Dict[str, int] = {}
+    engines_online: Dict[str, int] = {}
+    phones_online = 0
+    jobs_completed = 0
+    pending = 0.0
+    for w in workers:
+        hw = w.hardware if isinstance(w.hardware, Mapping) else {}
+        eng = str(hw.get("engine") or "node").lower()[:32]
+        is_online = (now - float(w.last_seen or 0)) <= online_window
+        engines[eng] = engines.get(eng, 0) + 1
+        if is_online:
+            online += 1
+            engines_online[eng] = engines_online.get(eng, 0) + 1
+            if eng == "webllm" or (eng == "animica-serve" and hw.get("termux")):
+                phones_online += 1
+        jobs_completed += int(w.jobs_completed or 0)
+        pending += float(w.earnings_pending_animica or 0.0)
+    return {
+        "total_registered": total,
+        "online": online,
+        "online_window_s": online_window,
+        "phones_online": phones_online,
+        "engines": engines,
+        "engines_online": engines_online,
+        "jobs_completed_total": jobs_completed,
+        "earnings_pending_animica_total": round(pending, 9),
+        "ts": now,
+    }
+
+
 @method("aicf.workerClaimNextJob", desc="Claim the next pending AICF job", aliases=("aicf_workerClaimNextJob",))
 async def worker_claim_next_job(
     ctx: Any = None,

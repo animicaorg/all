@@ -30,11 +30,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const RPC_URL = "https://rpc.animica.org/rpc";
 const WEBLLM_URL = "https://esm.run/@mlc-ai/web-llm@0.2.79";
 const TIERS = ["free", "standard"];
-const MODELS: { id: string; label: string; note: string }[] = [
-  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 1.5B (default)", note: "~1.0 GB · best answers, needs ~3 GB free RAM" },
-  { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 0.5B (light)", note: "~0.5 GB · for older / low-RAM phones" },
-  { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", label: "Llama 3.2 · 1B", note: "~0.8 GB · alternative to Qwen" },
+const MODELS: { id: string; label: string; note: string; approxGB: number }[] = [
+  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 1.5B (default)", note: "~1.0 GB · best answers, needs ~3 GB free RAM", approxGB: 1.0 },
+  { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 0.5B (light)", note: "~0.5 GB · for older / low-RAM phones", approxGB: 0.5 },
+  { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", label: "Llama 3.2 · 1B", note: "~0.8 GB · alternative to Qwen", approxGB: 0.8 },
 ];
+// The network's inference carve: 25% of every 300 ANM block reward. Settlement anchors
+// (posted automatically, ~10 min cadence) split the WHOLE carve pro-rata across servers
+// by earned weight — this is what serving "counts toward".
+const CARVE_ANM_PER_BLOCK = 75;
 
 type Phase = "idle" | "loading" | "serving" | "paused" | "stopped" | "error";
 
@@ -199,8 +203,35 @@ function makeInlineModule(): string {
   return CORE_SOURCE.replace("__POST__(m)", "(globalThis.__anmServePost || (() => {}))(m)");
 }
 
-function looksLikeAnimAddress(a: string): boolean {
-  return /^anim1[023456789acdefghjklmnpqrstuvwxyz]{20,}$/.test(a.trim());
+// Real bech32m validation (BIP-350). This matters: workers may register ANY string,
+// but settlement anchors can only pay valid anim1… addresses — a typo'd address would
+// accrue IOUs that can never be paid out, so Start refuses invalid ones outright.
+const B32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+function bech32Polymod(values: number[]): number {
+  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const v of values) {
+    const b = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((b >>> i) & 1) chk ^= GEN[i];
+  }
+  return chk >>> 0;
+}
+function isValidAnimAddress(addr: string): boolean {
+  const a = addr.trim();
+  if (a !== a.toLowerCase() && a !== a.toUpperCase()) return false;
+  const s = a.toLowerCase();
+  const pos = s.lastIndexOf("1");
+  if (!s.startsWith("anim1") || pos !== 4 || s.length < pos + 7) return false;
+  const hrp = s.slice(0, pos);
+  const data: number[] = [];
+  for (const ch of s.slice(pos + 1)) {
+    const d = B32_CHARSET.indexOf(ch);
+    if (d === -1) return false;
+    data.push(d);
+  }
+  const hrpExpand = [...[...hrp].map((c) => c.charCodeAt(0) >>> 5), 0, ...[...hrp].map((c) => c.charCodeAt(0) & 31)];
+  return bech32Polymod([...hrpExpand, ...data]) === 0x2bc830a3; // bech32m constant
 }
 
 function fmtANM(v: number | null): string {
@@ -230,6 +261,10 @@ export default function ServeWorker() {
   const audioRef = useRef<{ ctx: AudioContext; osc: OscillatorNode } | null>(null);
   const phaseRef = useRef<Phase>("idle");
   useEffect(() => { phaseRef.current = phase; }, [phase]);
+  const [dlSpeed, setDlSpeed] = useState<number | null>(null);   // MB/s while downloading
+  const dlRef = useRef<{ pct: number; t: number } | null>(null);
+  const modelIdRef = useRef(modelId);
+  useEffect(() => { modelIdRef.current = modelId; }, [modelId]);
 
   const addLog = useCallback((line: string) => {
     const t = new Date().toLocaleTimeString();
@@ -310,11 +345,26 @@ export default function ServeWorker() {
     if (!m || typeof m !== "object") return;
     switch (m.type) {
       case "status": setStatus(m.text || ""); break;
-      case "progress":
+      case "progress": {
         setProgress(m.pct ?? null);
         if (m.text) setStatus(m.text + "…");
+        // Download speed estimate: Δprogress × approximate model size / Δt. WebLLM's
+        // progress is fetch-dominated, so this tracks real network throughput closely.
+        if (typeof m.pct === "number") {
+          const now = performance.now();
+          const prev = dlRef.current;
+          if (prev && m.pct > prev.pct && now - prev.t > 400) {
+            const gb = MODELS.find((x) => x.id === modelIdRef.current)?.approxGB ?? 1.0;
+            const bytes = ((m.pct - prev.pct) / 100) * gb * 1e9;
+            setDlSpeed(bytes / ((now - prev.t) / 1000) / 1e6);
+            dlRef.current = { pct: m.pct, t: now };
+          } else if (!prev || m.pct < prev.pct) {
+            dlRef.current = { pct: m.pct, t: now };
+          }
+        }
         break;
-      case "ready": setProgress(null); setPhase("serving"); break;
+      }
+      case "ready": setProgress(null); setDlSpeed(null); dlRef.current = null; setPhase("serving"); break;
       case "log": addLog(m.text || ""); break;
       case "job":
         setStats((s) => ({
@@ -345,8 +395,11 @@ export default function ServeWorker() {
   // ── start / stop ──────────────────────────────────────────────────────────
   const start = useCallback(async () => {
     if (!address.trim()) { setStatus("Enter the anim1… address that should be paid."); return; }
-    if (!looksLikeAnimAddress(address) && !window.confirm(
-      "That doesn't look like an anim1… wallet address. Earnings credit whatever ID you register — an unknown ID can never be paid out. Continue anyway?")) return;
+    if (!isValidAnimAddress(address)) {
+      setPhase("error");
+      setStatus("That address fails the bech32m checksum, so the settlement anchors can NEVER pay it. Paste the exact anim1… address from your wallet (animica.org/wallet).");
+      return;
+    }
     runRef.current += 1;
     setPhase("loading");
     setStatus("Starting…");
@@ -494,8 +547,14 @@ export default function ServeWorker() {
           <span className="ml-2 text-xs text-white/40">· background-capable worker</span>
         )}
         {progress != null && (
-          <div className="mt-2 h-1.5 w-full overflow-hidden rounded bg-white/10">
-            <div className="h-full bg-neon-green transition-all" style={{ width: `${progress}%` }} />
+          <div className="mt-2 space-y-1">
+            <div className="h-1.5 w-full overflow-hidden rounded bg-white/10">
+              <div className="h-full bg-neon-green transition-all" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="flex justify-between text-xs text-white/50">
+              <span>downloading model · {progress}%</span>
+              <span>{dlSpeed != null ? `${dlSpeed.toFixed(1)} MB/s` : "…"}</span>
+            </div>
           </div>
         )}
       </div>
@@ -507,12 +566,14 @@ export default function ServeWorker() {
         <StatBox label="speed" value={stats.lastTokS ? `${stats.lastTokS.toFixed(1)} tok/s` : "—"} />
         <StatBox label="pending ANM" value={fmtANM(stats.pendingANM)} accent />
       </div>
-      {stats.jobsCompleted != null && (
-        <p className="text-xs text-white/40">
-          Ledger for this address: {stats.jobsCompleted} jobs completed all-time · pending earnings are
-          IOUs on the node&apos;s worker ledger and settle on-chain via the AICF carve.
-        </p>
-      )}
+      <p className="text-xs text-white/40">
+        Serving counts toward the network&apos;s <strong className="text-white/60">inference carve — {CARVE_ANM_PER_BLOCK} ANM
+        per block</strong> (25% of the block reward): settlement anchors post automatically (~every 10 min when there are
+        new earnings) and split the whole carve pro-rata across servers by earned weight.
+        {stats.jobsCompleted != null && (
+          <> Ledger for this address: {stats.jobsCompleted} jobs completed all-time, {fmtANM(stats.pendingANM)} ANM pending.</>
+        )}
+      </p>
 
       {log.length > 0 && (
         <details className="text-xs text-white/50" open>
