@@ -29,16 +29,28 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const RPC_URL = "https://rpc.animica.org/rpc";
 const WEBLLM_URL = "https://esm.run/@mlc-ai/web-llm@0.2.79";
+// CPU (WebAssembly) fallback engine for browsers WITHOUT WebGPU — iPhone Safari first
+// among them. llama.cpp compiled to wasm; single-thread build needs no COOP/COEP
+// headers, so it runs on this page as-is. Slower, honest, works everywhere.
+const WLLAMA_URL = "https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.5/esm/index.js";
+const WLLAMA_WASM = {
+  "single-thread/wllama.wasm": "https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.5/esm/single-thread/wllama.wasm",
+  "multi-thread/wllama.wasm": "https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.5/esm/multi-thread/wllama.wasm",
+};
 const TIERS = ["free", "standard"];
-const MODELS: { id: string; label: string; note: string; approxGB: number }[] = [
-  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 1.5B (default)", note: "~1.0 GB · best answers, needs ~3 GB free RAM", approxGB: 1.0 },
-  { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 0.5B (light)", note: "~0.5 GB · for older / low-RAM phones", approxGB: 0.5 },
-  { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", label: "Llama 3.2 · 1B", note: "~0.8 GB · alternative to Qwen", approxGB: 0.8 },
+const MODELS: { id: string; label: string; note: string; approxGB: number; gguf: string }[] = [
+  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 1.5B (default)", note: "~1.0 GB · best answers, needs ~3 GB free RAM", approxGB: 1.0,
+    gguf: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf" },
+  { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 0.5B (light)", note: "~0.5 GB · for older / low-RAM phones", approxGB: 0.5,
+    gguf: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf" },
+  { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", label: "Llama 3.2 · 1B", note: "~0.8 GB · alternative to Qwen", approxGB: 0.8,
+    gguf: "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf" },
 ];
 // The network's inference carve: 25% of every 300 ANM block reward. Settlement anchors
 // (posted automatically, ~10 min cadence) split the WHOLE carve pro-rata across servers
 // by earned weight — this is what serving "counts toward".
 const CARVE_ANM_PER_BLOCK = 75;
+const BUILD = "v3";   // shown in the panel so a user can tell a stale cached tab from the live page
 
 type Phase = "idle" | "loading" | "serving" | "paused" | "stopped" | "error";
 
@@ -59,7 +71,7 @@ let stopped = false;
 let paused = false;
 let engine = null;
 export function __control(msg) {
-  if (msg === "stop") { stopped = true; try { engine && engine.interruptGenerate && engine.interruptGenerate(); } catch (e) {} }
+  if (msg === "stop") { stopped = true; try { engine && engine.e && engine.e.interruptGenerate && engine.e.interruptGenerate(); } catch (e) {} }
   if (msg === "pause") { paused = true; }
   if (msg === "resume") { paused = false; }
 }
@@ -81,22 +93,91 @@ function clampPrompt(p, maxChars) {
   const tail = maxChars - head;
   return p.slice(0, head) + "\\n…\\n" + p.slice(p.length - tail);
 }
-export async function run(cfg) {
-  try {
+let engineModelId = null;
+let engineKind = null;
+function unloadEngine() {
+  try { engine && engine.e && engine.e.unload && engine.e.unload(); } catch (e) {}
+  try { engine && engine.w && engine.w.exit && engine.w.exit(); } catch (e) {}
+  engine = null; engineModelId = null; engineKind = null;
+}
+async function ensureEngine(cfg) {
+  if (engine && engineModelId === cfg.modelId && engineKind === cfg.engineKind) return;
+  unloadEngine();
+  if (cfg.engineKind === "wllama") {
+    // CPU / WebAssembly lane (no WebGPU needed — iPhone Safari runs this).
+    post({ type: "status", text: "Loading the CPU engine (WebAssembly)…" });
+    const mod = await import(cfg.wllamaUrl);
+    if (stopped) return;
+    const w = new mod.Wllama(cfg.wllamaWasm);
+    post({ type: "status", text: "Downloading the model (cached after the first time)…" });
+    await w.loadModelFromUrl(cfg.ggufUrl, {
+      n_ctx: 4096,
+      useCache: true,
+      progressCallback: (pr) => {
+        if (stopped || !pr || !pr.total) return;
+        post({ type: "progress", pct: Math.round(100 * pr.loaded / pr.total),
+               text: "Fetching " + (pr.loaded / 1e6).toFixed(0) + " / " + (pr.total / 1e6).toFixed(0) + " MB" });
+      },
+    });
+    engine = { kind: "wllama", w: w };
+  } else {
     post({ type: "status", text: "Loading WebLLM…" });
     const webllm = await import(cfg.webllmUrl);
     if (stopped) return;
     post({ type: "status", text: "Downloading the model (cached after the first time)…" });
-    engine = await webllm.CreateMLCEngine(cfg.modelId, {
+    const e = await webllm.CreateMLCEngine(cfg.modelId, {
       initProgressCallback: (p) => {
         if (stopped) return;
         post({ type: "progress", pct: typeof p.progress === "number" ? Math.round(p.progress * 100) : null,
                text: p.text ? String(p.text).slice(0, 90) : null });
       },
     });
-    if (stopped) { try { engine.unload && engine.unload(); } catch (e) {} return; }
-    post({ type: "ready" });
+    engine = { kind: "webllm", e: e };
+  }
+  engineModelId = cfg.modelId;
+  engineKind = cfg.engineKind;
+}
+function interruptEngine() {
+  try { engine && engine.e && engine.e.interruptGenerate && engine.e.interruptGenerate(); } catch (e) {}
+}
+async function generateText(prompt, maxTok, temperature, topP, onToken) {
+  if (engine.kind === "wllama") {
+    const out = await engine.w.createChatCompletion(
+      [{ role: "user", content: prompt }],
+      { nPredict: maxTok, sampling: { temp: temperature, top_p: topP },
+        onNewToken: (tok, piece, currentText) => { onToken(1); } });
+    return String(out || "");
+  }
+  let text = "";
+  const chunks = await engine.e.chat.completions.create({
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: maxTok,
+    temperature: temperature,
+    top_p: topP,
+    stream: true,
+  });
+  for await (const c of chunks) {
+    if (stopped) break;
+    const piece = (c && c.choices && c.choices[0] && c.choices[0].delta && c.choices[0].delta.content) || "";
+    if (piece) { text += piece; onToken(1); }
+  }
+  return text;
+}
+export async function download(cfg) {
+  try {
+    await ensureEngine(cfg);
+    if (stopped) return;
+    post({ type: "downloaded", modelId: cfg.modelId });
     post({ type: "log", text: "model ready: " + cfg.modelId });
+  } catch (e) {
+    post({ type: "fatal", text: String(e && e.message || e).slice(0, 200) });
+  }
+}
+export async function run(cfg) {
+  try {
+    await ensureEngine(cfg);
+    if (stopped) { unloadEngine(); return; }
+    post({ type: "ready" });
     await rpc(cfg.rpcUrl, "aicf.workerRegister", { address: cfg.address, tiers: cfg.tiers, hardware: cfg.hardware });
     post({ type: "log", text: "registered " + cfg.address.slice(0, 14) + "… tiers=" + cfg.tiers.join(",") });
     post({ type: "status", text: "Serving — waiting for jobs…" });
@@ -140,21 +221,13 @@ export async function run(cfg) {
       let text = "";
       let tokens = 0;
       const t0 = Date.now();
-      const watchdog = setTimeout(() => { try { engine.interruptGenerate && engine.interruptGenerate(); } catch (e) {} },
-        Math.max(5000, deadline - Date.now() - 4000));
+      const watchdog = setTimeout(interruptEngine, Math.max(5000, deadline - Date.now() - 4000));
       try {
-        const chunks = await engine.chat.completions.create({
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: maxTok,
-          temperature: Math.max(0, Math.min(Number(job.temperature != null ? job.temperature : 0.3), 1.2)),
-          top_p: Math.max(0.05, Math.min(Number(job.top_p != null ? job.top_p : 0.9), 1)),
-          stream: true,
-        });
-        for await (const c of chunks) {
-          if (stopped) break;
-          const piece = (c && c.choices && c.choices[0] && c.choices[0].delta && c.choices[0].delta.content) || "";
-          if (piece) { text += piece; tokens += 1; }
-        }
+        text = await generateText(
+          prompt, maxTok,
+          Math.max(0, Math.min(Number(job.temperature != null ? job.temperature : 0.3), 1.2)),
+          Math.max(0.05, Math.min(Number(job.top_p != null ? job.top_p : 0.9), 1)),
+          (n) => { tokens += n; });
       } catch (e) {
         post({ type: "log", text: "generation failed: " + String(e && e.message || e).slice(0, 80) });
       } finally {
@@ -182,17 +255,23 @@ export async function run(cfg) {
     post({ type: "fatal", text: String(e && e.message || e).slice(0, 200) });
     return;
   } finally {
-    try { engine && engine.unload && engine.unload(); } catch (e) {}
+    unloadEngine();
   }
   post({ type: "stopped" });
 }
 `;
 
 const WORKER_HARNESS = `
+// wllama's wasm loader reads document.baseURI / document.currentScript (one use is
+// unguarded) — workers have no document, so give it the minimum it dereferences.
+if (typeof self.document === "undefined") {
+  self.document = { baseURI: self.location.href, currentScript: null };
+}
 ${CORE_SOURCE.replace("__POST__(m)", "self.postMessage(m)")}
 self.onmessage = (ev) => {
   const d = ev.data || {};
   if (d.type === "start") run(d.cfg);
+  else if (d.type === "download") download(d.cfg);
   else if (d.type === "control") __control(d.cmd);
 };
 self.postMessage({ type: "boot", webgpu: !!(self.navigator && self.navigator.gpu) });
@@ -250,6 +329,8 @@ export default function ServeWorker() {
   const [batterySupported, setBatterySupported] = useState<boolean>(false);
   const [charging, setCharging] = useState<boolean>(true);
   const [gpuOk, setGpuOk] = useState<boolean | null>(null);
+  const [modelReady, setModelReady] = useState<boolean>(false);
+  const [downloading, setDownloading] = useState<boolean>(false);
   const [mode, setMode] = useState<"worker" | "inline" | null>(null);
   const [stats, setStats] = useState<Stats>({ won: 0, lost: 0, tokensOut: 0, lastTokS: null, pendingANM: null, jobsCompleted: null });
   const [log, setLog] = useState<string[]>([]);
@@ -272,11 +353,20 @@ export default function ServeWorker() {
   }, []);
 
   // ── environment probes + persisted prefs ──────────────────────────────────
+  const [engineKind, setEngineKind] = useState<"webllm" | "wllama">("webllm");
   useEffect(() => {
-    setGpuOk(typeof navigator !== "undefined" && !!(navigator as any).gpu);
+    const hasGpu = typeof navigator !== "undefined" && !!(navigator as any).gpu;
+    setGpuOk(hasGpu);
+    // No WebGPU (iPhone Safari, Firefox, older Android) → the CPU/WebAssembly engine.
+    // ?engine=wasm|webgpu overrides for testing.
+    const forced = new URLSearchParams(window.location.search).get("engine");
+    const kind = forced === "wasm" ? "wllama" : forced === "webgpu" ? "webllm" : hasGpu ? "webllm" : "wllama";
+    setEngineKind(kind);
     try {
       const a = localStorage.getItem("anmServeAddress"); if (a) setAddress(a);
-      const m = localStorage.getItem("anmServeModel"); if (m && MODELS.some((x) => x.id === m)) setModelId(m);
+      const m = localStorage.getItem("anmServeModel");
+      if (m && MODELS.some((x) => x.id === m)) setModelId(m);
+      else if (kind === "wllama") setModelId(MODELS[1].id);   // CPU: default to the 0.5B
       const c = localStorage.getItem("anmServeChargeOnly"); if (c != null) setChargeOnly(c !== "0");
       const b = localStorage.getItem("anmServeBgMode"); if (b != null) setBgMode(b !== "0");
     } catch { /* private mode */ }
@@ -290,9 +380,47 @@ export default function ServeWorker() {
     }
   }, []);
   useEffect(() => { try { localStorage.setItem("anmServeAddress", address); } catch { /* */ } }, [address]);
-  useEffect(() => { try { localStorage.setItem("anmServeModel", modelId); } catch { /* */ } }, [modelId]);
+  useEffect(() => { try { localStorage.setItem("anmServeModel", modelId); } catch { /* */ } setModelReady(false); }, [modelId]);
   useEffect(() => { try { localStorage.setItem("anmServeChargeOnly", chargeOnly ? "1" : "0"); } catch { /* */ } }, [chargeOnly]);
   useEffect(() => { try { localStorage.setItem("anmServeBgMode", bgMode ? "1" : "0"); } catch { /* */ } }, [bgMode]);
+
+  const cfgRef = useRef<any>(null);
+  const signOff = useCallback((addr: string) => {
+    // Best-effort "I'm gone" to the queue: removes this worker from every online
+    // view immediately (its earnings ledger is kept server-side). keepalive lets
+    // the request finish while the page is being torn down.
+    try {
+      fetch(RPC_URL, {
+        method: "POST",
+        keepalive: true,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "aicf.workerSignOff", params: { address: addr } }),
+      }).catch(() => { /* */ });
+    } catch { /* */ }
+  }, []);
+
+  // Closing / navigating away must stop serving (the worker thread dies with the
+  // page anyway) AND tell the network immediately. Coming back from bfcache
+  // re-registers so the fleet view stays truthful in both directions.
+  useEffect(() => {
+    const onHide = () => {
+      if ((phaseRef.current === "serving" || phaseRef.current === "paused" || phaseRef.current === "loading") && cfgRef.current) {
+        signOff(cfgRef.current.address);
+      }
+    };
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted && (phaseRef.current === "serving" || phaseRef.current === "paused") && cfgRef.current) {
+        fetch(RPC_URL, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "aicf.workerRegister", params: { address: cfgRef.current.address, tiers: cfgRef.current.tiers, hardware: cfgRef.current.hardware } }),
+        }).catch(() => { /* */ });
+      }
+    };
+    window.addEventListener("pagehide", onHide);
+    window.addEventListener("pageshow", onShow as any);
+    return () => { window.removeEventListener("pagehide", onHide); window.removeEventListener("pageshow", onShow as any); };
+  }, [signOff]);
 
   // ── charging gate → pause/resume the core ─────────────────────────────────
   const sendControl = useCallback((cmd: "pause" | "resume" | "stop") => {
@@ -364,7 +492,12 @@ export default function ServeWorker() {
         }
         break;
       }
-      case "ready": setProgress(null); setDlSpeed(null); dlRef.current = null; setPhase("serving"); break;
+      case "ready": setProgress(null); setDlSpeed(null); dlRef.current = null; setDownloading(false); setModelReady(true); setPhase("serving"); break;
+      case "downloaded":
+        setProgress(null); setDlSpeed(null); dlRef.current = null; setDownloading(false); setModelReady(true);
+        setPhase("idle");
+        setStatus("model ready ✓ — enter your payout address and press Start serving");
+        break;
       case "log": addLog(m.text || ""); break;
       case "job":
         setStats((s) => ({
@@ -376,7 +509,7 @@ export default function ServeWorker() {
         }));
         break;
       case "earnings": setStats((s) => ({ ...s, pendingANM: m.pending, jobsCompleted: m.completed })); break;
-      case "fatal": setPhase("error"); setStatus(`Stopped: ${m.text}`); cleanup(); break;
+      case "fatal": setPhase("error"); setStatus(`Stopped: ${m.text}`); setDownloading(false); cleanup(); break;
       case "stopped": if (phaseRef.current !== "error") { setPhase("stopped"); } cleanup(); break;
       default: break;
     }
@@ -392,6 +525,77 @@ export default function ServeWorker() {
     stopKeepalive();
   }
 
+  // Spawn (or reuse) the engine worker; returns "worker" | "inline" | null.
+  const ensureWorker = useCallback(async (): Promise<"worker" | "inline" | null> => {
+    if (workerRef.current) return "worker";
+    if (inlineRef.current) return "inline";
+    try {
+      const blob = new Blob([WORKER_HARNESS], { type: "text/javascript" });
+      const w = new Worker(URL.createObjectURL(blob), { type: "module" });
+      const booted: boolean = await new Promise((resolve) => {
+        const t = setTimeout(() => resolve(false), 4000);
+        w.onmessage = (ev) => { if (ev.data?.type === "boot") { clearTimeout(t); resolve(!!ev.data.webgpu); } };
+        w.onerror = () => { clearTimeout(t); resolve(false); };
+      });
+      if (booted || engineKind === "wllama") {   // the wasm engine needs no WebGPU in the worker
+        workerRef.current = w;
+        setMode("worker");
+        w.onmessage = (ev) => onMessage(ev.data);
+        w.onerror = (e) => { setPhase("error"); setStatus(`Worker error: ${e.message || e}`); setDownloading(false); cleanup(); };
+        return "worker";
+      }
+      w.terminate();
+    } catch { /* fall through */ }
+    try {
+      setMode("inline");
+      (globalThis as any).__anmServePost = onMessage;
+      const blob = new Blob([makeInlineModule()], { type: "text/javascript" });
+      const mod: any = await import(/* webpackIgnore: true */ URL.createObjectURL(blob));
+      inlineRef.current = mod;
+      return "inline";
+    } catch {
+      return null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onMessage, engineKind]);
+
+  const baseCfg = useCallback(() => ({
+    address: address.trim(),
+    modelId,
+    tiers: TIERS,
+    rpcUrl: RPC_URL,
+    webllmUrl: WEBLLM_URL,
+    engineKind,
+    wllamaUrl: WLLAMA_URL,
+    wllamaWasm: WLLAMA_WASM,
+    ggufUrl: MODELS.find((x) => x.id === modelId)?.gguf || MODELS[1].gguf,
+    // CPU generation is slow: cap output harder so answers land inside the claim window.
+    maxOutputCap: engineKind === "wllama" ? 320 : 768,
+    hardware: {
+      engine: engineKind,
+      model: modelId,
+      ua: navigator.userAgent.slice(0, 160),
+      platform: (navigator as any).userAgentData?.platform || navigator.platform || "",
+      cores: navigator.hardwareConcurrency || 0,
+      device_memory_gb: (navigator as any).deviceMemory || 0,
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [address, modelId, engineKind]);
+
+  // "Download model" — no address needed; fetches + compiles, then waits for Start.
+  const downloadModel = useCallback(async () => {
+    setDownloading(true);
+    setPhase("loading");
+    setStatus("Preparing download…");
+    setProgress(0);
+    const cfg = baseCfg();
+    const kind = await ensureWorker();
+    if (kind === "worker") workerRef.current!.postMessage({ type: "download", cfg });
+    else if (kind === "inline") void inlineRef.current.download(cfg);
+    else { setPhase("error"); setStatus("Couldn't start the engine in this browser."); setDownloading(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseCfg, ensureWorker]);
+
   // ── start / stop ──────────────────────────────────────────────────────────
   const start = useCallback(async () => {
     if (!address.trim()) { setStatus("Enter the anim1… address that should be paid."); return; }
@@ -401,71 +605,31 @@ export default function ServeWorker() {
       return;
     }
     runRef.current += 1;
+    const cfg = baseCfg();
+    cfgRef.current = cfg;
     setPhase("loading");
-    setStatus("Starting…");
-    setProgress(0);
+    setStatus(modelReady ? "Starting…" : "Starting (downloading the model first)…");
+    if (!modelReady) setProgress(0);
     await acquireWakeLock();
     if (bgMode) startKeepalive();
-
-    const cfg = {
-      address: address.trim(),
-      modelId,
-      tiers: TIERS,
-      rpcUrl: RPC_URL,
-      webllmUrl: WEBLLM_URL,
-      maxOutputCap: 768,
-      hardware: {
-        engine: "webllm",
-        model: modelId,
-        ua: navigator.userAgent.slice(0, 160),
-        platform: (navigator as any).userAgentData?.platform || navigator.platform || "",
-        cores: navigator.hardwareConcurrency || 0,
-        device_memory_gb: (navigator as any).deviceMemory || 0,
-      },
-    };
-
-    // Preferred: dedicated worker (keeps serving when the tab is backgrounded).
-    // Fallback: same module inline when the worker has no WebGPU (Safari).
-    try {
-      const blob = new Blob([WORKER_HARNESS], { type: "text/javascript" });
-      const w = new Worker(URL.createObjectURL(blob), { type: "module" });
-      const booted: boolean = await new Promise((resolve) => {
-        const t = setTimeout(() => resolve(false), 4000);
-        w.onmessage = (ev) => {
-          if (ev.data?.type === "boot") { clearTimeout(t); resolve(!!ev.data.webgpu); }
-        };
-        w.onerror = () => { clearTimeout(t); resolve(false); };
-      });
-      if (booted) {
-        workerRef.current = w;
-        setMode("worker");
-        w.onmessage = (ev) => onMessage(ev.data);
-        w.onerror = (e) => { setPhase("error"); setStatus(`Worker error: ${e.message || e}`); cleanup(); };
-        w.postMessage({ type: "start", cfg });
-        addLog("running in a background worker — serving continues while the tab is hidden");
-        return;
-      }
-      w.terminate();
-    } catch { /* fall through to inline */ }
-
-    try {
-      setMode("inline");
+    const kind = await ensureWorker();
+    if (kind === "worker") {
+      workerRef.current!.postMessage({ type: "start", cfg });
+      addLog("running in a background worker — serving continues while the tab is hidden");
+    } else if (kind === "inline") {
       addLog("this browser has no WebGPU in workers — running in the page (keep this tab in the foreground)");
-      (globalThis as any).__anmServePost = onMessage;
-      const blob = new Blob([makeInlineModule()], { type: "text/javascript" });
-      const mod: any = await import(/* webpackIgnore: true */ URL.createObjectURL(blob));
-      inlineRef.current = mod;
-      void mod.run(cfg);
-    } catch (e: any) {
+      void inlineRef.current.run(cfg);
+    } else {
       setPhase("error");
-      setStatus(`Couldn't start: ${String(e?.message || e).slice(0, 160)}`);
+      setStatus("Couldn't start the engine in this browser.");
       cleanup();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, modelId, bgMode, onMessage]);
+  }, [address, modelReady, bgMode, baseCfg, ensureWorker, addLog]);
 
   const stop = useCallback(() => {
     sendControl("stop");
+    if (cfgRef.current) signOff(cfgRef.current.address);
     // give the core a moment to unload the engine, then hard-terminate
     window.setTimeout(() => cleanup(), 2500);
     setPhase("stopped");
@@ -473,17 +637,19 @@ export default function ServeWorker() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sendControl]);
 
-  useEffect(() => () => { sendControl("stop"); cleanup(); }, []); // unmount
+  useEffect(() => () => { sendControl("stop"); if (cfgRef.current) signOff(cfgRef.current.address); cleanup(); }, []); // unmount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   const running = phase === "loading" || phase === "serving" || phase === "paused";
 
   return (
     <div className="space-y-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-      {gpuOk === false && (
-        <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-3 text-sm text-amber-200">
-          This browser has no WebGPU, so the model can&apos;t run here. Use Chrome/Edge on Android or
-          desktop; on iPhone use Safari on iOS&nbsp;18+ (enable WebGPU under Settings → Safari →
-          Advanced → Feature Flags if it reports unavailable).
+      {engineKind === "wllama" && (
+        <div className="rounded-lg border border-sky-400/40 bg-sky-400/10 p-3 text-sm text-sky-200">
+          No WebGPU in this browser (iPhone Safari included) — running the <strong>CPU engine
+          (WebAssembly)</strong> instead. It works everywhere, just slower: pick the 0.5B model,
+          expect a few tokens per second, and you&apos;ll mostly win jobs when faster workers are
+          asleep. Chrome/Edge on Android or desktop unlock the faster GPU engine.
         </div>
       )}
 
@@ -497,6 +663,15 @@ export default function ServeWorker() {
             placeholder="anim1…  (create one: animica.org/wallet)"
             className="mt-1 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 font-mono text-sm text-white placeholder-white/30 outline-none focus:border-neon-green/60"
           />
+          {address.trim() ? (
+            isValidAnimAddress(address) ? (
+              <span className="mt-1 block text-xs text-neon-green">✓ valid address — earnings will credit here</span>
+            ) : (
+              <span className="mt-1 block text-xs text-red-400">✗ not a valid anim1… address (bech32m checksum fails) — it could never be paid</span>
+            )
+          ) : (
+            <span className="mt-1 block text-xs text-white/40">enter your payout address to enable Start</span>
+          )}
         </label>
         <label className="block text-sm text-white/70">
           Model
@@ -514,14 +689,30 @@ export default function ServeWorker() {
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
-        {!running ? (
+        {!running && (
           <button
-            onClick={start}
-            disabled={gpuOk === false}
-            className="rounded-xl bg-neon-green px-6 py-2.5 font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={downloadModel}
+            disabled={downloading || modelReady}
+            className="rounded-xl border border-neon-green/60 px-5 py-2.5 font-semibold text-neon-green transition hover:bg-neon-green/10 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Start serving
+            {modelReady ? "Model ready ✓" : downloading ? "Downloading…" : "Download model"}
           </button>
+        )}
+        {!running ? (
+          <div className="flex flex-col">
+            <button
+              onClick={start}
+              disabled={!address.trim() || !isValidAnimAddress(address)}
+              className="rounded-xl bg-neon-green px-6 py-2.5 font-semibold text-black transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Start serving
+            </button>
+            {(!address.trim() || !isValidAnimAddress(address)) && (
+              <span className="mt-1 text-[11px] text-white/40">
+                {!address.trim() ? "waiting for your payout address" : "fix the address above first"}
+              </span>
+            )}
+          </div>
         ) : (
           <button onClick={stop} className="rounded-xl border border-white/25 px-6 py-2.5 font-semibold text-white transition hover:bg-white/10">
             Stop
@@ -541,11 +732,12 @@ export default function ServeWorker() {
         <span className={
           phase === "serving" ? "text-neon-green" : phase === "paused" ? "text-amber-300" : phase === "error" ? "text-red-400" : "text-white/60"
         }>
-          {phase === "idle" ? "idle — enter an address and press Start" : status || phase}
+          {phase === "idle" ? (status || "idle — enter an address and press Start") : status || phase}
         </span>
         {phase === "serving" && mode === "worker" && (
           <span className="ml-2 text-xs text-white/40">· background-capable worker</span>
         )}
+        <span className="float-right text-[10px] text-white/25">{BUILD}</span>
         {progress != null && (
           <div className="mt-2 space-y-1">
             <div className="h-1.5 w-full overflow-hidden rounded bg-white/10">

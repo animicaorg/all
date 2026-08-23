@@ -15,7 +15,7 @@ export default function ServePage() {
       <Section
         eyebrow="Serve &amp; Earn — zero install"
         title="Your phone is an AI miner now"
-        description="This page turns any WebGPU browser — including a phone plugged in on a shelf — into an Animica inference worker. A small open model downloads once and runs entirely on your device; the page claims real chat jobs from the network, answers them locally, and credits your wallet in ANM per job won. Nothing to install, no keys on this page — just an address to pay."
+        description="This page turns any modern browser — including an iPhone or Android phone plugged in on a shelf — into an Animica inference worker. A small open model downloads once and runs entirely on your device; the page claims real chat jobs from the network, answers them locally, and credits your wallet in ANM per job won. Nothing to install, no keys on this page — just an address to pay."
       >
         <ServeWorker />
       </Section>
@@ -69,10 +69,10 @@ animica-serve --address anim1yourwallet`}</code>
       <Section title="Requirements &amp; battery" className="text-sm text-white/70">
         <ul className="list-disc space-y-2 pl-5">
           <li>
-            <strong className="text-white">WebGPU browser.</strong> Chrome / Edge on Android or
-            desktop work out of the box. iPhone: Safari with WebGPU (iOS&nbsp;18+; enable in
-            Settings → Safari → Advanced → Feature Flags if it reports unavailable). Roughly 3&nbsp;GB
-            of free RAM for the default model — pick the 0.5B model on smaller phones.
+            <strong className="text-white">Any modern browser.</strong> With WebGPU (Chrome/Edge on
+            Android or desktop) the model runs on your GPU. Without it — <strong className="text-white">iPhone
+            Safari included</strong> — the page automatically switches to a CPU (WebAssembly) engine:
+            slower, but it serves and earns the same way. Pick the 0.5B model on phones with less RAM.
           </li>
           <li>
             <strong className="text-white">Plugged in, screen on.</strong> Sustained inference is

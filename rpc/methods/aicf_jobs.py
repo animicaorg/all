@@ -655,6 +655,20 @@ class _AicfJobStore:
             if w is not None:
                 w.last_seen = time.time()
 
+    def sign_off_worker(self, address: str) -> bool:
+        """Tab-closed / ctrl-C sign-off: drop the worker from every ONLINE view
+        without touching its earnings ledger (the settlement anchors pay from
+        that — deleting the row would wipe unpaid IOUs). last_seen=0 removes it
+        from workerCount online windows; tiers=["offline"] removes it from
+        estimateJobCost provider counts (whose `not tiers` means ALL tiers)."""
+        with self._lock:
+            w = self._workers.get(address)
+            if w is None:
+                return False
+            w.last_seen = 0.0
+            w.tiers = ["offline"]
+            return True
+
     def all_workers(self) -> List[_WorkerInfo]:
         with self._lock:
             return list(self._workers.values())
@@ -1461,6 +1475,14 @@ class _SqliteAicfJobStore:
         except Exception:  # noqa: BLE001 — a liveness touch must never fail a claim
             pass
 
+    def sign_off_worker(self, address: str) -> bool:
+        """See the in-memory twin: offline everywhere, ledger untouched."""
+        cur = self._conn().execute(
+            "UPDATE workers SET last_seen=0, tiers_json='[\"offline\"]' WHERE address=?",
+            (address,),
+        )
+        return bool(cur.rowcount)
+
     def all_workers(self) -> List[_WorkerInfo]:
         rows = self._conn().execute("SELECT * FROM workers").fetchall()
         return [self._worker_from_row(r) for r in rows]
@@ -2008,6 +2030,23 @@ async def worker_register(
     }
 
 
+@method(
+    "aicf.workerSignOff",
+    desc="Worker signs off (tab closed / ctrl-C): removed from online views, earnings ledger kept",
+    aliases=("aicf_workerSignOff", "aicf.workerUnregister"),
+)
+async def worker_sign_off(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    p = dict(params or {})
+    address = _coerce_str(p.get("address")).strip()
+    if not address:
+        raise InvalidParams("workerSignOff: 'address' is required")
+    ok = bool(getattr(_STORE, "sign_off_worker", lambda a: False)(address))
+    return {"signed_off": ok, "address": address}
+
+
 @method("aicf.workerStatus", desc="Get status of a registered AICF worker", aliases=("aicf_workerStatus",))
 async def worker_status(
     ctx: Any = None,
@@ -2116,7 +2155,7 @@ async def worker_count(
         if is_online:
             online += 1
             engines_online[eng] = engines_online.get(eng, 0) + 1
-            if eng == "webllm" or (eng == "animica-serve" and hw.get("termux")):
+            if eng in ("webllm", "wllama") or (eng == "animica-serve" and hw.get("termux")):
                 phones_online += 1
         jobs_completed += int(w.jobs_completed or 0)
         pending += float(w.earnings_pending_animica or 0.0)
