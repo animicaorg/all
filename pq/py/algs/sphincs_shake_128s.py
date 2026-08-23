@@ -12,7 +12,11 @@ from typing import Dict, Optional, Tuple
 
 from . import pure_python_fallbacks as _custom_fallbacks
 
-os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+# NOTE (11.1.0): this module used to set ANIMICA_ALLOW_PQ_PURE_FALLBACK=1 at IMPORT
+# time. The CLI imports it transitively, so every `animica wallet new` on mainnet hit
+# the fail-closed "unsafe flag is set" guard and refused to create a real ML-DSA-65
+# wallet. The fallback opt-in is now set only by the fallback keygen itself, at call
+# time (pure_python_fallbacks.fallback_sig_keypair).
 
 _sizes: Dict[str, int] = {
     "pk": _custom_fallbacks.SPHINCS_SHAKE_128S.pk,

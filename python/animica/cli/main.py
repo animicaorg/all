@@ -51,7 +51,7 @@ import typer
 
 # Import subcommand apps
 from . import (vpn,  # dVPN
-    ai, aicf, animal, beacon, bittensor, chain, chat, cloud, contract, da, debug, ena, faucet, growth, gui, key,
+    ai, aicf, animal, beacon, bittensor, chain, chat, cloud, compute, contract, da, debug, ena, faucet, growth, gui, key,
                mcp, media, mempool, mining, network, node, p2p, peer, phase2, quantum,
                rpc, script, settle, snapshot, stratum, studio, sync, tx, up, wallet)
 from . import l2 as l2_cli
@@ -224,6 +224,7 @@ app.add_typer(media.app, name="media")
 app.add_typer(growth.app, name="growth")
 app.add_typer(animal.app, name="animal")
 app.add_typer(settle.app, name="settle")
+app.add_typer(compute.app, name="compute")
 app.add_typer(up.app, name="up")
 app.add_typer(cloud.app, name="cloud")
 app.add_typer(l2_cli.app, name="l2")

@@ -27,6 +27,9 @@ class MediaKind(str, Enum):
     RENDER_BLENDER = "render_blender"        # .blend -> parent job (never claimed)
     RENDER_CHUNK = "render_chunk"            # .blend frame range -> zip of PNGs
     RENDER_ASSEMBLE = "render_assemble"      # chunk zips -> final mp4 / frames zip
+    # 11.1.0 distributed video — one planned shot per miner, then one assembler
+    VIDEO_SHOT = "video_shot"                # planned shot -> conformed mp4 clip
+    VIDEO_ASSEMBLE = "video_assemble"        # shot clips -> final mp4
 
     @classmethod
     def parse(cls, value: str) -> "MediaKind":

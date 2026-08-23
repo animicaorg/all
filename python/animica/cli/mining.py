@@ -398,7 +398,17 @@ def _start_aicf_worker(address: str) -> tuple[Callable[[], None], dict]:
                 cfg.integration["aicf"]["endpoint"][network] = override.strip()
             except Exception:  # noqa: BLE001
                 pass
-        worker = AICFWorker(cfg=cfg, address=address)
+        # Honor the operator's model selection from the `animica up` picker.
+        # ANIMICA_AICF_SERVE_TIERS is catalog-vocab (tiny/small/flagship/large),
+        # matching the installed bundle dirs the servable filter checks — NOT
+        # ANIMICA_AICF_TIERS, which is the stratum-vocab (free/standard/premium/
+        # elite) reference-miner var and would make every tier fail
+        # _has_servable_bundle → advertise nothing. Empty/unset ⇒ None ⇒ legacy
+        # hardware-eligible behavior. Restricts advertising so a de-selected but
+        # still-installed tier stops being served.
+        _tsel = os.environ.get("ANIMICA_AICF_SERVE_TIERS", "").strip()
+        _tiers_override = [t.strip() for t in _tsel.split(",") if t.strip()] or None
+        worker = AICFWorker(cfg=cfg, address=address, tiers_override=_tiers_override)
     except AgentRuntimeError as exc:
         stats["reason"] = exc.message if hasattr(exc, "message") else str(exc)
         return (lambda: None), stats
@@ -2249,7 +2259,9 @@ def setup(
         )
         from agent_runtime.config import load_config
         from agent_runtime.errors import AgentRuntimeError, BundleError
-        from agent_runtime.hardware import attach_eligible_tiers, detect_hardware
+        from agent_runtime.hardware import (
+            attach_eligible_tiers, canonical_tiers, detect_hardware,
+        )
     except Exception as exc:  # noqa: BLE001
         typer.secho(
             f"Error: agent_runtime is not installed ({exc}). "
@@ -2289,7 +2301,13 @@ def setup(
     if tiers:
         override = [t.strip() for t in tiers.split(",") if t.strip()]
         report["tiers_requested"] = override
-    resolved_tiers = resolve_tiers(profile, dict(cfg.model_catalog), override=override)
+    # resolve_tiers() now emits the node's CHAIN vocab (free/standard/premium/
+    # elite) — correct for ADVERTISING, but `setup` DOWNLOADS bundles, which live
+    # under CATALOG-vocab dirs (models/tiny|small|flagship|large) and whose
+    # base_model/CID helpers key on catalog ids. Canonicalize back to catalog so
+    # every tier actually resolves a bundle (chain names would all be skipped).
+    resolved_tiers = canonical_tiers(
+        resolve_tiers(profile, dict(cfg.model_catalog), override=override))
 
     cache_root_raw = (
         cfg.integration.get("aicf", {}).get("miner_cache_dir")

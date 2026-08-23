@@ -2,6 +2,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { prisma } from './db';
 import { Prisma } from '@prisma/client';
 import { moderateMediaPrompt, MediaBlockedError } from './mediaModeration';
+import { compileImagePrompt, snapImageSize, pickSeed, normalizePrecision } from './imagePrompt';
+import { findReferenceImages, webRefsEnabled } from './webRefs';
+import { planShots } from './videoPlan';
 
 // Generative-media job QUEUE (dispatch-only). No model runs on the gateway. Requests are
 // enqueued PENDING; a registered GPU media miner atomically CLAIMS + renders them; results
@@ -15,7 +18,10 @@ export type MediaKind =
   // 9.0.0 GPU Studios (docs/gpu-studios-9.0.0.md)
   | 'video_upscale' | 'video_interpolate' | 'video_subtitles' | 'video_bgremove' | 'video_shorts'
   | 'audio_stems' | 'audio_isolate' | 'audio_enhance' | 'audio_master'
-  | 'render_blender' | 'render_chunk' | 'render_assemble';
+  | 'render_blender' | 'render_chunk' | 'render_assemble'
+  // 11.1.0 distributed video: a video_t2v/video_multiscene PARENT is planned into shots that
+  // different miners render in parallel, then one miner assembles them (hand-off).
+  | 'video_shot' | 'video_assemble';
 
 // Kinds a CLIENT may submit. render_chunk/render_assemble are gateway-created children of a
 // render_blender parent — a direct submit of one would orphan the orchestration.
@@ -32,6 +38,7 @@ export const CLAIMABLE_KINDS: MediaKind[] = [
   'video_upscale', 'video_interpolate', 'video_subtitles', 'video_bgremove', 'video_shorts',
   'audio_stems', 'audio_isolate', 'audio_enhance', 'audio_master',
   'render_chunk', 'render_assemble',
+  'video_shot', 'video_assemble',
 ];
 // Union — what the public capabilities endpoint reports on.
 export const MEDIA_KINDS: MediaKind[] = Array.from(new Set<MediaKind>([...SUBMIT_KINDS, ...CLAIMABLE_KINDS]));
@@ -68,6 +75,7 @@ const LEASE_SECS_BY_KIND: Record<string, number> = {
   video_upscale: 900, video_interpolate: 900, video_subtitles: 900, video_bgremove: 900, video_shorts: 900,
   audio_stems: 600, audio_isolate: 600,
   render_chunk: 1200, render_assemble: 900,
+  video_shot: 900, video_assemble: 600,
 };
 export function leaseSecsFor(kind: string): number {
   return LEASE_SECS_BY_KIND[kind] ?? MEDIA_LEASE_SECS;
@@ -93,6 +101,8 @@ export const MEDIA_REWARD_NANM: Record<string, bigint> = {
   audio_master: BigInt(num('MEDIA_REWARD_AUDIO_MASTER_NANM', 500_000_000)),
   render_chunk: BigInt(num('MEDIA_REWARD_RENDER_CHUNK_NANM', 2_500_000_000)),
   render_assemble: BigInt(num('MEDIA_REWARD_RENDER_ASSEMBLE_NANM', 500_000_000)),
+  video_shot: BigInt(num('MEDIA_REWARD_VIDEO_SHOT_NANM', 1_000_000_000)),          // ~1 ANM per shot
+  video_assemble: BigInt(num('MEDIA_REWARD_VIDEO_ASSEMBLE_NANM', 500_000_000)),
   // render_blender is the parent bookkeeping row — the work is paid via its children.
   render_blender: 0n,
 };
@@ -305,10 +315,129 @@ export async function submitJob(inp: SubmitInput) {
     return { ...parent, position: 1, minersOnline: await onlineMinerCount('render_chunk'), chunks: chunks.length };
   }
 
+  // Image fidelity pass (deterministic, no model): compile the human request into what the
+  // renderer needs — instruction wrappers stripped, negations moved to negative_prompt, a
+  // machine-readable spec for the miner's reranker, /64-snapped size, recorded seed. The
+  // moderation verdict above was taken on the RAW prompt; the raw text is kept in params.
+  let prompt = (inp.prompt ?? '').slice(0, 4000);
+  let compiled: ReturnType<typeof compileImagePrompt> | null = null;
+  if (inp.kind === 'image') {
+    compiled = compileImagePrompt(prompt, { negative: typeof params.negative_prompt === 'string' ? params.negative_prompt : null });
+    params.prompt_raw = prompt;
+    if (compiled.prompt) prompt = compiled.prompt;
+    params.negative_prompt = compiled.negative || undefined;
+    params.spec = compiled.spec;
+    params.compiled = { est_tokens: compiled.est_tokens, truncation_risk: compiled.truncation_risk, notes: compiled.notes };
+    params.seed = pickSeed(params.seed);
+    params.precision = normalizePrecision(params.precision);
+    const snapped = snapImageSize(Number(params.width) || 512, Number(params.height) || 512);
+    params.width = snapped.width;
+    params.height = snapped.height;
+    // Optional renderer hints (11.1.0+ miners honor them; older miners ignore unknown keys).
+    params.candidates = params.candidates != null ? clampInt(params.candidates, 1, 8, 0) || undefined : undefined;
+    params.steps = params.steps != null ? clampInt(params.steps, 1, 60, 0) || undefined : undefined;
+    params.guidance = Number.isFinite(Number(params.guidance)) && params.guidance != null ? Math.max(0, Math.min(20, Number(params.guidance))) : undefined;
+  }
+  // Video kinds get the same compile pass (negations → negative prompt, spec), a recorded
+  // seed, precision and an optional engine pin (11.1.0 director: t2v | keyframe | parallax).
+  const VIDEO_GEN_KINDS = new Set(['video_t2v', 'video_multiscene', 'video_i2v']);
+  if (VIDEO_GEN_KINDS.has(inp.kind)) {
+    if (prompt.trim()) {
+      compiled = compileImagePrompt(prompt, { negative: typeof params.negative_prompt === 'string' ? params.negative_prompt : null });
+      params.prompt_raw = prompt;
+      if (compiled.prompt && inp.kind !== 'video_multiscene') prompt = compiled.prompt;
+      params.negative_prompt = compiled.negative || undefined;
+      params.spec = compiled.spec;
+      params.compiled = { est_tokens: compiled.est_tokens, truncation_risk: compiled.truncation_risk, notes: compiled.notes };
+    }
+    params.seed = pickSeed(params.seed);
+    params.precision = normalizePrecision(params.precision);
+    const eng = typeof params.engine === 'string' ? params.engine.toLowerCase() : '';
+    params.engine = ['t2v', 'keyframe', 'parallax'].includes(eng) ? eng : undefined;
+    if (inp.kind !== 'video_i2v') {
+      const snapped = snapImageSize(Number(params.width) || 768, Number(params.height) || 432, 128, 1280);
+      params.width = snapped.width;
+      params.height = snapped.height;
+    }
+  }
+  // Web access (default on): reference photos of the subject for the miner's fidelity judge.
+  // The metasearch takes ~3 s, so it runs AFTER the row exists and attaches to the job only
+  // while it is still PENDING (a miner that already claimed it simply renders without refs).
+  const wantRefs = (inp.kind === 'image' || VIDEO_GEN_KINDS.has(inp.kind)) && !!prompt.trim() && webRefsEnabled(params) && !verdict.adult;
+  if (wantRefs) params.web = { query: null, pending: true };
+  if (verdict.adult) params.adult = true;
+
+  // ── Distributed video (11.1.0): plan shots here, queue each as its own video_shot job so
+  // several miners render in parallel, then a video_assemble job joins them. The parent row
+  // keeps the client-facing kind (video_t2v / video_multiscene) and sits in WAITING.
+  // Only split when a miner that can take shots is actually online — otherwise the classic
+  // single job (which pre-11.1 miners render end-to-end) is the one that goes through.
+  const distributed = (inp.kind === 'video_t2v' || inp.kind === 'video_multiscene')
+    && process.env.MEDIA_VIDEO_DISTRIBUTED !== '0' && params.distributed !== false
+    && (await onlineMinerCount('video_shot')) > 0;
+  if (distributed) {
+    const fps = clampInt(params.fps, 6, 60, 24);
+    const seconds = inp.kind === 'video_multiscene'
+      ? Math.max(1, Math.min(Number(params.seconds_per_scene) || 2.5, 8)) * Math.max(1, Array.isArray(params.scenes) ? params.scenes.length : 1)
+      : Math.max(1, Math.min(Number(params.seconds) || 4, 60));
+    const shots = planShots(prompt, seconds, {
+      scenes: inp.kind === 'video_multiscene' && Array.isArray(params.scenes) ? (params.scenes as string[]) : null,
+      transition: typeof params.transition === 'string' ? params.transition : 'fade',
+      seed: Number(params.seed) || 0,
+    });
+    if (shots.length >= 2) {
+      const parent = await prisma.mediaJob.create({
+        data: {
+          kind: inp.kind, status: 'WAITING', prompt,
+          paramsJson: JSON.stringify({ ...params, fps, seconds, distributed: true, shots }),
+          isPrivate, priority: inp.priority ?? 0,
+          requesterIp: inp.requesterIp ?? null, requesterAcct: inp.requesterAcct ?? null,
+          expiresAt: new Date(Date.now() + ttl * 1000),
+        },
+        select: { id: true, kind: true, status: true, createdAt: true },
+      });
+      const shotParams = (sh: (typeof shots)[number]) => ({
+        parent_id: parent.id, shot: sh, shot_index: sh.index, shots_total: shots.length,
+        width: params.width, height: params.height, fps,
+        tier: params.tier, precision: params.precision, engine: params.engine,
+        negative_prompt: params.negative_prompt, references: params.references, web: params.web,
+        seed: sh.seed,
+      });
+      await prisma.mediaJob.createMany({
+        data: shots.map((sh) => ({
+          kind: 'video_shot', status: 'PENDING', prompt: sh.prompt,
+          paramsJson: JSON.stringify(shotParams(sh)),
+          isPrivate: true, priority: inp.priority ?? 0, parentId: parent.id,
+          requesterIp: inp.requesterIp ?? null,
+          expiresAt: new Date(Date.now() + ttl * 1000),
+        })),
+      });
+      if (wantRefs) {
+        // References attach to the PENDING shots (the parent is never claimed).
+        void (async () => {
+          let refs: Awaited<ReturnType<typeof findReferenceImages>> = null;
+          try { refs = await findReferenceImages(prompt); } catch { refs = null; }
+          if (!refs || !refs.urls.length) return;
+          const kids = await prisma.mediaJob.findMany({ where: { parentId: parent.id, kind: 'video_shot', status: 'PENDING' }, select: { id: true, paramsJson: true } });
+          for (const k of kids) {
+            let kp: any = {};
+            try { kp = JSON.parse(k.paramsJson || '{}'); } catch { /* ignore */ }
+            kp.references = refs.urls; kp.web = { query: refs.query, sources: refs.sources };
+            await prisma.mediaJob.updateMany({ where: { id: k.id, status: 'PENDING' }, data: { paramsJson: JSON.stringify(kp) } }).catch(() => {});
+          }
+        })().catch(() => {});
+      }
+      return {
+        ...parent, position: 1, minersOnline: await onlineMinerCount('video_shot'), shots: shots.length,
+        ...(compiled ? { compiled: { prompt: compiled.prompt, negative: compiled.negative || undefined, seed: params.seed, notes: compiled.notes, truncation_risk: compiled.truncation_risk } } : {}),
+      };
+    }
+  }
+
   const job = await prisma.mediaJob.create({
     data: {
       kind: inp.kind,
-      prompt: (inp.prompt ?? '').slice(0, 4000),
+      prompt,
       paramsJson: JSON.stringify(params),
       inputB64: inp.inputB64 ?? null,
       isPrivate,
@@ -322,8 +451,18 @@ export async function submitJob(inp: SubmitInput) {
   if (uploadIds.length) {
     await consumeUploads([...uploadIds, ...(referenceId ? [referenceId] : [])], job.id, new Date(Date.now() + (ttl + 3600) * 1000));
   }
+  if (wantRefs) {
+    void attachReferences(job.id, prompt, params).catch(() => {});
+  }
   const position = await queuePosition(job.id, inp.kind);
-  return { ...job, position, minersOnline: await onlineMinerCount(inp.kind) };
+  return {
+    ...job,
+    position,
+    minersOnline: await onlineMinerCount(inp.kind),
+    ...(compiled
+      ? { compiled: { prompt: compiled.prompt, negative: compiled.negative || undefined, seed: params.seed, notes: compiled.notes, truncation_risk: compiled.truncation_risk } }
+      : {}),
+  };
 }
 
 // Consuming an upload binds it to the job AND extends its life to outlast the job (jobs
@@ -339,6 +478,48 @@ async function consumeUploads(ids: string[], jobId: string, minExpiry: Date) {
     where: { id: { in: ids }, expiresAt: { lt: minExpiry } },
     data: { expiresAt: minExpiry },
   });
+}
+
+// Look up reference photos for a freshly queued job and attach them while it is still
+// PENDING. Never throws; a claimed job keeps the params the miner already received.
+async function attachReferences(jobId: string, prompt: string, params: Record<string, unknown>): Promise<void> {
+  let refs: Awaited<ReturnType<typeof findReferenceImages>> = null;
+  try { refs = await findReferenceImages(prompt); } catch { refs = null; }
+  const next: Record<string, unknown> = { ...params };
+  if (refs) {
+    next.web = { query: refs.query, sources: refs.sources };
+    if (refs.urls.length) next.references = refs.urls;
+  } else {
+    next.web = { query: null, sources: [], unavailable: true };
+  }
+  await prisma.mediaJob.updateMany({
+    where: { id: jobId, status: 'PENDING' },
+    data: { paramsJson: JSON.stringify(next) },
+  }).catch(() => {});
+}
+
+// What an image job is actually being rendered as (compiled prompt, seed, size). Public:
+// none of it is private input, and it is what makes a result reproducible.
+function imageRenderInfo(kind: string, prompt: string, paramsJson: string | null): Record<string, unknown> {
+  if (!['image', 'video_t2v', 'video_multiscene', 'video_i2v'].includes(kind)) return {};
+  let p: any = {};
+  try { p = paramsJson ? JSON.parse(paramsJson) : {}; } catch { /* ignore */ }
+  return {
+    render: {
+      prompt,
+      negative_prompt: p.negative_prompt ?? undefined,
+      seed: p.seed ?? undefined,
+      width: p.width ?? undefined,
+      height: p.height ?? undefined,
+      precision: p.precision ?? undefined,
+      engine: p.engine ?? undefined,
+      references: Array.isArray(p.references) ? p.references.length : undefined,
+      web_query: p.web?.query ?? undefined,
+      adult: p.adult === true ? true : undefined,
+      truncation_risk: p.compiled?.truncation_risk ?? undefined,
+      notes: p.compiled?.notes ?? undefined,
+    },
+  };
 }
 
 function clampInt(v: unknown, lo: number, hi: number, d: number): number {
@@ -402,25 +583,28 @@ export async function pollJob(id: string) {
     attempts: job.attempts,
     progressPct: job.progressPct ?? undefined,
     progressNote: job.progressNote ?? undefined,
+    ...imageRenderInfo(job.kind, job.prompt, job.paramsJson),
   };
 
-  // render_blender parent: aggregate its children into one honest progress view.
-  if (job.kind === 'render_blender' && job.status === 'WAITING') {
+  // WAITING parent (render_blender / distributed video): aggregate its children into one
+  // honest progress view.
+  if (job.status === 'WAITING') {
+    const childKind = job.kind === 'render_blender' ? 'render_chunk' : 'video_shot';
     const [total, done, running] = await Promise.all([
-      prisma.mediaJob.count({ where: { parentId: job.id, kind: 'render_chunk' } }),
-      prisma.mediaJob.count({ where: { parentId: job.id, kind: 'render_chunk', status: 'DONE' } }),
-      prisma.mediaJob.count({ where: { parentId: job.id, kind: 'render_chunk', status: 'RUNNING' } }),
+      prisma.mediaJob.count({ where: { parentId: job.id, kind: childKind } }),
+      prisma.mediaJob.count({ where: { parentId: job.id, kind: childKind, status: 'DONE' } }),
+      prisma.mediaJob.count({ where: { parentId: job.id, kind: childKind, status: 'RUNNING' } }),
     ]);
     const assembling = job.progressNote === 'assemble_queued';
     const pct = total > 0 ? Math.min(95, Math.round((done / total) * 90) + (assembling ? 3 : 0)) : 0;
     return {
       ...base,
       progressPct: pct,
-      progressNote: assembling ? 'assembling final output' : `rendering (${running} chunk${running === 1 ? '' : 's'} on miners)`,
+      progressNote: assembling ? 'assembling final output' : `rendering (${running} ${childKind === 'video_shot' ? 'shot' : 'chunk'}${running === 1 ? '' : 's'} on miners, ${done}/${total} done)`,
       chunks_total: total,
       chunks_done: done,
       position: 0,
-      minersOnline: await onlineMinerCount('render_chunk'),
+      minersOnline: await onlineMinerCount(childKind),
       result: null,
     };
   }
@@ -560,8 +744,8 @@ export async function claimJob(minerId: string, capabilities: string[]) {
   if (typeof params.upload_id === 'string') inputUrls.push(`/api/mkt/v1/media/uploads/${params.upload_id}`);
   if (Array.isArray(params.upload_ids)) for (const id of params.upload_ids) if (typeof id === 'string') inputUrls.push(`/api/mkt/v1/media/uploads/${id}`);
   if (typeof params.reference_upload_id === 'string') inputUrls.push(`/api/mkt/v1/media/uploads/${params.reference_upload_id}`);
-  if (r.kind === 'render_assemble' && Array.isArray(params.chunk_jobs)) {
-    for (const id of params.chunk_jobs) if (typeof id === 'string') inputUrls.push(`/api/mkt/v1/media/artifacts/${id}`);
+  if ((r.kind === 'render_assemble' && Array.isArray(params.chunk_jobs)) || (r.kind === 'video_assemble' && Array.isArray(params.shot_jobs))) {
+    for (const id of (params.chunk_jobs ?? params.shot_jobs)) if (typeof id === 'string') inputUrls.push(`/api/mkt/v1/media/artifacts/${id}`);
   }
   return {
     id: r.id, kind: r.kind, prompt: r.prompt, params,
@@ -635,8 +819,45 @@ async function onJobDone(jobId: string) {
   let pparams: any = {};
   try { pparams = JSON.parse(parent.paramsJson || '{}'); } catch { /* ignore */ }
 
-  if (job.kind === 'render_assemble') {
+  if (job.kind === 'render_assemble' || job.kind === 'video_assemble') {
     await promoteChildArtifact(parent.id, job);
+    return;
+  }
+  if (job.kind === 'video_shot') {
+    const [total, done] = await Promise.all([
+      prisma.mediaJob.count({ where: { parentId: parent.id, kind: 'video_shot' } }),
+      prisma.mediaJob.count({ where: { parentId: parent.id, kind: 'video_shot', status: 'DONE' } }),
+    ]);
+    await prisma.mediaJob.updateMany({
+      where: { id: parent.id, status: 'WAITING', OR: [{ progressNote: null }, { progressNote: { not: 'assemble_queued' } }] },
+      data: { progressPct: Math.round(85 * done / Math.max(1, total)), progressNote: `${done}/${total} shots rendered` },
+    }).catch(() => {});
+    if (done < total) return;
+    const won = await prisma.mediaJob.updateMany({
+      where: { id: parent.id, status: 'WAITING', OR: [{ progressNote: null }, { progressNote: { not: 'assemble_queued' } }] },
+      data: { progressNote: 'assemble_queued', progressPct: 90 },
+    });
+    if (won.count === 0) return;
+    const shotRows = await prisma.mediaJob.findMany({
+      where: { parentId: parent.id, kind: 'video_shot', status: 'DONE' },
+      select: { id: true, paramsJson: true },
+    });
+    const ordered = shotRows
+      .map((r) => { let p: any = {}; try { p = JSON.parse(r.paramsJson || '{}'); } catch { /* ignore */ } return { id: r.id, index: Number(p.shot_index ?? 0), shot: p.shot }; })
+      .sort((a, b) => a.index - b.index);
+    await prisma.mediaJob.create({
+      data: {
+        kind: 'video_assemble', status: 'PENDING', prompt: '',
+        paramsJson: JSON.stringify({
+          parent_id: parent.id, shot_jobs: ordered.map((o) => o.id),
+          shots: ordered.map((o) => o.shot), fps: pparams.fps ?? 24,
+          width: pparams.width, height: pparams.height,
+          transition: typeof pparams.transition === 'string' ? pparams.transition : 'fade',
+        }),
+        isPrivate: true, priority: 5, parentId: parent.id, requesterIp: null,
+        expiresAt: new Date(Date.now() + MEDIA_PRIVATE_TTL_SECS * 1000),
+      },
+    });
     return;
   }
   if (job.kind !== 'render_chunk') return;
@@ -711,7 +932,7 @@ async function promoteChildArtifact(parentId: string, child: { id: string; resul
   await prisma.mediaJob.update({ where: { id: child.id }, data: { resultPath: null } }).catch(() => {});
   // Chunk artifacts served their purpose — free the disk now instead of at TTL.
   const chunks = await prisma.mediaJob.findMany({
-    where: { parentId, kind: 'render_chunk', resultPath: { not: null } },
+    where: { parentId, kind: { in: ['render_chunk', 'video_shot'] }, resultPath: { not: null } },
     select: { id: true, resultPath: true },
   });
   for (const c of chunks) {

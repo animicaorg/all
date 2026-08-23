@@ -1481,6 +1481,33 @@ def _ensure_node_ready_for_tx(rpc: str) -> int | None:
     return head_height
 
 
+def _parse_tx_data(spec: Optional[str]) -> bytes:
+    """Turn --data into payload bytes.
+
+    Accepts ``0x<hex>``, bare hex, or ``utf8:<text>``. Returns b"" when unset so
+    the default transfer is byte-identical to before this option existed.
+
+    This is what makes ANMSETL1 settlement anchors postable at all: consensus
+    reads the anchor from TxTransfer.data (see consensus/iou_settlement.py), and
+    until now the CLI hardcoded that field to empty, so no anchor could ever be
+    constructed and the service carve had no way to reach a provider.
+    """
+    if spec is None:
+        return b""
+    s = str(spec).strip()
+    if not s:
+        return b""
+    if s.startswith("utf8:"):
+        return s[5:].encode("utf-8")
+    h = s[2:] if s.lower().startswith("0x") else s
+    try:
+        return bytes.fromhex(h)
+    except ValueError as exc:
+        raise typer.BadParameter(
+            f"--data must be 0x-hex, bare hex, or utf8:<text> ({exc})"
+        ) from exc
+
+
 @app.command("send")
 def send(
     from_addr: str = typer.Option(..., "--from", help="Sender address (anim1...)"),
@@ -1522,6 +1549,13 @@ def send(
     wait_timeout: int = typer.Option(30, "--wait-timeout", help="Max wait time for peer acks (seconds)"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose debug output"),
     debug_signing: bool = typer.Option(False, "--debug-signing", help="Dump canonical sign-bytes debug info"),
+    data: Optional[str] = typer.Option(
+        None, "--data",
+        help=("Attach payload data to the transfer. Accepts 0x-prefixed hex or "
+              "utf8:<text>. Required to post an ANMSETL1 settlement anchor, which "
+              "consensus reads from TxTransfer.data — without it the service carve "
+              "can never pay a provider."),
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Simulate mempool admission without inserting"),
     secret_key_hex: Optional[str] = typer.Option(
         None, "--secret-key-hex", help="Secret key hex (for external wallets, bypasses wallets.json lookup)"
@@ -1722,7 +1756,7 @@ def send(
                 value_base_units=value_base,
                 gas_limit=resolved_gas_limit,
                 max_fee=resolved_max_fee,
-                data=b"",
+                data=_parse_tx_data(data),
                 valid_after=valid_after,
                 valid_until=valid_until,
                 salt=salt,

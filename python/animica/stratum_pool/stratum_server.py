@@ -155,6 +155,19 @@ class StratumPoolServer:
             # re-applies the wire-difficulty floor before every emission.
             session_vardiff_enabled=False,
         )
+        # Wire the version gate into subscribe so a rejected miner receives an
+        # actionable onboarding error in its log (not a silent accept + failing
+        # shares). Uses the same config as the share-level gate.
+        def _subscribe_version_check(features: dict):
+            from . import version_gate
+            v = version_gate.evaluate(
+                features, getattr(config, "min_miner_version", ""),
+                enforce=bool(getattr(config, "require_min_version", False)))
+            return bool(v["ok"]), str(v.get("reason") or "")
+        try:
+            self._server._version_check = _subscribe_version_check
+        except Exception:
+            pass
         # XMR (Monero RandomX) dual-mining infrastructure. Initialised
         # lazily in start() once the pool config has been validated.
         # See python/animica/stratum_pool/xmr.py for the components.
@@ -425,6 +438,45 @@ class StratumPoolServer:
             self._aicf_dispatch_loop(), name="aicf_dispatch_loop"
         )
         await self._maybe_start_xmr()
+        await self._maybe_start_bc3()
+
+    async def _maybe_start_bc3(self) -> None:
+        """Start BC3 (BitcoinIII) mining alongside Animica, if configured.
+
+        Enabled by ANIMICA_POOL_BC3_ENABLED=1 plus a payout address. BC3 work
+        goes to every authorized session — it is not feature-gated — but clients
+        older than 10.2.6 have no `mining.bc3.notify` handler and ignore it, so
+        their Animica mining is unaffected.
+
+        Wrapped so that ANY BC3 failure (node down, bad address, bad config)
+        logs and leaves Animica mining running. BC3 is a side revenue stream;
+        Animica is the pool's actual business and must never be taken down by it.
+        """
+        import os  # module-level `os` is not imported in this file
+
+        self._bc3 = None
+        if os.getenv("ANIMICA_POOL_BC3_ENABLED", "0").strip().lower() not in (
+                "1", "true", "yes", "on"):
+            return
+        addr = os.getenv("BC3_PAYOUT_ADDRESS", "").strip()
+        if not addr:
+            self._log.warning("bc3: enabled but BC3_PAYOUT_ADDRESS is unset; not starting")
+            return
+        try:
+            from .bc3 import Bc3JobManager
+            mgr = Bc3JobManager(
+                self._server,
+                rpc_url=os.getenv("BC3_RPC_URL", "http://127.0.0.1:8432"),
+                cookie=os.getenv("BC3_RPC_COOKIE", "/root/bc3/data/.cookie"),
+                payout_address=addr,
+                share_diff=float(os.getenv("BC3_SHARE_DIFF", "0.05")),
+                poll_s=float(os.getenv("BC3_TEMPLATE_POLL_S", "5")),
+            )
+            await mgr.start()
+            self._bc3 = mgr
+        except Exception as exc:
+            self._log.warning("bc3: failed to start (Animica mining unaffected): %s", exc)
+            self._bc3 = None
 
     async def stop(self) -> None:
         self._aicf_dispatcher_stop.set()

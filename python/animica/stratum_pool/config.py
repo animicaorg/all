@@ -74,6 +74,12 @@ class PoolConfig:
     # credited balance and is paid out by the normal payout scheduler.
     ena_fee_bps: int = 0
     ena_treasury_address: str = ""
+    # When True the skimmed fee is NOT re-credited as a payable balance: it is
+    # deducted from miner credit and simply stays in the payout wallet as
+    # retained margin. Every skim is still written to accounting_ledger, so the
+    # running total is `SUM(amount) WHERE event='ena_treasury_fee'`. Default
+    # False preserves the original forward-to-treasury behaviour.
+    fee_retain_in_wallet: bool = False
     # True-solo second listener. When solo_port > 0 the pool also binds a solo
     # stratum port (solo_host:solo_port). Connections on it are forced to solo
     # accounting: the miner who finds a block keeps (10000 - solo_fee_bps) bps of
@@ -222,6 +228,10 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         or _env("ANIMICA_POOL_ENA_TREASURY_ADDRESS", "")
         or ""
     ).strip()
+    fee_retain_in_wallet = _as_bool(
+        overrides.get("fee_retain_in_wallet"),
+        _env("ANIMICA_POOL_FEE_RETAIN_IN_WALLET", "0"),
+    )
 
     solo_bind = overrides.get("solo_bind") or _env("ANIMICA_STRATUM_SOLO_BIND")
     if solo_bind:
@@ -340,6 +350,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         require_min_version=require_min_version,
         ena_fee_bps=ena_fee_bps,
         ena_treasury_address=ena_treasury_address,
+        fee_retain_in_wallet=fee_retain_in_wallet,
         solo_host=solo_host,
         solo_port=solo_port,
         solo_fee_bps=solo_fee_bps,

@@ -12,6 +12,9 @@ const BASE = process.env.PUBLIC_BASE_URL || 'https://animica.dev';
 const STATIC_ROUTES: Array<{ path: string; priority: number; changeFrequency: MetadataRoute.Sitemap[number]['changeFrequency'] }> = [
   { path: '/', priority: 1, changeFrequency: 'daily' },
   { path: '/apps', priority: 0.9, changeFrequency: 'hourly' },
+  // Served by nginx from the x402 gateway, not by this app, so it is invisible
+  // to route discovery and has to be listed explicitly.
+  { path: '/x402', priority: 0.9, changeFrequency: 'daily' },
   { path: '/functions', priority: 0.8, changeFrequency: 'hourly' },
   { path: '/developers', priority: 0.7, changeFrequency: 'daily' },
   { path: '/pricing', priority: 0.7, changeFrequency: 'weekly' },

@@ -136,6 +136,9 @@ _STUDIO_MIN_VRAM_GB = 4.0
 _TIER_VRAM_NEED = {
     "video_t2v": {"elite": 28.0, "premium": 10.0, "standard": 10.0},
     "audio": {"elite": 16.0, "premium": 8.0, "standard": 6.0},
+    # FLUX.1-schnell needs ~24 GiB resident (offload can squeeze it but takes minutes);
+    # sdxl-turbo ~7 GiB; sd-turbo runs anywhere (offload ladder / CPU).
+    "image": {"elite": 24.0, "premium": 8.0, "standard": 0.0},
 }
 _TIER_ORDER = ["elite", "premium", "standard"]
 
@@ -185,9 +188,17 @@ def probe_capabilities() -> List[str]:
 
     video_on = _env_flag("ANIMICA_MEDIA_VIDEO_ENABLED")
     if video_on is None:
-        video_on = img_ok and cuda and vram >= _T2V_MIN_VRAM_GB
+        # 11.1.0: the video director renders text->video on ANY image-capable box — a real
+        # t2v diffusion model on a big GPU, keyframe+SVD on a mid GPU, depth-parallax
+        # camera moves over judged keyframes on CPU (ANIMICA_MEDIA_T2V_CPU=0 opts out).
+        video_on = img_ok and ffmpeg and (
+            (cuda and vram >= _T2V_MIN_VRAM_GB) or os.environ.get("ANIMICA_MEDIA_T2V_CPU", "1") != "0"
+        )
     if video_on and img_ok:
         caps.append("video_t2v")
+        caps.append("video_shot")        # one planned shot of a distributed video
+    if ffmpeg:
+        caps.append("video_assemble")    # join shots other miners rendered (ffmpeg only)
 
     audio_on = _env_flag("ANIMICA_MEDIA_AUDIO_ENABLED")
     if audio_on is None:
@@ -277,6 +288,7 @@ _STUDIO_KINDS = {
     "video_upscale", "video_interpolate", "video_subtitles", "video_bgremove", "video_shorts",
     "audio_stems", "audio_isolate", "audio_enhance", "audio_master",
     "render_chunk", "render_assemble",
+    "video_shot", "video_assemble",   # 11.1.0 distributed video (one shot per miner + assembler)
 }
 
 
@@ -316,7 +328,7 @@ def _render_studio_job(job: dict, gw) -> dict:
         inputs: List[str] = []
         for i, u in enumerate(urls):
             # A stable extension helps blender/ffmpeg pick the right demuxer.
-            ext = ".blend" if kind == "render_chunk" else (".zip" if kind == "render_assemble" else ".bin")
+            ext = ".blend" if kind == "render_chunk" else (".zip" if kind == "render_assemble" else (".mp4" if kind == "video_assemble" else ".bin"))
             p = os.path.join(td, f"input_{i}{ext}")
             gw.download_input(u, p)
             inputs.append(p)
@@ -386,6 +398,28 @@ def _render_studio_job(job: dict, gw) -> dict:
             from . import render_farm
             out = render_farm.assemble_video(inputs, out_dir, fps=int(params.get("fps", 24)),
                                              mode=str(params.get("mode", "mp4")), progress=progress)
+        elif kind == "video_shot":
+            from . import video_director
+            shot = params.get("shot") or {}
+            if not shot.get("prompt"):
+                raise MediaError("video_shot needs a planned shot")
+            out = video_director.render_shot(
+                shot, out_dir, width=int(params.get("width") or 768), height=int(params.get("height") or 432),
+                fps=int(params.get("fps") or 24),
+                tier=_clamp_tier("video_t2v", params.get("tier")) if _have_cuda() else "standard",
+                precision=str(params.get("precision") or "balanced"), negative_prompt=params.get("negative_prompt"),
+                engine=params.get("engine"), references=params.get("references"), progress=progress, learner=_learner(),
+            )
+        elif kind == "video_assemble":
+            from . import video_director
+            shots = params.get("shots") or []
+            if not inputs:
+                raise MediaError("video_assemble needs the shot clips")
+            # Shot metas (engine/model/fidelity per shot) ride along in each clip's job meta
+            # on the gateway; the clip files themselves are what we join here.
+            out = video_director.assemble_shots(inputs, shots, out_dir, fps=int(params.get("fps") or 24),
+                                                transition=str(params.get("transition") or "fade"),
+                                                shot_metas=params.get("shot_metas"), progress=progress)
         else:
             raise MediaError(f"unknown studio kind {kind!r}")
 
@@ -398,6 +432,42 @@ def _render_studio_job(job: dict, gw) -> dict:
         raise
 
 
+def _opt_int(params: dict, k: str):
+    v = params.get(k)
+    try:
+        return int(v) if v is not None and str(v).strip() != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _progress_fn(job: dict, gw):
+    """Best-effort progress heartbeat for long director renders (extends the lease)."""
+    if gw is None or not job.get("id"):
+        return None
+    last = [0.0]
+
+    def _fn(pct: float, note: str):
+        now = time.monotonic()
+        if now - last[0] < 8.0:
+            return
+        last[0] = now
+        try:
+            gw.post_progress(job["id"], float(pct), note)
+        except Exception:
+            pass
+    return _fn
+
+
+def _learner():
+    """The miner's self-teaching ledger (fidelity outcomes → better camera/prompt choices).
+    Never required: returns None when unavailable."""
+    try:
+        from . import learning
+        return learning.get_learner()
+    except Exception:
+        return None
+
+
 def render_job(job: dict, gw=None) -> dict:
     """Render one claimed job to bytes. Fail-closed: returns real media or raises."""
     kind = job.get("kind")
@@ -408,13 +478,33 @@ def render_job(job: dict, gw=None) -> dict:
 
     if kind == "image":
         from . import image_gen
+
+        def _opt_float(k):
+            v = params.get(k)
+            try:
+                return float(v) if v is not None and str(v).strip() != "" else None
+            except (TypeError, ValueError):
+                return None
+
         out = image_gen.generate_image(
-            prompt, tier=tier or "standard",
+            prompt, tier=_clamp_tier("image", tier),
             width=int(params.get("width", 512)), height=int(params.get("height", 512)),
-            seed=params.get("seed"), negative_prompt=params.get("negative_prompt"),
+            seed=_opt_int(params, "seed"), negative_prompt=params.get("negative_prompt"),
+            steps=_opt_int(params, "steps"), guidance=_opt_float("guidance"),
+            candidates=_opt_int(params, "candidates"),
+            precision=str(params.get("precision") or "balanced"),
+            learner=_learner(), references=params.get("references"),
         )
-        return _pack(out["bytes"], out.get("mime", "image/png"),
-                     {"model": out.get("model"), "device": out.get("device", _device())}, "png")
+        # The full recipe travels back with the result so any image is reproducible and the
+        # requester can see what was actually rendered (compiled prompt, seed, model, judge).
+        meta = {k: out.get(k) for k in (
+            "model", "seed", "steps", "guidance", "scheduler", "candidates", "render_size", "refined",
+            "long_prompt", "precision", "prompt", "negative_prompt", "notes", "rerank", "scorer",
+            "scores", "fidelity",
+        ) if out.get(k) is not None}
+        meta["device"] = _device()
+        meta["strategy"] = out.get("device")
+        return _pack(out["bytes"], out.get("mime", "image/png"), meta, "png")
 
     if kind == "audio":
         from . import audio_gen
@@ -422,12 +512,21 @@ def render_job(job: dict, gw=None) -> dict:
         return _pack(out["bytes"], out.get("mime", "audio/wav"), {"model": out.get("model"), "device": _device()}, "wav")
 
     if kind == "video_t2v":
-        from . import video_gen
+        from . import video_director
         fps = int(params.get("fps", 24))
         seconds = float(params.get("seconds", 4))
-        num_frames = max(8, min(int(fps * seconds), 240))
-        out = video_gen.generate_text_to_video(prompt, tier=_clamp_tier("video_t2v", tier), num_frames=num_frames, fps=fps)
-        return _pack(out["bytes"], out.get("mime", "video/mp4"), {"model": out.get("model"), "device": _device()}, "mp4")
+        out = video_director.render_video(
+            prompt, seconds=seconds, fps=fps,
+            width=int(params.get("width", 768)), height=int(params.get("height", 432)),
+            tier=_clamp_tier("video_t2v", tier) if _have_cuda() else "standard",
+            precision=str(params.get("precision") or "balanced"),
+            seed=_opt_int(params, "seed"), negative_prompt=params.get("negative_prompt"),
+            transition=str(params.get("transition") or "fade"),
+            engine=params.get("engine"), progress=_progress_fn(job, gw),
+            learner=_learner(),
+        )
+        meta = dict(out["meta"]); meta["device"] = _device()
+        return _pack(out["bytes"], out.get("mime", "video/mp4"), meta, "mp4")
 
     if kind == "video_i2v":
         frames = [_decode(s) for s in images if s]
@@ -465,37 +564,45 @@ def render_job(job: dict, gw=None) -> dict:
                               "mode": "generative-i2v"}, "mp4")
             except Exception:      # noqa: BLE001 — OOM/model/load → graceful Ken Burns
                 pass               # fall through to the pan/zoom render below
-        from .scene_video import assemble_scene_video
-        per = max(1.0, seconds / max(1, len(frames)))
-        out = assemble_scene_video(
-            frames, fps=fps, seconds_per_scene=per,
-            transition=params.get("transition", "fade"), ken_burns=True,
+        # 11.1.0: depth-parallax camera moves (foreground/background separate) over each
+        # uploaded still — real 2.5D motion that runs on any CPU — instead of Ken Burns.
+        import io as _io
+        from PIL import Image
+        from . import video_director
+        stills = [Image.open(_io.BytesIO(b)).convert("RGB") for b in frames]
+        w0, h0 = stills[0].size
+        out = video_director.render_video(
+            prompt or "uploaded image", seconds=seconds, fps=fps,
+            width=int(params.get("width") or min(1280, w0 // 2 * 2)), height=int(params.get("height") or min(720, h0 // 2 * 2)),
+            tier="standard", precision="fast", seed=_opt_int(params, "seed"),
+            transition=str(params.get("transition") or "fade"), engine="parallax",
+            progress=_progress_fn(job, gw), stills=stills, learner=_learner(),
         )
-        return _pack(out["bytes"], out["mime"],
-                     {"model": "anm-i2v-kenburns", "device": _device(),
-                      "mode": "kenburns", "scenes": out["scenes"], "duration_s": out["duration_s"]}, "mp4")
+        meta = dict(out["meta"]); meta["device"] = _device(); meta["mode"] = "parallax"
+        return _pack(out["bytes"], out["mime"], meta, "mp4")
 
     if kind in _STUDIO_KINDS:
         return _render_studio_job(job, gw)
 
     if kind == "video_multiscene":
-        from . import image_gen
-        from .scene_video import assemble_scene_video, plan_scenes
+        from . import video_director
+        from .scene_video import plan_scenes
         scenes = params.get("scenes") or plan_scenes(prompt)
         scenes = [s for s in scenes if s][:8]
         if not scenes:
             raise MediaError("multi-scene video needs at least one scene")
-        stills: List[bytes] = []
-        for sc in scenes:
-            r = image_gen.generate_image(sc, tier=tier or "standard", width=768, height=432)
-            stills.append(r["bytes"])
-        out = assemble_scene_video(
-            stills, width=768, height=432,
-            seconds_per_scene=float(params.get("seconds_per_scene", 2.5)),
-            transition=params.get("transition", "fade"), ken_burns=True,
+        per = float(params.get("seconds_per_scene", 2.5))
+        out = video_director.render_video(
+            prompt, seconds=per * len(scenes), fps=int(params.get("fps", 24)),
+            width=int(params.get("width", 768)), height=int(params.get("height", 432)),
+            tier=_clamp_tier("video_t2v", tier) if _have_cuda() else "standard",
+            precision=str(params.get("precision") or "balanced"), seed=_opt_int(params, "seed"),
+            negative_prompt=params.get("negative_prompt"), scenes=scenes,
+            transition=str(params.get("transition") or "fade"), engine=params.get("engine"),
+            progress=_progress_fn(job, gw), learner=_learner(),
         )
-        return _pack(out["bytes"], out["mime"],
-                     {"model": "anm-multiscene", "device": _device(), "scenes": out["scenes"], "duration_s": out["duration_s"]}, "mp4")
+        meta = dict(out["meta"]); meta["device"] = _device(); meta["scenes"] = len(scenes)
+        return _pack(out["bytes"], out["mime"], meta, "mp4")
 
     raise MediaError(f"this miner cannot render job kind {kind!r}")
 
