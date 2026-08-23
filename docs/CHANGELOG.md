@@ -32,6 +32,8 @@ Accuracy against *specific* prompts. Every `image` job now runs:
 ### Also
 - Carries 11.0.0's wallet-RPC path-confinement + fail-closed local-IP fix and the additive `worker_claim_next_job` top-level prompt fields; restores the 10.2–10.4.4 CLI/pool/AICF work that 11.0.0 (cut from `main`) did not include.
 - CLI: `animica media gen --precision/--negative/--candidates`, `animica media video`, `animica media stats`.
+- **`animica wallet new` works again on mainnet.** `pq/py/algs/sphincs_shake_128s.py` set `ANIMICA_ALLOW_PQ_PURE_FALLBACK=1` at import time; the CLI imports it transitively, so the fail-closed "unsafe flag is set" guard refused every real ML-DSA-65 keygen (affected 10.4.4 and 11.0.0). The flag is now set only by the fallback keygen itself, at call time.
+- `pip install animica` 11.0.0's CLI could not start at all (`cannot import name 'cloud' from 'animica.cli'` — `cli/cloud.py` was missing from that wheel); 11.1.0 ships it.
 - Media content policy (gateway): adult content between adults is allowed (flagged); sexualized minors and non-consensual imagery remain hard-blocked.
 
 ## [8.5.0] - 2026-07-16
