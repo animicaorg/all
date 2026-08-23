@@ -245,7 +245,11 @@ def chain_get_params() -> dict:
 @method(
     "chain.getChainId",
     desc="Return the active chainId for this node.",
-    aliases=("eth_chainId", "chain_getChainId"),
+    # NOTE: no "eth_chainId" alias here. The JSON-RPC registry is first-wins and
+    # this module loads before rpc.methods.evm_compat, so the alias shadowed the
+    # EVM facade's dedicated chain id (149, formatters.evm_chain_id) with the
+    # native id 1 (= Ethereum mainnet). net_version already reported 149.
+    aliases=("chain_getChainId",),
 )
 def chain_get_chain_id() -> int:
     """
