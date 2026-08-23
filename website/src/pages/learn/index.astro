@@ -1,0 +1,158 @@
+---
+import { getCollection } from "astro:content";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { LEARN_CATEGORIES } from "../../content/config";
+
+const CATEGORY_META: Record<(typeof LEARN_CATEGORIES)[number], { title: string; blurb: string }> = {
+  protocol: {
+    title: "Protocol",
+    blurb:
+      "How the chain works underneath: post-quantum signatures, the address format, the nonce-less transaction model, PoIES consensus and difficulty.",
+  },
+  operate: {
+    title: "Operate",
+    blurb:
+      "Running the network: mining (pool or solo), running a node, wallets and the HD derivation standard, reading the explorer, peer-to-peer sync, and the security model.",
+  },
+  build: {
+    title: "Build",
+    blurb:
+      "Developing on Animica: Python-VM smart contracts, the JSON-RPC API, the ANM-native L2 rollup, the AI compute framework (AICF), and x402 agent payments.",
+  },
+  economy: {
+    title: "Economy",
+    blurb:
+      "ANM issuance and fees, what useful work means on this chain today, how Animica compares with Bitcoin and Ethereum, and how to buy or accept ANM.",
+  },
+  reference: {
+    title: "Reference",
+    blurb: "The glossary and the long-form FAQ.",
+  },
+};
+
+const entries = (await getCollection("learn", ({ data }) => !data.draft)).sort(
+  (a, b) => a.data.order - b.data.order || a.data.title.localeCompare(b.data.title),
+);
+
+const byCategory = LEARN_CATEGORIES.map((key) => ({
+  key,
+  ...CATEGORY_META[key],
+  items: entries.filter((e) => e.data.category === key),
+})).filter((c) => c.items.length > 0);
+
+const wordTotal = entries.reduce((n, e) => n + (e.body ? e.body.split(/\s+/).length : 0), 0);
+const fmt = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "2-digit" });
+
+const title = "Learn Animica — guides to the post-quantum blockchain";
+const description =
+  "Source-grounded explainers and guides: ML-DSA-65 signatures, addresses, transactions, PoIES consensus, mining, nodes, wallets, Python-VM contracts, the L2 rollup, AICF, tokenomics and more.";
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "CollectionPage",
+  name: title,
+  description,
+  url: "https://animica.org/learn",
+  isPartOf: { "@type": "WebSite", name: "Animica", url: "https://animica.org" },
+  hasPart: entries.map((e) => ({
+    "@type": "TechArticle",
+    headline: e.data.title,
+    url: `https://animica.org/learn/${e.slug}`,
+    datePublished: e.data.date.toISOString(),
+  })),
+};
+---
+
+<BaseLayout title={title} description={description} jsonLd={jsonLd}>
+  <main class="wrap">
+    <header class="hero">
+      <p class="eyebrow">Learn</p>
+      <h1>Understand Animica from the protocol up</h1>
+      <p class="lead">
+        {entries.length} in-depth articles ({Math.round(wordTotal / 1000)}k words) written from the project's own
+        specifications and documentation. Every article lists the repository files it was written from, so you can
+        check any claim against the source. Start with
+        <a href="/learn/what-is-animica">What is Animica?</a> if you are new, or jump to a track below.
+      </p>
+      <nav class="tracks" aria-label="Learning tracks">
+        {byCategory.map((c) => (
+          <a href={`#${c.key}`} class="track">
+            <strong>{c.title}</strong>
+            <span>{c.items.length} articles</span>
+          </a>
+        ))}
+      </nav>
+    </header>
+
+    {byCategory.map((c) => (
+      <section id={c.key} class="cat" aria-labelledby={`h-${c.key}`}>
+        <div class="catHead">
+          <h2 id={`h-${c.key}`}>{c.title}</h2>
+          <p>{c.blurb}</p>
+        </div>
+        <ol class="list" role="list">
+          {c.items.map((e, i) => (
+            <li class="item">
+              <a href={`/learn/${e.slug}`} class="itemLink">
+                <span class="num" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+                <span class="body">
+                  <span class="itemTitle">{e.data.title}</span>
+                  <span class="itemDesc">{e.data.description}</span>
+                  <span class="meta">
+                    <span class="level">{e.data.readingLevel}</span>
+                    <span class="sep">·</span>
+                    <span>{Math.max(1, Math.round((e.body?.split(/\s+/).length ?? 0) / 200))} min read</span>
+                    <span class="sep">·</span>
+                    <time datetime={(e.data.updated ?? e.data.date).toISOString()}>
+                      Updated {fmt(e.data.updated ?? e.data.date)}
+                    </time>
+                  </span>
+                </span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </section>
+    ))}
+
+    <section class="more">
+      <h2>Looking for something else?</h2>
+      <ul>
+        <li><a href="/docs">Reference docs</a> — RPC, mining and compatibility references.</li>
+        <li><a href="/blog">Engineering blog</a> — dated write-ups of forks, releases and incidents.</li>
+        <li><a href="/updates">Release notes</a> — what changed in each version.</li>
+        <li><a href="/faq">Short FAQ</a> — quick answers; the <a href="/learn/faq">long-form FAQ</a> goes deeper.</li>
+      </ul>
+    </section>
+  </main>
+
+  <style>
+    .wrap { max-width: 72rem; margin: 0 auto; padding: 2.5rem 1rem 4rem; }
+    .eyebrow { text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem; color: var(--anm-phthalo, #14c79b); margin: 0 0 0.5rem; }
+    .hero h1 { font-size: clamp(2rem, 4vw, 3rem); line-height: 1.05; letter-spacing: -0.02em; margin: 0 0 0.75rem; }
+    .lead { font-size: 1.1rem; line-height: 1.7; max-width: 60rem; margin: 0 0 1.25rem; color: var(--text-muted, #aab4c3); }
+    .lead a { color: var(--anm-blue-fill, #2e63ff); }
+    .tracks { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0 0 2.5rem; }
+    .track { display: inline-flex; flex-direction: column; gap: 0.1rem; padding: 0.6rem 0.9rem; border-radius: 0.75rem; border: 1px solid color-mix(in oklch, canvastext, transparent 85%); text-decoration: none; color: inherit; }
+    .track span { font-size: 0.8rem; color: var(--text-muted, #aab4c3); }
+    .track:hover { border-color: var(--anm-blue-fill, #2e63ff); }
+    .cat { margin: 0 0 3rem; }
+    .catHead h2 { font-size: 1.6rem; margin: 0 0 0.35rem; }
+    .catHead p { margin: 0 0 1rem; color: var(--text-muted, #aab4c3); line-height: 1.6; max-width: 60rem; }
+    .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+    .item { border: 1px solid color-mix(in oklch, canvastext, transparent 88%); border-radius: 0.9rem; }
+    .item:hover { border-color: var(--anm-blue-fill, #2e63ff); }
+    .itemLink { display: grid; grid-template-columns: 3rem 1fr; gap: 0.75rem; padding: 1rem 1.1rem; text-decoration: none; color: inherit; }
+    .num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--anm-phthalo, #14c79b); font-size: 0.95rem; padding-top: 0.15rem; }
+    .body { display: grid; gap: 0.25rem; }
+    .itemTitle { font-weight: 600; font-size: 1.1rem; }
+    .itemDesc { color: var(--text-muted, #aab4c3); line-height: 1.55; }
+    .meta { font-size: 0.8rem; color: var(--text-muted, #aab4c3); display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .level { text-transform: capitalize; }
+    .sep { opacity: 0.5; }
+    .more h2 { font-size: 1.3rem; margin: 0 0 0.5rem; }
+    .more ul { line-height: 1.8; padding-left: 1.25rem; }
+    .more a { color: var(--anm-blue-fill, #2e63ff); }
+    @media (max-width: 640px) { .itemLink { grid-template-columns: 1fr; } .num { display: none; } }
+  </style>
+</BaseLayout>

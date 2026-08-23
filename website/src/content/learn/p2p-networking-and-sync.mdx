@@ -1,0 +1,167 @@
+---
+title: "P2P networking and sync"
+description: "How Animica nodes find each other, what the wire protocol and handshake look like, how headers-first sync, snapshots, checkpoints and the reorg bound work, and how to debug a stalled node."
+date: 2026-08-23
+updated: 2026-08-23
+category: "operate"
+tags: ["p2p", "sync", "gossip", "kyber", "snapshots", "checkpoints", "reorg"]
+readingLevel: "advanced"
+sources:
+  - docs/P2P_NETWORKING_GUIDE.md
+  - docs/p2p.md
+  - docs/p2p_sync.md
+  - docs/P2P_SNAPSHOT_PROTOCOL.md
+  - docs/pq/HANDSHAKE.md
+  - docs/PEER_ACCOUNTING_UPDATE.md
+  - p2p/README.md
+  - docs/CHANGELOG.md
+  - core/network_params.py
+  - consensus/finality.py
+  - docs/security/DOS_DEFENSES.md
+order: 5
+---
+
+Everything that makes Animica a blockchain rather than a database happens between peers: discovering each other, exchanging headers and blocks, relaying transactions, and agreeing on which tip is canonical. This article explains the peer-to-peer layer as the repository documents it, including the parts that are designed but not the live default, and then works through sync, snapshots, checkpoints, the reorg bound, and the diagnostics you reach for when a node stalls.
+
+## Two generations of P2P code
+
+Readers of the repository will find two networking stacks documented side by side, and it helps to know which is which before reading either.
+
+The **current wire protocol** (`docs/p2p.md`, `p2p/core_p2p/`) is deliberately Bitcoin-like. Messages are framed as
+
+```text
+magic(4) + command(12) + length(4) + checksum(4) + payload
+```
+
+with magic `ANMC` (overridable with `ANIMICA_P2P_MAGIC`), a null-padded ASCII command, a little-endian length, and a checksum that is the first four bytes of double-SHA256 over the payload. Serialization uses CompactSize varints and IPv6-mapped network addresses. The handshake is `version` then `verack`; a peer that sends anything else before `verack` is disconnected. Discovery uses `addr`/`getaddr`, inventory relay uses `inv`/`getdata`/`notfound` with per-peer known-inventory filters, and sync is `getheaders`/`headers` followed by `getdata` for blocks. This stack is integrated by the node service and is what the `net.*` and `sync.*` RPC methods report on.
+
+The **older design** (`p2p/README.md`, `docs/pq/HANDSHAKE.md`, most of `docs/P2P_NETWORKING_GUIDE.md`) is a libp2p-style system with multiaddrs, gossip topics, and a post-quantum authenticated handshake. `docs/p2p.md` records that its HELLO/IDENTIFY and gossip frames "remain available in the old P2P stack". Its handshake specification is worth knowing because it is the stated security target for peer links: each side generates a fresh Kyber-768 keypair per connection, identities are PQ signature keys (the docs say Dilithium3 or SPHINCS+, which today means ML-DSA-65), the transcript of every CBOR handshake message is hashed with SHA3-256 and signed, keys are derived with HKDF-SHA3-256, and traffic is protected with ChaCha20-Poly1305 (or AES-256-GCM), rekeying every 2^32 packets or ten minutes. Peer ids are `sha3_256(alg_id || identity_pubkey)`.
+
+This article uses the current stack's vocabulary for sync and the guide's operational advice, and flags where a statement comes from the older design.
+
+## Finding peers
+
+Seeds are selected by chain id. For mainnet (chain id 1):
+
+```text
+/dns4/mainnet.animica.org/tcp/30333
+/dns4/mainnet.animica.org/udp/443/quic-v1
+/ip4/144.126.133.21/tcp/30333          # IP fallback if DNS fails
+/ip4/144.126.133.21/udp/443/quic-v1
+```
+
+The seed list ships in `p2p/fixtures/seed_list.txt` and can be overridden with `ANIMICA_P2P_SEEDS` (comma-separated). After the first connection the node asks for addresses, receives a small random sample (10 to 50), and periodically re-gossips samples to its peers excluding what it already announced. Learned peers are persisted under `~/.animica/p2p/mainnet/` so a restart does not start from the seeds. Private-range and loopback addresses are filtered unless `ANIMICA_P2P_PRIVATE_NETWORK=true`, which is the switch for isolated test networks (pair it with `ANIMICA_P2P_NETWORK_KEY`).
+
+A node only advertises an external address it knows: set `ANIMICA_P2P_ADVERTISE_ADDR` or `ANIMICA_P2P_EXTERNAL_IP`, or point `ANIMICA_P2P_EXTERNAL_IP_ENDPOINT` at a public-IP service. With nothing configured the node advertises nothing but still accepts inbound connections that arrive.
+
+The verifier-seed mechanism adds a sanity check on top: a small set of trusted seed nodes (`ANIMICA_P2P_VERIFIER_SEED_IPS`, enabled by `ANIMICA_P2P_ENABLE_VERIFIER_SEEDS`) anchors height validation, and `p2p.getVerifierSeeds` reports the connected verifiers, their maximum height and whether the local node is close enough to the tip to mine. It is a rail, not a consensus rule.
+
+### Ports and transports
+
+| Port | Transport | Role |
+|---|---|---|
+| 30333/tcp | TCP | default transport |
+| 443/udp | QUIC (ALPN `animica/1`) | faster handshake, better through NAT |
+| 30335/tcp | WebSocket | browser peers and web wallets |
+
+Open 30333/tcp and 443/udp inbound if you can; outbound-only nodes still sync. `ANIMICA_P2P_MAX_PEERS` (64 in the examples) and `ANIMICA_P2P_MAX_OUTBOUND` (16) bound the connection table. The guide's rule of thumb: eight to sixteen peers is healthy, fewer than three is a warning, zero is a firewall or seed problem.
+
+## Gossip and relay
+
+Transactions and blocks travel by inventory announcement: a node sends `inv` with the hashes it has, peers answer `getdata` for what they lack, and `notfound` covers the miss. Per-peer known-inventory filters stop the same hash being offered twice. The older stack organised the same traffic into gossip topics (`blocks`, `headers`, `txs`, `shares`, `blobs`) with Bloom-filter deduplication, and its documented rate limits are the numbers operators still quote: 200 transactions per second per peer and 60 blocks per minute per peer.
+
+Both stacks apply the same defensive posture from `docs/security/DOS_DEFENSES.md`: validate length prefixes and envelopes before decoding or allocating, run the cheapest checks first, keep a token bucket per peer and per topic plus a global one, cap in-flight requests (four concurrent block requests per peer in the illustrative defaults), score peers on valid relays and timeliness, greylist then ban misbehaviour with exponential backoff, and cap peers per /24 or ASN to resist eclipse attacks. Compression ratio limits and checksum-before-decompress guard against decompression bombs.
+
+Transaction admission on receipt mirrors the local mempool rules: chain id, size (128 KiB cap), canonical CBOR, intrinsic gas, and a fast signature precheck before the full ML-DSA-65 verification. `p2p.mempoolSyncStatus` and `p2p.importPeerKnownTxs` exist for operators who need to reconcile mempools across peers.
+
+## Sync
+
+Sync is headers-first and P2P-only. Neither the public RPC nor any other HTTP endpoint is on the consensus path; the design document says plainly that `127.0.0.1` is a client-facing service and "is NOT used for node consensus, mining, or validation."
+
+The sync worker is a state machine:
+
+```text
+IDLE -> HEADERS -> BLOCKS -> VERIFYING -> SYNCED
+                 ^             |
+                 +-- STALLED <-+
+```
+
+1. **HEADERS.** Request header batches from an activated peer, validate linkage and `Θ` thresholds, track `best_header_height`.
+2. **BLOCKS.** Request the bodies for accepted headers, bounded by in-flight limits, track `best_block_height` and the `active_peer_for_blocks`.
+3. **VERIFYING.** Execute transactions, apply rewards and forks at their heights, update state.
+4. **SYNCED.** Follow the tip; new headers arrive by announcement.
+
+A stall is declared only when all three hold: blocks were requested recently, a specific next block is known to be needed, and no valid block was imported within the stall timeout. Duplicate headers and "at tip" responses are treated as progress so a quiet network is not mistaken for a broken one. `sync.getStatus` (CLI: `animica sync status`) prints the phase, counters such as `headers_accepted_total` and `headers_seen_total`, the active peer and a `synchronized` flag. `sync.force` (`animica sync force --clear-cache`) requests a round and, if one cannot start, returns `success=false` with a `blockingReason` rather than pretending. Logs carry reason codes: `HEADER_BATCH_DISCARDED`, `PEER_NOT_ACTIVATED`, `BLOCK_FETCH_NOT_SCHEDULED`.
+
+Between restarts an on-disk cache at `~/.animica/chain-1/sync` keeps up to 1,024 MB of block payloads, 10,000 blocks and 20,000 headers (defaults in `p2p/node/p2p_service.py`, all tunable with `ANIMICA_SYNC_CACHE_*`); invalid entries are dropped and re-fetched from peers.
+
+### Snapshots
+
+A fresh node can bootstrap from a snapshot instead of replaying from genesis. Snapshots live under `~/.animica/snapshots/chain-1-height-<h>/` with a `manifest.json` (checkpoint height and hash, block and account counts, per-chunk sizes and hashes) and compressed chunks such as `blocks.tar.zst` and `state.tar.zst`. Dedicated wire messages exist for discovery and transfer: `GET_SNAPSHOTS` (0x0305), `SNAPSHOTS` (0x0306), `GET_SNAPSHOT_CHUNK` (0x0307) and `SNAPSHOT_CHUNK` (0x0308). The server side is mounted automatically; the snapshot document notes that the client-side P2P download was still a stub at the time of writing and that explicit HTTP URLs (`animica snapshot list --peer http://host:8545/rpc`) are the working path.
+
+Two fixes in the changelog are the things to remember. Chunks used to be cut at 128 MiB while the wire caps a message at 8 MiB, so no node could serve its own chunks and fast-sync was broken network-wide; the default is now 7 MiB. And a restore used to be able to import partial state and still advance the head, producing permanently too-low balances that nothing downstream could detect because headers do not commit a sealed state root; since 5.3.2 a completeness gate counts imported entries against the manifest and aborts before `set_head` on any shortfall. Always verify chunk hashes against the manifest, and treat a snapshot from an untrusted peer as untrusted input.
+
+### Checkpoints and pins
+
+Checkpoints are optional safety rails, off by default (`ANIMICA_CHECKPOINTS_MODE=off`). In `rpc` mode the node fetches `{height, hash}` pairs from a configured RPC (`chain.getCheckpoints`, falling back to `/checkpoints.json`); in `file` mode it reads a local JSON file, which suits air-gapped deployments. They are consulted during initial sync and fork choice and never replace validation; `ANIMICA_CHECKPOINTS_STRICT=true` makes a missing or mismatched checkpoint fatal instead of a warning.
+
+Separately, `core/network_params.py` carries a short list of **pinned checkpoints** at mainnet heights 28,167, 38,728 and 44,854. Each was a natural one-block fork on which some nodes got wedged because the headers pipeline discarded the winning sibling. An investigation recorded in the 8.0.3 changelog entry confirmed that any node on 7.2.0 or later self-heals that case without a pin (it re-requests the fork height by hash and reorganises onto the winner), so the pins are now a fast-converge aid for older software, not a requirement. The one case left unhealed on purpose is a node that mined more than the reorg bound of blocks onto a losing branch.
+
+### Fork choice and the reorg bound
+
+Fork choice is heaviest cumulative work with a deterministic tie-break. A reorg-depth guard has always existed (`DEFAULT_MAX_REORG_DEPTH = 96`), but the number was a per-operator override, so one node could be configured to refuse every reorg (and strand itself on the next one-block fork) while another accepted arbitrarily deep ones. `FORK_FINALITY_DEPTH`, active from block 75,000, clamps the effective bound into the range 8 to 100 on every node:
+
+- a block 100 deep is final: no node will reorganise it away, whatever its local setting;
+- no node may run a bound shallower than 8, so ordinary propagation delay cannot wedge it.
+
+The guard never rejects a block; it only declines to make a tip canonical, so a node that is merely behind can still catch up later. This is a uniform reorg bound, not a finality gadget: there is no validator vote, and for payments the right tool is still a confirmation count, as discussed in [Security and threat model](/learn/security-and-threat-model).
+
+## Observability
+
+| What | How |
+|---|---|
+| peer count (authoritative, deduplicated) | `net.peerCount`; the public node answered 3 on 2026-08-23 |
+| peer list with addresses, direction, latency | `net.peers` or `p2p.listPeers` (admin-gated on the public endpoint; open on your own node) |
+| listen addresses, seeds, bootstrap cache | `animica node p2p status`, `animica node p2p seeds`, `animica node p2p config` |
+| sync phase and counters | `sync.getStatus`, `animica sync status` |
+| bans and scores | `p2p.getBans`, `p2p.peerScores` |
+| verifier seeds | `p2p.getVerifierSeeds` |
+| metrics | `http://127.0.0.1:9000/metrics`, series prefixed `p2p_` (peers by state, messages per topic, bytes per direction, RTT) |
+
+`animica node status` fails fast after bounded retries and reports "unavailable" rather than a misleading 0 when peer data cannot be fetched. The live `rpc.discover` on 2026-08-23 listed 24 `p2p.*`, 3 `net.*` and 9 `sync.*` methods; the older `spec/openrpc.json` in the repository does not include them.
+
+## Troubleshooting
+
+**No peers.** Confirm `ANIMICA_P2P_ENABLE` is not false, resolve and connect to the seed (`dig mainnet.animica.org`, `nc -zv mainnet.animica.org 30333`), check outbound firewall rules, and read `~/.animica/logs/node.log` for `dial failed` or `handshake timeout`. Clearing the persisted peer store forces rediscovery.
+
+**Height not increasing with peers connected.** Read `sync.getStatus`: phase `HEADERS` with `headers_seen_total` at zero means no peer is activated for headers; phase `BLOCKS` with a set `next_block_needed_height` and no imports means a block fetch is not being scheduled; the reason codes in the log say which. `animica sync force --clear-cache` restarts a round and reports `blockingReason` if it cannot.
+
+**Wrong chain.** `chain.getChainIdentity` must give chain id 1, genesis `0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de` and fork id 3511060514. A `GENESIS_MISMATCH` at startup means the data directory was initialised from a different genesis; wipe it or start with `--auto-reset-genesis-mismatch`.
+
+**Same height, different hash.** You are on a fork. Nodes from 7.2.0 onward self-heal one-block forks; if yours does not converge within a few blocks, check that it is not running an ancient release and that `ANIMICA_MAX_REORG_DEPTH` has not been set to zero (from block 75,000 the clamp makes that impossible anyway).
+
+**Behind NAT or CGNAT.** Set the advertised address explicitly; the guide also mentions UPnP/NAT-PMP (`ANIMICA_P2P_NAT_UPNP`, `ANIMICA_P2P_NAT_PMP`) and STUN. Inbound reachability improves the network but is not required to sync.
+
+**Bandwidth.** Lower `ANIMICA_P2P_MAX_PEERS`, or set `ANIMICA_P2P_GOSSIP_RELAY=false` to sync without relaying. The guide's rough figures are 5 to 10 GB per month for light sync and 50 to 100 GB for a full relaying node; treat them as the documentation's estimate, not a measurement of today's network.
+
+## Key takeaways
+
+- The live wire protocol is Bitcoin-style (`ANMC` magic, `version`/`verack`, `inv`/`getdata`, `getheaders`/`headers`); a Kyber-768 plus PQ-signature handshake with ChaCha20-Poly1305 is the documented security design of the older stack that remains in the repository.
+- Seeds are `mainnet.animica.org` on TCP 30333 and QUIC UDP 443; peers persist under `~/.animica/p2p/mainnet/`.
+- Sync is headers-first and never depends on an RPC; `sync.getStatus` exposes the phase machine and explicit stall reasons.
+- Snapshots use 7 MiB chunks and a completeness gate; checkpoints are optional rails; three historical one-block wedges are pinned but self-heal on 7.2.0+.
+- From block 75,000 the reorg bound is clamped to 8 to 100 on every node; 100 blocks deep is irreversible, but it is a bound, not a finality vote.
+
+## Sources
+
+- docs/P2P_NETWORKING_GUIDE.md
+- docs/p2p.md
+- docs/p2p_sync.md
+- docs/P2P_SNAPSHOT_PROTOCOL.md
+- docs/pq/HANDSHAKE.md
+- docs/PEER_ACCOUNTING_UPDATE.md
+- p2p/README.md
+- docs/security/DOS_DEFENSES.md
+- docs/CHANGELOG.md (5.3.2, 8.0.3, Unreleased entries)
+- core/network_params.py, consensus/finality.py
+- Live: `rpc.discover`, `net.peerCount`, `net.peers`, `chain.getChainIdentity` against https://rpc.animica.org/rpc, 2026-08-23

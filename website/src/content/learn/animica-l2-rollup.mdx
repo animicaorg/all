@@ -1,0 +1,162 @@
+---
+title: "The Animica L2: an ANM-native payment rollup"
+description: "How the 10.x Layer 2 works: payment-only transaction types, ML-DSA-65 signatures, a designated sequencer, re-execution validity proofs, DA blobs, the L1 bridge, fees, and live status."
+date: 2026-08-23
+updated: 2026-08-23
+category: "build"
+tags: ["l2", "rollup", "payments", "data-availability", "bridge"]
+readingLevel: "advanced"
+sources:
+  - docs/l2/ARCHITECTURE.md
+  - docs/l2/TRANSACTION_LIFECYCLE.md
+  - docs/l2/FEES.md
+  - docs/l2/DATA_AVAILABILITY.md
+  - docs/l2/FORCED_EXITS.md
+  - docs/l2/SECURITY_ASSUMPTIONS.md
+  - docs/l2/PERFORMANCE.md
+  - docs/l2/RUNNING.md
+order: 4
+---
+
+Animica 10.0.0 added a Layer 2 in the top-level `l2/` package: a payment rollup whose only asset is ANM, whose every transaction is signed with the same ML-DSA-65 keys as Layer 1, and which settles by anchoring batch commitments to L1. This article explains the design choices, the transaction lifecycle and its three grades of confirmation, the fee schedule, the data-availability format, the trust model as the documentation itself states it, and what the public RPC reports about the L2 as of 2026-08-23.
+
+## What it is, and what it is not
+
+The design goals in `docs/l2/ARCHITECTURE.md` are narrow on purpose:
+
+- **ANM only, no VM.** There is no general-purpose execution; the L2 has a fixed set of payment-shaped transaction types (`TRANSFER`, `PAY`, `AGENT_PAYMENT`, `INFERENCE_PAYMENT`, `BATCH_PAYMENT`, escrow open/release/refund, `WITHDRAW`, `FORCED_WITHDRAW`, and the protocol-minted `DEPOSIT_CLAIM`). Amounts are integer nanos, identical to L1.
+- **Post-quantum end to end.** Each user transaction carries an ML-DSA-65 signature (3,309 bytes) and public key (1,952 bytes). That is roughly 5.3 KB per transaction on the wire, and much of the L2's engineering is about amortising it.
+- **No minting.** A bridge conservation invariant ties every L2 nano to ANM locked on L1.
+- **Deterministic everywhere.** Two nodes replaying the same batch produce identical roots regardless of core count or scheduling, which is what makes third-party re-execution meaningful.
+- **A designated sequencer.** The documentation says plainly that 10.0.0 runs one sequencer and is not trustless; the security section below repeats its list of what that operator can and cannot do.
+
+The L2 chain id is 1001 on mainnet (421337 on devnet), and it is part of every signing preimage together with the domain tag `animica.l2.tx.v1`, so an L1 transaction can never be replayed on L2 or vice versa.
+
+## Components
+
+| Module | Role |
+|---|---|
+| `l2/tx.py`, `l2/codec.py` | `L2Tx` dataclass, canonical varint encoding, `signing_hash()`, `txid()` |
+| `l2/crypto.py` | Batched ML-DSA-65 verification with a worker pool |
+| `l2/state.py` | Depth-256 sparse Merkle tree keyed by the 32-byte address; membership and non-membership proofs; copy-on-write per batch |
+| `l2/executor.py` | Builds an account-conflict graph, runs connected components in parallel and transactions inside a component serially; result equals a sequential run |
+| `l2/fees.py` | The protocol-fixed fee schedule |
+| `l2/batch.py` | `BatchHeader` (previous and new state roots, transactions/receipts/escrow/data roots, aggregates) and the closure policy |
+| `l2/da.py` | Self-describing compressed batch blobs |
+| `l2/proof.py` | `ProofBackend` interface with `ReExecutionValidityBackend`, `OptimisticBackend`, `DevBackend` |
+| `l2/bridge.py` | Deposits with confirmation tiers, withdrawals with nullifiers, forced-request queue, `check_invariant()` |
+| `l2/sequencer.py`, `l2/store.py`, `l2/node.py` | Admission and batch pipeline; atomic per-batch durability (temp file, fsync, rename, WAL marker); the all-in-one node object |
+| `rpc/methods/l2.py` | The `l2_*` JSON-RPC methods |
+
+## The lifecycle: nine states, three grades
+
+`docs/l2/TRANSACTION_LIFECYCLE.md` defines an explicit state machine and a rule: sequencer acceptance is never presented as L1 finality.
+
+| State | Meaning |
+|---|---|
+| `RECEIVED` | Bytes arrived and decoded |
+| `VALIDATED` | Structural checks (size, chain id, scheme) and dedupe passed |
+| `SOFT_CONFIRMED` | Signature verified, nonce and balance admission passed, ordered into the open batch; the sequencer promises inclusion |
+| `BATCHED` | The batch closed and executed; the tx has a receipt inside a committed batch with a header and DA blob |
+| `PROVEN` | The active settlement backend produced the batch's proof |
+| `L1_SUBMITTED` | The commitment was submitted to L1 as an anchoring transaction |
+| `L1_FINALIZED` | That anchoring transaction is 64 L1 blocks deep; withdrawals in the batch become claimable |
+| `FAILED` | Rejected before ordering (bad signature, nonce, balance, expiry, queue full) |
+| `REVERTED` | Admitted, but the authoritative re-validation at execution failed (for example the balance raced away); the tx is in the batch with a reverted receipt and changed nothing |
+
+Those states fold into three grades of confirmation, and the document is explicit about who vouches for each:
+
+1. **Soft** (`SOFT_CONFIRMED`): the sequencer alone. Suitable for low-value UX between parties that already accept sequencer trust.
+2. **Proven** (`BATCHED` + `PROVEN`): anyone holding the DA blob and the prior state can re-derive the new root with `l2_verifyBatch`.
+3. **L1-finalised** (`L1_FINALIZED`): Animica L1 consensus, 64 blocks deep. Required for withdrawals, exchange credits and anything irreversible.
+
+A batch closes on whichever comes first of a transaction count (default 50,000), a byte size (8 MiB) or an age (250 ms), and the sequencer loop ticks every 25 ms (`docs/l2/RUNNING.md`).
+
+## The bridge and the fork gate
+
+The L2 never changes L1 consensus rules for ordinary transactions; anchoring is additive.
+
+- **Deposits** are ordinary L1 transfers to the canonical bridge account carrying the memo magic `ANML2D1`. The bridge tracks each deposit through tiers: `OBSERVED` (seen in a block, never credited), `CONFIRMED` (12 blocks, still never credited), `FINALIZED` (64 blocks, `L1_FINALITY_DEPTH`). Only a finalised deposit is credited on L2, through a protocol-minted, fee-free `DEPOSIT_CLAIM` that must match beneficiary and amount exactly. An L1 reorg therefore cannot create unbacked L2 ANM; `rollback_l1_to` drops observed and confirmed deposits above the new safe height.
+- **Commitments** (state roots plus DA blobs) ride the same rail with memo `ANML2C1`.
+- **Withdrawals** burn on L2 and produce a nullifier `sha3_256("animica.l2.withdraw.nullifier.v1" || l2_txid)`. The L1 claim spends the nullifier exactly once after the containing batch is L1-finalised; a claim that would exceed the locked balance is refused as an invariant violation rather than paid.
+- **The fork gate.** `FORK_L2_ANCHOR_HEIGHT = 80_000`: below that L1 height, anchoring transactions are opaque memos indexed off-consensus; at and above it, full nodes running 10.0.0 or later interpret them in consensus. The mainnet head passed 80,000 in August 2026, so this gate is now behind the chain.
+
+At every step the conservation invariant holds: L2 balances plus open escrows plus unclaimed burns equal credited total minus claimed-on-L1, and withdrawable value never exceeds ANM locked on L1.
+
+## Fees
+
+The schedule in `docs/l2/FEES.md` is consensus-relevant because it moves balances; a sequencer that charges differently produces batches the verifier rejects.
+
+```
+fee = base + da_per_byte × encoded_bytes + exec_per_unit × exec_units
+```
+
+| Constant | Value |
+|---|---|
+| `base` | 100 nanos |
+| `da_per_byte` | 2 nanos per byte of `body_bytes()` |
+| `exec_per_unit` | 20 nanos per execution unit |
+
+Execution units are 1 for `TRANSFER`, `PAY`, `AGENT_PAYMENT`, `INFERENCE_PAYMENT`; 2 for withdrawals and escrow operations; one per recipient for `BATCH_PAYMENT`; 0 for `DEPOSIT_CLAIM`. A roughly 180-byte `INFERENCE_PAYMENT` body therefore costs 100 + 360 + 20 = 480 nanos, which the document offers as the reason a 0.01 ANM micropayment is viable here. The signed `tx.fee` is a ceiling, not the charge: execution takes the schedule fee, reverts if the ceiling is lower, and leaves the excess untouched. Fees accrue to a protocol-fixed treasury address derived from `sha3_256("animica.l2.treasury.v1")`, so they move between L2 accounts rather than being destroyed, which keeps the minting check exact. `l2_estimateFee` returns the `{base, da, exec, total}` breakdown.
+
+The interesting primitive is `BATCH_PAYMENT`: one ML-DSA-65 signature authorising up to 4,096 recipient-amount pairs, charged per recipient but sharing one signature's DA bytes. That is the shape a payout batch or an agent paying many providers wants.
+
+## Data availability
+
+A state root alone lets nobody rebuild the ledger, so every batch publishes a DA blob from which any node can reconstruct the exact transaction list and re-derive `new_state_root` (`docs/l2/DATA_AVAILABILITY.md`). The encoding pipeline is an address dictionary (each distinct 32-byte address emitted once, referenced by varint index), dictionary-aware re-encoding of each transaction with signatures and public keys kept inline, then zlib over the concatenation. The uncompressed body is framed as `ANML2DA1 || varint(dict_len) || addresses || varint(tx_count) || length-prefixed txs`, and the commitment is `data_root = sha3_256(uncompressed_body)`, computed before compression so the commitment does not depend on the compressor. Decoding is strict: a bad magic, an out-of-range dictionary index or trailing bytes raise `CodecError`, so a damaged blob can never yield a partial replay. `verify_blob(blob, expected_root)` is the availability check anyone can run.
+
+The documentation is candid that ML-DSA-65 signatures are high-entropy and do not compress; a measured 500-transfer batch went from 2,670,000 to 2,646,389 bytes. Structure and addresses compress, signatures do not, and that is why `da_per_byte` exists.
+
+## The trust model, as written
+
+`docs/l2/SECURITY_ASSUMPTIONS.md` errs on the side of under-claiming. Its table of trusted parties:
+
+| Trusted | Could do | Bounded by |
+|---|---|---|
+| Sequencer liveness | Stop producing batches | The forced-exit path via L1 |
+| Sequencer ordering | Reorder, front-run, delay within a batch | Nothing in 10.0.0; this is a real operator power. Forced inclusion bounds indefinite delay only |
+| Soft confirmations | A promise, not a proof | Treat as trusted until proven, final only at `L1_FINALIZED` |
+| Watchfulness | An invalid commitment is detectable but someone must check | `l2_verifyBatch` is cheap enough for any full node; the design assumes at least one honest checker |
+
+What the sequencer cannot do even if malicious: forge a transaction (every tx is ML-DSA-65 signed over a domain-separated preimage), mint ANM (conservation is checked by the bridge and re-checked per batch), replay a transaction (strict nonces, nullifiers, one-to-one deposit matching), credit a fake deposit (only finalised L1 events count), or double-release a withdrawal.
+
+Three settlement modes exist behind one `ProofBackend` interface:
+
+- **VALIDITY** (default): the proof is the DA blob plus public inputs, and verification is a full re-execution that checks the blob reconstructs to `data_root`, re-verifies every signature, re-runs the batch, and asserts that the net balance change equals deposits minus withdrawals. The document states exactly what this is: a real, anyone-can-run verifier whose security equals a full node re-executing the batch, but neither succinct nor zero-knowledge. It was shipped this way because a succinct ZK proof of the full ML-DSA-65 stack is not something that can honestly be called production cryptography today. The interface leaves a slot for a future `ZkValidityBackend` with the same public inputs.
+- **OPTIMISTIC**: commit now, allow a challenge window (default 100 batches) in which anyone can submit the same re-execution as a fraud proof; presupposes a bonded sequencer and adds a synchrony assumption.
+- **DEV**: `verify` returns true unconditionally. Local development only.
+
+Forced inclusion (`docs/l2/FORCED_EXITS.md`) completes the picture: a censored user submits their fully signed L2 transaction bytes on L1 instead; the bridge indexes it as a `ForcedRequest` keyed by `sha3_256("animica.l2.forced.v1" || raw_tx)` with a deadline height; if the sequencer has not included it by then, `Sequencer.process_forced` injects it, and exit-shaped requests execute as `FORCED_WITHDRAW`. Forcing changes when a transaction must be included, never what it may do.
+
+## Performance, with conditions attached
+
+`docs/l2/PERFORMANCE.md` refuses to quote a number without its conditions, and so does this article. On a 10-vCPU dev box with `liboqs` 0.14, seed 1, pre-signed admission, VALIDITY mode, in-memory store and a single force-closed batch of 500 transfers, the harness (`animica l2 bench`) measured 660.7 end-to-end transactions per second with one worker, 796.3 with four and 779.5 with eight, while the execution-only pipeline (no signature verification) cleared 3,790.8 with four workers. The conclusion the document draws is that signature verification is the wall, as a post-quantum rollup should expect; ramp-mode sustained figures at 100,000-plus transactions are listed as not yet measured. Treat the 700 to 800 range as a smoke-test reading on one machine, not a network property; note too that the harness used a liboqs signature backend, whereas the public node reports `sigBackend: "pure"` (pure-Python ML-DSA-65, the repository's policy), which verifies far more slowly.
+
+## Running it
+
+The L2 is configured entirely through `ANIMICA_L2_*` environment variables (`docs/l2/RUNNING.md`). `ANIMICA_L2_ENABLE=1 animica node up` starts an all-in-one dev L2 beside the L1 node with no L1 writes; `ANIMICA_L2_MODE=sequencer` plus `ANIMICA_L2_SETTLEMENT_ENABLED=1` and a bridge address makes a settling sequencer; `ANIMICA_L2_MODE=node` runs the follower/verifier role that re-executes every batch from its DA blob and is, in the document's words, the role anyone can run to hold the sequencer honest. The `animica l2` CLI wraps the RPC: `status`, `balance`, `send`, `send-many`, `deposit`, `withdraw`, `force-withdraw`, `tx`, `batch`, `proof`, `sync`, `bench` and `doctor` (`python/animica/cli/l2.py`). In the all-in-one node the `l2_*` methods are served by the main JSON-RPC server on port 8545.
+
+## What the public node reports today
+
+Calling `l2_status` on `https://rpc.animica.org/rpc` on 2026-08-23 returned `enabled: false`, `mode: "all"`, `l2ChainId: 1001`, `settlementMode: "VALIDITY"`, `headBatch: 2`, `sigBackend: "pure"`, `depositsEnabled: false`, and a bridge summary of three deposits with 1,000,350,000,000 nanos (1,000.35 ANM) locked on L1 and credited, zero withdrawals and zero forced requests; `l2_getTPS` returned zeros across the board. Read that as: the code path is deployed and has been exercised with a small amount of real ANM, the public sequencer is not accepting traffic, and the published `openrpc.json` lists 23 `l2_*` methods for when it is. The [RPC guide](/learn/json-rpc-api-guide) shows the full response.
+
+## Key takeaways
+
+- A payments-only rollup: ANM in integer nanos, fixed transaction types, no VM, ML-DSA-65 throughout, L2 chain id 1001.
+- Nine lifecycle states collapse into soft, proven and L1-finalised confirmation; only the last is irreversible.
+- Deposits credit after 64 L1 blocks; withdrawals are nullifier-protected; the conservation invariant is checked continuously and per batch.
+- Fees are `100 + 2 × bytes + 20 × units` nanos and are part of consensus; `BATCH_PAYMENT` amortises one signature over up to 4,096 recipients.
+- VALIDITY mode means validity by universal re-execution, not a ZK rollup; the sequencer is designated and its ordering power is real.
+- As of 2026-08-23 the public node has the L2 deployed with two batches and three deposits, and the sequencer disabled.
+
+## Sources
+
+- docs/l2/ARCHITECTURE.md
+- docs/l2/TRANSACTION_LIFECYCLE.md
+- docs/l2/FEES.md
+- docs/l2/DATA_AVAILABILITY.md
+- docs/l2/FORCED_EXITS.md
+- docs/l2/SECURITY_ASSUMPTIONS.md
+- docs/l2/PERFORMANCE.md
+- docs/l2/RUNNING.md
+- Live `l2_status`, `l2_chainId`, `l2_getTPS` from https://rpc.animica.org/rpc, 2026-08-23

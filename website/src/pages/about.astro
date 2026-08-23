@@ -3,152 +3,245 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
 const title = "About Animica";
 const description =
-  "Animica is a live post-quantum layer-1 blockchain: Dilithium3/SPHINCS+ signatures, deterministic Python smart contracts, and PoIES useful-work consensus.";
+  "What Animica is, when mainnet launched, what is open source, how protocol changes are made, and how to reach the project.";
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "AboutPage",
+  name: "About Animica",
+  description,
+  url: "https://animica.org/about",
+  about: {
+    "@type": "Organization",
+    name: "Animica",
+    url: "https://animica.org",
+    sameAs: ["https://github.com/animicaorg/all", "https://x.com/animicaorg"],
+  },
+};
+
+const chainFacts = [
+  ["Chain id", "1 (mainnet)"],
+  ["Genesis time", "2026-04-06T00:00:00Z (header timestamp 1775433600)"],
+  ["Genesis hash", "0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de"],
+  ["Fork id", "3511060514"],
+  ["Native coin", "ANM, 9 decimals (1 ANM = 1,000,000,000 nANM)"],
+  ["Signatures", "ML-DSA-65 (FIPS 204), scheme id 0x1003"],
+  ["Addresses", "bech32m, prefix anim1"],
+  ["Block target", "60 seconds"],
+  ["Software line", "10.x (python/pyproject.toml: 10.4.4)"],
+];
+
+const licenseRows = [
+  ["Node, consensus, VM, P2P, RPC, AICF, SDKs", "Apache-2.0 (repo LICENSE); docs/legal/LICENSING.md also offers MIT for most packages"],
+  ["website/ (this site)", "MIT"],
+  ["docs/", "CC BY-SA 4.0 unless a file says otherwise"],
+  ["Name, logo, wordmark", "Not open-licensed; see docs/legal/TRADEMARKS.md"],
+];
 ---
 
-<BaseLayout title={title} description={description}>
+<BaseLayout title={title} description={description} jsonLd={jsonLd}>
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">About Animica</span>
-      <h1 class="aicf-heading">A Post-Quantum Layer&#8209;1, Live on Mainnet</h1>
+      <span class="aicf-kicker">About</span>
+      <h1 class="aicf-heading">What Animica is</h1>
       <p class="aicf-subheading">
-        Animica is a layer-1 blockchain built for the post-quantum era. Every transaction is signed with
-        NIST-standardized post-quantum cryptography (Dilithium3, with SPHINCS+ as an alternative), smart
-        contracts run in a deterministic Python VM, and consensus rewards useful computation — not just hashing.
-        The native coin is <strong>ANM</strong>; addresses use bech32m encoding with the <code>anim1&hellip;</code> prefix.
+        Animica is an open-source, proof-of-work Layer-1 blockchain whose accounts and transactions are
+        signed with the post-quantum ML-DSA-65 scheme. It runs a deterministic Python smart-contract VM,
+        an ANM-native Layer-2 rollup, and an AI-compute framework (AICF) that lets miners and GPU operators
+        serve inference for ANM. Mainnet has been producing blocks since 6 April 2026.
       </p>
       <div class="aicf-btn-row">
-        <a class="aicf-btn" href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">Open the Explorer</a>
-        <a class="aicf-ghost-btn" href="/technology">How It Works</a>
+        <a class="aicf-btn" href="/learn/what-is-animica">Read the full introduction</a>
         <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+        <a class="aicf-ghost-btn" href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">Explorer</a>
       </div>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container aicf-grid-3">
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Post-Quantum by Default</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          Signatures use Dilithium3 (ML-DSA-65) with SPHINCS+ as a hash-based alternative — no
-          quantum-vulnerable elliptic-curve keys anywhere in the protocol. Funds stay safe against
-          harvest-now-decrypt-later attacks.
-        </p>
-      </article>
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Python Smart Contracts</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          Contracts are written in Python and executed in a deterministic, gas-metered VM. Every node
-          reproduces the exact same result — no custom contract language to learn.
-        </p>
-      </article>
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Useful-Work Consensus</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          PoIES (Proof-of-Integrated-External-Services) combines hash-based mining with verifiable proofs
-          of useful work, steering network energy toward AI and quantum-relevant compute instead of
-          throwing it away.
-        </p>
-      </article>
-    </div>
-  </section>
+    <div class="aicf-container page-prose">
+      <h2>The short version</h2>
+      <p>
+        Most blockchains in production today sign transactions with elliptic-curve schemes (ECDSA or
+        Ed25519). Those schemes are expected to fail against a sufficiently large quantum computer, and
+        anything recorded on a public ledger today can be attacked later. Animica took the opposite
+        starting point: there is no elliptic-curve signature anywhere in consensus. Every account key is
+        an ML-DSA-65 keypair (FIPS 204, the standardised form of Dilithium3), every transaction carries an
+        ML-DSA-65 signature, and the address itself is derived from a SHA3-256 hash of the public key.
+        The cost is size: a public key is 1,952 bytes and a signature 3,309 bytes, which is why the
+        transaction format, the P2P layer, and the L2 rollup are all designed around large signatures
+        rather than bolted on afterwards.
+      </p>
+      <p>
+        The second design choice is how blocks are accepted. Animica uses SHA3-256 proof-of-work with a
+        scoring rule called PoIES (Proof-of-Integrated-External-Services). A block clears the threshold
+        Θ when its hash work, plus any verified useful-work evidence, is high enough. The protocol defines
+        how AI, quantum, storage and VDF proofs would add to that score. On mainnet today, however, blocks
+        are accepted on hash work alone: the reference miner does not attach useful-work proofs, and the
+        verification rule for them runs in shadow mode. We say this plainly because the difference between
+        "the protocol supports X" and "X is enforced on mainnet" matters to anyone evaluating the chain.
+      </p>
+      <p>
+        The third choice is the contract language. Contracts are written in a strict, deterministic subset
+        of Python, compiled to a small IR, and executed by a gas-metered interpreter. On-chain execution of
+        contract calls activated at block 75,000 (release 9.6.0); before that height every CALL reverted.
+      </p>
 
-  <section class="aicf-section">
-    <div class="aicf-container">
-      <span class="aicf-kicker">Live Today</span>
-      <h2 class="aicf-heading" style="font-size:1.7rem;">What You Can Use Right Now</h2>
-      <div class="aicf-grid-3" style="margin-top:1.2rem;">
+      <h2>Mainnet at a glance</h2>
+      <table class="aicf-table">
+        <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+        <tbody>
+          {chainFacts.map(([k, v]) => (
+            <tr><td><strong>{k}</strong></td><td><code>{v}</code></td></tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="aicf-muted">
+        Values can be checked against the public RPC with <code>chain.getChainIdentity</code> and
+        <code>chain.getBlockByHeight [0, false]</code>. The full parameter set and fork history is on the
+        <a href="/network">Network page</a>.
+      </p>
+
+      <h2>When mainnet launched and what has changed since</h2>
+      <p>
+        The canonical genesis header is timestamped 2026-04-06T00:00:00Z. Consensus rules have since been
+        tightened through forward-only, height-gated forks: post-quantum hardening and header root
+        commitments at block 40,000 (release 6.0.1), the address-freeze rule at 42,000 (7.0.0), the
+        85/15 miner/foundation subsidy split at 42,001 (7.1.0), state-commitment enforcement at 44,444
+        (7.1.9), the inert service-IOU settlement carve at 50,000 (8.0.1), and a bundle at 75,000
+        (9.5.0 to 9.6.0) that introduced a bounded retarget, a uniform 100-block reorg bound, value-carrying
+        CALL, on-chain VM execution and the 50/25/25 reward split between miner, treasury and inference
+        providers. Each of these is documented in <code>docs/ANIMICA_2026_STATE.md</code>,
+        <code>docs/CHANGELOG.md</code> and <code>core/network_params.py</code>, and summarised on the
+        <a href="/roadmap">Roadmap</a>.
+      </p>
+
+      <h2>What is open source</h2>
+      <p>
+        The whole stack is public. The monorepo at
+        <a href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">github.com/animicaorg/all</a>
+        contains the node (<code>core/</code>, <code>consensus/</code>, <code>p2p/</code>, <code>rpc/</code>),
+        the Python VM (<code>vm_py/</code>), the L2 (<code>l2/</code>), AICF (<code>aicf/</code>), the
+        miners (<code>mining/</code>), wallets, SDKs, the explorer, the pool, and this website. A
+        node-focused mirror lives at
+        <a href="https://github.com/animicaorg/animica-core" target="_blank" rel="noopener noreferrer">animicaorg/animica-core</a>.
+        The runnable package is published to PyPI as
+        <a href="https://pypi.org/project/animica/" target="_blank" rel="noopener noreferrer"><code>animica</code></a>;
+        <code>pip install animica</code> installs the node, CLI, wallet, miner and the MCP server.
+      </p>
+      <table class="aicf-table">
+        <thead><tr><th>Component</th><th>License</th></tr></thead>
+        <tbody>
+          {licenseRows.map(([k, v]) => (
+            <tr><td><strong>{k}</strong></td><td>{v}</td></tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="aicf-muted">
+        The repository root <code>LICENSE</code> is Apache License 2.0. <code>docs/legal/LICENSING.md</code>
+        describes the per-package picture, including third-party notices for vendored components such as
+        Pyodide (MPL-2.0). Files with an explicit SPDX header follow that header.
+      </p>
+
+      <h2>How the project is run</h2>
+      <p>
+        Animica does not have a token-vote DAO. The documented process, in <code>docs/governance/</code>,
+        separates two kinds of change. <strong>Parameter governance</strong> covers dials that can move
+        without changing serialisation or state layout: the Θ retarget schedule, PoIES caps, fee floors,
+        gas tables, AICF SLA thresholds, DA and randomness parameters. <strong>Protocol upgrades</strong>
+        cover anything that changes encoding, state layout or consensus-critical behaviour, and ship as
+        versioned releases with a height-gated activation.
+      </p>
+      <p>
+        The community process (<code>docs/governance/COMMUNITY.md</code>) uses Animica Improvement
+        Proposals (<code>AIP-####</code>): a proposal issue with at least 72 hours of initial feedback, an
+        RFC pull request, a review window of 7 days for low or medium risk and 14 days for high risk or
+        upgrades, a 5-day last call, then enactment through a signed governance bundle with a timelock.
+        Reviewers are expected to cover security, economics, operations and protocol compatibility.
+      </p>
+      <p>
+        In practice, every consensus change on mainnet so far has been shipped by the core maintainers as
+        a release with a coordinated activation height and a public upgrade notice (for example, "run
+        7.1.1 before block 42,000"). The foundation treasury address that receives its subsidy share is
+        fixed in <code>consensus/rewards.py</code> and is visible on the explorer, so the split can be
+        audited by anyone.
+      </p>
+
+      <h2>Properties the project operates</h2>
+      <div class="aicf-grid-3" style="margin-top:1rem;">
         <article class="aicf-card">
-          <h3 style="font-size:1.1rem;">Mainnet &amp; Explorer</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            The chain is producing blocks on mainnet. Browse blocks, transactions, and addresses at
-            <a href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">explorer.animica.org</a>,
-            or query the public RPC directly.
+          <h3>Chain services</h3>
+          <p class="aicf-muted">
+            <a href="https://rpc.animica.org/rpc">rpc.animica.org</a> (JSON-RPC),
+            <a href="https://explorer.animica.org">explorer.animica.org</a>,
+            <a href="https://pool.animica.org">pool.animica.org</a> (stratum :3333 / solo :3334),
+            and the non-custodial wallet apps on <a href="/wallet">/wallet</a> (the former web wallet at wallet.animica.org was discontinued on 2026-07-11).
           </p>
         </article>
         <article class="aicf-card">
-          <h3 style="font-size:1.1rem;">Wallets</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            Use the web wallet at
-            <a href="https://wallet.animica.org" target="_blank" rel="noopener noreferrer">wallet.animica.org</a>,
-            or download the desktop wallet and browser extension from the <a href="/wallet">wallet page</a>.
+          <h3>AI and compute</h3>
+          <p class="aicf-muted">
+            <a href="https://animica.dev">animica.dev</a> (free keyless OpenAI-compatible API at /v1),
+            <a href="https://console.animica.org">console.animica.org</a> (AI API keys),
+            <a href="https://x402.animica.dev">x402.animica.dev</a> (per-call agent payments).
           </p>
         </article>
         <article class="aicf-card">
-          <h3 style="font-size:1.1rem;">Mining Pool</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            Mine ANM with your CPU and dual-mine XMR on the same hardware via the official pool at
-            <a href="https://pool.animica.org" target="_blank" rel="noopener noreferrer">pool.animica.org</a>.
-            Setup guides are on the <a href="/mine">mining page</a>.
-          </p>
-        </article>
-        <article class="aicf-card">
-          <h3 style="font-size:1.1rem;">GPU Compute via Bittensor</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            Animica integrates with Bittensor for GPU compute. Track it on the
-            <a href="https://pool.animica.org/bittensor" target="_blank" rel="noopener noreferrer">Bittensor dashboard</a>.
-          </p>
-        </article>
-        <article class="aicf-card">
-          <h3 style="font-size:1.1rem;">Marketplace</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            Trade ANM and ecosystem assets on the marketplace at
-            <a href="https://animica.xyz/" target="_blank" rel="noopener noreferrer">animica.xyz</a>.
-          </p>
-        </article>
-        <article class="aicf-card">
-          <h3 style="font-size:1.1rem;">CLI &amp; SDK</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            <code>pip install animica</code> gives you the complete <code>animica</code> client —
-            everything to mine, run a node, use the wallet, deploy Python contracts, run the unified
-            <code>animica up</code> miner, and use the Studio SDK, with the native CPU miner included
-            by default. This is what most people want. Prefer
-            <code>pip install "animica[all]"</code> (quote the brackets so zsh/macOS won't glob them)
-            for the kitchen sink: every optional extra — Qt wallet QR codes, the full distributed
-            Studio client, and all server/operator dependencies pinned. See
-            <a href="/downloads">downloads</a> and <a href="/docs">docs</a>.
+          <h3>Learning and building</h3>
+          <p class="aicf-muted">
+            <a href="https://academy.animica.org">academy.animica.org</a>,
+            <a href="https://studio.animica.org">studio.animica.org</a>,
+            <a href="https://pay.animica.dev">pay.animica.dev</a> (merchant payments, 2.00% fee).
           </p>
         </article>
       </div>
-    </div>
-  </section>
 
-  <section class="aicf-section">
-    <div class="aicf-container">
-      <article class="aicf-card">
-        <span class="aicf-kicker">AICF</span>
-        <h2 style="font-size:1.35rem; margin-top:0.5rem;">The AI Compute Lane</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          AICF is Animica's AI-compute lane: a marketplace where developers buy inference and training
-          paid in ANM, and providers earn ANM by contributing benchmarked GPU hardware. It settles
-          natively on the chain, so escrow, receipts, and rewards stay on-chain and auditable.
-        </p>
-        <div class="aicf-btn-row" style="margin-top:0.9rem;">
-          <a class="aicf-btn" href="https://aicf.animica.org" target="_blank" rel="noopener noreferrer">AICF Compute Dashboard</a>
-          <a class="aicf-ghost-btn" href="/providers">Become a Provider</a>
-        </div>
-      </article>
-    </div>
-  </section>
+      <h2>Where ANM trades</h2>
+      <p>
+        ANM trades on NonKYC (ANM/USDT):
+        <a href="https://nonkyc.io/market/ANM_USDT" target="_blank" rel="noopener noreferrer">nonkyc.io/market/ANM_USDT</a>.
+        There is no mainnet faucet. This site does not give investment advice; see the
+        <a href="/terms">Terms</a>.
+      </p>
 
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Open Source</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          The full node, wallets, SDKs, and tooling are public at
-          <a href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">github.com/animicaorg/all</a>.
-          Issues and contributions are welcome.
-        </p>
-      </article>
-      <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Stay in Touch</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          Follow <a href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg on X</a>
-          for releases and network updates, or reach the team at
-          <a href="mailto:contact@animica.org">contact@animica.org</a>.
-        </p>
-      </article>
+      <h2>Contact</h2>
+      <ul>
+        <li>General: <a href="mailto:contact@animica.org">contact@animica.org</a></li>
+        <li>Security reports: <a href="mailto:security@animica.org">security@animica.org</a> (see <a href="/security">Security</a> and <a href="/.well-known/security.txt">security.txt</a>)</li>
+        <li>Bugs and feature requests: <a href="https://github.com/animicaorg/all/issues" target="_blank" rel="noopener noreferrer">GitHub issues</a></li>
+        <li>Announcements: <a href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg on X</a></li>
+      </ul>
+      <p class="aicf-muted">
+        We do not currently list a Discord or Telegram channel. Be wary of anyone claiming to represent
+        Animica on chat platforms, especially if they ask for seed phrases or "verification" payments.
+      </p>
+
+      <h2>Trademarks and licensing</h2>
+      <p>
+        The name "Animica", the logo and the wordmark are trademarks and are not covered by the code
+        licenses. You may use the name nominatively ("Wallet X for Animica", "runs on Animica") and link
+        to first-party properties; you may not ship a product named "Animica Something", alter the logo,
+        or imply endorsement. Forks must replace the marks. The full rules are in
+        <code>docs/legal/TRADEMARKS.md</code>, and the licensing summary with third-party notices is in
+        <code>docs/legal/LICENSING.md</code>, both in the repository.
+      </p>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/ANIMICA_2026_STATE.md · docs/governance/OVERVIEW.md · docs/governance/COMMUNITY.md ·
+        docs/legal/LICENSING.md · docs/legal/TRADEMARKS.md · core/network_params.py · LICENSE ·
+        python/pyproject.toml · live rpc.animica.org (chain.getChainIdentity, 2026-08-23)
+      </p>
     </div>
   </section>
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2rem; }
+  .page-prose h3 { font-size: 1.05rem; }
+  .page-prose p, .page-prose ul { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose li { margin-top: 0.35rem; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; word-break: break-all; }
+</style>

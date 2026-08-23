@@ -1,0 +1,20 @@
+---
+title: "Pool 9.1.0: sub-block shares — PPS pays miners who never find a block"
+description: "Per-session, opt-in sub-block share targets derived from live Θ, so a share is worth exactly 1/S of a block. Older miners keep byte-identical targets."
+date: 2026-08-06
+tags: ["release", "pool", "mining", "pps"]
+---
+
+Pool 9.1.0 fixes a structural problem with pay-per-share on pool.animica.org. The wire share target is a ratio of Θ, and the xmrig-compatible floor pinned it at 1.0 — which *is* the block target. So every accepted share in the live database for more than a week had been a block, and PPS paid only block finders.
+
+Lowering the floor globally was not an option: a sub-1.0 wire difficulty put the xmrig build into a connect → set-difficulty → disconnect loop that cost about two hours of mainnet block production on 2026-07-10.
+
+**The mechanism.** Sub-block targets are handed out per session, and only to clients that explicitly ask on `mining.subscribe` (`features.subblockShares`). xmrig, ASIC dashboards, cryptonote clients and every older miner keep byte-for-byte the target they receive today. v1 sessions are excluded unconditionally (their wire difficulty must stay at or above the compat floor), as are solo sessions (solo credit is block-only).
+
+The ratio is derived per job from live Θ so a share is worth 1/S of a block in expectation: `r = 1 − MICRO · ln(S) / Θ`. That makes the pool-wide share rate exactly `S / block_time`, independent of hashrate, so S bounds the share flood by construction. If Θ is too small to carve S shares without crossing the minimum ratio, the feature switches off for that job rather than clamping into a flood. At the live Θ of about 25.7 nats and S = 64, the ratio is about 0.838 and a share is worth about 1/64 of a block reward.
+
+No new wire fields and no miner-side threshold change were needed: the native miner already thresholds on `T256(Θ × shareTarget)`, validation was already per-session, and credit already priced a share at its assigned ratio.
+
+**Also in 9.1.0.** The miner's `mining.set_difficulty` parser no longer raises on an unexpected shape — the signature of the 2026-07-10 outage — and the credit-cap query that summed the whole blocks table on every accepted share now keeps an exact headroom snapshot. `/api/pool/summary` reports `subblock_sessions` and `shares_per_block`. Environment: `ANIMICA_POOL_SUBBLOCK_SHARES` (kill switch), `ANIMICA_POOL_SHARES_PER_BLOCK`, `ANIMICA_POOL_SUBBLOCK_MIN_RATIO`, `ANIMICA_MINER_NO_SUBBLOCK`.
+
+Preceded the same day by pool 9.0.9 (per-IP session caps, an idle reaper, honest miner counts after one client parked 835 idle sockets, and a 5% PPS block reserve) and 9.0.10 (bounded line buffers, a broadcast deadline so one slow peer cannot stall job publication). 9.1.1 made every shipped miner request sub-block shares.

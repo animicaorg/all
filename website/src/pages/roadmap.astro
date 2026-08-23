@@ -1,70 +1,70 @@
 ---
-/**
- * Roadmap Page
- *
- * Development milestones organized by phase with clear status indicators.
- * Data-driven from src/data/roadmap.ts for easy updates.
- */
-
 import BaseLayout from "../layouts/BaseLayout.astro";
 import roadmapData from "../data/roadmap";
 
-const pageTitle = "Roadmap";
-const pageDesc =
-  "Animica mainnet is live. Track what has shipped — and what is in progress — across infrastructure, consensus, execution, tooling, and ecosystem.";
+const title = "Roadmap";
+const description =
+  "What Animica has shipped, with dates and activation heights, and what the repository documents as planned. No dates are given for plans because none are documented.";
 
-const statusLabel = {
-  'done': 'Shipped',
-  'in-progress': 'In Progress',
-  'planned': 'Planned',
-} as const;
-
-const statusStyle = {
-  'done': 'background:rgba(22,217,195,0.12); color:var(--brand-500, #16d9c3); border:1px solid rgba(22,217,195,0.35);',
-  'in-progress': 'background:rgba(245,184,73,0.12); color:#f5b849; border:1px solid rgba(245,184,73,0.35);',
-  'planned': 'background:rgba(255,255,255,0.06); color:var(--text-secondary, #bacce4); border:1px solid rgba(255,255,255,0.14);',
-} as const;
-
-const badgeBase =
-  'display:inline-block; padding:0.2rem 0.6rem; border-radius:999px; font-size:0.72rem; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; white-space:nowrap;';
+const statusLabel = { done: "Shipped", "in-progress": "In progress", planned: "Planned" } as const;
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
+<BaseLayout title={title} description={description}>
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Roadmap</span>
-      <h1 class="aicf-heading">Mainnet Is Live</h1>
+      <h1 class="aicf-heading">Shipped, in progress, planned</h1>
       <p class="aicf-subheading">
-        The foundation phases are shipped: the chain, post-quantum signatures, the Python VM, the pool,
-        and the public infrastructure are running in production. This page tracks what shipped and what
-        we are actively working on — no promises we can't keep.
+        This page is a record before it is a promise. Shipped items carry the release date from
+        <code>docs/CHANGELOG.md</code> or the mainnet activation height from <code>core/network_params.py</code>.
+        The final section lists plans that a repository document actually states; they have no dates because
+        none are documented, and they can change through the <a href="/community">AIP process</a>.
       </p>
       <div class="aicf-btn-row">
-        <span style={`${badgeBase} ${statusStyle['done']}`}>Shipped</span>
-        <span style={`${badgeBase} ${statusStyle['in-progress']}`}>In Progress</span>
-        <span style={`${badgeBase} ${statusStyle['planned']}`}>Planned</span>
+        <a class="aicf-btn" href="/network">Fork table and parameters</a>
+        <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all/releases" target="_blank" rel="noopener noreferrer">GitHub releases</a>
+        <a class="aicf-ghost-btn" href="https://pypi.org/project/animica/" target="_blank" rel="noopener noreferrer">animica on PyPI (10.x)</a>
       </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>How to read this page</h2>
+      <p>
+        Animica ships protocol changes as versioned releases with a height gate: the rule applies from a
+        fixed block height and never to earlier blocks. That is why several milestones below are dated by
+        height rather than by calendar. Two kinds of change appear. Reject rules (for example the
+        address freeze at 42,000) fork off nodes that have not upgraded at the first violating block.
+        Emission changes (42,001, 50,000, 75,000) do not; an outdated node keeps following the chain but
+        records wrong balances, so exchanges and explorers must upgrade on time. Non-consensus releases
+        (wallets, explorer, ENA, the free AI API, x402) are dated by release.
+      </p>
+      <p>
+        Where a feature exists in code but is deliberately inert or in shadow mode on mainnet, the item
+        says so. The <a href="/learn/useful-work-ai-and-quantum">useful-work article</a> covers the
+        biggest such case in depth.
+      </p>
     </div>
   </section>
 
   {roadmapData.map((phase) => (
     <section class="aicf-section">
       <div class="aicf-container">
-        <h2 style="font-size:1.45rem;">{phase.phase}</h2>
-        <p class="aicf-muted" style="margin-top:0.4rem;">{phase.description}</p>
-        <div class="aicf-grid-3" style="margin-top:1.1rem;">
+        <span class="aicf-kicker">{phase.phase}</span>
+        <p class="aicf-muted" style="margin-top:0.4rem; max-width:72ch;">{phase.description}</p>
+        <div class="aicf-grid-2" style="margin-top:1rem;">
           {phase.items.map((item) => (
             <article class="aicf-card">
-              <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:0.6rem;">
+              <div style="display:flex; justify-content:space-between; gap:0.75rem; align-items:flex-start; flex-wrap:wrap;">
                 <h3 style="font-size:1.05rem;">{item.title}</h3>
-                <span style={`${badgeBase} ${statusStyle[item.status]}`}>{statusLabel[item.status]}</span>
+                <span class={`rm-status rm-${item.status}`}>{statusLabel[item.status]}</span>
               </div>
-              <p class="aicf-muted" style="margin-top:0.55rem; font-size:0.92rem;">{item.description}</p>
-              {item.date && (
-                <p style="margin-top:0.55rem; font-size:0.78rem; color:var(--brand-500, #16d9c3); font-weight:600;">
-                  {item.status === 'done' ? `Shipped ${item.date}` : `Target ${item.date}`}
-                </p>
-              )}
+              <p class="aicf-muted" style="margin-top:0.5rem;">{item.description}</p>
+              <p style="margin-top:0.6rem; font-size:0.85rem;" class="aicf-muted">
+                <span style="text-transform:capitalize;">{item.category}</span>
+                {item.date ? <span> · {item.date}</span> : null}
+              </p>
             </article>
           ))}
         </div>
@@ -73,18 +73,29 @@ const badgeBase =
   ))}
 
   <section class="aicf-section">
-    <div class="aicf-container">
-      <article class="aicf-card" style="text-align:center;">
-        <h2 style="font-size:1.3rem;">Want to contribute?</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem; max-width:46rem; margin-left:auto; margin-right:auto;">
-          Animica is open source. The node, wallets, SDKs, and pool all live in one public monorepo —
-          issues and pull requests are welcome.
-        </p>
-        <div class="aicf-btn-row" style="margin-top:1rem; justify-content:center;">
-          <a class="aicf-btn" href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">View on GitHub</a>
-          <a class="aicf-ghost-btn" href="/community">Join the Community</a>
-        </div>
-      </article>
+    <div class="aicf-container page-prose">
+      <h2>What is not on this page</h2>
+      <p>
+        No exchange listings, partnerships, audits, token events or "coming soon" features are listed,
+        because none are documented in the repository. If something you expected to see is missing, that
+        absence is deliberate. Announcements, when they happen, are made on
+        <a href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg</a> and in GitHub releases.
+      </p>
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/CHANGELOG.md · docs/ANIMICA_2026_STATE.md · core/network_params.py · docs/l2/SECURITY_ASSUMPTIONS.md ·
+        docs/USEFUL_WORK_SHADOW_RUNBOOK.md · docs/ena/overview.md · docs/wallet/HD_DERIVATION.md · docs/pq/POLICY.md · python/pyproject.toml
+      </p>
     </div>
   </section>
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 1.2rem; }
+  .page-prose p { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose code { font-size: 0.92em; }
+  .rm-status { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.2rem 0.55rem; border-radius: 999px; border: 1px solid rgba(133,170,210,0.3); white-space: nowrap; }
+  .rm-done { color: #14C79B; border-color: rgba(20,199,155,0.45); }
+  .rm-in-progress { color: #f5b14b; border-color: rgba(245,177,75,0.45); }
+  .rm-planned { color: #95aac6; }
+</style>

@@ -1,0 +1,174 @@
+---
+title: "ANM tokenomics: premine, block subsidy, halvings and the reward split"
+description: "How ANM enters circulation: the 81 M premine, the 300 ANM block subsidy, 1.35 M-block halvings, the 0.0001 ANM tail, and how the coinbase is split between miner, treasury and the service carve."
+date: 2026-08-23
+updated: 2026-08-23
+category: "economy"
+tags: ["anm", "emission", "halving", "premine", "treasury", "fees"]
+readingLevel: "intermediate"
+sources:
+  - spec/params.yaml
+  - docs/anm_tokenomics_mainnet.md
+  - docs/economics/OVERVIEW.md
+  - docs/economics/INFLATION.md
+  - docs/economics/REWARDS.md
+  - docs/economics/FEES.md
+  - docs/economics/NUMERICS.md
+  - docs/ANIMICA_2026_STATE.md
+  - consensus/rewards.py
+  - consensus/service_carve.py
+  - core/network_params.py
+  - execution/runtime/fees.py
+order: 1
+---
+
+This article explains where every ANM comes from: the genesis allocation, the per-block subsidy and its halving schedule, the long-run supply ceiling, and how the subsidy is divided between the block producer, the foundation treasury and the service carve. It also covers what happens to transaction fees and how to read the live supply figure. All protocol constants below come from `spec/params.yaml` and the consensus code that applies them; live numbers are marked "as of 2026-08-23".
+
+## Units first
+
+ANM has **9 decimals**. The base unit is the nano-ANM (nANM): 1 ANM = 1,000,000,000 nANM. Every RPC method, every explorer API field and every wallet file stores and transmits integer nANM; decimals exist only for display. This matters for economics because all subsidy arithmetic is done in integers with floor division, so no rounding can ever mint a fraction of a nANM that the schedule did not authorise (see `docs/economics/NUMERICS.md` for the general rounding rules and `consensus/rewards.py` for the mainnet implementation).
+
+## The genesis allocation (premine)
+
+Mainnet genesis (block 0, 2026-04-06T00:00:00Z) created **81,000,000 ANM** outright. `spec/params.yaml` and `docs/anm_tokenomics_mainnet.md` describe that amount as four buckets:
+
+| Bucket | Amount | Vesting (per `spec/params.yaml`) |
+|---|---|---|
+| Foundation | 45,000,000 ANM | 365-day cliff, then linear over 36 months |
+| Treasury | 20,000,000 ANM | none |
+| AICF (AI Compute Fund) | 7,000,000 ANM | none |
+| Founder | 9,000,000 ANM | none |
+
+Two honest caveats. First, the addresses in `spec/params.yaml` are placeholders (they do not decode), and the canonical mainnet genesis in `consensus/rewards.py` credits the entire 81 M to a single foundation-managed account, `anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208`, from which the buckets above are distributed operationally. Second, the vesting terms are a policy statement in the parameter file, not a consensus rule: there is no on-chain lock-up contract enforcing the cliff. You can watch the genesis account and its outflows on the explorer at `https://explorer.animica.org/address/anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208`.
+
+The consensus code enforces the premine strictly: the height-0 coinbase must pay exactly 81,000,000 ANM, and from height 1 onward only the schedule below can create coins. There is no multi-block premine window.
+
+## The block subsidy schedule
+
+The mainnet issuance parameters are:
+
+```yaml
+# spec/params.yaml — networks."animica:1".monetary.issuance
+target_block_interval_ms: 60000          # 60 s target
+min_block_spacing_ms:     60000          # no block may follow its parent in < 60 s
+subsidy:
+  start_nANM_per_block:   300000000000   # 300 ANM
+  epoch_length_blocks:    1350000        # blocks per halving epoch
+  decay_pct_per_epoch:    50.0           # a true halving
+  tail_nANM_per_block:    100000         # 0.0001 ANM floor
+  max_halvings:           64
+```
+
+The subsidy for a block at height `h ≥ 1` is computed as:
+
+```text
+epoch   = (h - 1) // 1,350,000           # heights 1..1,350,000 are epoch 0
+subsidy = max( 300 ANM / 2^epoch , 0.0001 ANM )
+```
+
+The implementation uses exact integer arithmetic for the power-of-two decay (there is no floating point on the consensus path), and clamps the epoch index at 63 because `max_halvings` is 64. In practice the clamp never matters: by epoch 22 the halved value (about 0.0000715 ANM) is already below the 0.0001 ANM tail, so the tail governs from roughly height 29.7 million onward.
+
+### Per-epoch totals
+
+| Epoch | Height range | Subsidy per block | Subsidy in the epoch | Cumulative subsidy |
+|---|---|---|---|---|
+| 0 | 1 – 1,350,000 | 300 ANM | 405,000,000 | 405,000,000 |
+| 1 | 1,350,001 – 2,700,000 | 150 ANM | 202,500,000 | 607,500,000 |
+| 2 | 2,700,001 – 4,050,000 | 75 ANM | 101,250,000 | 708,750,000 |
+| 3 | 4,050,001 – 5,400,000 | 37.5 ANM | 50,625,000 | 759,375,000 |
+| 4 | 5,400,001 – 6,750,000 | 18.75 ANM | 25,312,500 | 784,687,500 |
+| … | … | halves each epoch | … | converges to 810,000,000 |
+
+The geometric series sums to 2 × 1,350,000 × 300 = **810,000,000 ANM** of mined supply. Added to the 81 M premine that gives an asymptote just under **891 M ANM**, which sits below the `MAX_MONEY` constant of 900,000,000 ANM that `consensus/rewards.py` uses as a hard sanity ceiling. The tail emission is tiny in absolute terms: at the 60-second target a year holds 525,600 blocks, so the tail adds about 52.6 ANM per year once it applies. Animica therefore has an effectively capped supply with a nominal perpetual floor rather than a hard stop, which is the "tail emission" design discussed in `docs/economics/INFLATION.md`.
+
+### Timing
+
+At the 60-second target, an epoch of 1,350,000 blocks lasts 937.5 days (about 2.57 years). The realised average block time has been closer to 67 seconds (explorer, 2026-08-23), which stretches an epoch to roughly 2.9 years. The first halving is therefore expected somewhere between late 2028 and early 2029; it is triggered by height, not by date, so the exact moment depends on realised block times.
+
+Daily issuance in epoch 0 is 1,440 blocks × 300 ANM = 432,000 ANM at target (about 387,000 ANM at the measured 67-second average). Relative to a supply of roughly 110 M ANM this is a high early inflation rate by design: `docs/economics/OVERVIEW.md` describes the bootstrap phase as deliberately issuance-heavy to fund security and the useful-work programme, with the halving schedule doing the work of reducing it.
+
+### Older documents disagree
+
+`docs/anm_tokenomics_mainnet.md` describes a 2-second block time, a 5 ANM subsidy and a 78.84 M-block halving. Those were earlier parameter choices; the values that mainnet actually runs are the ones in `spec/params.yaml` and `consensus/rewards.py` quoted above (60 s, 300 ANM, 1.35 M blocks). Likewise the worked examples in `docs/economics/INFLATION.md`, `REWARDS.md` and `NUMERICS.md` are explicitly illustrative (some even assume 18 decimals) and do not describe live parameters. When documents disagree, `docs/ANIMICA_2026_STATE.md` and the code win.
+
+## Who receives the subsidy: the split and its forks
+
+The schedule fixes how much is minted per block. Consensus forks, activated at fixed heights and grandfathered below them, have changed how that amount is divided. The total never changed; only the division did. The foundation treasury address is hard-coded in `consensus/rewards.py` so that every node computes byte-identical balances: `anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga`.
+
+| Heights | Rule | Miner | Foundation treasury | Service carve |
+|---|---|---|---|---|
+| 1 – 42,000 | `subsidy_split_pct` in params (100/0/0) | 300 ANM | 0 | 0 |
+| 42,001 – 74,999 | `FORK_FOUNDATION_SPLIT` (release 7.1.0) | 255 ANM (85%) | 45 ANM (15%) | 0 |
+| 75,000 onward | `FORK_TREASURY_25` + `FORK_SERVICE_CARVE` (9.5.0/9.7.0) | 150 ANM (50%) | 75 ANM (25%) | 75 ANM (25%) |
+
+### The service carve
+
+The carve introduced at block 75,000 is the part most worth understanding, because its destination varies block by block. `consensus/service_carve.py` states the rule in one line: from the activation height the miner loses a fixed 25% of the subsidy whether or not anyone claims it, and settlement anchors decide only whether that slice reaches service providers or the treasury.
+
+- If a block contains **no** inference settlement anchor, the whole 75 ANM goes to the foundation treasury. On such a block the effective split is 150 ANM miner / 150 ANM treasury.
+- If a block contains **any** anchored claim, the **whole** 75 ANM is paid to the claiming providers pro-rata by claim size. Nothing falls back to the treasury in that case.
+
+The carve is measured against the full 300 ANM subsidy, not the miner's remainder (25% of 75% would be 18.75%, which is explicitly not the rule). The arithmetic is integer-only and emission-conserving: `paid + residual == carve` and `miner + carve == pre-carve miner slice`, so nothing is minted or burned by the split.
+
+Why is the carve not keyed on "did this miner serve inference"? Because nothing inside a block can prove it. There is no on-chain worker registry, job id or result hash that a validator could check, and `header.extra` is miner-authored. A rule that paid on self-attestation would pay anyone who edits a config value. The chain therefore never measures serving; it only declines to hand the service slice to the block producer. How providers actually get paid from that slice, and what is and is not enforced, is covered in [useful work: AI and quantum](/learn/useful-work-ai-and-quantum).
+
+### What this means in ANM
+
+Some arithmetic from the table (heights from `core/network_params.py`, head 81,213 as of 2026-08-23):
+
+- Blocks 42,001 to 74,999: 32,999 blocks × 45 ANM ≈ **1.48 M ANM** to the treasury from the 15% split.
+- Blocks 75,000 to 81,213: 6,214 blocks × 75 ANM ≈ **466,000 ANM** from the 25% treasury share, plus up to the same amount again from unclaimed carve.
+- A miner's take per block fell from 300 ANM to 255 ANM to 150 ANM across the two forks; the halving schedule was untouched each time.
+
+The design documents (`docs/economics/REWARDS.md`) also describe "committee" and "rain" buckets and an 80/15/5 provider/miner/treasury AICF split. Those are design options, not live mainnet rules: the only coinbase outputs on mainnet are the miner, the treasury and the carve described above.
+
+## Transaction fees
+
+A plain transfer costs 21,000 gas at a gas price of 1 nANM per gas, i.e. **21,000 nANM = 0.000021 ANM**, and admission requires `balance ≥ amount + gasLimit × gasPrice` (see [transactions and fees](/learn/transactions-and-fees)). For scale, one 300 ANM block subsidy equals the fees of about 14 million transfers, so fees are not a material part of supply or of miner revenue today.
+
+The fee runtime in `execution/runtime/fees.py` supports a base component that can be burned and a priority component split between the coinbase, the treasury and the AICF pool; `spec/params.yaml` configures mainnet as base-fee 50% burn / 25% treasury / 25% AICF and tips 90% miner / 10% AICF. At block application the node credits the block producer with the block's explicit fees minus the AICF tip slice (`core/chain/block_import.py`), and the runtime's `FeeConfig` defaults on mainnet (base fee 0, treasury and AICF tip shares 0 bps) make that slice zero, so today the whole fee goes to the block producer and nothing is burned. With a 1 nANM gas price and low transaction volume the net effect of any of this on supply is negligible; the EIP-1559-style "burn offsets issuance" dynamics described in `docs/economics/FEES.md` and `OVERVIEW.md` would only become relevant at volumes the network does not see today.
+
+## Reading the live supply
+
+The explorer exposes `https://explorer.animica.org/api/circulating-supply`, which returns a bare JSON number in whole ANM so that aggregators can consume it directly. Under the hood it calls the node's `state.getTotalSupply` RPC and divides by 10^9. As of 2026-08-23 it returns about **110.79 M ANM** at height 81,213.
+
+Note that the figure is the node's total of account balances, which is the genesis allocation plus everything credited by coinbases and other state credits since; it is not adjusted for vesting or for coins held by the foundation, so "circulating" here means "in existence on the ledger". If you want the subsidy-only view, the schedule gives it directly: every height from 1 to the current head has so far paid 300 ANM, so block subsidy to date is `300 × head` ANM.
+
+```bash
+# live supply in whole ANM
+curl -s https://explorer.animica.org/api/circulating-supply
+
+# the raw figure in nANM, straight from the node
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"state.getTotalSupply","params":[]}'
+```
+
+## Where ANM trades
+
+ANM trades on NonKYC (ANM/USDT): https://nonkyc.io/market/ANM_USDT. Nothing in this article is a comment on price; see [how to buy and accept ANM](/learn/how-to-buy-and-accept-anm) for the mechanics and the cautions that apply.
+
+## Key takeaways
+
+- 9 decimals; all protocol amounts are integer nANM.
+- 81 M ANM premine at genesis, credited to one foundation-managed account; vesting terms are policy, not consensus.
+- 300 ANM per block, halving every 1,350,000 blocks, with a 0.0001 ANM tail; mined supply converges to 810 M, total to just under 891 M, below the 900 M `MAX_MONEY` ceiling.
+- The first halving is expected around late 2028 to early 2029, triggered by height.
+- The split of the subsidy changed at 42,001 (85/15) and at 75,000 (50% miner / 25% treasury / 25% service carve); unclaimed carve goes to the treasury, any claimed carve goes entirely to providers.
+- Fees are 21,000 nANM per transfer and immaterial to supply at current volumes.
+- The explorer's supply figure is the node's `state.getTotalSupply` in whole ANM; about 110.79 M as of 2026-08-23.
+
+## Sources
+
+- `spec/params.yaml`
+- `docs/anm_tokenomics_mainnet.md`
+- `docs/economics/OVERVIEW.md`
+- `docs/economics/INFLATION.md`
+- `docs/economics/REWARDS.md`
+- `docs/economics/FEES.md`
+- `docs/economics/NUMERICS.md`
+- `docs/ANIMICA_2026_STATE.md`
+- `consensus/rewards.py`
+- `consensus/service_carve.py`
+- `core/network_params.py`
+- `execution/runtime/fees.py`
+- `explorer2/api/src/service.ts` (circulating-supply endpoint)

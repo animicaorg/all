@@ -1,0 +1,171 @@
+---
+title: "Animica addresses: bech32m, alg ids and SHA3-256 explained"
+description: "Anatomy of an anim1… address: the 34-byte payload, why bech32m and not bech32, a character-by-character decode of the published test vector, and how to validate addresses in code."
+date: 2026-08-23
+updated: 2026-08-23
+category: "protocol"
+tags: ["addresses", "bech32m", "bip-350", "sha3", "wallets"]
+readingLevel: "beginner"
+sources:
+  - docs/pq_keys_and_addresses.md
+  - python/_build_vendor/pq/py/address.py
+  - docs/wallet/HD_DERIVATION.md
+  - docs/wallets/ADDRESS_BOOK.md
+  - pq/alg_ids.yaml
+order: 3
+---
+
+An Animica address such as `anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7` packs three things into 66 characters: which signature algorithm the account uses, a 32-byte fingerprint of its public key, and a checksum that catches typos. This article takes the published test-vector address apart character by character, explains each design decision, and shows how to validate addresses correctly in your own code.
+
+## The format in one line
+
+From the reference codec (`pq/py/address.py`, vendored into the `animica` package):
+
+```
+address = bech32m("anim", convertbits(payload, 8 → 5))
+payload = alg_id (2 bytes, big-endian) ‖ SHA3-256(pubkey) (32 bytes)
+```
+
+So the payload is always exactly 34 bytes. Encoding 34 bytes as 5-bit groups gives 55 characters (272 bits padded to 275), the bech32m checksum adds 6, and the human-readable part `anim` plus the separator `1` add 5: 55 + 6 + 5 = 66 characters, for every account, regardless of algorithm.
+
+A few facts that follow directly:
+
+- **SHA3** means NIST SHA-3 (FIPS 202), not the pre-standard Keccak used by Ethereum. The two differ in padding and produce different digests for the same input.
+- The public key is never in the address. For ML-DSA-65 it is 1,952 bytes; the address commits to its digest, and the full key travels inside the transaction envelope.
+- Addresses are lowercase. bech32 strings are case-insensitive by specification, but mixed case is invalid and lowercase is canonical.
+
+## Why bech32m and not bech32
+
+bech32 (BIP-173) and bech32m (BIP-350) share the same alphabet, structure and checksum polynomial; they differ only in the constant XORed into the checksum (`1` versus `0x2bc830a3`). The change was made after a weakness was found in bech32's error detection for certain length changes. Animica uses bech32m exclusively, and the decoder checks the variant explicitly:
+
+```python
+if spec != "bech32m":
+    raise AddressError("Animica addresses must use bech32m")
+```
+
+This matters for integrators who reach for a generic bech32 library. Re-encoding the test vector's 34-byte payload with the plain bech32 constant produces a string that looks entirely plausible:
+
+```
+anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5s8e3wyu   # bech32 checksum: INVALID
+anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7   # bech32m checksum: valid
+```
+
+Only the last six characters differ. An Animica node rejects the first one. If your library exposes a single `bech32_decode` that returns the detected variant, check that it reports `bech32m`; if it silently accepts either, you need a stricter decoder.
+
+## Decoding the test vector by hand
+
+The bech32 alphabet maps each character to a 5-bit value:
+
+```
+q p z r y 9 x 8 g f 2 t v d w 0 s 3 j n 5 4 k h c e 6 m u a 7 l
+0 1 2 3 4 5 6 7 8 9 ...                                      31
+```
+
+Take the data part of the test vector (everything after `anim1`, minus the last six checksum characters) and look at the first four characters:
+
+| Char | Value | Bits |
+|---|---|---|
+| `z` | 2 | `00010` |
+| `q` | 0 | `00000` |
+| `p` | 1 | `00001` |
+| `n` | 19 | `10011` |
+
+Concatenated: `00010 00000 00001 10011`. The first 16 bits are `0001 0000 0000 0011` = `0x1003`, the ML-DSA-65 algorithm id. The remaining bits of `n` (`0011`) are the first four bits of the SHA3-256 digest. Running the reference decoder on the full string gives:
+
+```
+hrp     = anim
+spec    = bech32m
+alg_id  = 0x1003
+digest  = 3a548b5244ff391410a31007f6bf9797322f5ee902e1ae6751ab275b231aa6d2
+```
+
+That digest is `SHA3-256(pk)` where `pk` is the ML-DSA-65 public key generated from seed `e3bb5b74…c50835`, the key at path `m/44'/4279885'/0'/0'/0'` of the BIP-39 reference mnemonic ("abandon" ×11, "about"). The derivation is specified in `docs/wallet/HD_DERIVATION.md` and covered in [Wallets and HD derivation](/learn/wallets-and-hd-derivation).
+
+## Reading the prefix: `anim1zqp` and `anim1qqq`
+
+Because the algorithm id occupies the first 16 bits, the first three characters after `anim1` are a function of the algorithm alone, and the fourth character's top bit is too:
+
+| Algorithm id | First 15 bits | Prefix | Fourth character |
+|---|---|---|---|
+| `0x1003` ML-DSA-65 | `000100000000000` | `anim1zqp` | high bit 1: one of `s 3 j n 5 4 k h c e 6 m u a 7 l` |
+| `0x0000` contract | `000000000000000` | `anim1qqq` | high bit 0: one of `q p z r y 9 x 8 g f 2 t v d w 0` |
+
+All three HD test-vector addresses begin `anim1zqpn…`, `anim1zqpm…`, `anim1zqpn…`, and the sender in the live transaction shown below begins `anim1zqp6…`, consistent with the table. An illustrative contract-style string (algorithm id `0x0000` over `SHA3-256("example")`, not a real contract) is `anim1qqq8pxpadyhkfqv9l6lx6maxqa3s4e5xf8m7dlz9h9rgqztvqmj04kc8htc6q`.
+
+Legacy algorithm ids also exist in the registry. `0x1001` (the deprecated `dilithium3` stub) encodes as `anim1zqq` followed by a high-range fourth character, and `0x1002` (SPHINCS+) as `anim1zqp` followed by a low-range fourth character (`q p z r y 9 x 8 g f 2 t v d w 0`), so it can be told apart from an ML-DSA-65 address by that single character. Addresses with those ids can be decoded but cannot sign on mainnet; see [Post-quantum signatures on Animica](/learn/post-quantum-signatures-ml-dsa-65).
+
+## The address versus the account key
+
+The RPC and the explorer show the same account two different ways. For a transfer in block 81,213:
+
+```
+tx.getTransactionByHash → "from": "0xa15d728321989d9fb66cdbf9b5ad943db30b65b079eb74a36f7a4ce6d0c20eb1"
+explorer /api/tx/…      → "from": "anim1zqp6zhtjsvse38vlkekdh7d44k2rmvctvkc8n6m55dhh5n8x6rpqavgztza8r"
+```
+
+The hex value is the 32-byte digest; the bech32m string is `0x1003 ‖ digest` encoded. The state database keys accounts by the digest alone, with the algorithm id stripped. That design keeps the ledger independent of the address encoding, but it is also why the node hard-rejects the forgeable legacy scheme ids: a signature under a stub scheme for the same public key would otherwise debit the same 32-byte account. Conversion between the two forms is mechanical, and both `state.getBalance` and `state.getAccount` accept the bech32m form:
+
+```bash
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"state.getAccount",
+       "params":["anim1zqp6zhtjsvse38vlkekdh7d44k2rmvctvkc8n6m55dhh5n8x6rpqavgztza8r"]}'
+# → {"result":{"address":"anim1zqp6zh…","balance":"0x2d69cf7ba578"}}
+```
+
+Balances are hex-encoded integers in nANM; `0x2d69cf7ba578` is 49,932,475,803,000 nANM, or 49,932.475803 ANM.
+
+## Validating an address correctly
+
+The reference validator does five things, in order. Do all five; skipping the second or fourth is the common mistake.
+
+1. bech32 decode; any checksum failure is a rejection.
+2. Confirm the detected variant is `bech32m`.
+3. Confirm the HRP is the one for your network (`anim` on mainnet).
+4. Convert 5-bit groups back to bytes **without** padding and confirm the result is exactly 34 bytes.
+5. Read `alg_id = payload[0:2]` big-endian and confirm it is an id you are prepared to handle; for a wallet that means `0x1003` for accounts and `0x0000` for contracts.
+
+In Python, with the `animica` package installed:
+
+```python
+from pq.py.address import decode_address, address_from_pubkey, AddressError
+
+rec = decode_address("anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7",
+                     expect_hrp="anim")
+print(hex(rec.alg_id), rec.digest.hex())       # 0x1003 3a548b52…
+
+# Round-trip from a public key:
+addr = address_from_pubkey(pubkey_bytes, 0x1003)   # hrp defaults to "anim"
+```
+
+A wallet that has the public key can additionally recompute `SHA3-256(pubkey)` and compare it with the last 32 bytes of the payload, which is exactly what the node does when it verifies a transaction's `from` field against the attached key.
+
+## Other networks and older documents
+
+The mainnet HRP is `anim`. The repository is not consistent about test networks: `docs/pq/KEYS.md` lists `anit`/`anil`, while `spec/pq_policy.yaml` lists `ant`/`anv`. If you need a testnet address format, read the chain configuration of the network you are connecting to rather than assuming.
+
+Two older documents also describe a 33-byte payload with a one-byte algorithm tag (`dilithium3 = 0x01`). That format was superseded by the two-byte id in `pq/alg_ids.yaml` and the 34-byte payload in `pq/py/address.py`, and every live mainnet address decodes to 34 bytes. `docs/pq_keys_and_addresses.md` describes the current 34-byte layout but still quotes `0x0103` as Dilithium3's id from an earlier numbering; the registry value is `0x1003` for ML-DSA-65. When in doubt, the codec and the registry file are authoritative, and the test vector above is the quickest way to check an implementation.
+
+## Why this design
+
+- **Algorithm agility without variable length.** Putting the algorithm id in the payload lets the chain introduce a new signature scheme with new addresses while every address stays 66 characters. Rotations are meant to proceed through the policy lifecycle described in `docs/pq/POLICY.md`.
+- **Digest, not key.** A 1,952-byte key would make addresses unusable; SHA3-256 binds the key to 32 bytes and the full key is revealed only when the account first spends.
+- **Error detection.** bech32m guarantees detection of up to four character errors in strings of this length and locates most single errors, which is why wallets can show a specific "checksum failed" message instead of sending funds to a mistyped address.
+- **Display safety.** `docs/wallets/ADDRESS_BOOK.md` recommends showing `anim1…` plus the last characters (`anim1zqp…zp7`) in confined UI while always validating the full string internally, and keeping watch-only entries (address and label, no key) separate from signing accounts.
+
+## Key takeaways
+
+- Payload = `u16be(alg_id) ‖ SHA3-256(pubkey)`, 34 bytes; bech32m with HRP `anim`; 66 characters.
+- ML-DSA-65 accounts start `anim1zqp`; contract addresses start `anim1qqq`.
+- Plain bech32 checksums are invalid; check the variant, the HRP, the 34-byte length and the algorithm id.
+- The node keys accounts by the 32-byte digest, which is the `0x…` form you see in raw RPC output.
+- Use the published test vector to verify any new implementation.
+
+## Sources
+
+- `python/_build_vendor/pq/py/address.py` (reference codec)
+- `pq/alg_ids.yaml`
+- `docs/wallet/HD_DERIVATION.md` (test vectors)
+- `docs/pq_keys_and_addresses.md`
+- `docs/pq/KEYS.md`, `spec/pq_policy.yaml` (older, partly superseded)
+- `docs/wallets/ADDRESS_BOOK.md`
+- Live reads of `tx.getTransactionByHash`, `state.getAccount` and the explorer `/api/tx/` endpoint on 2026-08-23

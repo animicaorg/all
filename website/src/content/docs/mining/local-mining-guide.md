@@ -1,0 +1,169 @@
+---
+title: "Mine Animica locally (devnet or pool)"
+description: "A full local mining setup from source: start a devnet with RPC and WebSocket, run the built-in CPU or GPU miner, and expose a Stratum pool for external miners."
+group: "mining"
+order: 1
+draft: false
+---
+
+*Source: `docs/tutorials/MINING_GUIDE.md` — this page mirrors the repository documentation.*
+
+This guide walks through a full local mining setup: install dependencies, start a devnet with RPC/WS, run the built-in miner (CPU or GPU), and optionally expose Stratum so external miners can connect. All commands are copy-pasteable and default to localhost.
+
+---
+
+## 0) Prerequisites
+
+- **Python 3.10+** (system Python or a virtual environment)
+- **Git** and build tooling for Python packages (Rust toolchain optional for native speedups)
+- Optional: GPU drivers/runtime if you want to try `--device cuda|rocm|opencl|metal`
+
+Clone the repo and enter it:
+
+```bash
+git clone https://github.com/animicaorg/all.git animica
+cd animica
+```
+
+---
+
+## 1) Install mining and RPC dependencies
+
+Use the setup script to install all required dependencies including stratum pool modules and the Omni SDK:
+
+```bash
+./setup.sh
+source .venv/bin/activate
+```
+
+The setup script installs:
+- Python virtual environment with all dependencies
+- Core, RPC, and mining packages in editable mode
+- Stratum pool modules (fastapi, uvicorn)
+- Omni SDK with RPC client support
+- Additional tools (requests, trio for async RPC tests)
+
+> The SDK is required for `mine-blocks` command and RPC interactions.
+
+---
+
+## 2) Bootstrap a devnet and RPC server
+
+Initialize a fresh database from the bundled genesis, export it for the RPC server, then start the RPC/WS surfaces:
+
+```bash
+python -m core.boot \
+  --genesis core/genesis/genesis.json \
+  --db sqlite:///animica_dev.db
+
+export ANIMICA_DB=sqlite:///animica_dev.db
+python -m rpc.server --host 127.0.0.1 --port 8545
+```
+
+- HTTP JSON-RPC: `http://127.0.0.1:8545/rpc`
+- WebSocket hub: `ws://127.0.0.1:8546/ws` (same base host/port; auto-bound by the server)
+
+Leave this terminal running so the node advances and serves work templates.
+
+---
+
+## 3) Run the built-in miner (CPU or GPU)
+
+### Quick Mining for Testing
+
+For quick testing and development, you can mine a specific number of blocks to a target address:
+
+```bash
+source .venv/bin/activate
+
+# Mine 10 blocks to your address (block rewards credited to this address)
+animica miner mine-blocks --address anim1... --count 10 --rpc-url http://127.0.0.1:8545
+
+# Or use the mining module directly
+python -m mining.cli.miner mine-blocks --address anim1... --count 10 --rpc-url http://127.0.0.1:8545
+```
+
+The `--address` parameter specifies where block rewards are credited. Accepts both bech32 (anim1...) and hex (0x...) format addresses.
+
+### Continuous Mining
+
+Start the continuous miner in another terminal. The defaults bind to the local RPC/WS endpoints; set `--device` to choose your backend:
+
+```bash
+source .venv/bin/activate  # if you created one
+python -m mining.cli.miner start \
+  --threads 4 \
+  --device cpu \
+  --rpc-url http://127.0.0.1:8545 \
+  --ws-url ws://127.0.0.1:8546
+```
+
+Expected output (truncated):
+
+```text
+INFO mining.templates refreshing work from head height=0 theta=…
+INFO mining.hash_search found share d_ratio_ppm=712345 nonce=0x...
+INFO mining.share_submitter accepted share template=…
+```
+
+Switch to a GPU by changing `--device cuda` (or `rocm|opencl|metal`) when the corresponding backend and drivers are available.
+
+Handy environment overrides (alternatives to CLI flags):
+
+- `MINER_THREADS`, `MINER_DEVICE`, `MINER_TARGET_SHARES_PER_SEC`
+- `ANIMICA_RPC_URL`, `ANIMICA_WS_URL`, `ANIMICA_CHAIN_ID`
+
+---
+
+## 4) Inspect current work (one-shot)
+
+Use the lightweight helper to print the current mining template via JSON-RPC:
+
+```bash
+python -m mining.cli.getwork --rpc-url http://127.0.0.1:8545 --chain-id 1 --pretty
+```
+
+Output is a JSON object containing `parentHash`, `thetaMicro`, `gammaCap`, `nonceDomain.mixSeed`, and coinbase data bound to the current head.
+
+---
+
+## 5) Run the managed Stratum pool
+
+Start the built-in pool against the local node:
+
+```bash
+animica pool up --daemon \
+  --rpc-url http://127.0.0.1:8545/rpc \
+  --pool-address anim1... \
+  --host 0.0.0.0 \
+  --port 3333
+```
+
+Validate that the node and pool are issuing real templates:
+
+```bash
+animica pool doctor
+animica pool test-job
+animica pool status
+```
+
+Connect the reference Stratum miner:
+
+```bash
+python -m animica.stratum_pool.reference_cpu_miner \
+  --host 127.0.0.1 \
+  --port 3333 \
+  --address anim1... \
+  --worker rig-1
+```
+
+The managed pool uses `miner.getBlockTemplate` and `miner.submitBlock`, so full-target shares map back to real submit-ready Animica blocks instead of fake share-only jobs.
+
+---
+
+## 6) Tuning and troubleshooting
+
+- **Adaptive share target:** the miner auto-tunes share difficulty to keep submissions steady; deeper shares (`d_ratio_ppm` closer to Θ) are preferred when assembling blocks.
+- **Proof attachments:** if AI/Quantum/Storage/VDF workers are running locally, the miner will attach verified proofs that increase Σψ and make block sealing easier.
+- **Metrics:** scrape `/metrics` from the RPC server to watch `animica_miner_hashrate_shares_per_sec`, `animica_miner_shares_rejected_total{reason=…}`, and block seals.
+- **Reset state:** stop the miner and RPC server, delete `animica_dev.db`, and rerun the bootstrap commands to start fresh.

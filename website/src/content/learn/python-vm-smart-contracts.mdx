@@ -1,0 +1,188 @@
+---
+title: "Smart contracts on Animica: the deterministic Python VM"
+description: "How Animica's Python-VM works: the deterministic language subset, the stdlib, bytes-only storage, the gas table, the ABI, and which capabilities are actually wired up."
+date: 2026-08-23
+updated: 2026-08-23
+category: "build"
+tags: ["python-vm", "smart-contracts", "gas", "abi", "determinism"]
+readingLevel: "intermediate"
+sources:
+  - docs/vm/OVERVIEW.md
+  - docs/vm/GAS_MODEL.md
+  - docs/vm/SANDBOX.md
+  - docs/vm/CAPABILITIES.md
+  - docs/vm/PATTERNS.md
+  - docs/vm/ABI.md
+  - vm_py/specs/DETERMINISM.md
+  - vm_py/specs/GAS.md
+  - vm_py/gas_table.json
+  - vm_py/stdlib/storage.py
+  - vm_py/stdlib/treasury.py
+  - vm_py/runtime/syscalls_api.py
+  - vm_py/runtime/abi.py
+  - vm_py/examples/counter/contract.py
+order: 1
+---
+
+Animica contracts are written in Python, not Solidity, and they run in a purpose-built interpreter called VM(Py) that lives in the `vm_py/` package of the node. This article explains what that VM accepts and rejects, how storage, events and gas actually behave, how calls are encoded on the wire, and which parts of the documented capability surface are live today versus shipped as placeholders.
+
+## Why a Python subset
+
+Every node in a blockchain must reach the same result from the same transaction, so a contract language cannot depend on anything that varies between machines: wall-clock time, floating-point rounding, hash seeds, thread scheduling, or the order of a hash set. Animica's answer is to keep ordinary Python syntax for the parts that are already deterministic (integers, bytes, `if`/`for`/`while`, functions) and to reject everything else at validation time, before any code is compiled.
+
+The pipeline described in `docs/vm/OVERVIEW.md` is: AST validation, lowering to a small intermediate representation (IR), type checking, a static gas upper-bound pass, canonical CBOR encoding of the IR, and execution by a gas-metered interpreter. The SHA3-256 of the encoded IR becomes the code hash that identifies the contract on chain. Contract addresses use algorithm id `0x0000` in the address payload, which is how an `anim1…` address is recognisable as a contract rather than an ML-DSA-65 account (see [Addresses](/learn/animica-addresses-bech32m)).
+
+## What the validator allows and forbids
+
+`vm_py/specs/DETERMINISM.md` is normative here. The rules worth memorising:
+
+| Allowed | Rejected |
+|---|---|
+| `def` functions; `if/elif/else`, `for`, `while`, `break`, `continue` | Any `import` other than `from stdlib import …` |
+| `int`, `bool`, `bytes`, `bytearray`, `str` literals, tuples and lists of those | `float`, `decimal`, `fractions`, complex numbers |
+| Integer arithmetic including `//`, `%`, bit operations, shifts (within caps) | True division `/` |
+| `len`, `range`, `min`, `max`, `abs`, `sum`, `sorted`, `int.from_bytes`, `int.to_bytes` and the rest of the builtins allowlist | `hash()`, `open`, `print`, `eval`, `exec`, `getattr`/`setattr` on strings, `__import__` |
+| `try/except` on VM-defined exceptions | Generators, `async`, `with`, decorators that capture functions |
+| Dict construction and lookup | Iterating a dict without sorting first; `set` and `frozenset` anywhere |
+| Helper functions calling each other | Recursion, direct or indirect |
+
+The reasoning is spelled out in the spec's rationale section: floats differ in rounding modes across platforms, sets iterate in salted-hash order, recursion depth is interpreter-dependent, and `hash()` is randomised per process. None of that can be allowed to influence state.
+
+## A contract, as the repo ships it
+
+The canonical example is `vm_py/examples/counter/contract.py`. Trimmed of docstrings it is:
+
+```python
+from typing import Final
+from stdlib import abi, events, storage
+
+K_COUNTER: Final[bytes] = b"counter:value"
+MIN_VALUE: Final[int] = 0
+MAX_VALUE: Final[int] = 2**255 - 1
+
+def _load() -> int:
+    raw = storage.get(K_COUNTER)
+    if not raw:
+        return 0
+    return int.from_bytes(raw, byteorder="big", signed=True)
+
+def _store(value: int) -> None:
+    abi.require(isinstance(value, int), b"counter: value must be int")
+    abi.require(MIN_VALUE <= value <= MAX_VALUE, b"counter: value out of range")
+    storage.set(K_COUNTER, int(value).to_bytes(32, byteorder="big", signed=True))
+
+def get() -> int:
+    return _load()
+
+def inc() -> None:
+    new = _load() + 1
+    _store(new)
+    events.emit(b"Counter.Incremented", {b"new": new})
+
+def set(n: int) -> None:
+    abi.require(isinstance(n, int), b"counter: n must be int")
+    abi.require(n >= 0, b"counter: negative")
+    _store(n)
+    events.emit(b"Counter.Set", {b"value": n})
+```
+
+Three details in that twenty-line file are the ones that trip up people arriving from other chains.
+
+**Storage holds bytes, only bytes.** `vm_py/stdlib/storage.py` raises `TypeError` if you pass an `int` as a value, and a read of a key that was never written returns `b""`, not `None`. That is why `_load` tests `if not raw` and why the counter is stored as a 32-byte big-endian integer. Some older tutorial prose in `docs/vm/` writes `storage.get(KEY) or 0` or `storage.set(key, 5)`; the shipped library does not accept that. Encode integers yourself and decode them on the way out.
+
+**Errors are reverts, not exceptions.** `abi.require(cond, b"reason")` and `abi.revert(b"reason")` produce a canonical REVERT that shows up in the receipt. Python `assert` is rejected by the validator. Keep reason strings short ASCII bytes.
+
+**Events are your only debug channel.** There is no `print`. `events.emit(name: bytes, args: dict)` writes a log whose ordering is exactly program order, and the SDKs decode it from `tx.getTransactionReceipt`. `docs/vm/DEBUGGING.md` recommends a throwaway `DBG` event during development.
+
+## The stdlib surface and what is behind it
+
+Contracts may only import from a synthetic `stdlib` package. `vm_py/stdlib/__init__.py` exports `storage, events, hash, abi, treasury, syscalls, ena`. The status of each, checked against the source rather than the prose docs:
+
+| Module | Functions | Status in the shipped runtime |
+|---|---|---|
+| `storage` | `get(key)`, `set(key, value)`, `delete(key)` | Live. Bytes in, bytes out; missing key returns `b""`. Writes are journaled and committed only if the call succeeds. |
+| `events` | `emit(name, args)` | Live. Keys are bytes; the runtime converts them for the log encoder. |
+| `hash` | `sha3_256`, `sha3_512`, `keccak256` | `sha3_256`/`sha3_512` are backed by `hashlib` and always available. `keccak256` depends on an optional package and raises if it is missing. Prefer SHA3-256; SHA3-256 and Keccak-256 are different functions. |
+| `abi` | `require`, `revert`, `caller()`, `sender()`, `tx_origin()`, `self_address()`, `contract_address()`, `value()`, `chain_id()`, `tx_hash()`, `block_height()`, `block_timestamp()`, `call_depth()`, `is_read_only()`, `encode_struct`, `decode_struct` | Live. This is where the call context lives; there is no `msg.sender` object. `call_contract`/`try_call_contract` exist as functions but cross-contract calls are not enabled (`docs/vm/PATTERNS.md` says the same). |
+| `treasury` | `balance(addr)`, `transfer(from, to, amount)` | Placeholder. `vm_py/stdlib/treasury.py` returns `0` from `balance` and `transfer` is a no-op; its own comment says the real implementation lives in the chain runtime. Do not build value flows on it. |
+| `syscalls` | `blob_pin`, `ai_enqueue`, `quantum_enqueue`, `read_result`, `zk_verify`, `random` | Deterministic shims. `vm_py/runtime/syscalls_api.py` routes them through a pluggable provider; the default is `_LocalNoOpProvider`, whose `ai_enqueue` returns a real task id tagged `"local-noop"` and whose `read_result` never reports a result. A host must call `set_provider(...)` to wire these to real capabilities. |
+
+The capability design in `docs/vm/CAPABILITIES.md` (deterministic task ids derived from chain id, height, tx hash, caller and payload; enqueue in one block, consume in a later one; canonical error codes such as `cap:no_result_yet`) is coherent and gas-priced, but you should read it as the intended interface. Real AI inference on Animica today is requested and served through the `aicf.*` RPC namespace and paid for off the VM; see [AICF](/learn/aicf-ai-compute-framework).
+
+## Gas: the table the runtime loads
+
+`docs/vm/GAS_MODEL.md` and `vm_py/specs/GAS.md` describe the shape of the model: every IR instruction and stdlib call has a fixed or affine cost, gas is debited before work is done, running out aborts the call at the same instruction on every node, and there are no refunds in v1. The numbers themselves live in `vm_py/gas_table.json`, which is what `GasMeter` reads. Its header says it was tuned for devnet and is subject to the policy in `spec/opcodes_vm_py.yaml`; changing it is a consensus change.
+
+| Operation | Cost from `gas_table.json` |
+|---|---|
+| `PUSH_CONST` / `LOAD_LOCAL` / `STORE_LOCAL` | 2 / 2 / 3 |
+| `ADD`, `SUB` / `MUL` / `DIV`, `MOD` | 3 / 5 / 8 |
+| `JUMP` / conditional jump / `CALL_INTERNAL` | 5 / 6 / 8 |
+| `storage.get` | 40 + 1 per key byte |
+| `storage.set` | 200 + 1 per key byte + 4 per value byte |
+| `events.emit` | 100 + 20 per topic + 2 per data byte |
+| `hash.sha3_256` / `hash.sha3_512` | 25 + 1 per byte / 35 + 1 per byte |
+| `abi.require` | 5 |
+| `syscalls.ai_enqueue` | 10,000 + 1 per prompt byte |
+| `syscalls.blob_pin` | 5,000 + 2 per byte |
+| `syscalls.zk_verify` | 5,000 + 10 per input byte |
+
+Limits in the same file: stack depth 1,024, internal call depth 64, at most 4 event topics, at most 1 MiB of bytes per call.
+
+A worked estimate for the counter's `inc()` using only the stdlib rows: the key `b"counter:value"` is 13 bytes and the stored value is 32 bytes, so `storage.get` costs 53, `storage.set` costs 200 + 13 + 128 = 341, the two `abi.require` calls cost 10, and the event (two topics, about 7 bytes of canonical args) costs roughly 154. That is about 560 gas before the few dozen IR instructions, which add tens of gas, not hundreds. The static estimator (`python -m vm_py.cli.inspect_ir`) prints the real upper bound for any compiled artifact.
+
+Note that the illustrative tables inside `docs/vm/GAS_MODEL.md` use different magnitudes (for example `storage.set` at 160 base and per-64-byte hashing slopes). The JSON table is the resolved artifact; the prose is a description of the model's shape.
+
+## The ABI: not the EVM ABI
+
+`docs/vm/ABI.md` defines a compact, length-prefixed codec with no 32-byte slot padding:
+
+- Lengths and counts are LEB128 unsigned varints, minimal form only.
+- An `int` is `uvarint(L)` followed by `L` big-endian bytes with no leading zero; zero is encoded as `L = 0` with no payload. Values are capped at 256 bits.
+- `bool` is one byte, `0x00` or `0x01`.
+- `bytes` is `uvarint(len)` followed by the raw bytes.
+- An `address` is encoded as 33 bytes: one algorithm-id byte followed by the 32-byte SHA3-256 public-key hash. SDKs convert to and from the bech32m text form.
+- Tuples and arrays are `uvarint(n)` followed by the elements.
+
+A function selector is the first 8 bytes of `sha3_256(b"fn:" + signature)`, where the signature includes the return types, for example `get()->int` or `transfer(address,int)->bool`. Call data is the selector followed by the argument tuple; return data is the result tuple. Event logs carry `topic[0] = sha3_256(b"event:" + name)` and `topic[1]` as a hash of the canonical, key-sorted argument encoding, with the same encoding as the log data.
+
+The manifest (`manifest.json` next to the source) declares the functions, their input and output types, the events and the error strings, and is what `animica contract compile --abi-out` turns into the ABI JSON used by the CLI and SDKs.
+
+## Patterns that fit this VM
+
+Because there are no cross-contract calls and no delegatecall, `docs/vm/PATTERNS.md` recommends upgradeability by indirection rather than proxies: either a single facade contract whose behaviour is gated by a stored `impl_epoch` and a pinned implementation hash, or an on-chain name-to-address registry that clients resolve. Both keep determinism trivial. The same document sketches role-based access control stored as `cfg:v1:role:<role>:<addr>` keys, a pause flag checked by every write path, and a two-phase (propose, then execute after a delay) upgrade bookkeeping pattern. Namespacing keys by feature and version (`state:v1:…`, `cfg:v1:…`, `meta:v1:…`) is the convention the standard token contract follows as well.
+
+## Toolchain
+
+| Task | Command |
+|---|---|
+| Compile to IR | `animica contract compile contract.py --out build/c.avm --abi-out build/c.abi.json` or `python -m vm_py.cli.compile contract.py --out out.ir` |
+| Static gas and IR dump | `python -m vm_py.cli.inspect_ir --ir out.ir` |
+| Local call without a node | `python -m vm_py.cli.run --manifest manifest.json --call inc` |
+| Deploy / call / send on a node | `animica contract deploy …`, `animica contract call …`, `animica contract send …` |
+
+The full flow, with real commands and the things that go wrong, is in [the Counter tutorial](/learn/hello-counter-contract-tutorial). Transaction mechanics (fees, the 21,000-gas transfer, admission rules) are covered in [Transactions and fees](/learn/transactions-and-fees).
+
+## Key takeaways
+
+- Contracts are plain Python modules restricted to a deterministic subset; the validator, not convention, enforces the restriction.
+- Storage is bytes-only and a missing key reads as `b""`; encode integers explicitly.
+- Gas costs come from `vm_py/gas_table.json`; the prose tables are illustrative.
+- The ABI is a compact varint codec with 8-byte SHA3-256 selectors, not the EVM ABI.
+- `treasury.*` and `syscalls.*` are placeholders in the shipped runtime unless a host provider is installed; real AI compute goes through `aicf.*`.
+- No cross-contract calls today, so upgradeability is done by indirection, not proxies.
+
+## Sources
+
+- docs/vm/OVERVIEW.md
+- docs/vm/GAS_MODEL.md
+- docs/vm/SANDBOX.md
+- docs/vm/CAPABILITIES.md
+- docs/vm/PATTERNS.md
+- docs/vm/ABI.md
+- vm_py/specs/DETERMINISM.md
+- vm_py/specs/GAS.md
+- vm_py/gas_table.json
+- vm_py/stdlib/storage.py, vm_py/stdlib/treasury.py, vm_py/stdlib/__init__.py
+- vm_py/runtime/syscalls_api.py, vm_py/runtime/abi.py
+- vm_py/examples/counter/contract.py

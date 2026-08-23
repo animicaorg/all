@@ -1,0 +1,249 @@
+---
+title: "Mining Animica: from animica up to pool payouts"
+description: "How Animica proof-of-work mining works on mainnet, how to start with one command, pool versus solo on ports 3333 and 3334, and how the 300 ANM block subsidy is split."
+date: 2026-08-23
+updated: 2026-08-23
+category: "operate"
+tags: ["mining", "pool", "stratum", "sha3-256", "poies", "rewards"]
+readingLevel: "beginner"
+sources:
+  - docs/tutorials/MINING_GUIDE.md
+  - docs/MINING_TROUBLESHOOTING.md
+  - docs/mining_scripts.md
+  - docs/miner-rpc.md
+  - docs/stratum-asic.md
+  - docs/mining-asic-sha256.md
+  - mining/README.md
+  - animica-pool/README.md
+  - docs/economics/REWARDS.md
+  - docs/DIFFICULTY_ADJUSTMENT.md
+  - docs/ANIMICA_2026_STATE.md
+  - docs/exposure/recon/chain-facts.md
+  - docs/CHANGELOG.md
+  - spec/params.yaml
+  - core/network_params.py
+  - consensus/tests/test_service_carve.py
+  - python/animica/stratum_pool/api.py
+  - python/README.md
+  - README.md
+order: 1
+---
+
+This guide explains what an Animica miner actually computes, how to start mining with a single command, how the public pool's two Stratum ports differ, and how block rewards are split on mainnet after block 75,000. It is written for someone who has never mined Animica before but is comfortable with a terminal. Where the repository documentation is stale or describes a devnet-only feature, that is called out rather than glossed over.
+
+## What you are mining
+
+Animica is a proof-of-work chain with a 60-second target block interval. The work function is SHA3-256 (FIPS 202 SHA-3, not the pre-standard Keccak padding): a candidate block hash is `sha3_256(serialized header || nonce)`, and the miner's job is to find a nonce whose hash clears the current threshold.
+
+The threshold is expressed differently from Bitcoin. Instead of a target integer, Animica uses **PoIES** scoring. The 32-byte hash is mapped to a uniform value `u` in (0, 1], the hash work is scored as `H(u) = -ln(u)`, and a block is accepted when
+
+```text
+S = H(u) + Σψ  ≥  Θ
+```
+
+where `Θ` ("theta") is the difficulty in micro-nats and `Σψ` is the credit for verified useful-work proofs (AI, quantum, storage, VDF) attached to the block. Higher `Θ` means harder mining. The head on 2026-08-23 reported `thetaMicro = 26,392,958`, i.e. about 26.4 nats, and the retarget keeps `Θ` moving a few tenths of a percent per block.
+
+One honesty note that matters for miners: on mainnet today `Σψ` is zero. The reference miner attaches no useful-work proofs, every stored mainnet block carries an empty proof list, and the `FORK_USEFUL_WORK_VERIFY` rule that activated at 75,000 runs in shadow mode (it logs, it does not enforce). Blocks are won on hash work alone. The protocol supports useful-work credit; the network does not yet use it. See [PoIES consensus explained](/learn/poies-consensus-explained) and [Useful work: AI and quantum](/learn/useful-work-ai-and-quantum) for the design.
+
+Difficulty retargets every block with an EMA/proportional controller over the log ratio of observed to target interval; the mainnet importer derives a half-life of about 4.3 blocks from the `ema_beta = 0.15` in `spec/params.yaml`, uses a gain of 0.5 and clamps each step to 162,518 µ-nats (about 17% in expected work). Details are in [Difficulty adjustment and theta](/learn/difficulty-adjustment-and-theta). The measured average block time on the explorer on 2026-08-23 was about 67 seconds against the 60-second target.
+
+## Start mining in one command
+
+The supported path for mainnet is the PyPI package:
+
+```bash
+pip install --upgrade animica
+animica up
+```
+
+`animica up` does several things at once, chosen by what your machine can do:
+
+- creates a wallet under `~/.animica/wallets.json` if you do not have one and uses it as the payout address (pass `--address anim1...` to override);
+- connects to `pool.animica.org:3333` by default (`--pool-host`, `--pool-port`);
+- runs SHA3 proof-of-work on CPU, or on every visible GPU (CUDA, ROCm, OpenCL, Metal);
+- runs ENA useful-work and, on a GPU with enough memory, an AICF inference worker that serves AI jobs for extra ANM;
+- enrols a qualified GPU (16 GB VRAM or more) in Bittensor serving, with earnings paid in ANM.
+
+Preview what will run before committing:
+
+```bash
+animica up --plan
+animica up --profile miner          # PoW only
+animica up --without bittensor      # everything except Bittensor serving
+animica up --with-node              # also run a local full node
+```
+
+The wallet that `animica up` creates is the only place your payout key lives, and by default the CLI stores the secret key unencrypted in `wallets.json` unless you supply a passphrase. Back it up and consider `animica wallet encrypt` before the first payout arrives; the details are in [Wallets and HD derivation](/learn/wallets-and-hd-derivation).
+
+The pool enforces a minimum miner version and rejects older clients, so `pip install --upgrade animica` is the first thing to try when shares stop being accepted.
+
+### The manual path
+
+`animica up` is a front-end for component commands you can run yourself. The plain Stratum miner is:
+
+```bash
+animica miner start \
+  --pool pool.animica.org:3333 \
+  --address anim1... \
+  --worker rig-1 \
+  --device auto \
+  --threads 0
+```
+
+Useful flags and their environment equivalents:
+
+| Flag | Env var | Meaning |
+|---|---|---|
+| `--pool` | `ANIMICA_MINER_POOL` | Stratum host:port (default `pool.animica.org:3333`) |
+| `--address` | `ANIMICA_MINER_ADDRESS` | payout address or wallet label |
+| `--worker` | `ANIMICA_MINER_WORKER` | name shown in pool stats (defaults to the address) |
+| `--device` | `ANIMICA_MINER_DEVICE` | `cpu`, `cuda`, `rocm`, `opencl`, `metal`, `auto` |
+| `--threads` | | CPU threads; `0` auto-detects and is capped at the detected CPU count |
+| `--no-aicf` | | disable the AICF worker that otherwise runs alongside PoW |
+
+`--device auto` tries CUDA, then ROCm, then OpenCL, then Metal, and falls back to CPU with a warning. Multi-GPU rigs fan the nonce search out across all cards over disjoint nonce bands, so an N-GPU machine does roughly N times the work of one card.
+
+There is also a Qt desktop GUI miner (`apps/miner-gui`, launched with `animica gui miner`) with a first-run wizard and live hashrate graphs; installers are listed on [animica.org/downloads](https://animica.org/downloads).
+
+## Pool or solo: ports 3333 and 3334
+
+The public pool at `pool.animica.org` runs two Stratum listeners. Both are described by the pool's own stats API (`/api/pool/summary`) and its Swagger page at [pool.animica.org/api/docs](https://pool.animica.org/api/docs).
+
+| Endpoint | Mode | How you are paid |
+|---|---|---|
+| `stratum+tcp://pool.animica.org:3333` | PPS | each accepted share is credited at its expected value; as of 2026-08-23 every worker reports a share difficulty of 1.0 (the block target), so shares and blocks coincide in practice (see below) |
+| `stratum+tcp://pool.animica.org:3334` | true solo | only when *your* worker finds a block; the finder keeps 95%, the pool keeps 5% |
+
+**PPS (pay-per-share)** is designed to be the low-variance choice: the pool can serve a worker a *share target* easier than the block threshold `Θ`, so a small CPU submits "sub-block" shares many times an hour and earns steady credit. The share target is adaptive (vardiff): a fresh pool bootstraps at a start difficulty of 0.01 relative to the block target (`ANIMICA_STRATUM_START_DIFFICULTY`) and ratchets up from accept-rate feedback. Two bugs fixed in 5.3.0 and 5.3.1 had the miner and the pool both collapsing the share target to the full block target, so small miners were only credited when they found an entire block. An honesty note about the live pool: the per-session sub-block mechanism built in pool releases 9.1.0 to 9.2.0 lives on a branch that was never merged into the main line the public pool runs (`python -m animica.stratum_pool`, restarted 2026-08-21), and the main-line pool pins the wire difficulty floor at 1.0 for xmrig compatibility. On 2026-08-23 `/api/miners` reported `difficulty: 1.0` for every worker and the pool's hourly share count matched its hourly block count, so in practice a share is currently a block and PPS credit accrues to block finders. Treat steady sub-block income as designed, not yet delivered.
+
+**Solo (3334)** is for people who want the whole block reward and accept the variance. The expected interval between your blocks is the network interval divided by your fraction of network hashrate. With the network at roughly 52 MH/s and blocks every 67 seconds (both as of 2026-08-23), a miner with 1% of the network would expect a block about every 6,700 seconds, a little under two hours; a miner with 0.01% would wait on the order of a week. The pool's 3334 listener validates and submits your block for you, takes 5%, and pays the rest.
+
+The pool's PPS credit is an accounting entry until a payout transaction is sent; the pool API exposes per-miner stats (`/api/miners/{id}`) and recent blocks (`/api/blocks/recent`) so you can reconcile. Pool payouts are ordinary on-chain transfers, visible on the explorer like any other transaction (see [Block explorer guide](/learn/block-explorer-guide)).
+
+### A dated example
+
+The pool summary on 2026-08-23 at 12:48 UTC reported:
+
+```json
+{
+  "pool_mode": "pps",
+  "height": 81213,
+  "network_hashrate_hps": 52494044.7,
+  "blocks_found_total": 61057,
+  "round_estimated_reward": "150000000000",
+  "latest_block": {
+    "height": 81212,
+    "reward": "150000000000",
+    "found_by_pool": true
+  },
+  "stratum_endpoint": "stratum+tcp://0.0.0.0:3333"
+}
+```
+
+The reward figures are in nANM; `150000000000` nANM is 150 ANM, which is the miner's share of the 300 ANM subsidy after the block-75,000 split described below.
+
+## What hardware matters
+
+The repository documents the following; it does not publish benchmark tables, and this article deliberately does not invent hashrates.
+
+- **CPU.** The native CPU miner (`animica-fastpow`) is included in the base `pip install animica`. The thread count is capped at the detected CPU count; asking for more threads does nothing useful, and the batch size scales automatically.
+- **GPU.** Backends exist for CUDA (a fused CUDA C Keccak kernel where one thread hashes one nonce in registers, with every candidate re-verified on the host with `hashlib`), a portable PyTorch SHA3 path, ROCm, OpenCL, and Apple Metal. Every GPU is used automatically.
+- **ASICs.** The chain-facts document records no known SHA3-256 ASICs. The repository also ships an *experimental* `asic_sha256` Stratum profile for Bitcoin-style SHA-256 hardware; it translates to a separate job format and is documented as submitting through a stub endpoint. Do not expect to point a Bitcoin ASIC at port 3333 and earn ANM.
+- **Memory decides the AI tiers.** If you also serve inference, `animica up` advertises tiers by available GPU VRAM (or Apple unified memory; CPU boxes cap at `standard`): `free` at 3 GB or more, `standard` at 7 GB, `premium` at 15 GB, `elite` at 72 GB. Multi-GPU rigs pool their VRAM for this decision.
+
+Because the mainnet block hash is plain SHA3-256 and there is no memory-hard component, raw hash throughput is what counts for the PoW part. The useful-work and serving components are where a GPU earns beyond its hashrate.
+
+## How rewards work
+
+### The subsidy schedule
+
+Mainnet parameters (`spec/params.yaml`, `networks.mainnet.monetary.issuance`):
+
+| Parameter | Value |
+|---|---|
+| Starting subsidy | 300 ANM per block (300,000,000,000 nANM) |
+| Halving epoch | every 1,350,000 blocks (about 2.57 years at 60 s) |
+| Decay | 50% per epoch |
+| Tail | 0.0001 ANM per block, never lower |
+| Hard cap | 900,000,000 ANM, enforced in code |
+
+The math is integer-exact: `subsidy(e) = floor(300e9 * 50^e / 100^e)` nANM for epoch `e`. The first halving lands at block 1,350,000. With the head near 81,200 on 2026-08-23, mainnet is still in epoch 0 at 300 ANM per block.
+
+### How the 300 ANM is split today
+
+The split has changed twice through height-gated forks, and a pool or exchange that did not upgrade would silently mis-credit balances:
+
+| Heights | Miner | Foundation treasury | Service carve |
+|---|---|---|---|
+| 1 to 42,000 | 100% | 0 | 0 |
+| 42,001 to 74,999 | 85% (255 ANM) | 15% (45 ANM) | 0 |
+| 75,000 onward | 50% (150 ANM) | 25% (75 ANM) | 25% (75 ANM) |
+
+At 75,000 two things activated together: `FORK_TREASURY_25` raised the treasury share from 15% to 25%, and `FORK_SERVICE_CARVE` reserved a further 25% of every block for inference and service providers, *withheld from the miner whether or not anyone claims it*. If no provider anchors a claim in a block, the carve rolls to the foundation treasury (so the block is effectively 50% miner, 50% treasury). If any claim is present, the whole 75 ANM slice is paid to the claimants pro rata. The invariant the tests enforce is emission conservation: miner plus carve equals the pre-carve subsidy, every block.
+
+The practical consequence for a miner: the network can pay hashers at most 1,440 blocks per day times 150 ANM, or 216,000 ANM per day in total, across everyone. No amount of hardware changes that ceiling; it only changes your slice of it.
+
+Transaction fees are small at current usage. A plain transfer costs 21,000 gas at a gas price of 1 nANM, i.e. 21,000 nANM (0.000021 ANM). `spec/params.yaml` describes a 90/10 miner/AICF tip split and a partly burned base fee, but the fee runtime's mainnet defaults are a zero base fee and 0-bps splits, so today the whole fee is credited to the block producer (see [Transactions and fees](/learn/transactions-and-fees)). Fees are not a meaningful part of miner income either way.
+
+Rewards are credited to the coinbase address at block application and are spendable immediately; there is no maturity lock-up. The only way to lose a credited reward is a reorg that orphans the block, which is why pools and exchanges wait for confirmations.
+
+### A note on docs/economics/REWARDS.md
+
+The repository's `docs/economics/REWARDS.md` describes a "v1" model with leader, committee and rain buckets (50/10/40 splits, 64-member committees, 7,200-block rain windows). That document is explicitly an overview of a parameterised design, and it is not what mainnet implements. The authoritative numbers are the ones in `spec/params.yaml` and `core/network_params.py` summarised above, and they match what the explorer and the pool report block by block.
+
+## Checking that it works
+
+- **Pool side.** `https://pool.animica.org/api/pool/summary` for the pool, `/api/miners` for workers. Your worker name should appear within a few minutes of the first accepted share.
+- **Chain side.** `https://explorer.animica.org/api/mining/info` reports whether the public node considers mining healthy (`sync_phase`, head, mempool size). `https://explorer.animica.org/api/head` gives the live `thetaMicro`.
+- **Your balance.** `animica wallet show <label-or-address>` queries `state.getBalance`; the explorer's `/address/anim1...` page shows incoming payout transactions.
+- **Local stats.** `animica miner credits` prints the mining-credit audit trail the client keeps.
+
+If you run your own node, the node's `/metrics` endpoint exposes `animica_miner_hashrate_abs`, `animica_miner_found_shares_total`, `animica_miner_submit_ok_total` and `animica_miner_submit_reject_total` (`mining/metrics.py`).
+
+## Troubleshooting highlights
+
+**Shares rejected after an upgrade on the pool side.** The pool enforces a minimum client version. Run `pip install --upgrade animica` and restart.
+
+**"Could not auto-detect device. Falling back to CPU."** Normal on machines without GPU drivers. Force `--device cpu` to skip detection, or install the vendor driver and retry `--device cuda` (or `rocm`, `metal`).
+
+**GPU rigs dropped to zero hashrate while the AICF worker errored.** A 7.x release shipped a bug where model inputs stayed on CPU while weights sat on `cuda:0`, the useful-work worker crashed, and the whole rig stopped hashing. The fix is in later releases; upgrade rather than disabling the worker. If you only want PoW, `--no-aicf` or `animica up --profile miner` is the clean way to say so.
+
+**Balance not increasing although shares are accepted.** On PPS you are credited at the pool, not on chain, until a payout is sent; check your miner record on the pool API for the pending credit and the pool's minimum payout. Confirm the address you mine to is the one you are checking; labels and addresses are easy to confuse.
+
+**Stale shares and orphaned blocks.** Propagation delay means two miners can legitimately extend different tips. The node tags each template with a head generation and marks stale submissions explicitly; the miner should refresh templates on every head change. A found block can be orphaned in a one-block fork; treat rewards as final only after several confirmations.
+
+**Theta looks very high.** Theta tracks network hashrate with a half-life of about four blocks, so it reacts within minutes. After a large miner leaves, blocks slow down and `Θ` decays; after a large miner joins, `Θ` rises. This is the retarget working, not a fault.
+
+**Old documentation mentions 12-second blocks, 5 ANM rewards, `mine-blocks`, or a proxy mode.** Those are devnet settings (chain id 1337) or historical. Mainnet is 60 seconds, 300 ANM, and P2P-validated; `animica miner mine-blocks` drives a local node's `miner.mine` RPC and is a development tool, not a way to mine mainnet.
+
+**Running your own pool.** `animica pool up --daemon --rpc-url http://127.0.0.1:8545/rpc --pool-address anim1... --port 3333` starts the managed Stratum server against your own node, with `animica pool doctor`, `animica pool test-job` and `animica pool status` to validate it. The managed pool uses `miner.getBlockTemplate` and `miner.submitBlock`, so full-target shares are real blocks.
+
+## Key takeaways
+
+- Mining is SHA3-256 hash work scored as `H(u) = -ln(u)` against a threshold `Θ` in micro-nats; useful-work credit exists in the protocol but is not produced or enforced on mainnet today.
+- `pip install animica && animica up` is the whole setup; `animica up --plan` shows what will run on your machine.
+- Port 3333 is PPS (sub-block share credit is designed, but the live pool currently serves block-difficulty shares), port 3334 is true solo (95% to the finder, 5% to the pool).
+- The subsidy is 300 ANM per block until block 1,350,000. Since block 75,000 the miner receives 150 ANM; 75 ANM goes to the treasury and 75 ANM is carved for service providers or, unclaimed, the treasury.
+- Rewards are spendable immediately but can be orphaned by a reorg; wait for confirmations.
+
+## Sources
+
+- docs/tutorials/MINING_GUIDE.md
+- docs/MINING_TROUBLESHOOTING.md
+- docs/mining_scripts.md
+- docs/miner-rpc.md
+- docs/stratum-asic.md
+- docs/mining-asic-sha256.md
+- mining/README.md
+- animica-pool/README.md
+- docs/economics/REWARDS.md
+- docs/DIFFICULTY_ADJUSTMENT.md
+- docs/ANIMICA_2026_STATE.md
+- docs/exposure/recon/chain-facts.md
+- docs/CHANGELOG.md (5.3.0, 5.3.1, 7.1.4, 7.1.5, 7.1.7 entries)
+- spec/params.yaml
+- core/network_params.py
+- consensus/tests/test_service_carve.py
+- python/animica/stratum_pool/api.py
+- python/README.md, README.md
+- Live: https://pool.animica.org/api/pool/summary and https://explorer.animica.org/api/head, read 2026-08-23

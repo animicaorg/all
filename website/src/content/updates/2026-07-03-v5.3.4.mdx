@@ -1,0 +1,16 @@
+---
+title: "Animica 5.3.4: GPU useful-work crash that stalled mainnet"
+description: "A device-placement bug in the GPU miner's AI generation path took the PoW loop down with it; network hashrate decayed from about 2.7 GH/s to zero in an hour."
+date: 2026-07-03
+tags: ["release", "mining", "gpu", "incident"]
+---
+
+Animica 5.3.4 is a critical fix for GPU miners. The useful-work AI generation step in `stratum_pool/aicf_inference.py` loaded its model onto `cuda:0`, but at generation time only moved the input tensors to the GPU when the resolved device string was exactly `"cuda"`. In practice the device resolves at load time and that field is usually `None`, so inputs stayed on the CPU while the weights sat on `cuda:0`. `model.generate()` then raised *"Expected all tensors to be on the same device"*, the useful-work worker errored, and the `animica-cli` miners stopped hashing.
+
+On mainnet the effect was not confined to the AI path: the GPU rig farm decayed from roughly 2.7 GH/s to zero over about an hour and block production stalled. The fix places inputs on the model's actual device (`next(model.parameters()).device`) and treats any `cuda:N` device string as a GPU load. Rigs should `pip install -U animica` and restart mining to restore hashrate.
+
+5.3.4 is the last of four same-day releases in the 5.3.x line:
+
+- **5.3.0** fixed a miner that only earned credit at full block difficulty — both scan drivers promoted an undelivered share target to the full block target Θ — and made multi-GPU rigs fan the header scan out across every detected GPU over disjoint nonce bands.
+- **5.3.1** fixed the pool-side half of the same problem: a fresh pool bootstrapped its vardiff from the block-difficulty share target, which is unsubmittable, so the target never stepped down. New pools now start at an achievable `start_difficulty` (default 0.01) and ratchet up from real accept-rate feedback.
+- **5.3.2** added a completeness gate to snapshot restore, which could previously import partial state and still advance the head, producing permanently too-low balances; and **5.3.3** moved the ENA training stack into the base install so a plain `pip install animica` rig can train.

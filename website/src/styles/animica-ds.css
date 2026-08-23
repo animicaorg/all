@@ -1,0 +1,212 @@
+/* ============================================================================
+   Animica Design System — "Phthalo mass tone, Animica blue"
+   ----------------------------------------------------------------------------
+   One shared visual language for every Animica front-end (animica.org, explorer,
+   pool, animica.xyz, console, studio, wallet, aicf, evm).
+
+   THE IDEA — borrowed from the pigment itself. Phthalocyanine green is famous
+   among painters for one behaviour: mass tone vs undertone. In bulk it reads as
+   a near-black green; thinned to a glaze it turns a brilliant blue-green. It is
+   also, literally, a copper-centred macrocycle — a lattice with a metal core.
+   So the whole interface is one body of phthalo pigment at different densities:
+
+     mass tone  (--anm-void, --anm-surface)  the page and its panels: the deep
+                                             green-black of undiluted phthalo.
+                                             --anm-surface is #123524, the
+                                             canonical Phthalo Green hex.
+     undertone  (--anm-phthalo / --anm-live) what shows where the pigment thins:
+                                             reserved for SYSTEM TRUTH — live
+                                             data, verified, confirmed on chain.
+     Animica blue (--anm-blue-fill)          the brand's own voice: every action
+                                             the person takes. From the Animica
+                                             mark, #2E63FF.
+
+   That split is the rule, not decoration: green states are things the network
+   asserts, blue is things you do. Never use one for the other.
+
+   Contrast is measured, not eyeballed. #2E63FF is 3.90:1 on the field, so the
+   brand blue is a FILL (white on it = 4.83:1) and never small text; accent text
+   uses --anm-wave #7AA6FF (7.84:1). Undertone text #14C79B is 8.69:1.
+
+   Kept from the previous system so no site has to be re-audited: token names
+   (--anm-wave / --anm-collapse), IBM Plex, the hash-chain .anm-spine, motion.
+   - Mono is INFORMATION: every hash/address/entropy value is set in Plex Mono.
+   - The hash-chain "spine" is a structural device, not decoration.
+
+   Portable: pure CSS custom properties + a few primitives. Each site imports this
+   (or copies it) and builds on the tokens. Self-host IBM Plex for production; the
+   @import below is a privacy-friendly fallback.
+   ========================================================================== */
+
+@import url('https://fonts.bunny.net/css?family=ibm-plex-sans:400,500,600,700|ibm-plex-mono:400,500,600&display=swap');
+
+:root {
+  /* ---- mass tone: the page and its panels, undiluted phthalo ---- */
+  --anm-void:      #05140F;   /* base — phthalo mass tone, green-black */
+  --anm-void-2:    #08201A;
+  --anm-surface:   #123524;   /* panels/cards — canonical Phthalo Green */
+  --anm-surface-2: #17422E;   /* hover / raised */
+  --anm-line:      #1D5340;   /* hairline borders */
+  --anm-line-2:    #276B53;
+
+  /* ---- text (green-tinted, never pure grey) ---- */
+  --anm-ink:       #E8F4EE;   /* primary   16.7:1 on field */
+  --anm-ink-2:     #A9C4B8;   /* secondary 10.1:1 */
+  --anm-mute:      #86A69A;   /* tertiary   5.1:1 — still AA on panels */
+
+  /* ---- the pair: what you do (blue) vs what the network asserts (green) ---- */
+  --anm-blue-fill: #2E63FF;   /* Animica brand blue — FILLS ONLY (white on it) */
+  --anm-blue-deep: #1E4BD8;   /* pressed / gradient far end */
+  --anm-wave:      #7AA6FF;   /* accent TEXT + links — AA on field (7.8:1) */
+  --anm-phthalo:   #14C79B;   /* phthalo undertone — system truth */
+  --anm-collapse:  var(--anm-phthalo);  /* legacy alias: pair's far end */
+  --anm-grad:      linear-gradient(110deg, var(--anm-blue-fill), var(--anm-phthalo));
+  --anm-grad-soft: linear-gradient(110deg, #2E63FF22, #14C79B22);
+
+  /* ---- reserved signal: live / verified ONLY (the undertone showing through) ---- */
+  --anm-live:      #14C79B;
+  --anm-warn:      #FFC24B;
+  --anm-bad:       #FF6B7A;
+
+  /* ---- type ---- */
+  --anm-font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --anm-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --anm-font-display: "IBM Plex Sans", var(--anm-font-sans); /* heavy + tight tracking = display */
+
+  /* fluid type scale (clamped) */
+  --anm-fs-300: 0.8125rem;                                   /* 13 — captions/data */
+  --anm-fs-400: 0.9375rem;                                   /* 15 — body */
+  --anm-fs-500: 1.0625rem;                                   /* 17 — lead */
+  --anm-fs-600: clamp(1.25rem, 1rem + 1.1vw, 1.6rem);        /* h3 */
+  --anm-fs-700: clamp(1.7rem, 1.2rem + 2.2vw, 2.6rem);       /* h2 */
+  --anm-fs-800: clamp(2.4rem, 1.4rem + 4.4vw, 4.5rem);       /* h1 / hero */
+  --anm-fs-900: clamp(3rem, 1.2rem + 7vw, 6.5rem);           /* display number */
+
+  --anm-tracking-tight: -0.02em;
+  --anm-tracking-wide:  0.16em;     /* eyebrows / labels */
+
+  /* ---- space / radius / depth ---- */
+  --anm-radius:    14px;            /* deliberate: soft, not 0, not pill */
+  --anm-radius-sm: 9px;
+  --anm-radius-lg: 22px;
+  --anm-shadow:    0 1px 0 #ffffff0a inset, 0 18px 50px -24px #01100B;
+  --anm-glow:      0 0 0 1px #2E63FF44, 0 8px 40px -12px #2E63FF40;
+
+  /* ---- motion: "measurement collapse" ---- */
+  --anm-ease:      cubic-bezier(.22,.61,.36,1);   /* settle */
+  --anm-ease-in:   cubic-bezier(.5,0,.75,0);
+  --anm-dur:       .5s;
+  --anm-dur-fast:  .22s;
+
+  --anm-maxw: 1140px;
+}
+
+/* ============================ base ============================ */
+.anm, .anm * { box-sizing: border-box; }
+.anm {
+  background:
+    radial-gradient(1200px 600px at 78% -8%, #2E63FF14, transparent 60%),
+    radial-gradient(900px 520px at 8% 8%, #14C79B12, transparent 55%),
+    var(--anm-void);
+  color: var(--anm-ink);
+  font-family: var(--anm-font-sans);
+  font-size: var(--anm-fs-400);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.anm-wrap { max-width: var(--anm-maxw); margin-inline: auto; padding-inline: clamp(16px, 4vw, 32px); }
+
+.anm h1, .anm h2, .anm h3 {
+  font-family: var(--anm-font-display);
+  font-weight: 700; letter-spacing: var(--anm-tracking-tight); line-height: 1.05; margin: 0;
+}
+.anm h1 { font-size: var(--anm-fs-800); }
+.anm h2 { font-size: var(--anm-fs-700); }
+.anm h3 { font-size: var(--anm-fs-600); letter-spacing: -0.01em; }
+
+/* eyebrow — structural label, not decoration */
+.anm-eyebrow {
+  font-family: var(--anm-font-mono); font-size: var(--anm-fs-300); font-weight: 500;
+  letter-spacing: var(--anm-tracking-wide); text-transform: uppercase; color: var(--anm-wave);
+}
+.anm-mono { font-family: var(--anm-font-mono); font-variant-ligatures: none; }
+.anm-data { font-family: var(--anm-font-mono); color: var(--anm-ink-2); word-break: break-all; }
+.anm-grad-text {
+  background: var(--anm-grad); -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+
+/* ============================ primitives ============================ */
+.anm-card {
+  background: linear-gradient(180deg, #ffffff05, transparent 40%), var(--anm-surface);
+  border: 1px solid var(--anm-line);
+  border-radius: var(--anm-radius);
+  box-shadow: var(--anm-shadow);
+}
+.anm-card--hover { transition: border-color var(--anm-dur-fast) var(--anm-ease), transform var(--anm-dur-fast) var(--anm-ease); }
+.anm-card--hover:hover { border-color: var(--anm-line-2); transform: translateY(-2px); }
+
+.anm-btn {
+  display: inline-flex; align-items: center; gap: .5em;
+  font: 600 var(--anm-fs-400)/1 var(--anm-font-sans);
+  padding: .8em 1.25em; border-radius: var(--anm-radius-sm);
+  border: 1px solid transparent; cursor: pointer; text-decoration: none;
+  transition: transform var(--anm-dur-fast) var(--anm-ease), box-shadow var(--anm-dur-fast) var(--anm-ease), background var(--anm-dur-fast);
+}
+.anm-btn--primary {
+  /* Solid Animica blue, white label. Deliberately NOT the gradient: the brand
+     blue is the voice of "you do this", and white-on-#2E63FF measures 4.83:1
+     where dark-on-gradient did not clear AA. The gradient stays where it says
+     something — grad-text and the spine. */
+  background: var(--anm-blue-fill); color: #fff; box-shadow: var(--anm-glow);
+}
+.anm-btn--primary:hover { background: #3E71FF; transform: translateY(-1px); }
+.anm-btn--primary:active { background: var(--anm-blue-deep); transform: none; }
+.anm-btn--ghost { background: transparent; color: var(--anm-ink); border-color: var(--anm-line-2); }
+.anm-btn--ghost:hover { border-color: var(--anm-wave); color: #fff; }
+
+/* verify / live pill — the ONLY place --anm-live is used */
+.anm-verify {
+  display: inline-flex; align-items: center; gap: .45em;
+  font: 600 var(--anm-fs-300)/1 var(--anm-font-mono); letter-spacing: .04em;
+  color: var(--anm-live); background: #14C79B16; border: 1px solid #14C79B3d;
+  padding: .35em .7em; border-radius: 999px;
+}
+.anm-verify::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--anm-live); box-shadow: 0 0 10px var(--anm-live); }
+
+/* hash-chain spine — structural device threading sections */
+.anm-spine { position: relative; padding-left: 26px; }
+.anm-spine::before {
+  content: ""; position: absolute; left: 9px; top: 4px; bottom: 4px; width: 1px;
+  background: linear-gradient(var(--anm-wave), var(--anm-collapse), transparent);
+  opacity: .5;
+}
+.anm-spine > * { position: relative; }
+.anm-spine > *::before {
+  content: ""; position: absolute; left: -21px; top: .55em; width: 9px; height: 9px;
+  border-radius: 50%; background: var(--anm-void); border: 1px solid var(--anm-wave);
+}
+
+.anm-divider { height: 1px; background: var(--anm-line); border: 0; }
+
+/* ============================ motion ============================ */
+/* measurement-collapse reveal: superposed (blurred/offset) -> resolved */
+@keyframes anm-collapse-in {
+  from { opacity: 0; filter: blur(8px); transform: translateY(10px) scale(.985); }
+  to   { opacity: 1; filter: blur(0);   transform: none; }
+}
+.anm-reveal { animation: anm-collapse-in var(--anm-dur) var(--anm-ease) both; }
+.anm-reveal-2 { animation: anm-collapse-in var(--anm-dur) var(--anm-ease) .08s both; }
+.anm-reveal-3 { animation: anm-collapse-in var(--anm-dur) var(--anm-ease) .16s both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .anm *, .anm *::before, .anm *::after { animation: none !important; transition: none !important; }
+  .anm-reveal, .anm-reveal-2, .anm-reveal-3 { animation: none !important; }
+}
+
+/* ============================ quality floor ============================ */
+.anm a { color: var(--anm-wave); text-underline-offset: 3px; }
+.anm a:hover { color: #fff; }
+.anm :focus-visible { outline: 2px solid var(--anm-wave); outline-offset: 2px; border-radius: 4px; }
+.anm ::selection { background: #2E63FF55; color: #fff; }

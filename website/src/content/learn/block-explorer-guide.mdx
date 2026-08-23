@@ -1,0 +1,258 @@
+---
+title: "Reading the Animica block explorer"
+description: "A walkthrough of explorer.animica.org and its REST API: head, blocks, transactions, addresses, supply and mining endpoints, with live 2026-08-23 examples and node cross-checks."
+date: 2026-08-23
+updated: 2026-08-23
+category: "operate"
+tags: ["explorer", "rest-api", "blocks", "transactions", "addresses", "confirmations"]
+readingLevel: "beginner"
+sources:
+  - explorer2/README.md
+  - explorer2/api/src/server.ts
+  - docs/TX_WORKFLOW.md
+  - docs/CHANGELOG.md
+  - docs/exposure/recon/chain-facts.md
+  - AGENTS.md
+order: 4
+---
+
+The explorer at [explorer.animica.org](https://explorer.animica.org) is a web UI on top of a small REST API that talks JSON-RPC to a full node. Because the API is free, unauthenticated and returns plain JSON, it is also the quickest way to script a balance check, confirm a payment, or watch difficulty. This guide walks through the real routes in `explorer2/api/src/server.ts`, reads a block, a transaction and an address with responses captured on 2026-08-23, explains the fields that confuse newcomers (hex balances, zeroed roots, partial address history), and shows how to verify anything the explorer says against a node.
+
+## How the explorer is built
+
+`explorer2/` is a pnpm workspace with three packages: `shared` (types), `api` (an Express server, port 8081 by default) and `web` (a Vite UI, port 3001 in development). The API runs in one of two modes. In **RPC mode** it connects to a node's JSON-RPC (`EXPLORER2_RPC_URL`, default `http://127.0.0.1:8545/rpc`) and has every feature: live head, mempool, peers, transaction status. If the RPC is unreachable it falls back to **local DB mode**, reading `~/.animica/chain-1/animica.db` directly, with no mempool or peer data. `GET /api/meta` tells you which mode a deployment is in; the public instance answered `"mode": "RPC"` against `http://127.0.0.1:8545/rpc` on 2026-08-23, meaning it sits on the same host as the node it reads.
+
+The UI routes are `/block/{height-or-hash}`, `/tx/{hash}` and `/address/{anim1...}`, plus a unified search box. Everything the UI shows comes from the API routes below, so the rest of this article uses `curl`.
+
+## The routes
+
+From `server.ts`, the endpoints most people use:
+
+| Route | Returns |
+|---|---|
+| `GET /api/head` | head height and hash, `thetaMicro`, peer and mempool stats, recent theta history |
+| `GET /api/blocks?limit=&cursor=` | newest-first block list with `nextCursor` |
+| `GET /api/block/:hashOrHeight` | one block with its transactions |
+| `GET /api/tx/:hash` | one transaction with status, confirmations and classification |
+| `GET /api/address/:bech32?limit=&cursor=` | balance, account type and recent transactions |
+| `GET /api/search?q=` | detects height, hash or address and returns the matching object |
+| `GET /api/mempool?limit=&cursor=` | pending transactions and mempool stats |
+| `GET /api/richlist?limit=&offset=` and `/api/richlist/summary` | balances ranked, concentration metrics |
+| `GET /api/circulating-supply` | a bare JSON number in whole ANM, in the shape aggregators expect |
+| `GET /api/mining/info` | whether the node considers mining healthy, current template if any |
+| `GET /api/network/status` | per-service health (chain, mempool, peers) |
+| `GET /api/rpc/discover` | the node's OpenRPC document, proxied |
+| `GET /api/contracts/...`, `/api/tokens/...` | deployments, code, verification jobs, token views |
+| `GET /api/l2/...`, `/api/aicf/...`, `/api/da/...`, `/api/ena/...`, `/api/quantum/info` | the L2 rollup, AI-compute, data-availability, training and quantum subsystems |
+| `GET /api/health`, `/api/meta`, `/api/diagnostics` | liveness, mode, connection details |
+
+CORS is open (`EXPLORER2_CORS_ORIGIN` defaults to `*`), so browser code can call these directly. The README also documents `EXPLORER2_RPC_TIMEOUT_MS` (30 s) and `EXPLORER2_RPC_MAX_RETRIES` (3), which explain why a slow node shows up as a slow explorer rather than an error.
+
+## Reading the head
+
+```bash
+curl -s https://explorer.animica.org/api/head
+```
+
+Captured 2026-08-23 12:48 UTC (theta history trimmed):
+
+```json
+{
+  "head": {
+    "height": 81213,
+    "canonicalHeight": 81212,
+    "hash": "0x000000000285fce2e883bc00cba4e00fc38d390e7a3b8133cfc522bcf09ba3f9",
+    "chainId": 1,
+    "thetaMicro": 26392958
+  },
+  "stats": {
+    "peerCount": 3, "inboundPeers": 2, "outboundPeers": 1,
+    "mempoolSize": 0, "tps": 0.0097, "avgBlockTime": 66.84
+  },
+  "thetaHistory": [ { "height": 81212, "time": 1787489273, "thetaMicro": 26524140 }, "..." ]
+}
+```
+
+What to read from it:
+
+- `height` is the node's current tip; `canonicalHeight` is one lower because the newest block has not yet been built upon. A payment in block `h` has `head.height - h + 1` confirmations.
+- `thetaMicro` is the PoIES difficulty in micro-nats, about 26.4 nats here. It moves every block; the history array is what the UI's difficulty chart plots. The leading zeros on the hash are the visible consequence of a high threshold. See [Difficulty adjustment and theta](/learn/difficulty-adjustment-and-theta).
+- `avgBlockTime` is measured over recent blocks (66.8 s against the 60 s target) and `tps` is tiny because the chain carried few transactions in that window. `peerCount` is the explorer's node's own peer count, not a network census.
+
+## Reading a block
+
+```bash
+curl -s https://explorer.animica.org/api/block/81213
+```
+
+The response has a summary layer and a `raw` layer. The summary, trimmed:
+
+```json
+{
+  "height": 81213,
+  "hash": "0x000000000285fce2e883bc00cba4e00fc38d390e7a3b8133cfc522bcf09ba3f9",
+  "parentHash": "0x00000000020577dd7ab8ad48f75b4750764aaa98678a34d1410cb722bd23b6ae",
+  "time": 1787489353,
+  "chainId": 1,
+  "difficulty": 26392958,
+  "nonce": 260923656941849,
+  "txs": [
+    { "hash": "0x72637302...", "from": "anim1zqp6zht...", "to": "anim1zqpe6a5...", "value": "198000" },
+    { "hash": "0xcb3bdc0a...", "from": "anim1zqp6zht...", "to": "anim1zqpe6a5...", "value": "2000" },
+    { "hash": "0xe949e8e1...", "from": "anim1zqp6zht...", "to": "anim1zqpe6a5...", "value": "2000" }
+  ]
+}
+```
+
+`difficulty` is the same number as `thetaMicro`. `time` is a Unix timestamp; `nonce` is the 64-bit value the miner found. `value` strings are integer nANM, so these three transfers are 0.000198, 0.000002 and 0.000002 ANM.
+
+The `raw` layer is the node's own block object, and its transaction entries show the v2 transaction shape:
+
+```json
+{
+  "hash": "0x72637302b66d380c02db8212441c11a03f695f277d2cd461b3f1043e99d88df9",
+  "from": "0xa15d7283...", "to": "0x9d769767...",
+  "gas": 21000, "tip": 1,
+  "validAfter": 81211, "validUntil": 81331,
+  "salt": "0x4510de45a1676acab2d6762fa3bead8a",
+  "value": 198000, "kind": 0, "data": "0x"
+}
+```
+
+Three things stand out. The raw `from` and `to` are 32-byte account keys (the SHA3-256 digest part of the address), not bech32m strings; the summary layer converts them. `validAfter`/`validUntil` is the 120-block validity window that replaces a nonce in v2 transactions, and `salt` makes the transaction id unique; see [Transactions and fees](/learn/transactions-and-fees). And `gas: 21000` with `tip: 1` is the standard transfer, so the fee was 21,000 nANM.
+
+The raw header also carries `roots`: `txsRoot` is populated, while `stateRoot`, `receiptsRoot`, `proofsRoot` and `daRoot` are all zeros. That is accurate, not a display bug. State commitment is armed but the roots are not yet sealed in headers, and `proofsRoot` is zero because no miner attaches useful-work proofs on mainnet; the explorer shows the header as it is.
+
+## Reading a transaction
+
+```bash
+curl -s https://explorer.animica.org/api/tx/0x1f28c7253ce50b458c44c5c49561451e8bbec4470b8b59fc910561a87fd7d8a9
+```
+
+Trimmed response, captured at head 81,215:
+
+```json
+{
+  "hash": "0x1f28c725...",
+  "status": "confirmed",
+  "blockHeight": 81202,
+  "blockHash": "0x000000000526368a...",
+  "from": "anim1zqpkpp780dsm3rp2mfxk64grvcdzmfyat90uppa78daqs2cs63kzmusws44wt",
+  "to": "anim1zqpukdqr97wlyv4kyj2r64tllzq5jcygvmul4l5xywnrawpuryqnzjg99pukt",
+  "value": "1435861937685",
+  "confirmations": 14,
+  "timestamp": 1787488742,
+  "explorer_head_height": 81215,
+  "classification": {
+    "type": "native_transfer", "failed": false, "isReverted": false,
+    "targetIsContract": false, "createdContractAddress": null,
+    "methodSelector": null, "decodedCall": null, "decodedEvents": []
+  },
+  "raw": { "gasLimit": 23100, "gasPrice": 3585891, "maxFee": 3585891, "chainId": 1, "transactionIndex": 2 }
+}
+```
+
+- `value` is `1435861937685` nANM, which is 1,435.861937685 ANM (divide by 10^9). This particular transfer is a pool payout to a miner's address.
+- `status` moves through `pending`, `confirmed` and, if a reorg removes the block, `reorged_out`. `confirmations` is `explorer_head_height - blockHeight + 1`; 14 here. The [security article](/learn/security-and-threat-model) has a table for choosing how many to wait for.
+- `classification` is the explorer's decoding: `native_transfer` for a plain send; for contract calls it fills `methodSelector`, `decodedCall` and `decodedEvents` when the contract's ABI is known, and `createdContractAddress` for deployments. `failed` and `isReverted` distinguish an execution failure from a successful inclusion.
+- `raw.gasPrice` and `raw.gasLimit` bound the fee; the fee actually charged is `gasUsed × gasPrice`, which the receipt reports. This response had `receipt: null`, which the explorer returns when the node did not supply one; use the RPC (below) if you need `gasUsed`.
+
+## Reading an address
+
+```bash
+curl -s "https://explorer.animica.org/api/address/anim1zqpukdqr97wlyv4kyj2r64tllzq5jcygvmul4l5xywnrawpuryqnzjg99pukt"
+```
+
+```json
+{
+  "address": "anim1zqpukdqr97wlyv4kyj2r64tllzq5jcygvmul4l5xywnrawpuryqnzjg99pukt",
+  "accountType": "eoa",
+  "confirmedBalance": "0x7662581a73d",
+  "pendingBalance": "0x7662581a73d",
+  "txs": [ { "hash": "0x1f28c725...", "value": "1435861937685", "status": "confirmed", "blockNumber": 81202, "gasPrice": 3585891, "gasLimit": 23100 }, "..." ],
+  "contract": null,
+  "nextCursor": "81178",
+  "scannedBlocks": 35,
+  "partial": true
+}
+```
+
+**Balances are hex strings of nANM.** `0x7662581a73d` is 8,135,297,312,573 nANM, or about 8,135.297 ANM. A one-liner:
+
+```python
+int("0x7662581a73d", 16) / 1e9      # -> 8135.297312573
+```
+
+`pendingBalance` differs from `confirmedBalance` only when the mempool holds transactions from or to this address. `accountType` is `eoa` for a key-controlled account and `contract` for a deployed contract, in which case `contract` carries code and verification details.
+
+**History is a bounded live scan.** The explorer builds an address's transaction list by scanning recent blocks from the node, under a wall-clock budget (`EXPLORER_ADDRESS_SCAN_MS`, 3,500 ms by default, introduced after address pages used to hang for 37 seconds on sparse addresses). The response tells you exactly what it did: `scannedBlocks: 35` and `partial: true` mean it covered 35 blocks and stopped; pass `?cursor=81178` to continue from there. For a full history of an old or busy address, page until `partial` is false or `nextCursor` is null, or query a node directly. The balance itself is never partial; it is a single `state.getBalance` call.
+
+## Supply and the rich list
+
+```bash
+curl -s https://explorer.animica.org/api/circulating-supply
+# 110791581.88065287
+curl -s https://explorer.animica.org/api/richlist/summary
+# {"height":81215,"totalSupply":"0x1899ce704e30445","addressCount":155,"top10Pct":86.01,"top100Pct":99.99}
+```
+
+Circulating supply is returned as a bare number in whole ANM because that is the body format CoinMarketCap and CoinGecko expect. On 2026-08-23 it was about 110.79 million ANM across 155 non-zero accounts, with the top ten holding 86% of supply; the chain-facts document explains that the largest balances are the genesis premine allocations and accrued foundation shares, which is why the concentration figure is high on a young chain. The `/api/richlist` entries identify accounts by their 32-byte keys rather than bech32m strings.
+
+## Mining and network
+
+`GET /api/mining/info` reports the node's mining view; on 2026-08-23 it returned `sync_phase: "IDLE"`, `ok: true`, head 81,213, an empty mempool and `has_state_root: false`. `GET /api/network/status` lists each service with its status and the node-reported head, and is the closest thing to a public health page. `GET /api/mempool` was empty at capture time, which is typical outside bursts of pool payouts.
+
+## Cross-checking with a node
+
+Every explorer field maps to an RPC call, so you can verify against `https://rpc.animica.org/rpc` or [your own node](/learn/run-a-node):
+
+```bash
+RPC=https://rpc.animica.org/rpc
+# the same block, with transaction hashes only
+curl -s -X POST $RPC -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getBlockByHeight","params":[81213,false]}'
+# status and confirmations of the payout
+curl -s -X POST $RPC -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tx.getStatus","params":["0x1f28c7253ce50b458c44c5c49561451e8bbec4470b8b59fc910561a87fd7d8a9"]}'
+# the balance the explorer showed
+curl -s -X POST $RPC -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"state.getBalance","params":["anim1zqpukdqr97wlyv4kyj2r64tllzq5jcygvmul4l5xywnrawpuryqnzjg99pukt"]}'
+```
+
+On 2026-08-23 `chain.getBlockByHeight` returned the identical hash, parent and three transaction ids, and `tx.getStatus` returned `included_height: 81202`, `confirmations: 14`, `reorged_out: false`, with `status: "finalized"` and `finalized_in_pow: true`. That last pair is worth a sentence: `finalized_in_pow` is set for any transaction included in a proof-of-work block, and `status`/`finalized` switch to `finalized` once the transaction has 12 confirmations (the node's `ANIMICA_TX_FINALITY_CONFIRMATIONS` default). Neither is a consensus finality vote, so the number you act on is `confirmations`, exactly as the explorer displays it. The RPC namespaces and error codes are covered in the [JSON-RPC API guide](/learn/json-rpc-api-guide).
+
+## Running your own explorer
+
+If you operate a node, the explorer is a two-command addition:
+
+```bash
+pnpm install
+EXPLORER2_RPC_URL=http://127.0.0.1:8545/rpc pnpm -C explorer2 dev    # API :8081, UI :3001
+```
+
+or with Docker:
+
+```bash
+EXPLORER2_RPC_URL=http://your-node:8545/rpc \
+  docker compose -f explorer2/docker/docker-compose.explorer2.yml up --build
+```
+
+The `/diagnostics` page in the UI shows the mode, the RPC URL and which optional methods the node exposes; DA, quantum and AICF panels show "Disabled on this node" until the corresponding node features are configured. `node scripts/verify_richlist.js --sample 10` in `explorer2/api` cross-checks rich-list balances against direct RPC queries.
+
+## Key takeaways
+
+- The explorer is a thin REST layer over a node's JSON-RPC; `/api/meta` shows the mode, and every field can be reproduced with an RPC call.
+- Balances and supply come back as hex nANM or integer nANM strings; divide by 10^9 for ANM.
+- Block headers show zeroed state, receipt, proof and DA roots today; that is the chain's current state, not a display error.
+- Address history is a time-budgeted scan: respect `partial` and `nextCursor`.
+- Act on `confirmations`, not on the word "finalized" in `tx.getStatus`.
+
+## Sources
+
+- explorer2/README.md
+- explorer2/api/src/server.ts (route definitions)
+- docs/TX_WORKFLOW.md
+- docs/CHANGELOG.md (5.3.1 explorer entry)
+- docs/exposure/recon/chain-facts.md
+- AGENTS.md (live endpoints table)
+- Live: `/api/head`, `/api/blocks`, `/api/block/81213`, `/api/tx/0x1f28c725...`, `/api/address/anim1zqpukdqr...`, `/api/search`, `/api/richlist/summary`, `/api/circulating-supply`, `/api/mining/info`, `/api/network/status`, `/api/meta`, `/api/mempool` on https://explorer.animica.org and `chain.getBlockByHeight`, `tx.getStatus` on https://rpc.animica.org/rpc, captured 2026-08-23

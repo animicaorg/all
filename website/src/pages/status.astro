@@ -2,52 +2,26 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
+import MetricTicker from "../components/MetricTicker.astro";
+import StatusBadge from "../components/StatusBadge.astro";
 
 const title = "Status";
 const description =
-  "Animica service directory: chain endpoints (explorer, RPC, pool, wallet) plus live AICF compute status fetched from the status endpoint.";
+  "Live status of Animica services: chain head and RPC health polled from your browser, AICF compute status, what each metric means, the endpoints used, and what to do when something looks wrong.";
 const aicfApiBaseUrl =
   (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
   (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
   "https://aicf.animica.org/api";
 
 const chainServices = [
-  {
-    name: "Block Explorer",
-    href: "https://explorer.animica.org",
-    label: "explorer.animica.org",
-    detail: "Browse blocks, transactions, and addresses on mainnet.",
-  },
-  {
-    name: "Public JSON-RPC",
-    href: "/developers#rpc",
-    label: "rpc.animica.org/rpc",
-    detail: "JSON-RPC 2.0 over HTTPS, POST only. Chain id 1.",
-  },
-  {
-    name: "Mining Pool",
-    href: "https://pool.animica.org",
-    label: "pool.animica.org",
-    detail: "Useful-work mining with XMR dual-mining and live stats.",
-  },
-  {
-    name: "Web Wallet",
-    href: "https://wallet.animica.org",
-    label: "wallet.animica.org",
-    detail: "Post-quantum accounts, bech32m addresses (anim1...).",
-  },
-  {
-    name: "AICF Compute",
-    href: "https://aicf.animica.org",
-    label: "aicf.animica.org",
-    detail: "API keys, project budgets, and the compute dashboard.",
-  },
-  {
-    name: "Marketplace",
-    href: "https://animica.xyz/",
-    label: "animica.xyz",
-    detail: "The Animica marketplace.",
-  },
+  { name: "Public JSON-RPC", href: "/developers#rpc", label: "rpc.animica.org/rpc", detail: "JSON-RPC 2.0 over HTTPS, POST only, chain id 1. The badge above polls it." },
+  { name: "Block Explorer", href: "https://explorer.animica.org", label: "explorer.animica.org", detail: "Blocks, transactions, addresses, rich list, L2 and AICF views; REST API under /api." },
+  { name: "Mining Pool", href: "https://pool.animica.org", label: "pool.animica.org", detail: "Stratum :3333 (PPS) and :3334 (solo). Summary at /api/pool/summary; ENA stats at /api/ena/stats." },
+  { name: "AICF Compute", href: "https://aicf.animica.org", label: "aicf.animica.org", detail: "Provider registry, API keys and project budgets. Status endpoint feeds the section below." },
+  { name: "Free AI API", href: "https://animica.dev", label: "animica.dev/v1", detail: "Keyless OpenAI-compatible endpoint, 30 requests per minute per IP." },
+  { name: "Console", href: "https://console.animica.org", label: "console.animica.org", detail: "Paid AI API keys and usage." },
+  { name: "Merchant payments", href: "https://pay.animica.dev", label: "pay.animica.dev", detail: "Accept ANM at checkout; 2.00% fee." },
+  { name: "Agent payments (x402)", href: "https://x402.animica.dev", label: "x402.animica.dev", detail: "Per-call HTTP 402 paywall with an ANM-native lane (CAIP-2 animica:1)." },
 ];
 
 const topMetrics = [
@@ -55,6 +29,26 @@ const topMetrics = [
   { key: "paused", label: "Scheduler Paused" },
   { key: "apiLatencyMs", label: "API Latency" },
   { key: "updatedAt", label: "Last Update (UTC)" },
+];
+
+const metricMeaning = [
+  ["Head / age (ticker)", "chain.getHead on rpc.animica.org", "The latest block height the public node knows, and how long ago its timestamp was. An age much above 3 to 5 minutes usually means either a slow block (the target is 60 s but variance is high) or a stalled node."],
+  ["TPS (ticker)", "Derived from recent blocks", "Transactions per second over the ticker's window. Mainnet throughput is low in absolute terms; a zero here during quiet periods is normal."],
+  ["RPC badge", "Round-trip of a chain.getHead call", "Green under 300 ms, amber under 1,000 ms, red after three consecutive failures or if the head goes stale for 20 s. It measures your path to the node, so a slow connection colours it too."],
+  ["Service Status", "GET /status on the AICF API", "The AICF control plane's own health verdict (ok / degraded)."],
+  ["Scheduler Paused", "paused flag in the same payload", "Whether the AICF job scheduler has been paused by the operator. YES means new jobs queue but are not dispatched."],
+  ["API Latency", "Browser-observed fetch time", "Time for your browser to fetch the status payload; not a server-side figure."],
+  ["Providers / Nodes / Jobs / Settlements", "health.counts in the payload", "Registry counts. They are small today (one registered provider on 2026-08-23) and are shown unrounded."],
+];
+
+const whatIf = [
+  ["The RPC badge is red", "Confirm from another network or a terminal with curl. If the public node is down, wallets and the explorer that depend on it will be affected, but the chain itself continues; miners on the pool keep producing blocks. Use your own node if you have one."],
+  ["The head age keeps growing", "Check explorer.animica.org for the same height. If the explorer advances and this page does not, the public RPC node is behind. If neither advances for more than 10 minutes, block production is slow or the network is partitioned; see the pool's blocks_found and hashrate series."],
+  ["My transaction is not on the explorer", "A rejected transaction never appears. Re-submit and read the RPC error code; -32013 means insufficient balance for amount plus fee, -32017 fee too low, -32011 wrong chain id, -32020 duplicate. A pending transaction shows in /mempool until a block includes it."],
+  ["The explorer shows zero roots in the head", "Expected on mainnet today: sealed header roots are armed but not populated by the miner. It does not indicate a fault."],
+  ["Pool hashrate reads 0 but the network hashrate is high", "pool_hashrate counts miners connected to the pool; network_hashrate_hps is derived from Θ and block times for the whole network, including solo and direct miners."],
+  ["AICF metrics read Unavailable", "The status endpoint could not be reached from your browser within 7 seconds. Chain services are independent of it."],
+  ["I found a security issue", "Do not post it publicly. Email security@animica.org; see the Security page for scope and timelines."],
 ];
 ---
 
@@ -64,17 +58,23 @@ const topMetrics = [
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Service Health</span>
-      <h1 class="aicf-heading">Animica Service Status</h1>
+      <h1 class="aicf-heading">Animica service status</h1>
       <p class="aicf-subheading">
-        Chain services below are linked directly so you can verify them yourself. AICF compute status is fetched live from
-        the AICF status endpoint — no synthetic uptime, latency, or incident values are shown.
+        Nothing on this page is synthetic. Chain figures are polled from the public RPC by your browser,
+        AICF figures come from the AICF status endpoint, and every service below is linked so you can
+        check it yourself. There is no incident history feed; outages are announced on
+        <a href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg</a>.
       </p>
+      <div class="aicf-btn-row" style="align-items:center;">
+        <MetricTicker />
+        <StatusBadge size="md" />
+      </div>
     </div>
   </section>
 
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">Chain Services</span>
+      <span class="aicf-kicker">Services</span>
       <div class="aicf-grid-3" style="margin-top:0.95rem;">
         {chainServices.map((svc) => (
           <article class="aicf-card">
@@ -84,9 +84,6 @@ const topMetrics = [
           </article>
         ))}
       </div>
-      <p class="aicf-muted" style="margin-top:0.75rem; font-size:0.9rem;">
-        Contract Studio (studio.animica.org) is being rebuilt and currently serves a holding page.
-      </p>
     </div>
   </section>
 
@@ -107,68 +104,85 @@ const topMetrics = [
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-2">
       <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Live Count Metrics</h2>
+        <h2 style="font-size:1.2rem;">Registry counts</h2>
         <table class="aicf-table" style="margin-top:0.8rem;">
-          <thead>
-            <tr>
-              <th>Metric</th>
-              <th>Value</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Metric</th><th>Value</th></tr></thead>
           <tbody>
-            <tr>
-              <td><strong>Users</strong></td>
-              <td data-aicf-status-metric="users">--</td>
-            </tr>
-            <tr>
-              <td><strong>Projects</strong></td>
-              <td data-aicf-status-metric="projects">--</td>
-            </tr>
-            <tr>
-              <td><strong>Providers</strong></td>
-              <td data-aicf-status-metric="providers">--</td>
-            </tr>
-            <tr>
-              <td><strong>Nodes</strong></td>
-              <td data-aicf-status-metric="nodes">--</td>
-            </tr>
-            <tr>
-              <td><strong>Jobs</strong></td>
-              <td data-aicf-status-metric="jobs">--</td>
-            </tr>
-            <tr>
-              <td><strong>Contract Jobs</strong></td>
-              <td data-aicf-status-metric="contractJobs">--</td>
-            </tr>
-            <tr>
-              <td><strong>Agent Tasks</strong></td>
-              <td data-aicf-status-metric="agentTasks">--</td>
-            </tr>
-            <tr>
-              <td><strong>Usage Records</strong></td>
-              <td data-aicf-status-metric="usage">--</td>
-            </tr>
-            <tr>
-              <td><strong>Settlements</strong></td>
-              <td data-aicf-status-metric="settlements">--</td>
-            </tr>
-            <tr>
-              <td><strong>Total Queue Units</strong></td>
-              <td data-aicf-status-metric="queueUnits">--</td>
-            </tr>
+            <tr><td><strong>Users</strong></td><td data-aicf-status-metric="users">--</td></tr>
+            <tr><td><strong>Projects</strong></td><td data-aicf-status-metric="projects">--</td></tr>
+            <tr><td><strong>Providers</strong></td><td data-aicf-status-metric="providers">--</td></tr>
+            <tr><td><strong>Nodes</strong></td><td data-aicf-status-metric="nodes">--</td></tr>
+            <tr><td><strong>Jobs</strong></td><td data-aicf-status-metric="jobs">--</td></tr>
+            <tr><td><strong>Contract Jobs</strong></td><td data-aicf-status-metric="contractJobs">--</td></tr>
+            <tr><td><strong>Agent Tasks</strong></td><td data-aicf-status-metric="agentTasks">--</td></tr>
+            <tr><td><strong>Usage Records</strong></td><td data-aicf-status-metric="usage">--</td></tr>
+            <tr><td><strong>Settlements</strong></td><td data-aicf-status-metric="settlements">--</td></tr>
+            <tr><td><strong>Total Queue Units</strong></td><td data-aicf-status-metric="queueUnits">--</td></tr>
           </tbody>
         </table>
       </article>
 
       <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Endpoint Payload</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">Raw response from `GET /status` on the configured AICF API base URL.</p>
+        <h2 style="font-size:1.2rem;">Endpoint payload</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">Raw response from <code>GET /status</code> on the configured AICF API base URL.</p>
         <div class="aicf-code" style="margin-top:0.75rem;">
           <pre style="margin:0;" data-aicf-status-raw>{`Loading...`}</pre>
         </div>
       </article>
     </div>
     <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-status-message>Loading live AICF metrics...</p>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>What each metric means</h2>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Metric</th><th>Source</th><th>Meaning</th></tr></thead>
+          <tbody>
+            {metricMeaning.map(([m, s, d]) => (
+              <tr><td><strong>{m}</strong></td><td><code>{s}</code></td><td class="aicf-muted">{d}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Endpoints this page uses</h2>
+      <ul>
+        <li><code>POST https://rpc.animica.org/rpc</code> with <code>chain.getHead</code>, every 2 to 4 seconds, for the ticker and badge.</li>
+        <li><code>GET {aicfApiBaseUrl}/status</code>, once on load, for the AICF section.</li>
+      </ul>
+      <p>
+        Other useful checks that this page does not poll: <code>https://explorer.animica.org/api/head</code>
+        (independent node, includes peer count and average block time),
+        <code>https://pool.animica.org/api/pool/summary</code> (network hashrate, blocks found, share rates),
+        and <code>https://pool.animica.org/api/ena/stats</code> (ENA job and receipt counts).
+      </p>
+
+      <h2>What to do if</h2>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Symptom</th><th>What it usually means and what to do</th></tr></thead>
+          <tbody>
+            {whatIf.map(([s, d]) => (
+              <tr><td><strong>{s}</strong></td><td class="aicf-muted">{d}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p>
+        If a hosted service is down and you need it, the <a href="/support">Support page</a> explains
+        how to report it and what to include. For anything that must keep working through an outage of
+        the hosted RPC, <a href="/node">run your own node</a>.
+      </p>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        website/src/components/StatusBadge.astro and MetricTicker.astro (thresholds and polling) ·
+        website/src/features/aicf/liveMetricsClient.ts · explorer2/api/src/server.ts · docs/TROUBLESHOOTING.md ·
+        live probes of the listed services on 2026-08-23
+      </p>
+    </div>
   </section>
 
   <script>
@@ -243,3 +257,12 @@ const topMetrics = [
 
   <Footer slot="footer" />
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2rem; }
+  .page-prose p, .page-prose ul { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose li { margin-top: 0.4rem; }
+  .page-prose table { margin-top: 0.9rem; min-width: 560px; }
+  .page-prose code { font-size: 0.92em; }
+</style>

@@ -1,0 +1,95 @@
+---
+title: "Inclusion implies execution: the block 44,444 fork and the phantom-deposit bug class"
+description: "A transaction that is in a block is not necessarily a transaction that moved funds. How a silent in-block revert produced phantom deposits, what 7.1.8 and 7.1.9 changed, and the rule integrators should follow."
+date: 2026-07-12
+updated: 2026-08-23
+author: "Animica Team"
+tags: ["consensus", "security", "state-commitment", "fork", "integrators"]
+---
+
+In July 2026 an exchange integration credited roughly 3.64 million ANM of deposits that had never moved. The transactions were real, signed, and sitting in confirmed blocks. They had simply not executed. This post explains how that was possible, what the 7.1.8 and 7.1.9 releases did about it — including the `FORK_STATE_COMMITMENT` rule at block 44,444 — and the one rule every integrator should take away. Sources are the release commits and `core/network_params.py`.
+
+## The bug class
+
+Animica's executor, `execution/runtime/executor.py::apply_block`, handles a transfer whose sender cannot cover amount plus fee by catching `InsufficientBalance` and converting it into an in-block **revert**. The transaction stays in the block; it moves no funds and increments no nonce. That behaviour is not unusual — many chains include failed transactions — but it has a consequence: *inclusion does not imply execution*.
+
+Two further conditions turned that into an incident:
+
+1. **Unfundable transactions could reach a block.** The RPC-side balance check, `rpc/methods/tx.py::_validate_sufficient_balance`, read its state handle from a context object that was `None` on the live node. With nothing to read, it skipped silently. Every unfundable transaction passed admission, and the force-chain submit path (`ANIMICA_TX_SEND_FORCE_CHAIN=1`) could put one straight into a block.
+2. **Nothing on chain exposed the non-execution.** Miners sealed a zero `stateRoot`, so no commitment distinguished a block in which the transfer executed from one in which it reverted.
+
+An integrator whose deposit logic was "transaction hash appears in a block, wait N confirmations, credit the account" therefore credited transfers from senders whose real balances and nonces proved the transfers had never happened. The 7.1.8 commit names the figure: about 3.64M ANM of phantom deposits.
+
+## 7.1.8: fail closed at the door
+
+7.1.8 (2026-07-12) fixed the admission side without touching consensus:
+
+- The sender's balance is now read through the same authoritative path that backs the `state.getBalance` RPC, with the context handle only as a fallback.
+- On the force-chain path, an unresolvable sender or an unverifiable balance is **rejected**, not skipped. A known-insufficient balance is rejected on every path.
+- The miner's normal selection path, `mempool/select.py::select_for_block`, already ran a per-block running-balance overlay, so ordinary mining was guarded; the fix closed the one path that was not.
+
+The same commit records a rejected alternative: a consensus-level "execution must succeed or the block is invalid" gate. Adversarial review found it split-unsafe — it depended on each node's own head and could be bypassed through a reorg — and state-corrupting, because its dry run mutated AICF state that the snapshot/revert machinery did not cover. The commit's guidance to integrators is the sentence this post exists to repeat: *credit on executed state change, not on transaction inclusion.*
+
+## 7.1.9: a deterministic cure at block 44,444
+
+7.1.9 promoted the state-root check that 6.0.0 had been running in shadow into a height-gated consensus rule, `FORK_STATE_COMMITMENT`, active on mainnet from block 44,444. The rule, from `core/network_params.py`:
+
+> From H, a block that commits a NON-ZERO stateRoot must commit the REAL post-execution root: every node re-applies the block to its parent state … and REJECTS on mismatch.
+
+Four properties made it safe to ship:
+
+**It is self-gating.** A zero or uncommitted root is accepted. A miner that has not upgraded and still seals zero roots is never rejected, so adoption cannot cause a split; only a *wrong non-zero* root is rejected.
+
+**It runs on one path.** Enforcement sits in `_apply_state_reorg` after the real state application, which is the path used for both tip-extension and reorg-attached blocks. The 7.1.8 attempt had a bypass precisely because the two paths differed.
+
+**It cannot stall the head.** A rejected block used to remain the heaviest tip and be re-selected forever. 7.1.9 added `ForkChoice.mark_invalid`, which excludes a block and its descendants from best-tip selection, backed by a durable invalid set on the importer that survives fork-choice rebuilds and short-circuits re-import at ingress.
+
+**It never halts.** A compute error inside the check returns "do not reject" — the node fails open on that one block rather than wedging. The rollback on a genuine mismatch reuses the proven pre-reorg restore path.
+
+The miner's side is `BlockImporter.compute_sealed_state_root`: the identical apply, so an honest miner's sealed root equals what every verifier recomputes by construction.
+
+## Where the rule stands
+
+Be precise about what 44,444 guarantees. It guarantees that a block claiming a state root is telling the truth. It does not force a block to claim one. The rule was shipped "dormant/self-gating" pending real root sealing by miners, a live shadow window with zero mismatches, and adversarial review. The chain-facts snapshot taken on 2026-08-03 notes that `chain.getHead` still reported zeroed state and transaction roots at that time — the rule armed, roots not yet sealed network-wide. Whether a particular block is checked depends on whether its producer sealed a non-zero root. That is the honest status, and it is why the integrator rule below does not depend on the fork at all.
+
+## Also at 44,444: the treasury-scam clawback
+
+The same release carried a one-time, height-gated state migration at 44,444 recovering funds from the ANM-2026-07 treasury scam into the foundation treasury: about 4,000,799.837 ANM from an ML-DSA-65 account, about 9,248.762 ANM from a stranded SPHINCS+ account, and a third source of about 1,643,614.049 ANM added in a follow-up commit — 5,653,662.648 ANM in total per the chain-facts record. The migration has the same contract as the earlier 6.0.5 clawback at block 39,584: deterministic, debit equals credit, never raises out of block application, reorg-safe, and it moves whatever is present at H. Both source accounts were frozen at the same height so they cannot be re-funded. This is value-preserving recovery, not issuance, and it is visible on chain at those heights.
+
+## The integrator rule
+
+A deposit is credited when the recipient's **executed balance** changed, not when a transaction hash appeared. Concretely, against the public RPC:
+
+```bash
+# 1. Find the transaction and the block it is in.
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tx.getTransactionByHash","params":["0x<txid>"]}'
+
+# 2. Read the recipient balance at the current head (hex nANM).
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"state.getBalance","params":["anim1..."]}'
+```
+
+Compare the balance before and after the block (or track the sender's balance and nonce, which a reverted transfer leaves untouched). Then wait for confirmations: Animica has no finality gadget, the `finalized` flag in `tx.getStatus` is only a node-local label that turns true at 12 confirmations, and the reorg depth bound defaults to 96 blocks. The explorer's `/address/{anim1…}` and `/tx/{hash}` pages show executed effects, which is the right mental model. The RPC surface is documented in [/learn/json-rpc-api-guide](/learn/json-rpc-api-guide) and the transaction model in [/learn/transactions-and-fees](/learn/transactions-and-fees).
+
+A useful pre-flight for senders is `mempool.simulateAdmission`, which dry-runs admission — including the now fail-closed balance check — without broadcasting.
+
+## Why not just reject failed transactions at consensus?
+
+Because "failed" is not a property of the transaction; it is a property of the transaction *given a state*. Two honest nodes with different views of the mempool, or on either side of a one-block reorg, can disagree about whether a transfer is fundable at the moment of inclusion. A rule that rejects the *block* on that basis turns ordinary disagreement into a chain split. Committing the post-execution root instead lets every node check the same deterministic claim — "this is the state after this block" — and reject only a block that lies. That is the difference between the abandoned 7.1.8 gate and the 7.1.9 fork.
+
+## Key takeaways
+
+- An included transaction can revert in-block; on Animica a reverted transfer moves nothing and leaves the nonce unchanged.
+- 7.1.8 closed the admission hole (a skipped balance check) and fails closed on the force-chain path.
+- 7.1.9's `FORK_STATE_COMMITMENT` at block 44,444 rejects any block whose non-zero `stateRoot` is wrong; it is self-gating on zero roots and cannot stall or halt a node.
+- Integrators: credit on executed balance change plus confirmations, never on inclusion.
+
+## Sources
+
+- git commit `ad2658086` (7.1.8 fail-closed pre-mempool balance guard)
+- git commits `502ede6e9`, `5c2fc4488`, and the 7.1.9 merge `a81d11812`
+- `core/network_params.py` (`FORK_STATE_COMMITMENT`)
+- `core/chain/state_commit.py`
+- `docs/exposure/recon/chain-facts.md` (fork history table, 2026-08-03 snapshot)
+- `docs/ANIMICA_2026_STATE.md`

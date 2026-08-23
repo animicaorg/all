@@ -1,343 +1,178 @@
 ---
-/**
- * Technology Page
- * 
- * Deep dive into Animica's technical architecture, consensus, execution, and cryptography.
- */
-
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import Accordion from "../components/Accordion.astro";
-import Card from "../components/Card.astro";
-import Callout from "../components/Callout.astro";
 
 const pageTitle = "Technology";
-const pageDesc = "Explore the technical architecture of Animica: PoIES consensus, Python-VM execution, post-quantum cryptography, and P2P networking.";
+const pageDesc =
+  "Architecture overview of Animica: ML-DSA-65 signatures, bech32m addresses, the nonce-less transaction model, PoIES consensus, the deterministic Python VM, the ANM-native L2, AICF and the post-quantum P2P layer.";
+
+const sizes = [
+  ["Public key", "1,952 bytes"],
+  ["Secret key", "4,032 bytes"],
+  ["Signature", "3,309 bytes"],
+  ["Scheme id", "0x1003 (4099)"],
+  ["Standard", "FIPS 204 (ML-DSA-65, lineage name Dilithium3)"],
+];
 ---
 
 <BaseLayout title={pageTitle} description={pageDesc}>
   <Header slot="header" />
-  
-  <main class="min-h-screen bg-white dark:bg-dark-50">
-    <!-- Hero Section -->
-    <section class="bg-gradient-to-b from-brand-50 to-white dark:from-dark-100 dark:to-dark-50 py-20 md:py-32">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white mb-6">
-          Technology
-        </h1>
-        <p class="text-xl sm:text-2xl text-gray-600 dark:text-gray-300 leading-relaxed">
-          {pageDesc}
-        </p>
-      </div>
-    </section>
 
-    <!-- Overview -->
-    <section class="py-16 md:py-24">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="prose prose-lg dark:prose-invert max-w-none mb-12">
-          <p class="text-gray-700 dark:text-gray-300 leading-relaxed">
-            Animica is built on four core technical pillars: post-quantum security, deterministic execution, useful-work consensus, and decentralized networking. Each layer is designed with transparency, verifiability, and long-term sustainability in mind.
-          </p>
-        </div>
-      </div>
-    </section>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Technology</span>
+      <h1 class="aicf-heading">How Animica is built</h1>
+      <p class="aicf-subheading">
+        Eight layers, each with one or two design decisions that explain everything else. Each section
+        links to the long-form article. Where something exists in the protocol but is not enforced on
+        mainnet, it says so.
+      </p>
+    </div>
+  </section>
 
-    <!-- Consensus Section -->
-    <section class="py-16 md:py-24 bg-gray-50 dark:bg-dark-100">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="max-w-4xl mx-auto mb-12">
-          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-            Consensus: PoIES
-          </h2>
-          <p class="text-xl text-gray-600 dark:text-gray-300">
-            Proof-of-Integrated-External-Services combines hash-based security with verifiable useful work
-          </p>
-        </div>
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2 id="signatures">1. Post-quantum signatures: ML-DSA-65</h2>
+      <p>
+        Every account key on Animica is an ML-DSA-65 keypair, the FIPS 204 standardisation of Dilithium3,
+        a lattice-based scheme at NIST security category 3. There is no ECDSA or Ed25519 anywhere in
+        consensus, which is what makes the chain post-quantum by default rather than by a future
+        migration. The trade-off is size: a signature is about 50 times larger than an ECDSA signature,
+        and that single fact shapes the transaction limit (131,072 bytes), the P2P framing, and the L2's
+        data-availability design. Mainnet accepts only scheme id <code>0x1003</code> for new transactions;
+        SPHINCS+ (<code>0x1002</code>) exists in the code as a legacy scheme but is consensus-stranded and
+        cannot sign on mainnet. Hashing throughout is NIST SHA-3, not Keccak-256.
+      </p>
+      <table class="aicf-table">
+        <tbody>
+          {sizes.map(([k, v]) => (<tr><td><strong>{k}</strong></td><td><code>{v}</code></td></tr>))}
+        </tbody>
+      </table>
+      <p class="aicf-muted">Read: <a href="/learn/post-quantum-signatures-ml-dsa-65">Why ML-DSA-65</a>.</p>
 
-        <div class="max-w-4xl mx-auto space-y-6">
-          <Accordion title="How PoIES Works">
-            <p class="mb-4">
-              PoIES (Proof-of-Integrated-External-Services) accepts blocks when a miner's score exceeds a moving threshold (Θ). The score combines:
-            </p>
-            <ul class="list-disc pl-6 space-y-2">
-              <li><strong>Hash-share work</strong>: Traditional cryptographic hashing with exponential scoring H(u) = −ln(u)</li>
-              <li><strong>Useful work proofs</strong>: Verified AI computation, quantum tasks, storage proofs, and VDF results</li>
-            </ul>
-            <p class="mt-4">
-              Each proof type has policy-defined caps (Γ) to maintain security and fairness. The threshold Θ adjusts dynamically using EMA-based retargeting to maintain target block times.
-            </p>
-          </Accordion>
+      <h2 id="addresses">2. Addresses and HD derivation</h2>
+      <p>
+        An address is bech32m (BIP-350) with human-readable part <code>anim</code> and a 34-byte payload:
+        the 2-byte scheme id followed by SHA3-256 of the public key. Account addresses therefore begin
+        <code>anim1zqp</code> and are 66 characters long; contract addresses use scheme id
+        <code>0x0000</code>. Plain bech32 checksums are rejected. Because ML-DSA key generation is a pure
+        function of a 32-byte seed, HD wallets derive that seed with BIP-39 and SLIP-0010 (ed25519-style
+        hardened derivation) along <code>m/44'/4279885'/account'/0'/index'</code>, where 4279885 is ASCII
+        "ANM". Every wallet that follows <code>docs/wallet/HD_DERIVATION.md</code> recovers the same
+        addresses from the same words.
+      </p>
+      <p class="aicf-muted">Read: <a href="/learn/animica-addresses-bech32m">Addresses</a> · <a href="/learn/wallets-and-hd-derivation">Wallets and HD derivation</a>.</p>
 
-          <Accordion title="Security Model">
-            <p>
-              PoIES maintains security by:
-            </p>
-            <ul class="list-disc pl-6 space-y-2 mt-4">
-              <li><strong>Bounded proof contributions</strong>: No single proof type can dominate block production</li>
-              <li><strong>Nullifier windows</strong>: Prevents proof reuse across blocks with time-to-live tracking</li>
-              <li><strong>Fixed-point math</strong>: Deterministic scoring using micro-nats (μ-nats) for consensus stability</li>
-              <li><strong>EMA difficulty adjustment</strong>: Smooth retargeting based on recent block times</li>
-            </ul>
-          </Accordion>
+      <h2 id="transactions">3. Transactions without nonces</h2>
+      <p>
+        The v2 transaction body has no nonce. Instead it carries a validity window
+        (<code>validAfter</code>, <code>validUntil</code> block heights) and a random salt; the transaction
+        id must be unique within the window, which gives replay protection without the ordering problems
+        a nonce causes for wallets that sign offline or from several devices. The body is canonical CBOR
+        (RFC 8949 §4.2.1), the signing preimage is domain-separated (<code>animica.tx.v1</code>) and wrapped
+        with the chain id and fork id, hashed with SHA3-512 and signed with ML-DSA-65. The envelope is
+        <code>{"{"}tx, sigs: [{"{"}alg: 4099, pubkey, sig{"}"}]{"}"}</code>. Legacy nonce-based v1 transactions are
+        still accepted. A transfer costs 21,000 gas at a price of 1 nANM, so 0.000021 ANM; admission
+        requires the balance to cover amount plus gas limit × gas price.
+      </p>
+      <p class="aicf-muted">Read: <a href="/learn/transactions-and-fees">Transactions and fees</a>.</p>
 
-          <Accordion title="Useful Work Integration">
-            <p class="mb-4">
-              Miners can augment their hash-based score with proofs of useful computation:
-            </p>
-            <ul class="list-disc pl-6 space-y-2">
-              <li><strong>AI proofs</strong>: Inference results, model training contributions</li>
-              <li><strong>Quantum proofs</strong>: Quantum circuit execution, quantum random numbers</li>
-              <li><strong>Storage proofs</strong>: Data availability commitments, erasure coding</li>
-              <li><strong>VDF proofs</strong>: Verifiable delay functions for randomness</li>
-            </ul>
-            <p class="mt-4">
-              All proofs are verified deterministically by nodes before being included in the score calculation.
-            </p>
-          </Accordion>
-        </div>
-      </div>
-    </section>
+      <h2 id="consensus">4. PoIES consensus</h2>
+      <p>
+        Blocks are produced by SHA3-256 proof-of-work over the header and nonce. The acceptance rule,
+        PoIES (Proof-of-Integrated-External-Services), is written as a score: <code>S = H(u) + Σψ ≥ Θ</code>,
+        where the block hash maps to a uniform draw <code>u</code>, <code>H(u) = −ln(u)</code> measures
+        hash luck in nats, and <code>Σψ</code> is the weighted sum of verified useful-work proofs (AI,
+        quantum, storage, VDF) under per-type and global caps. Θ, exposed as <code>thetaMicro</code> in
+        micro-nats, is retargeted every block by an EMA on <code>ln(dt/T)</code> with a 60-second target
+        and, since block 75,000, bounded per-step and global limits.
+      </p>
+      <p>
+        The honest status: every mainnet block so far has <code>Σψ = 0</code>. The reference miner
+        attaches no proofs, and the useful-work verification rule armed at 75,000 is presence-gated and
+        runs in shadow mode on mainnet, so blocks are accepted on hash work alone. There is no finality
+        gadget; a 100-block reorg bound has been enforced since 75,000, and confirmations are the
+        measure of settlement.
+      </p>
+      <p class="aicf-muted">Read: <a href="/learn/poies-consensus-explained">PoIES explained</a> · <a href="/learn/difficulty-adjustment-and-theta">Difficulty and Θ</a> · <a href="/learn/useful-work-ai-and-quantum">Useful work: designed vs live</a>.</p>
 
-    <!-- Execution Section -->
-    <section class="py-16 md:py-24">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="max-w-4xl mx-auto mb-12">
-          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-            Execution: Python-VM
-          </h2>
-          <p class="text-xl text-gray-600 dark:text-gray-300">
-            Deterministic Python smart contracts with gas metering and reproducible state transitions
-          </p>
-        </div>
+      <h2 id="vm">5. The deterministic Python VM</h2>
+      <p>
+        Contracts are written in a validated subset of Python and compiled to a small IR with a stable
+        CBOR encoding. Determinism comes from subtraction: no floats, no I/O, no time or randomness, no
+        reflection, bounded integers and containers, and an import allowlist of
+        <code>storage, events, hash, abi, treasury, syscalls</code>. A static estimator gives a gas upper
+        bound before execution and the interpreter meters actual gas from <code>vm_py/gas_table.json</code>.
+        Storage is a byte-keyed, byte-valued map. On-chain execution of contract CALLs activated at block
+        75,000 with release 9.6.0; before that height every CALL reverted, which is why the fork is
+        history-safe.
+      </p>
+      <p class="aicf-muted">Read: <a href="/learn/python-vm-smart-contracts">Python-VM contracts</a> · <a href="/learn/hello-counter-contract-tutorial">Hello Counter</a>.</p>
 
-        <div class="max-w-4xl mx-auto space-y-6">
-          <Accordion title="Python Smart Contracts">
-            <p class="mb-4">
-              Animica's execution layer runs smart contracts written in Python. The Python-VM ensures deterministic execution with:
-            </p>
-            <ul class="list-disc pl-6 space-y-2">
-              <li><strong>Pure functions</strong>: No I/O, clock access, or non-deterministic operations</li>
-              <li><strong>Gas metering</strong>: Per-opcode costs tracked for predictable resource usage</li>
-              <li><strong>Canonical encoding</strong>: CBOR serialization with sorted keys for state consistency</li>
-              <li><strong>Journaled state</strong>: Track reads/writes per transaction for rollback and snapshots</li>
-            </ul>
-          </Accordion>
+      <h2 id="l2">6. The ANM-native L2</h2>
+      <p>
+        The 10.x rollup is deliberately narrow: one asset (ANM in nANM), a fixed set of payment
+        transaction types, and ML-DSA-65 signatures end to end. State is a depth-256 sparse Merkle tree
+        keyed by address; the executor builds an account-conflict graph and runs independent components in
+        parallel with results identical to a sequential run. Batches close on count, bytes or age, are
+        published as self-describing DA blobs from which anyone can re-derive the state root, and are
+        anchored to L1 (consensus-interpreted from L1 height 80,000). The trust model is stated plainly:
+        a designated sequencer orders transactions; what bounds it is re-derivability, the bridge's
+        conservation invariant, and forced inclusion through L1.
+      </p>
+      <p class="aicf-muted">Read: <a href="/learn/animica-l2-rollup">Animica L2</a>.</p>
 
-          <Accordion title="Contract Lifecycle">
-            <p class="mb-4">
-              Deploying and calling contracts follows a standard workflow:
-            </p>
-            <ol class="list-decimal pl-6 space-y-2">
-              <li>Write contract in Python following Python-VM spec</li>
-              <li>Compile to intermediate representation (IR)</li>
-              <li>Deploy via transaction with manifest and code</li>
-              <li>Call contract functions via transactions</li>
-              <li>Receive deterministic receipts with gas used and logs</li>
-            </ol>
-          </Accordion>
+      <h2 id="aicf">7. AICF: AI compute with on-chain accounting</h2>
+      <p>
+        The AI Compute Framework connects three parties: requesters (users via the OpenAI-compatible API,
+        or contracts via syscalls), providers (registered, staked workers with heartbeats and SLA
+        scoring), and the chain (the <code>aicf.*</code> RPC namespace, credits, and settlement). Since
+        block 75,000, 25% of each block subsidy is earmarked for inference providers who claim it; the
+        unclaimed share rolls to the treasury. Every inference response from <code>animica.dev/v1</code>
+        carries a proof-of-inference receipt (model, prompt hash, output hash, seed) signed with
+        ML-DSA-65 under the domain <code>animica.ai.proof-of-inference.v1</code>, so a response can be
+        verified without trusting the server. The registry is small today, and the provider pages say so.
+      </p>
+      <p class="aicf-muted">Read: <a href="/learn/aicf-ai-compute-framework">AICF explained</a> · <a href="/providers">Providers</a>.</p>
 
-          <Accordion title="Gas & Metering">
-            <p>
-              Gas costs are defined per-opcode in `gas_table.json`. Common operations:
-            </p>
-            <ul class="list-disc pl-6 space-y-2 mt-4">
-              <li>Storage read: 200 gas</li>
-              <li>Storage write: 5000 gas</li>
-              <li>Contract call: 700 gas + execution costs</li>
-              <li>Event emission: 375 gas + data costs</li>
-            </ul>
-            <p class="mt-4">
-              Transactions specify a gas limit. If exceeded, execution reverts but gas is still consumed.
-            </p>
-          </Accordion>
-        </div>
-      </div>
-    </section>
+      <h2 id="p2p">8. Post-quantum P2P</h2>
+      <p>
+        Nodes find each other through DNS seeds and peer exchange and gossip headers, blocks,
+        transactions and shares over TCP (port 30333), with QUIC and WebSocket transports in the code.
+        The handshake is mutually authenticated and post-quantum: an ephemeral Kyber-768 KEM per
+        connection, identity signatures with the node's lattice key, HKDF-SHA3-256 for the key schedule,
+        and ChaCha20-Poly1305 (or AES-256-GCM) for the session. Peer ids are SHA3-256 of the identity key.
+        Sync is header-first with pinned checkpoints in <code>core/network_params.py</code> as a recovery
+        aid for nodes wedged on an orphaned sibling.
+      </p>
+      <p class="aicf-muted">Read: <a href="/learn/p2p-networking-and-sync">P2P networking and sync</a> · <a href="/learn/security-and-threat-model">Security and threat model</a>.</p>
 
-    <!-- Cryptography Section -->
-    <section class="py-16 md:py-24 bg-gray-50 dark:bg-dark-100">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="max-w-4xl mx-auto mb-12">
-          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-            Post-Quantum Cryptography
-          </h2>
-          <p class="text-xl text-gray-600 dark:text-gray-300">
-            Quantum-resistant signatures and encryption built-in from day one
-          </p>
-        </div>
+      <h2>Putting it together</h2>
+      <p>
+        A wallet derives an ML-DSA-65 key from a mnemonic, builds a CBOR transaction with a validity
+        window, signs it, and posts it to any node's <code>/rpc</code>. The node checks admission (chain id,
+        signature, balance, fee floor), gossips it over the Kyber-encrypted mesh, and a miner includes it
+        in a block whose SHA3-256 hash clears Θ. Every node re-executes the block, contract calls run in
+        the Python VM, and the explorer indexes the result. Nothing in that path depends on a server the
+        project controls, which is the property the whole design exists to provide.
+      </p>
 
-        <div class="max-w-4xl mx-auto space-y-6">
-          <Accordion title="Signature Schemes">
-            <p class="mb-4">
-              Animica supports two NIST-standardized post-quantum signature schemes:
-            </p>
-            <ul class="list-disc pl-6 space-y-2">
-              <li><strong>Dilithium3 (ML-DSA-65)</strong>: Default stateless signature scheme with fast verification</li>
-              <li><strong>SPHINCS+</strong>: Alternative stateful scheme for high-security scenarios</li>
-            </ul>
-            <p class="mt-4">
-              Both schemes provide security against quantum attacks using lattice-based (Dilithium) or hash-based (SPHINCS+) constructions.
-            </p>
-          </Accordion>
-
-          <Accordion title="Key Management">
-            <p class="mb-4">
-              Keys are managed with:
-            </p>
-            <ul class="list-disc pl-6 space-y-2">
-              <li><strong>BIP39 mnemonics</strong>: 24-word phrases for seed generation</li>
-              <li><strong>Hierarchical derivation</strong>: Multiple keys from a single seed</li>
-              <li><strong>Address encoding</strong>: Bech32m format with 'anim1' prefix</li>
-              <li><strong>Domain separation</strong>: Unique prefixes for tx, commitment, header signatures</li>
-            </ul>
-          </Accordion>
-
-          <Accordion title="Encryption & Handshakes">
-            <p>
-              P2P connections use quantum-resistant encryption:
-            </p>
-            <ul class="list-disc pl-6 space-y-2 mt-4">
-              <li><strong>Kyber768</strong>: Key encapsulation mechanism for session keys</li>
-              <li><strong>ChaCha20-Poly1305</strong>: Symmetric encryption for data transport</li>
-              <li><strong>Noise protocol</strong>: Handshake patterns with forward secrecy</li>
-            </ul>
-          </Accordion>
-        </div>
-      </div>
-    </section>
-
-    <!-- Networking Section -->
-    <section class="py-16 md:py-24">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="max-w-4xl mx-auto mb-12">
-          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-            P2P Networking
-          </h2>
-          <p class="text-xl text-gray-600 dark:text-gray-300">
-            Fully decentralized gossip protocol with multi-transport support
-          </p>
-        </div>
-
-        <div class="max-w-4xl mx-auto space-y-6">
-          <Accordion title="Peer Discovery">
-            <p class="mb-4">
-              Nodes discover peers through multiple mechanisms:
-            </p>
-            <ul class="list-disc pl-6 space-y-2">
-              <li><strong>DNS seeds</strong>: Bootstrap from well-known seed nodes</li>
-              <li><strong>mDNS</strong>: Local network discovery for devnets</li>
-              <li><strong>Kademlia DHT</strong>: Distributed hash table for global discovery</li>
-              <li><strong>Peer exchange</strong>: Share known peers via gossip</li>
-            </ul>
-          </Accordion>
-
-          <Accordion title="Transport Protocols">
-            <p class="mb-4">
-              Animica supports multiple transport protocols:
-            </p>
-            <ul class="list-disc pl-6 space-y-2">
-              <li><strong>TCP</strong>: Reliable stream protocol for stable connections</li>
-              <li><strong>QUIC</strong>: UDP-based with built-in encryption and multiplexing</li>
-              <li><strong>WebSocket</strong>: Browser-compatible for web clients</li>
-            </ul>
-            <p class="mt-4">
-              All transports use end-to-end encryption with quantum-resistant handshakes.
-            </p>
-          </Accordion>
-
-          <Accordion title="Gossip Protocol">
-            <p>
-              Block, transaction, and proof propagation uses an efficient gossip protocol:
-            </p>
-            <ul class="list-disc pl-6 space-y-2 mt-4">
-              <li><strong>Push-pull</strong>: Proactive and reactive sync</li>
-              <li><strong>Bloom filters</strong>: Efficient set reconciliation</li>
-              <li><strong>Prioritization</strong>: High-value data (new blocks) spreads faster</li>
-              <li><strong>Rate limiting</strong>: Prevent spam and DoS attacks</li>
-            </ul>
-          </Accordion>
-        </div>
-      </div>
-    </section>
-
-    <!-- Data Availability -->
-    <section class="py-16 md:py-24 bg-gray-50 dark:bg-dark-100">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="max-w-4xl mx-auto mb-12">
-          <h2 class="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-            Data Availability
-          </h2>
-          <p class="text-xl text-gray-600 dark:text-gray-300">
-            NMT-based commitments for light client verification
-          </p>
-        </div>
-
-        <div class="max-w-4xl mx-auto space-y-6">
-          <Accordion title="Namespaced Merkle Trees (NMT)">
-            <p>
-              Animica uses NMTs for data availability commitments, allowing light clients to verify data for specific namespaces without downloading entire blocks. This enables efficient data availability sampling (DAS) for resource-constrained nodes.
-            </p>
-          </Accordion>
-
-          <Accordion title="Light Client Verification">
-            <p>
-              Light clients can verify block headers and sample data without full state:
-            </p>
-            <ul class="list-disc pl-6 space-y-2 mt-4">
-              <li>Download headers with NMT roots</li>
-              <li>Sample random data shares to probabilistically verify availability</li>
-              <li>Request Merkle proofs for specific transactions or state</li>
-            </ul>
-          </Accordion>
-        </div>
-      </div>
-    </section>
-
-    <!-- Learn More -->
-    <section class="py-16 md:py-24">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <Callout type="info" title="Dive Deeper">
-          <p>
-            For detailed specifications, see the <a href="/docs" class="text-brand-600 dark:text-brand-400 underline">documentation</a>:
-          </p>
-          <ul class="list-disc pl-6 space-y-1 mt-4">
-            <li><code>spec/poies_math.md</code> - PoIES scoring and retargeting</li>
-            <li><code>vm_py/specs/</code> - Python-VM gas, determinism, ABI</li>
-            <li><code>execution/specs/</code> - Receipts, scheduler, state management</li>
-            <li><code>p2p/</code> - Networking architecture and protocols</li>
-            <li><code>pq/</code> - Post-quantum cryptography implementation</li>
-          </ul>
-        </Callout>
-      </div>
-    </section>
-
-    <!-- CTA -->
-    <section class="py-16 md:py-24 bg-brand-500 dark:bg-brand-600">
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <h2 class="text-3xl font-bold text-white mb-4">
-          Ready to build on Animica?
-        </h2>
-        <p class="text-xl text-brand-50 mb-8">
-          Start deploying Python smart contracts and exploring the technology today
-        </p>
-        <div class="flex flex-col sm:flex-row gap-4 justify-center">
-          <a 
-            href="/developers" 
-            class="inline-flex items-center justify-center px-6 py-3 bg-white text-brand-600 font-medium rounded-lg hover:bg-gray-100 transition-colors duration-150"
-          >
-            Developer Guide
-          </a>
-          <a 
-            href="/node" 
-            class="inline-flex items-center justify-center px-6 py-3 bg-brand-700 text-white font-medium rounded-lg hover:bg-brand-800 transition-colors duration-150"
-          >
-            Run a Node
-          </a>
-        </div>
-      </div>
-    </section>
-  </main>
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/ANIMICA_2026_STATE.md · docs/pq/POLICY.md · docs/wallet/HD_DERIVATION.md · docs/consensus/poies_overview.md ·
+        docs/DIFFICULTY_ADJUSTMENT.md · docs/vm/OVERVIEW.md · docs/l2/ARCHITECTURE.md · docs/l2/SECURITY_ASSUMPTIONS.md ·
+        docs/aicf/OVERVIEW.md · docs/P2P_NETWORKING_GUIDE.md · docs/pq/HANDSHAKE.md · core/network_params.py · consensus/finality.py
+      </p>
+    </div>
+  </section>
 
   <Footer slot="footer" />
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2.2rem; }
+  .page-prose p { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose table { margin-top: 0.9rem; max-width: 560px; }
+  .page-prose code { font-size: 0.92em; }
+</style>

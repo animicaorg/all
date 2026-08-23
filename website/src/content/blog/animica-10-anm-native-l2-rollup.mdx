@@ -1,0 +1,112 @@
+---
+title: "Animica 10.0: an ANM-native Layer 2 rollup"
+description: "The design of the 10.0.0 L2 — a payment rollup with ML-DSA-65 signatures end to end, validity by universal re-execution, a conservation invariant that makes minting impossible, and an honest statement of what the designated sequencer can still do."
+date: 2026-08-13
+updated: 2026-08-23
+author: "Animica Team"
+tags: ["l2", "rollup", "10.0.0", "ml-dsa-65", "data-availability"]
+---
+
+Animica 10.0.0 (2026-08-13) packaged a Layer 2 into the `animica` wheel: an ANM-only payment rollup that settles to Animica L1, signs every user transaction with ML-DSA-65, and proves batches by letting anyone re-execute them. This post explains the architecture, the trust model the documentation is careful to state honestly, the fee schedule, and the measured throughput — including where the bottleneck is and why. It is a synthesis of `docs/l2/*`; the developer-facing reference is [/learn/animica-l2-rollup](/learn/animica-l2-rollup).
+
+## Design goals
+
+Four constraints shaped the `l2/` package:
+
+- **ANM-native.** The only asset is ANM in integer nanos, identical to L1. No new token and no VM — a fixed set of payment-shaped transaction types (transfer, pay, agent payment, inference payment, batch payment, escrow open/release/refund, withdraw, forced withdraw, deposit claim).
+- **Post-quantum end to end.** Every user transaction is signed with ML-DSA-65, the L1-canonical `0x1003` scheme. A signature is 3,309 bytes and a public key 1,952 bytes, so a transaction is about 5.3 KB on the wire. That size "dominates the wire format, and the DA layer exists largely to amortize it."
+- **Money can never be minted on L2.** The bridge enforces a conservation invariant tying every L2 nano to ANM locked on L1.
+- **Deterministic everywhere.** Two nodes replaying the same batch produce identical roots regardless of core count or scheduling.
+
+## The pipeline
+
+A signed transaction enters the sequencer (`l2/sequencer.py`) and moves through decode, cheap validation (size limits, chain id, scheme), dedupe, batched signature verification, and nonce/balance admission. At that point it is `SOFT_CONFIRMED` and ordered into the open batch. The batch closes on whichever comes first: 50,000 transactions, 8 MiB encoded, or 250 ms of age (all `ANIMICA_L2_*` defaults). Then:
+
+1. **Execute** (`l2/executor.py`). Transactions are grouped by account-conflict into connected components; components run in parallel, transactions within a component serially in sequencer order. The result is provably equal to a sequential run for any worker count.
+2. **State** (`l2/state.py`). A depth-256 sparse Merkle tree keyed by the 32-byte address, with membership and non-membership proofs, copy-on-write per batch. The root is independent of insertion order.
+3. **DA encode** (`l2/da.py`). An address dictionary replaces repeated 32-byte addresses with varint indices, then zlib compresses the body. `data_root = sha3_256(uncompressed_body)`, so the commitment is independent of the compressor. Signatures are high-entropy and do not compress; structure and addresses do.
+4. **Prove** (`l2/proof.py`), then **commit** atomically (`l2/store.py`: temp file, fsync, `os.replace`, WAL marker — never one fsync per transaction).
+
+The batch header commits previous and new state roots, the transactions, receipts, escrow and data roots, and the fee, deposit and withdrawal aggregates. The sequencer timestamp is excluded from the batch id so two honest replays agree.
+
+## Nine transaction states, three grades of confirmation
+
+`l2/constants.py::TxStatus` defines `RECEIVED`, `VALIDATED`, `SOFT_CONFIRMED`, `BATCHED`, `PROVEN`, `L1_SUBMITTED`, `L1_FINALIZED`, `FAILED` and `REVERTED`. The lifecycle document's rule is that "sequencer acceptance is never presented as L1 finality", and it maps the states onto three grades:
+
+| Grade | State | Who vouches | Use for |
+|---|---|---|---|
+| Soft | `SOFT_CONFIRMED` | the sequencer alone (a promise) | low-value UX, micropayments between parties who already accept sequencer trust |
+| Proven | `BATCHED` + `PROVEN` | anyone who re-executes the DA blob (`l2_verifyBatch`) | values you want independently checkable before L1 finality |
+| L1-finalized | `L1_FINALIZED` | Animica L1 consensus, anchoring tx 64 blocks deep | withdrawals, exchange credits, anything irreversible |
+
+`REVERTED` exists separately from `FAILED` because admission is never trusted: the executor re-validates nonce, balance and expiry at execution time, so a transaction whose balance raced away is recorded in the batch with a reverted receipt rather than dropped.
+
+## The bridge and the invariant
+
+Deposits are ordinary L1 transfers to the canonical bridge account. A transfer carrying the `ANML2D1` memo names an explicit L2 beneficiary; since 10.0.1 a plain transfer credits the L1 sender as beneficiary, because L1 and L2 share the same address derivation. The L1 executor treats memos as opaque, so deposits needed no L1 change.
+
+A deposit is credited only once it is `FINALIZED` on L1 — 64 blocks deep (`L1_FINALITY_DEPTH`), past the 12-block `CONFIRMED` tier — so an L1 reorg can never mint unbacked L2 ANM. `OBSERVED` and `CONFIRMED` deposits are dropped by `rollback_l1_to` on reorg; finalized ones are never rolled back.
+
+Withdrawals burn on L2 and produce a unique nullifier, `sha3_256("animica.l2.withdraw.nullifier.v1" || l2_txid)`. The L1 claim spends the nullifier exactly once after the containing batch is L1-finalized; a claim that would exceed the locked balance is refused as an invariant violation. Throughout, the bridge checks
+
+```
+balances + open escrows + unclaimed burns == credited_total − claimed_on_l1
+total_withdrawable_L2_ANM <= ANM_locked_for_L2_on_L1
+```
+
+and the security document is explicit that an invariant failure is **fatal**: halt settlement rather than risk unbacked withdrawals. "Do not 'fix' this by loosening the check."
+
+Batch commitments ride the same rail as deposits, as transfers to the bridge address with memo `ANML2C1`. Below L1 height 80,000 (`FORK_L2_ANCHOR_HEIGHT`) they are opaque memos indexed off-consensus; at and above it, full nodes advertising 10.0.0 interpret them at consensus. As of 2026-08-23 the L1 head is past 81,000, so that height has been reached. Whether a given node actually submits anchors is a separate operator switch, `ANIMICA_L2_SETTLEMENT_ENABLED`, which defaults to off.
+
+## The trust model, stated honestly
+
+`docs/l2/SECURITY_ASSUMPTIONS.md` opens by saying the 10.0.0 L2 runs a **designated sequencer** and "we do not call it trustless". Trust minimisation comes from three mechanisms that bound the sequencer:
+
+1. **Data availability plus re-derivability.** Anyone can reconstruct the exact transaction list from the DA blob and re-execute it; a committed state transition that honest re-execution rejects is detectable by anyone who checks.
+2. **The money invariant**, checked continuously by the bridge and independently per batch by the verifier (Δ balances must equal deposited − withdrawn; fees move between accounts inside L2 and cancel).
+3. **Forced inclusion and forced exits.** A user who is censored submits their fully signed L2 transaction bytes on L1 instead. The request carries a deadline height; if the sequencer has not included it by then, `Sequencer.process_forced` injects it. "Censorship can delay, not confiscate."
+
+The document also lists what *is* trusted. The sequencer can stop (liveness), and it can reorder or delay transactions before batch close — "nothing in 10.0.0 prevents ordering discretion inside a batch. This is a real power of the operator." Soft confirmations are promises. And the design assumes at least one honest party runs the verifier.
+
+What the sequencer cannot do, even maliciously: forge a transaction (every one carries an ML-DSA-65 signature over a domain-separated preimage including the L2 chain id and nonce), mint ANM, replay a transaction, credit a fake deposit, or double-release a withdrawal.
+
+## Validity by re-execution, not by zero knowledge
+
+The default settlement mode, `VALIDITY`, uses `ReExecutionValidityBackend`. The proof for a batch is its DA blob plus public inputs; verification reconstructs the blob, checks the prior state root, re-verifies every signature, re-executes, and asserts every committed root and aggregate plus the no-minting condition. The documentation is careful: this is "a real, anyone-can-run verifier — its security is identical to a full node re-executing the batch — but it is not succinct and not zero-knowledge." The reason given is that a succinct ZK proof of a full ML-DSA-65 signature stack "is not something that can honestly be shipped as production cryptography today, and we never fake a proof." The `ProofBackend` interface is backend-independent so a future PQ-friendly succinct backend drops into the same slot. `OPTIMISTIC` mode exists for migration scenarios (a 100-batch challenge window, presupposing a bonded sequencer) and `DEV` mode verifies nothing and is for local development only.
+
+## Fees
+
+`l2/fees.py` charges the marginal resource a transaction imposes: `base (100 nanos) + 2 nanos × encoded bytes + 20 nanos × execution units`. Transfers and payments are 1 unit, withdrawals and escrow operations 2, batch payments 1 per recipient, and protocol-minted deposit claims are free. A roughly 180-byte inference payment costs 100 + 360 + 20 = 480 nanos, about 4.8 × 10⁻⁷ ANM — the point being that a 0.01 ANM AI micropayment is economically sensible. The signed `tx.fee` is a ceiling, not the charge; the excess is not taken, and anything above the schedule fee acts as a priority tip. Fees accrue to a protocol-fixed L2 treasury address and never leave L2, which is what keeps the conservation check exact. The schedule is consensus: a sequencer that deviates produces batches the verifier rejects.
+
+## Measured throughput, and the wall
+
+`docs/l2/PERFORMANCE.md` refuses marketing figures: every number must come from the harness (`animica l2 bench`), be labelled with its machine and conditions, and "the real TPS of the system is the lowest sustainable stage of the pipeline." Its example report, labelled *measured on the dev box* (10 vCPU Linux, Python 3.12, liboqs 0.14, seed 1, presigned admission, 500-transaction smoke runs, not ramp-mode sustained):
+
+| Metric | Value |
+|---|---|
+| bytes per transfer on the wire | 5,340 B |
+| end-to-end tps, transfers, 1 worker | 660.7 |
+| end-to-end tps, transfers, 4 workers | 796.3 |
+| end-to-end tps, transfers, 8 workers | 779.5 (plateau) |
+| execution-only tps (no signature verify), 4 workers | 3,790.8 |
+| bottleneck stage | signature verification |
+
+The reading is the one a post-quantum rollup should expect: the non-crypto pipeline clears about 3.8k tps on that box, but end-to-end throughput sits near 0.7–0.8k and stops scaling past four workers because ML-DSA-65 verification is the wall. Raising real throughput means attacking verification (more verifier cores, `ANIMICA_L2_SIG_WORKERS`, a faster liboqs build), not the executor. Ramp-mode sustained figures are marked TBD in the report and are not claimed here.
+
+## Running it
+
+`ANIMICA_L2_ENABLE=1 animica node up` brings up an all-in-one L2 beside the L1 node; `ANIMICA_L2_MODE=node` runs a follower that syncs batches and DA blobs and re-executes them — the role anyone can run to hold the sequencer honest. The `l2_*` JSON-RPC methods (`l2_status`, `l2_getBalance`, `l2_sendRawTransaction`, `l2_getBatch`, `l2_verifyBatch`, `l2_getAccountProof`, …) are served by the node's main RPC server; they are flat names, not a namespace. See [/learn/json-rpc-api-guide](/learn/json-rpc-api-guide) and, for the payment use case the L2 was built around, [/learn/x402-agent-payments](/learn/x402-agent-payments).
+
+## Key takeaways
+
+- The 10.0.0 L2 is an ANM-only payment rollup, ML-DSA-65 end to end, chain id 1001 on mainnet, settling to L1 via memo-tagged transfers to a bridge account.
+- Deposits credit only at 64 L1 confirmations; withdrawals are nullifier-protected; the bridge invariant makes minting on L2 impossible and halts on violation.
+- Validity is by universal re-execution — real but not succinct; a designated sequencer retains ordering discretion, bounded by forced inclusion via L1.
+- Measured dev-box throughput is about 0.7–0.8k tps end to end, limited by signature verification.
+
+## Sources
+
+- `docs/l2/ARCHITECTURE.md`, `docs/l2/SECURITY_ASSUMPTIONS.md`, `docs/l2/TRANSACTION_LIFECYCLE.md`
+- `docs/l2/FEES.md`, `docs/l2/DATA_AVAILABILITY.md`, `docs/l2/FORCED_EXITS.md`
+- `docs/l2/PERFORMANCE.md`, `docs/l2/RUNNING.md`
+- git commits for 10.0.0 (`l2` packaged into the wheel) and 10.0.1 (deposit indexer, memo-less deposits)

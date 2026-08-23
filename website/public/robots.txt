@@ -15,3 +15,28 @@ Sitemap: https://animica.org/sitemap-index.xml
 
 # Preferred host
 Host: animica.org
+
+# Paid Crawl — how a website charges AI crawlers for access.
+# FREE to set up for site owners (no account, no API key). Crawlers pay.
+# Protocol document (free, no auth): https://animica.dev/.well-known/paid-crawl
+
+# Explicitly welcome AI crawlers / agents — agent guide: https://animica.org/llms.txt
+User-agent: GPTBot
+Allow: /
+User-agent: OAI-SearchBot
+Allow: /
+User-agent: ClaudeBot
+Allow: /
+User-agent: Claude-Web
+Allow: /
+User-agent: anthropic-ai
+Allow: /
+User-agent: PerplexityBot
+Allow: /
+User-agent: Google-Extended
+Allow: /
+User-agent: CCBot
+Allow: /
+User-agent: Bingbot
+Allow: /
+# LLM/agent guide (llmstxt.org): https://animica.org/llms.txt

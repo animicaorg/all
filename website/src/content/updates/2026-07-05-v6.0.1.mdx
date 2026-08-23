@@ -1,0 +1,19 @@
+---
+title: "Animica 6.0.1: consensus activation at block 40,000"
+description: "Sets the coordinated mainnet activation height for the 6.0.0 rules — mandatory ML-DSA-65 signature verification and header root checks — and merges the hardening branch into main."
+date: 2026-07-05
+tags: ["release", "consensus", "fork", "upgrade"]
+---
+
+Animica 6.0.1 fixes the mainnet activation height for the 6.0.0 consensus rules at **block 40,000**. At that height upgraded nodes begin enforcing `FORK_PQ_HARDENING` (every transaction signature verified at block import; only ML-DSA-65, scheme `0x1003`, accepted) and `FORK_ROOT_COMMITMENT` (header `txsRoot` and `proofsRoot` checked against block contents, self-gating on zero roots).
+
+The activation height is a network-wide consensus parameter. It must be identical on every node — the live seed node and every `pip install` — or nodes that enforce diverge from nodes that do not the moment a rule-violating block appears. That is why the height ships as a release rather than a configuration note: operators must run 6.0.1, or set `ANIMICA_FORK_PQ_HARDENING_HEIGHT` / `ANIMICA_FORK_ROOT_COMMITMENT_HEIGHT` to 40000 by hand, before block 40,000. The runway at release time was roughly 1.2 to 2.3 days from a head near 36,628.
+
+Two properties made the short runway safe:
+
+- **P2P-transparent.** The mainnet P2P parameters hash is pinned to the canonical live value (fingerprint `41f0acb8…`), so 6.0.1, 6.0.0 and legacy nodes keep peering through the pre-activation window. The activation height is deliberately not folded into that hash.
+- **Verified at activation.** Empty and coinbase-only blocks still pass the gates at the activation height, so an upgraded node cannot be rejected for its own honest blocks.
+
+6.0.1 also merges the `security/6.0.0-hardening` branch onto main on top of the 5.2.1–5.2.6 line (snapshot wire-cap and CBOR framing, authoritative balance read-through, the Bitcoin-compatible wallet RPC, pool embeddings, wallet-Qt release CI). It adds `cryptography>=42` as a base dependency for production AEAD; the pure-Python fallback is warn-and-allow unless `ANIMICA_STRICT_AEAD=1`. Seventy-seven Python files changed; the CBOR module keeps both the prefix decoder and strict-minimal decode.
+
+The pool site carried an upgrade banner for this release: "animica 6.0.1 before block 40000".

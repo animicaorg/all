@@ -96,15 +96,14 @@ export const SITE: SiteConfig = {
 
   nav: {
     top: [
-      { label: 'AI API', href: 'https://console.animica.org' },
-      { label: 'Free AI', href: 'https://animica.dev', external: true, target: '_blank', rel: 'noopener' },
-      { label: 'ENA', href: '/ena' },
+      { label: 'Learn', href: '/learn' },
       { label: 'Developers', href: '/developers' },
       { label: 'Mine', href: '/mine' },
       { label: 'Wallet', href: '/wallet' },
       { label: 'Network', href: '/network' },
       { label: 'Docs', href: '/docs' },
-      { label: 'Status', href: '/status' },
+      { label: 'Blog', href: '/blog' },
+      { label: 'Free AI', href: 'https://animica.dev', external: true, target: '_blank', rel: 'noopener' },
     ],
     footer: [
       {
@@ -115,9 +114,25 @@ export const SITE: SiteConfig = {
         ],
       },
       {
+        title: 'Learn',
+        items: [
+          { label: 'All guides', href: '/learn' },
+          { label: 'What is Animica?', href: '/learn/what-is-animica' },
+          { label: 'Post-quantum signatures', href: '/learn/post-quantum-signatures-ml-dsa-65' },
+          { label: 'Mining guide', href: '/learn/mining-guide' },
+          { label: 'Run a node', href: '/learn/run-a-node' },
+          { label: 'Tokenomics', href: '/learn/anm-tokenomics-and-emission' },
+          { label: 'Glossary', href: '/learn/glossary' },
+          { label: 'Blog', href: '/blog' },
+          { label: 'Release notes', href: '/updates' },
+        ],
+      },
+      {
         title: 'Platform',
         items: [
           { label: 'Developers', href: '/developers' },
+          { label: 'AI API', href: 'https://console.animica.org' },
+          { label: 'ENA', href: '/ena' },
           { label: 'Providers', href: '/providers' },
           { label: 'Wallet', href: '/wallet' },
           { label: 'Mine', href: '/mine' },

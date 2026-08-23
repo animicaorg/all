@@ -2,164 +2,233 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
+import CodeBlock from "../components/CodeBlock.astro";
 
-const title = "ENA — Open AI, trained by everyone";
+const title = "ENA";
 const description =
-  "ENA is Animica's open AI training and inference network. Contribute compute from any machine, run useful-work and fine-tuning jobs, and earn ANM. Live progress and contributor tutorials.";
+  "ENA is Animica's CLI-first layer for agent runtime, retrieval, useful-work jobs and training orchestration. What it does today, what is still external, how contributors earn, and live job statistics.";
 
 const enaApiBase =
   (import.meta.env.PUBLIC_ENA_API_BASE as string | undefined)?.trim() ||
-  "https://pool.animica.org/api";
+  "https://pool.animica.org/api/ena";
 const enaSite = "https://pool.animica.org";
 
-const features = [
-  { ic: "🧹", h: "Useful-work", p: "Curate, dedupe, label, embed and index data — CPU-friendly jobs any machine can run." },
-  { ic: "🎯", h: "Training", p: "SFT, LoRA/QLoRA and DPO fine-tuning, orchestrated with manifests, checkpoints and evals." },
-  { ic: "⚡", h: "Inference", p: "OpenAI-compatible serving across a fleet of contributor nodes and routed providers." },
-  { ic: "🧾", h: "On-chain receipts", p: "Deterministic SHA3 receipts tie every job to a payable credit event." },
-];
+const install = `pip install --upgrade animica
+animica ena config init
+animica ena doctor
+
+# Contribute CPU useful-work (paid to your ANM address via the pool)
+animica ena worker start --worker-id "$(hostname)"
+
+# Or run everything the machine supports (PoW + ENA + serving) in one command
+animica up`;
+
+const lifecycle = `animica ena jobs create --type extract --source https://example.com
+animica ena jobs list
+animica ena jobs claim --worker-id miner-01 --types scrape,extract,index
+animica ena jobs run   --worker-id miner-01 --types scrape,extract,index
+animica ena jobs verify <job_id>
+animica ena jobs receipt <job_id>
+animica ena jobs export-onchain <job_id>
+animica ena credits show --miner-address anim1zqp...`;
+
+const training = `animica ena collect build-dataset crawl.jsonl --raw-out raw.jsonl --manifest dataset.json --split
+animica ena train prepare --dataset raw.deduped.jsonl --out train_manifest.json \\
+  --base-model <model> --backend command --auto-split \\
+  --launcher-command "python external_trainer.py --manifest {manifest} --output-dir {output_dir}"
+animica ena train run --manifest train_manifest.json
+animica ena train status <run_id>
+animica ena train eval --run-id <run_id> --model-provider ollama --model llama3.1`;
+
+const jobTypes = ["scrape", "extract", "clean", "dedupe", "chunk", "classify", "label", "summarize", "embed", "index", "eval", "dataset_build", "training_records", "train_prepare"];
+
+const receiptFields = ["job_id", "job_hash", "manifest_hash", "worker_id", "event_timestamps", "input_refs", "output_refs", "result_hash", "verification_hash", "score", "reward", "export_payload_hash"];
 ---
 
 <BaseLayout title={title} description={description}>
   <Header slot="header" />
 
-  <main class="ena" data-ena-api={enaApiBase}>
-    <section class="ena-hero">
-      <span class="ena-tag">◆ Open, community-trained AI on Animica</span>
-      <h1>Open AI, <span class="grad">trained by everyone.</span></h1>
-      <p class="lead">
-        Lend your machine — laptop, rig, or GPU box — to run real AI work and earn <b>ANM</b>.
-        Every verified job mints an on-chain receipt. This is ENA.
+  <section class="aicf-section">
+    <div class="aicf-container" data-ena-api={enaApiBase}>
+      <span class="aicf-kicker">ENA</span>
+      <h1 class="aicf-heading">ENA: useful work, retrieval and training on Animica</h1>
+      <p class="aicf-subheading">
+        ENA is the CLI-first layer in the <code>animica</code> package (<code>python/animica/ena/</code>)
+        for four things: a model-backed agent runtime, an embedding-backed retrieval layer, a useful-work
+        job lifecycle with deterministic receipts, and a training orchestrator. Contributors run ENA
+        workers on ordinary machines and are paid in ANM through the pool. The coordinator lives at
+        <a href={enaSite} target="_blank" rel="noopener noreferrer">pool.animica.org</a>
+        (ena.animica.org redirects there).
       </p>
-      <div class="ena-cta">
-        <a class="ena-btn primary" href={`${enaSite}/#contribute`}>⛏ Contribute compute</a>
-        <a class="ena-btn ghost" href={`${enaSite}/about-ena`}>Open pool.animica.org ↗</a>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href={`${enaSite}/#contribute`} target="_blank" rel="noopener noreferrer">Contribute compute</a>
+        <a class="aicf-ghost-btn" href="/learn/useful-work-ai-and-quantum">Useful work: designed vs live</a>
+        <a class="aicf-ghost-btn" href="/learn/mining-guide">Mining guide</a>
       </div>
-      <div class="ena-ticker">
+      <div class="ena-ticker" style="margin-top:1.2rem;">
         <span>Jobs verified <b data-stat="jobs_verified">—</b></span>
+        <span>Receipts <b data-stat="receipts_total">—</b></span>
         <span>Training runs <b data-stat="training_runs_total">—</b></span>
         <span>Contributors <b data-stat="contributors">—</b></span>
-        <span>Receipts <b data-stat="receipts_total">—</b></span>
         <span class="ena-live" data-live><span class="pulse"></span><span data-live-text>connecting…</span></span>
       </div>
-    </section>
+      <p class="aicf-muted" style="margin-top:0.5rem; font-size:0.88rem;">
+        Fetched by your browser from <code>{enaApiBase}/stats</code>. On 2026-08-23 it reported about 146,000 verified jobs, 71 contributors and 10 training runs.
+      </p>
+    </div>
+  </section>
 
-    <section class="ena-stats">
-      <div class="ena-stat"><div class="n" data-stat="jobs_total">—</div><div class="l">Jobs submitted</div></div>
-      <div class="ena-stat"><div class="n" data-stat="jobs_verified">—</div><div class="l">Jobs verified</div></div>
-      <div class="ena-stat"><div class="n" data-stat="training_runs_total">—</div><div class="l">Training runs</div></div>
-      <div class="ena-stat"><div class="n" data-stat="contributors">—</div><div class="l">Contributors</div></div>
-      <div class="ena-stat"><div class="n" data-stat="chunks_total">—</div><div class="l">Indexed chunks</div></div>
-      <div class="ena-stat"><div class="n" data-stat="receipts_total">—</div><div class="l">Receipts</div></div>
-    </section>
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>What ENA is, concretely</h2>
+      <p>
+        The name gets used loosely, so here is the precise scope from <code>docs/ena/overview.md</code>.
+        ENA has four production-facing pillars: a <strong>model runtime</strong> with pluggable providers
+        (a deterministic extractive fallback, OpenAI-compatible endpoints, Ollama) and an auditable
+        plan/act/observe loop whose every tool call is traced to SQLite and <code>logs/audit.jsonl</code>;
+        a <strong>retrieval layer</strong> that chunks documents, stores embeddings from a real provider,
+        and answers keyword, semantic and hybrid queries; a <strong>useful-work lifecycle</strong> with
+        stable job hashes, typed states, verification records and machine-readable receipts; and a
+        <strong>training orchestrator</strong> that tracks manifests, runs, checkpoints, artifacts and
+        evaluation reports.
+      </p>
+      <p>
+        What ENA is not: it is not a consensus rule, and it is not the mainnet PoIES useful-work proof.
+        ENA receipts are mirrored into a local AICF protocol-state ledger and credited to the
+        contributor's address through the pool; the documentation describes direct chain anchoring of
+        receipts as an explicit boundary that depends on a node-side submission hook. The
+        <a href="/learn/useful-work-ai-and-quantum">useful-work article</a> separates the designed
+        PoIES proof path from the ENA path that actually pays contributors today.
+      </p>
 
-    <section class="ena-feat">
-      {features.map((f) => (
-        <div class="ena-card"><div class="ic">{f.ic}</div><h3>{f.h}</h3><p>{f.p}</p></div>
-      ))}
-    </section>
+      <h2>How contributors earn</h2>
+      <p>
+        An ENA worker claims jobs from the coordinator, runs them locally, and submits results. The
+        coordinator verifies the result (deterministic checks, score) and issues a receipt with a reward.
+        Verified receipts accrue to the worker's ANM address as credits, paid out by the pool on its
+        schedule alongside mining rewards. Every reward, whether from proof-of-work, useful-work, training
+        or serving, lands on the same address, which is why <code>animica up</code> binds a single payout
+        address for the whole machine.
+      </p>
+      <CodeBlock lang="bash" title="Install and start a worker" code={install} />
+      <p>
+        Jobs are CPU-friendly by design: scraping, extraction, cleaning, deduplication, chunking,
+        classification, labelling, summarisation, embedding and indexing, plus dataset construction and
+        training preparation. A laptop can run them. GPU machines can additionally take fine-tuning runs.
+      </p>
+      <p class="aicf-muted">
+        Job types: {jobTypes.map((t, i) => (<span><code>{t}</code>{i < jobTypes.length - 1 ? ", " : ""}</span>))}.
+      </p>
 
-    <section class="ena-contribute">
-      <h2>Contribute &amp; <span class="grad">earn ANM</span></h2>
-      <p class="lead">Two commands to start. CPU jobs run on any machine; GPU operators run fine-tuning.</p>
-      <pre><code>pip install --upgrade animica
-animica ena worker start --worker-id "$(hostname)" --endpoint {enaApiBase}</code></pre>
-      <div class="ena-cta">
-        <a class="ena-btn primary" href={`${enaSite}/#contribute`}>Full tutorials &amp; GPU track ↗</a>
-        <a class="ena-btn ghost" href="/docs">Read the docs</a>
-      </div>
-    </section>
-  </main>
+      <h2>The job lifecycle</h2>
+      <p>
+        The same lifecycle is exposed on the CLI for anyone who wants to create work, not only consume it.
+        A job gets a deterministic <code>job_id</code>, <code>job_hash</code> and <code>aicf_task_id</code>
+        at creation, moves through typed states (awaiting payment, submitted, claimed, completed,
+        verified, rejected), and ends with a receipt and an on-chain export envelope.
+      </p>
+      <CodeBlock lang="bash" title="Create, claim, run, verify, receipt" code={lifecycle} />
+      <p>Every receipt carries these fields, which is what makes it checkable after the fact:</p>
+      <p class="aicf-muted">
+        {receiptFields.map((f, i) => (<span><code>{f}</code>{i < receiptFields.length - 1 ? " · " : ""}</span>))}
+      </p>
+      <p>
+        The receipt hash is deterministic (SHA3 over canonical fields), so two parties holding the same
+        inputs compute the same <code>result_hash</code> and <code>verification_hash</code>. The
+        <code>export-onchain</code> payload is the envelope a chain-side consumer would ingest; the
+        documentation is explicit that the node-side consumer is the next boundary rather than something
+        to assume.
+      </p>
+
+      <h2>Training</h2>
+      <p>
+        ENA training prepares manifests with dataset split records, launches runs, tracks checkpoints and
+        artifacts, resumes interrupted runs, and evaluates results against a configured model provider.
+        Two backends exist: <code>command</code>, which invokes an external trainer you supply, and
+        <code>python_transformers</code>, a local path that works when the optional <code>datasets</code>
+        and <code>transformers</code> dependencies are installed. The heavyweight GPU stack is therefore
+        external by design; ENA owns orchestration, manifests, receipts and artifact tracking.
+      </p>
+      <CodeBlock lang="bash" title="Dataset to fine-tune" code={training} />
+
+      <h2>Retrieval and the agent runtime</h2>
+      <p>
+        The same package gives you a working local RAG stack: <code>animica ena scrape url</code> and
+        <code>scrape crawl</code> (robots-aware, with depth and request caps, optionally sitemap-assisted),
+        <code>index build</code> to chunk and embed, and <code>search --hybrid</code> or
+        <code>summarize</code> to query. The agent loop persists sessions and traces, so an answer can be
+        audited back to the documents and tool calls that produced it. Legacy hashing vectors remain as a
+        fallback provider only.
+      </p>
+
+      <h2>Status, honestly</h2>
+      <ul>
+        <li><strong>Live:</strong> worker onboarding via the CLI, the job lifecycle, verification, receipts, local credits, the coordinator statistics you see above, and training orchestration with the command backend.</li>
+        <li><strong>External by design:</strong> the model or embedding endpoint itself, the GPU trainer when using the command backend.</li>
+        <li><strong>Documented as a boundary:</strong> direct node-side anchoring of ENA receipt envelopes; credits are paid through the pool rather than enforced by consensus.</li>
+        <li><strong>Not the same thing:</strong> PoIES useful-work proofs in block headers, which the reference miner does not produce on mainnet.</li>
+      </ul>
+      <p class="aicf-muted">
+        An older document, <code>docs/ENA.md</code>, describes an "Embedded Neural Agent" inference
+        service with its own fee schedule (<code>animica ena infer</code>, <code>animica ena pricing</code>).
+        It predates the current layer; treat <code>docs/ena/</code> and <code>docs/ena_overview.md</code> as
+        current.
+      </p>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/ena/overview.md · docs/ena_overview.md · docs/ena_useful_work_and_mining.md · docs/ena_training.md ·
+        docs/ena_operator_quickstart.md · docs/ANIMICA_2026_STATE.md · python/README.md · live pool.animica.org/api/ena/stats (2026-08-23)
+      </p>
+    </div>
+  </section>
 
   <Footer slot="footer" />
 </BaseLayout>
 
 <style>
-  .ena { max-width: 1080px; margin: 0 auto; padding: 0 22px 60px; }
-  .grad {
-    background: linear-gradient(100deg, var(--brand-grad-from, #16d9c3), var(--brand-grad-to, #3a9bff));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .ena-hero { text-align: center; padding: 60px 0 26px; }
-  .ena-tag {
-    display: inline-flex; gap: .45rem; font-size: .82rem; color: var(--brand-grad-accent, #8debdc);
-    border: 1px solid var(--color-border, rgba(133,170,210,.2)); border-radius: 999px;
-    padding: .32rem .8rem; background: rgba(22,217,195,.06);
-  }
-  .ena-hero h1 { font-size: clamp(2.2rem, 6vw, 3.7rem); line-height: 1.05; font-weight: 820;
-    letter-spacing: -1px; margin: .7rem 0 .3rem; }
-  .lead { color: var(--color-muted, #95aac6); max-width: 640px; margin: .4rem auto 1.4rem;
-    font-size: clamp(1rem, 2vw, 1.18rem); }
-  .ena-cta { display: flex; gap: .7rem; justify-content: center; flex-wrap: wrap; }
-  .ena-btn { display: inline-flex; align-items: center; gap: .4rem; border-radius: 11px;
-    padding: .7rem 1.1rem; font-weight: 650; border: 1px solid var(--color-border, rgba(133,170,210,.2));
-    transition: transform .18s ease; text-decoration: none; }
-  .ena-btn:hover { transform: translateY(-2px); }
-  .ena-btn.primary { background: linear-gradient(100deg, var(--brand-grad-from, #16d9c3), var(--brand-grad-to, #3a9bff));
-    color: #04121a; border-color: transparent; }
-  .ena-btn.ghost { background: rgba(255,255,255,.03); color: var(--color-fg, #e9f4ff); }
-  .ena-ticker { display: flex; gap: 1.3rem; justify-content: center; flex-wrap: wrap;
-    margin-top: 30px; color: var(--color-muted, #95aac6); font-size: .92rem; align-items: center; }
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2.2rem; }
+  .page-prose p, .page-prose ul { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose li { margin-top: 0.4rem; }
+  .page-prose code { font-size: 0.92em; }
+  .page-prose :global(.not-prose) { margin-top: 0.9rem; }
+  .ena-ticker { display: flex; gap: 1.3rem; flex-wrap: wrap; color: var(--color-muted, #95aac6); font-size: .92rem; align-items: center; }
   .ena-ticker b { color: var(--color-fg, #e9f4ff); font-variant-numeric: tabular-nums; }
   .ena-live { display: inline-flex; align-items: center; gap: .4rem; }
-  .ena-live .pulse { width: 8px; height: 8px; border-radius: 50%; background: #3ad07a;
-    animation: enapulse 2s infinite; }
+  .ena-live .pulse { width: 8px; height: 8px; border-radius: 50%; background: #3ad07a; animation: enapulse 2s infinite; }
   .ena-live.off .pulse { background: #f5b14b; animation: none; }
-  @keyframes enapulse { 0% { box-shadow: 0 0 0 0 rgba(58,208,122,.5); }
-    70% { box-shadow: 0 0 0 9px rgba(58,208,122,0); } 100% { box-shadow: 0 0 0 0 rgba(58,208,122,0); } }
-  .ena-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin: 26px 0; }
-  .ena-stat { background: var(--color-surface-2, #0a1324); border: 1px solid var(--color-border, rgba(133,170,210,.2));
-    border-radius: 14px; padding: 16px; text-align: center; }
-  .ena-stat .n { font-size: 1.7rem; font-weight: 800; font-variant-numeric: tabular-nums;
-    background: linear-gradient(100deg, var(--brand-grad-from, #16d9c3), var(--brand-grad-to, #3a9bff));
-    -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .ena-stat .l { color: var(--color-muted, #95aac6); font-size: .78rem; margin-top: 2px; }
-  .ena-feat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 10px 0 40px; }
-  .ena-card { background: var(--color-surface, rgba(10,18,33,.7)); border: 1px solid var(--color-border, rgba(133,170,210,.2));
-    border-radius: 14px; padding: 18px; transition: transform .2s ease, border-color .2s ease; }
-  .ena-card:hover { transform: translateY(-3px); border-color: rgba(22,217,195,.45); }
-  .ena-card .ic { font-size: 1.4rem; }
-  .ena-card h3 { margin: .3rem 0 .25rem; font-size: 1.05rem; }
-  .ena-card p { color: var(--color-muted, #95aac6); margin: 0; font-size: .92rem; }
-  .ena-contribute { text-align: center; }
-  .ena-contribute h2 { font-size: clamp(1.6rem, 3.4vw, 2.1rem); font-weight: 760; }
-  .ena-contribute pre { text-align: left; max-width: 760px; margin: 8px auto 18px;
-    background: #060c18; border: 1px solid var(--color-border, rgba(133,170,210,.2));
-    border-radius: 12px; padding: 14px; overflow: auto; }
-  .ena-contribute code { font-family: ui-monospace, Menlo, monospace; font-size: .86rem; color: #cfe7ff; }
-  @media (max-width: 900px) { .ena-stats { grid-template-columns: repeat(3, 1fr); } .ena-feat { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 560px) { .ena-stats { grid-template-columns: repeat(2, 1fr); } .ena-feat { grid-template-columns: 1fr; } }
+  @keyframes enapulse { 0% { box-shadow: 0 0 0 0 rgba(58,208,122,.5); } 70% { box-shadow: 0 0 0 9px rgba(58,208,122,0); } 100% { box-shadow: 0 0 0 0 rgba(58,208,122,0); } }
 </style>
 
 <script>
   (function () {
-    const main = document.querySelector(".ena");
-    if (!main) return;
-    const api = (main.getAttribute("data-ena-api") || "https://pool.animica.org/api").replace(/\/$/, "");
-    const SAMPLE = { jobs_total: 0, jobs_verified: 0, training_runs_total: 0,
-      contributors: 0, chunks_total: 0, receipts_total: 0, _offline: true };
-    function fmt(n) {
-      n = Number(n || 0);
-      if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
-      if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
-      return String(n);
+    const root = document.querySelector("[data-ena-api]");
+    if (!root) return;
+    const api = (root.getAttribute("data-ena-api") || "https://pool.animica.org/api/ena").replace(/\/$/, "");
+    function fmt(n: unknown) {
+      const v = Number(n || 0);
+      if (v >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+      if (v >= 1e3) return (v / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
+      return String(v);
     }
-    function render(s) {
+    function render(s: Record<string, unknown>, offline: boolean) {
       document.querySelectorAll("[data-stat]").forEach((el) => {
-        el.textContent = fmt(s[el.getAttribute("data-stat")]);
+        const key = el.getAttribute("data-stat") || "";
+        el.textContent = offline ? "—" : fmt(s[key]);
       });
       const live = document.querySelector("[data-live]");
       const txt = document.querySelector("[data-live-text]");
       if (live && txt) {
-        if (s._offline) { live.classList.add("off"); txt.textContent = "coordinator offline"; }
+        if (offline) { live.classList.add("off"); txt.textContent = "coordinator unreachable"; }
         else { live.classList.remove("off"); txt.textContent = "live"; }
       }
     }
     const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 4000);
+    const to = setTimeout(() => ctrl.abort(), 5000);
     fetch(api + "/stats", { signal: ctrl.signal })
-      .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((d) => { clearTimeout(to); render(d); })
-      .catch(() => { clearTimeout(to); render(SAMPLE); });
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then((d) => { clearTimeout(to); render(d, false); })
+      .catch(() => { clearTimeout(to); render({}, true); });
   })();
 </script>

@@ -1,0 +1,21 @@
+---
+title: "Animica 7.2.0: sync ingests fork siblings; 38,728 checkpoint"
+description: "Three peers sat at height 38,728 for six days after a natural one-block fork because the headers pipeline discarded the winning sibling at every layer. 7.2.0 lets it through and pins the canonical block."
+date: 2026-07-13
+tags: ["release", "sync", "p2p", "node"]
+---
+
+Animica 7.2.0 is a sync-hardening release built around one stuck-node case. On 2026-07-07 mainnet had a natural one-block fork at height **38,728**. Nodes that had accepted the losing sibling could never import the winning one, because the headers pipeline discarded any header at or below the local head at every layer:
+
+- the canonical-overlap trimmer binned the whole batch as overlap (observed live: 73,896 headers seen, 0 accepted), and a full-window overlap batch was credited as progress whenever the sync target was unknown, so the stall watchdog never fired;
+- the header processor treated a batch beginning with the sibling as an anchor mismatch and dropped it;
+- a re-served sibling was never "actionable", and blocks at height ≤ head were never fetched;
+- the one recovery keyed to that signature returned false because the network-best height was `None` on every stuck node.
+
+**The fix.** A bounded fork-sibling predicate — height ≤ head, within reorg depth, hash different from the canonical block at that height, parent on our canonical chain — lets the sibling through all four layers so fork choice finally sees the competing branch; queued descendants then cascade the reorg. Full-window overlap batches no longer count as progress, and the reset recovery falls back to pipeline-vetted evidence when no peer height survives.
+
+**Pinned checkpoint at 38,728.** As with the earlier 28,167 outage, a node whose block at 38,728 is the orphan sibling rolls back to 38,727 at boot, prunes the dead-fork index and re-pulls the canonical chain. Verified end-to-end on a clone of live data surgically wedged on the orphan. P2P identity is unaffected because the chain-1 parameters hash is pinned precisely so source edits cannot fragment the handshake.
+
+**Review hardening.** The adversarial review of the wedge fixes narrowed the snapshot genesis recovery to the one known-benign case (a height-0 entry whose block-0 matches the pinned genesis hash), capped distinct sibling fetches at four per height because compact headers carry no verifiable PoW, made the reset-recovery fallback use only queued-block heights, and disabled sibling ingest entirely when `_max_reorg_depth` is 0.
+
+8.0.3 (2026-07-15) later confirmed by four independent code traces and an end-to-end reproduction that any node on ≥ 7.2.0 self-heals a natural one-block fork without a pin; the per-fork pins remain as a fast-converge safety net for older nodes.

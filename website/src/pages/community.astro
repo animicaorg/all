@@ -1,51 +1,140 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
 import { links } from "../config/links";
 
-const pageTitle = "Community";
-const pageDesc = "Join the Animica community and contribute to the network.";
+const title = "Community";
+const description =
+  "Where the Animica community works: GitHub for code and proposals, X for announcements, the AIP process for protocol changes, and how to contribute code, documentation, hashrate or compute.";
+
+const channels = [
+  { name: "GitHub", href: links.github.root, label: "github.com/animicaorg/all", detail: "Source, issues, pull requests and releases. The only place code changes happen." },
+  { name: "GitHub issues", href: links.github.issues(), label: "…/all/issues", detail: "Bug reports, feature requests and proposal issues (the first step of an AIP)." },
+  { name: "X", href: links.community.x || "https://x.com/animicaorg", label: "@animicaorg", detail: "Release announcements, fork activation notices and outage reports." },
+  { name: "Email", href: "mailto:contact@animica.org", label: "contact@animica.org", detail: "Anything that should not be public. Security reports go to security@animica.org." },
+];
+
+const contribute = [
+  ["Code", "Pick an issue, keep the PR scoped to one module, write tests under <module>/tests/, run ./testall.sh, and read the relevant spec/ file before touching consensus, execution or wire formats."],
+  ["Documentation", "docs/ is CC BY-SA 4.0. Corrections and clarifications are the most welcome PRs; the repo root is full of historical work logs that are not canonical, so improve docs/ and module READMEs."],
+  ["Hashrate", "Point a miner at pool.animica.org:3333 (PPS) or :3334 (solo), or run animica up. Every block you find is one more independent confirmation of the chain."],
+  ["Nodes", "Run a full node with inbound port 30333 open. More independent nodes mean more peers for everyone and less reliance on the hosted RPC."],
+  ["Compute", "Serve inference with animica miner aicf-worker start, or run ENA useful-work jobs on a CPU. Both pay in ANM."],
+  ["Wallet integrations", "Third-party wallets can add Animica by following docs/wallet/HD_DERIVATION.md (coin type 4279885) and the bech32m address rules; we answer integration questions by email."],
+];
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Community</h1>
-    <p class="mt-3 opacity-80">Stay close to releases, discussions, and governance updates.</p>
-
-    <div class="mt-8 grid gap-6 md:grid-cols-2">
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h2 class="text-xl font-semibold">Official channels</h2>
-        <ul class="mt-4 space-y-2 text-sm opacity-80">
-          {links.community.discord && (
-            <li><InlineLink href={links.community.discord}>Discord</InlineLink></li>
-          )}
-          {links.community.telegram && (
-            <li><InlineLink href={links.community.telegram}>Telegram</InlineLink></li>
-          )}
-          {links.community.x && (
-            <li><InlineLink href={links.community.x}>X (Twitter)</InlineLink></li>
-          )}
-          <li><InlineLink href={links.github.root}>GitHub</InlineLink></li>
-        </ul>
-      </div>
-
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h2 class="text-xl font-semibold">Contribute</h2>
-        <p class="mt-2 text-sm opacity-80">Open issues, proposals, and pull requests are welcome.</p>
-        <InlineLink href={links.github.discussions()}>Join discussions →</InlineLink>
-        <div class="mt-3 text-sm opacity-80">
-          <InlineLink href="/docs">Read contributing docs →</InlineLink>
-        </div>
-      </div>
+<BaseLayout title={title} description={description}>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Community</span>
+      <h1 class="aicf-heading">Where Animica happens</h1>
+      <p class="aicf-subheading">
+        Animica is developed in the open by a small group of maintainers with contributions from miners,
+        node operators and developers. There is no foundation forum, Discord or Telegram at the moment;
+        the working channels are GitHub and X, and protocol changes follow a written proposal process.
+      </p>
     </div>
+  </section>
 
-    <div class="mt-10 rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h3 class="text-lg font-semibold">Code of Conduct</h3>
-      <p class="mt-2 text-sm opacity-80">We follow a strict code of conduct for inclusive collaboration.</p>
-      <InlineLink href="/docs">View policy →</InlineLink>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Channels</span>
+      <div class="aicf-grid-2" style="margin-top:0.95rem;">
+        {channels.map((c) => (
+          <article class="aicf-card">
+            <h2 style="font-size:1.15rem;">{c.name}</h2>
+            <p class="aicf-muted" style="margin-top:0.5rem;">{c.detail}</p>
+            <p style="margin-top:0.6rem;"><a href={c.href} target="_blank" rel="noopener noreferrer"><code>{c.label}</code></a></p>
+          </article>
+        ))}
+      </div>
+      <p class="aicf-muted" style="margin-top:0.8rem; font-size:0.9rem;">
+        Anyone claiming to be "Animica support" on a chat platform is not. We never ask for seed phrases or payments.
+      </p>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>How protocol changes are proposed</h2>
+      <p>
+        Changes to parameters, policies and consensus go through Animica Improvement Proposals, documented
+        in <code>docs/governance/COMMUNITY.md</code>. The path is: open a short proposal issue stating the
+        problem, the type of change (parameter, policy, upgrade, registry, process) and the risk level, and
+        collect feedback for at least 72 hours; open an RFC pull request with an <code>AIP-####</code> id,
+        rationale, alternatives, success metrics and a rollback plan; a review window of 7 days (14 for
+        high-risk changes or upgrades) with security, economics and operations reviewers; a 5-day last
+        call; then, if accepted, a signed governance bundle scheduled for a target height. After activation
+        the proposal becomes "Enacted" and an impact review is published within 14 days. Parameter changes
+        can be made without a hard fork; anything touching encoding, state layout or consensus behaviour
+        ships as a versioned release with a height gate, which is how every mainnet fork so far has been
+        delivered.
+      </p>
+
+      <h2>Ways to contribute</h2>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>What</th><th>How</th></tr></thead>
+          <tbody>
+            {contribute.map(([w, h]) => (<tr><td><strong>{w}</strong></td><td class="aicf-muted">{h}</td></tr>))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Ground rules</h2>
+      <ul>
+        <li>Discussions happen in public issues and PRs so decisions are traceable. Disclose conflicts of interest in an RFC.</li>
+        <li>Security vulnerabilities go to <a href="mailto:security@animica.org">security@animica.org</a>, never to a public issue; see <a href="/security">Security</a>.</li>
+        <li>Use the name and logo nominatively only; product names starting with "Animica" need permission (<code>docs/legal/TRADEMARKS.md</code>).</li>
+        <li>No price talk on project channels. Where ANM trades is a fact (NonKYC, ANM/USDT); what it will do is not a topic for this project.</li>
+      </ul>
+
+      <h2>Finding your way around the repository</h2>
+      <p>
+        The monorepo is large, and the root directory contains hundreds of historical work-log files
+        (<code>*_SUMMARY.md</code>, <code>*_FIX*.md</code>) that are not canonical documentation. The
+        sources that matter are <code>spec/</code> (schemas, wire formats, PoIES maths and parameters),
+        <code>docs/</code> (guides, with <code>docs/ANIMICA_2026_STATE.md</code> as the authority when
+        older pages disagree), and each module's <code>README.md</code>. The node lives in
+        <code>core/</code>, <code>consensus/</code>, <code>execution/</code>, <code>mempool/</code>,
+        <code>p2p/</code> and <code>rpc/</code>; contracts in <code>vm_py/</code> and <code>contracts/</code>;
+        the L2 in <code>l2/</code>; AI compute in <code>aicf/</code> and <code>capabilities/</code>; the
+        PyPI package in <code>python/</code>; wallets in <code>wallet/</code>, <code>wallet-qt/</code> and
+        <code>wallet-extension/</code>; the explorer in <code>explorer2/</code>; the pool in
+        <code>animica-pool/</code>; and this site in <code>website/</code>. There is no
+        <code>pyproject.toml</code> at the root: run <code>./setup.sh</code>, which creates a virtualenv and
+        installs the SDK, the <code>python/</code> package and the pure-Python PQ backend in the right order.
+      </p>
+      <p>
+        Tests run with <code>./testall.sh</code> (pytest across modules, cargo tests for the native crates,
+        pnpm workspaces, ruff). A fast smoke run is <code>pytest -m "not slow and not integration" -q</code>.
+        Consensus and execution code must stay pure: no I/O, no clock, no ambient randomness, canonical
+        CBOR for serialisation, and fixed-point micro-nat maths. A PR that changes a wire format without
+        updating <code>spec/</code> will be asked to justify it.
+      </p>
+
+      <h2>Learn first</h2>
+      <p>
+        New contributors get the most out of the <a href="/learn/what-is-animica">introduction</a>, the
+        <a href="/learn/mining-guide">mining guide</a>, the <a href="/learn/run-a-node">node guide</a> and
+        the <a href="/learn/glossary">glossary</a>. Developers should start with the
+        <a href="/developers">developer hub</a> and <code>AGENTS.md</code> in the repository, which is the
+        canonical orientation for both humans and coding agents.
+      </p>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/governance/COMMUNITY.md · docs/governance/OVERVIEW.md · AGENTS.md · CONTRIBUTING.md · docs/legal/TRADEMARKS.md · website/src/config/site.ts
+      </p>
     </div>
   </section>
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2.2rem; }
+  .page-prose p, .page-prose ul { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose li { margin-top: 0.4rem; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; }
+</style>

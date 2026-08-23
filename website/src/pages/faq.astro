@@ -4,28 +4,51 @@ import faqData from "../data/faq";
 
 const title = "FAQ";
 const description =
-  "Frequently asked questions about Animica: ANM, post-quantum security, Python smart contracts, wallets, mining, and AICF compute billing.";
+  "Short, accurate answers about Animica: ANM and emission, post-quantum keys, wallets and addresses, fees and confirmations, mining, nodes, building, AI compute, and how the project is run.";
+
+const total = faqData.reduce((n, g) => n + g.items.length, 0);
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: faqData.flatMap((g) =>
+    g.items.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: { "@type": "Answer", text: item.answer },
+    })),
+  ),
+};
+
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 ---
 
-<BaseLayout title={title} description={description}>
+<BaseLayout title={title} description={description} jsonLd={jsonLd}>
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">FAQ</span>
-      <h1 class="aicf-heading">Common Questions</h1>
+      <h1 class="aicf-heading">Common questions</h1>
       <p class="aicf-subheading">
-        Straight answers about the Animica chain, ANM, wallets, mining, and the AICF compute lane.
+        {total} questions in {faqData.length} groups, answered from the repository documentation and live
+        reads on 2026-08-23. Where a feature exists in code but is not enforced on mainnet, the answer says
+        so. The long-form, source-cited version is at <a href="/learn/faq">/learn/faq</a>.
       </p>
+      <nav class="aicf-btn-row" aria-label="FAQ groups">
+        {faqData.map((group) => (
+          <a class="aicf-ghost-btn" href={`#${slug(group.category)}`}>{group.category}</a>
+        ))}
+      </nav>
     </div>
   </section>
 
   {faqData.map((group) => (
-    <section class="aicf-section">
+    <section class="aicf-section" id={slug(group.category)}>
       <div class="aicf-container" style="display:grid; gap:0.85rem;">
         <span class="aicf-kicker">{group.category}</span>
         {group.items.map((item) => (
           <article class="aicf-card">
             <h2 style="font-size:1.1rem;">{item.question}</h2>
-            <p class="aicf-muted" style="margin-top:0.6rem;">{item.answer}</p>
+            <p class="aicf-muted" style="margin-top:0.6rem; line-height:1.6;">{item.answer}</p>
           </article>
         ))}
       </div>
@@ -37,10 +60,13 @@ const description =
       <article class="aicf-card">
         <h2 style="font-size:1.2rem;">Still have a question?</h2>
         <p class="aicf-muted" style="margin-top:0.6rem;">
-          Open an issue on GitHub, email us, or ask on X — we read all three.
+          Check the <a href="/learn/faq">extended FAQ</a> and the <a href="/learn/glossary">glossary</a>,
+          search <a href="https://github.com/animicaorg/all/issues" target="_blank" rel="noopener noreferrer">GitHub issues</a>,
+          or write to <a href="mailto:contact@animica.org">contact@animica.org</a>. Security issues go to
+          security@animica.org only.
         </p>
         <div class="aicf-btn-row" style="margin-top:0.9rem;">
-          <a class="aicf-btn" href="/support">Get Support</a>
+          <a class="aicf-btn" href="/support">Support and contact</a>
           <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a class="aicf-ghost-btn" href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg</a>
         </div>

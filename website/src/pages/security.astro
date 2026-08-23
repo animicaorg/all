@@ -3,100 +3,206 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
 
-import SecurityContent from "../../docs/SECURITY.md";
-
 const title = "Security";
-const description = "Defense-in-depth guidance for the site, rendered directly from SECURITY.md.";
+const description =
+  "Animica security: threat-model summary, what is in and out of scope, the coordinated disclosure process with timelines, the post-quantum algorithm policy, and key-handling advice for users.";
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  name: title,
+  description,
+  url: "https://animica.org/security",
+};
+
+const timelines = [
+  ["Acknowledgement", "within 3 business days"],
+  ["Initial assessment and severity (CVSS v3.1)", "within 7 days"],
+  ["Fix window", "typically 30 to 90 days depending on severity"],
+  ["Embargo", "may be requested while patches roll out"],
+  ["Credit", "with your consent, in release notes"],
+];
+
+const severity = [
+  ["Critical", "Key exfiltration, remote code execution, signature forgery, consensus safety breaks, reorgs beyond the stated bound"],
+  ["High", "Transaction malleability with fund loss, VM sandbox escape, policy bypass enabling unauthorised state changes"],
+  ["Medium", "Persistent DoS via an unauthenticated path, inaccurate economic accounting without loss, information disclosure aiding exploitation"],
+  ["Low", "UI spoofing mitigated by confirmation, minor input validation without impact, documentation gaps"],
+];
+
+const surfaces = [
+  ["Consensus and PoIES", "Grinding on the u-draw, ψ over-weighting, cap bypass, nullifier reuse, retarget oscillation, shallow reorgs", "Strict hash domains; per-proof, per-type and global caps; nullifier TTLs; EMA retarget with clamps; 100-block reorg bound since 75,000"],
+  ["P2P", "Sybil and eclipse, flooding, handshake downgrade, compression bombs", "Kyber-768 + lattice-signed mutual handshake, AEAD sessions, peer scoring and rate limits, pinned checkpoints"],
+  ["Mempool and fees", "Spam, replacement griefing, underpriced transaction kinds", "Admission checks (chain id, signature, balance, fee floor, size), duplicate-id rejection"],
+  ["Execution and VM", "Non-determinism, gas accounting bugs, reentrancy-like syscall patterns", "Validated Python subset, static gas bound plus metering, no I/O or time, bounded integers"],
+  ["Wallets and SDKs", "Phishing, blind signing, mnemonic theft, address-encoding confusion", "Structured signing summaries, origin prompts, bech32m with scheme id in the payload, no server-side signing"],
+  ["RPC, explorer, website", "CORS bypass, SSRF, artifact poisoning, XSS", "POST-only RPC, rate limits, static site with no secrets, strict headers guidance in docs"],
+  ["Build and release", "Dependency and registry compromise, signing-key misuse", "Checksums on downloads, signed wallet builds, supply-chain notes in docs/security/SUPPLY_CHAIN.md"],
+];
 ---
 
-<BaseLayout title={title} description={description} bodyClass="page">
-  <fragment slot="header">
-    <Header />
-  </fragment>
+<BaseLayout title={title} description={description} jsonLd={jsonLd}>
+  <Header slot="header" />
 
-  <section class="doc-shell">
-    <div>
-      <p class="eyebrow">Hardening</p>
-      <h1>{title}</h1>
-      <p class="muted">{description}</p>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Security</span>
+      <h1 class="aicf-heading">Security at Animica</h1>
+      <p class="aicf-subheading">
+        How to report a vulnerability, what the project defends against and what it does not, how the
+        post-quantum algorithm set is governed, and what you can do to keep your own keys safe.
+      </p>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="mailto:security@animica.org">security@animica.org</a>
+        <a class="aicf-ghost-btn" href="/.well-known/security.txt">security.txt</a>
+        <a class="aicf-ghost-btn" href="/learn/security-and-threat-model">Full threat model article</a>
+      </div>
     </div>
-    <article class="doc">
-      <SecurityContent />
-    </article>
   </section>
 
-  <fragment slot="footer">
-    <Footer />
-  </fragment>
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>Reporting a vulnerability</h2>
+      <p>
+        Email <a href="mailto:security@animica.org">security@animica.org</a>. Do not open a public GitHub
+        issue. Include the affected component and version or commit, reproduction steps or a proof of
+        concept, your impact assessment, and how you would like to be credited (or that you prefer not to
+        be). For sensitive reports, encrypt with the PGP key referenced from
+        <a href="/.well-known/security.txt">/.well-known/security.txt</a>; the machine-readable record also
+        lists the canonical contact and policy URLs and its own expiry date. English is preferred; Spanish
+        is accepted.
+      </p>
+      <table class="aicf-table">
+        <thead><tr><th>Step</th><th>Commitment</th></tr></thead>
+        <tbody>
+          {timelines.map(([s, c]) => (<tr><td><strong>{s}</strong></td><td>{c}</td></tr>))}
+        </tbody>
+      </table>
+      <p>
+        These commitments come from <code>docs/legal/SECURITY_POLICY.md</code>. If you do not receive an
+        acknowledgement, re-send or use a second channel; the top-level <code>SECURITY.md</code> lists the
+        same address. We will keep you informed if a timeline has to change because of downstream
+        coordination.
+      </p>
+
+      <h2>Scope</h2>
+      <p>
+        In scope: all first-party software and services, including the node (<code>core/</code>,
+        <code>consensus/</code>, <code>p2p/</code>, <code>rpc/</code>, <code>mempool/</code>,
+        <code>execution/</code>, <code>vm_py/</code>, <code>da/</code>, <code>proofs/</code>,
+        <code>randomness/</code>, <code>aicf/</code>, <code>l2/</code>), the wallets (browser extension,
+        Flutter, Qt, web), the explorer, Studio, the SDKs, installers and update flows, and the hosted
+        surfaces under <code>*.animica.org</code> and <code>*.animica.dev</code>.
+      </p>
+      <p>
+        Out of scope, or handled outside coordinated timelines: third-party forks and sites we do not
+        operate, social engineering of maintainers, physical attacks, volumetric DDoS that does not bypass
+        rate limits, SPF/DMARC findings without a practical exploit, self-XSS, best-practice suggestions
+        without a concrete vulnerability, and issues that only affect end-of-life or rooted environments.
+        If you are unsure, ask at the same address before testing.
+      </p>
+
+      <h2>Safe harbour</h2>
+      <p>
+        Good-faith research that avoids privacy violations, service degradation and data exfiltration,
+        respects rate limits and the law, and uses test networks and accounts where feasible is welcome.
+        If you follow the policy we will not initiate legal action over your research and will work with
+        you on remediation.
+      </p>
+
+      <h2>Severity guidance</h2>
+      <table class="aicf-table">
+        <thead><tr><th>Severity</th><th>Examples</th></tr></thead>
+        <tbody>
+          {severity.map(([s, e]) => (<tr><td><strong>{s}</strong></td><td class="aicf-muted">{e}</td></tr>))}
+        </tbody>
+      </table>
+
+      <h2>Threat model in brief</h2>
+      <p>
+        The full model (<code>docs/security/THREAT_MODEL.md</code>) names the assets it protects:
+        consensus safety and fork-choice correctness, liveness, execution determinism, economic
+        accounting (fees, rewards, AICF payouts), key handling, and user safety against phishing and
+        secret leakage. It assumes an honest majority of work over time windows, treats the P2P network as
+        byzantine with Sybils expected, trusts verification logic and pinned root stores but not providers,
+        and keeps all secrets client-side (no server-side signing anywhere). It considers three adversary
+        classes, from opportunistic spammers through economically motivated cartels to nation-state
+        attackers capable of route hijacking and supply-chain compromise.
+      </p>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Surface</th><th>Threats considered</th><th>Mitigations</th></tr></thead>
+          <tbody>
+            {surfaces.map(([s, t, m]) => (
+              <tr><td><strong>{s}</strong></td><td class="aicf-muted">{t}</td><td class="aicf-muted">{m}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Explicit non-goals: content moderation of user data or contract logic, privacy beyond what the
+        base protocol provides, and strong side-channel resistance on commodity hardware. On the last
+        point, <code>SECURITY.md</code> is candid that pure Python cannot be constant-time; the project
+        uses constant-time comparison helpers and normalised verification paths to mitigate local timing
+        channels, and relies on network jitter and rate limiting for remote ones.
+      </p>
+      <p>
+        Two honest residuals worth knowing. Header state roots are armed but not sealed by the reference
+        miner, so header roots are not yet a guarantee you can rely on; validity comes from every node
+        executing every block. And the useful-work verification rule runs in shadow mode on mainnet and
+        does not force a miner to run a model; do not read "useful work" as an enforced property today.
+      </p>
+
+      <h2>Post-quantum algorithm policy</h2>
+      <p>
+        The canonical algorithm set and its lifecycle are defined in <code>docs/pq/POLICY.md</code> and
+        <code>docs/governance/PQ_POLICY.md</code>: a preferred lattice signature (Dilithium3 lineage,
+        standardised as ML-DSA-65 and the only scheme mainnet accepts since block 40,000), Kyber-768 for
+        the P2P handshake KEM, and a deprecation ladder of Active → Deprecating (at least 12 months) →
+        Sunset (hard reject), with the whole policy object hashed into an alg-policy Merkle root published
+        in chain parameters. Rotation cadence is semi-annual with a staging window and a grace period, and
+        emergency levers exist to disable a broken algorithm without halting the chain. SPHINCS+ appears in
+        the policy documents as a backup but is consensus-stranded on mainnet; it is not a usable
+        alternative today.
+      </p>
+
+      <h2>Key handling for users</h2>
+      <ul>
+        <li><strong>The mnemonic is the wallet.</strong> Write the 12 or 24 words down offline. Anyone with them has your ANM; nobody without them, including us, can recover it.</li>
+        <li><strong>Verify every address character by character.</strong> Mainnet accounts are 66 characters starting <code>anim1zqp</code>; bech32m catches typos, not substitutions. Use an address book for recurring recipients.</li>
+        <li><strong>Never blind-sign.</strong> The wallets show chain id, sender, recipient, amount, fee and gas limit for every signature; read them. Blind mode is for development only.</li>
+        <li><strong>Pin the chain id and the RPC URL.</strong> A malicious RPC can lie about state; cross-check large transfers on the explorer and use simulation (<code>mempool.simulateAdmission</code>) before signing.</li>
+        <li><strong>Install only from official sources</strong> and check the published SHA-256 checksums on <a href="/downloads">Downloads</a>. Connect only to dapps you trust; connecting is not the same as approving a spend.</li>
+        <li><strong>Separate roles.</strong> Use a different key for a mining payout address, an AICF worker and your savings.</li>
+        <li><strong>Ignore "support" on chat platforms.</strong> We run no Discord or Telegram. Official channels are this site, GitHub and @animicaorg.</li>
+      </ul>
+
+      <h2>Release integrity</h2>
+      <p>
+        Releases ship on PyPI as <code>animica</code> and as signed wallet and miner builds with published
+        checksums. <code>docs/security/SUPPLY_CHAIN.md</code> describes SBOM and attestation practice. One
+        gotcha the project documents for itself: the PyPI wheel builds from the working tree rather than
+        from git, so release engineering checks both <code>git status</code> and <code>git ls-files</code>
+        before publishing.
+      </p>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/legal/SECURITY_POLICY.md · SECURITY.md · docs/security/RESPONSIBLE_DISCLOSURE.md · docs/security/THREAT_MODEL.md ·
+        docs/pq/POLICY.md · docs/governance/PQ_POLICY.md · docs/wallets/SECURITY.md · consensus/finality.py ·
+        website/public/.well-known/security.txt
+      </p>
+    </div>
+  </section>
+
+  <Footer slot="footer" />
 </BaseLayout>
 
 <style>
-  .doc-shell {
-    max-width: 960px;
-    margin: clamp(1.5rem, 4vw, 3rem) auto;
-    padding: 0 clamp(1.25rem, 4vw, 2.25rem);
-    display: grid;
-    gap: 1.25rem;
-  }
-
-  h1 {
-    margin: 0.25rem 0 0.35rem;
-    font-size: clamp(2rem, 4vw, 2.6rem);
-    letter-spacing: -0.02em;
-  }
-
-  .muted {
-    color: color-mix(in oklab, var(--text-primary), #fff 20%);
-  }
-
-  .doc {
-    border: 1px solid color-mix(in oklab, var(--color-border), transparent 35%);
-    background: color-mix(in oklab, var(--color-surface), #0e1523 18%);
-    border-radius: var(--radius-xl);
-    padding: clamp(1rem, 3vw, 1.75rem);
-    line-height: 1.6;
-    display: grid;
-    gap: 0.75rem;
-  }
-
-  .doc :global(h2),
-  .doc :global(h3),
-  .doc :global(h4) {
-    margin-top: 1rem;
-    margin-bottom: 0.35rem;
-  }
-
-  .doc :global(code) {
-    background: color-mix(in oklab, var(--bg-elevated), #0d1020 15%);
-    padding: 0.15rem 0.3rem;
-    border-radius: 0.35rem;
-    font-size: 0.95em;
-  }
-
-  .doc :global(pre) {
-    background: color-mix(in oklab, var(--bg-elevated), #0d1020 12%);
-    border: 1px solid color-mix(in oklab, var(--color-border), transparent 30%);
-    border-radius: 0.75rem;
-    padding: 0.75rem;
-    overflow-x: auto;
-  }
-
-  .doc :global(table) {
-    border-collapse: collapse;
-    width: 100%;
-  }
-
-  .doc :global(th),
-  .doc :global(td) {
-    border: 1px solid color-mix(in oklab, var(--color-border), transparent 40%);
-    padding: 0.4rem 0.55rem;
-    text-align: left;
-  }
-
-  .doc :global(blockquote) {
-    border-left: 3px solid color-mix(in oklab, var(--brand-grad-to), transparent 30%);
-    margin: 0.5rem 0;
-    padding: 0.35rem 0.85rem;
-    color: color-mix(in oklab, var(--text-primary), #fff 26%);
-  }
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2.2rem; }
+  .page-prose p, .page-prose ul { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose li { margin-top: 0.4rem; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; }
 </style>

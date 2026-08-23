@@ -1,0 +1,21 @@
+---
+title: "Animica 6.0.0: security and consensus hardening"
+description: "Closes forgeable signature stubs, unverified block-import signatures, unchecked header roots and plaintext wallet keys. Consensus changes are forward-only and height-gated; no genesis reset."
+date: 2026-07-04
+tags: ["release", "security", "consensus", "fork"]
+---
+
+Animica 6.0.0 is a security release that closes the findings of an internal security and consensus review. Every consensus change is **forward-only and height-gated**, grandfathering all existing history: no genesis reset, no hard fork in the destructive sense, and no legitimately mined historical block is rejected. Node-local hardening (RPC, P2P, snapshot, wallet, mempool) is always on and independent of the activation height.
+
+**Critical findings fixed**
+
+- **Forgeable post-quantum stubs (ANM-C01).** The legacy `dilithium3` (id 1) and `sphincs` (id 2) schemes verified via a public hash with no secret. Anyone with a public key could forge a signature and, because accounts were keyed by `sha3_256(pubkey)` with the algorithm id stripped, drain the victim's real account. Only ML-DSA-65 (`0x1003`) is now accepted; the stubs are rejected in both signature stacks.
+- **Block import applied balances without verifying signatures (ANM-C02).** Import now verifies every transaction signature, height-gated and fail-closed.
+- **Header roots never validated on import (ANM-C03).** `txsRoot` and `proofsRoot` are now verified on import (self-gating on non-zero roots); the post-execution state root is computed and shadow-logged for later enforcement.
+- **Contract `exec()` remote code execution and unbounded loops (ANM-C05/C06).** The raw-exec path is fail-closed by default; contracts revert.
+- **Plaintext wallet keys (ANM-C07).** `wallets.json` is encrypted at rest with AES-256-GCM when a passphrase is provided.
+- **Unauthenticated RPC and snapshot path traversal (ANM-C08/C10/C11).** Opt-in bearer auth, path validation, caps, and a completeness gate before the head is set.
+
+**Also:** deterministic Θ warm-up independent of node uptime; exact-integer, fail-closed block emission; a mempool fee floor, per-sender caps and mandatory signatures; canonical transaction ids with strict-minimal CBOR; bounded P2P decompression and per-peer rate limits.
+
+**Migration.** Nodes, the pool and miners must upgrade before the activation height. 6.0.0 shipped with a placeholder height that was deferred the same day (37,000 → 100,000) to avoid an early upgrader becoming a lone enforcer; the coordinated height of **40,000** was set in 6.0.1. Full PoIES useful-work verification (ANM-C04) and authenticated P2P handshakes (ANM-C09/C10) were tracked but not shipped in this release.

@@ -1,0 +1,20 @@
+---
+title: "Animica 9.6.0: on-chain contract execution (FORK_VM_EXEC at 75,000)"
+description: "Python-VM contract calls execute on chain through a deterministic, gas-metered tree interpreter from block 75,000, replacing the fail-closed stub without the unsafe raw-exec path."
+date: 2026-08-10
+tags: ["release", "consensus", "fork", "vm", "contracts"]
+---
+
+Animica 9.6.0 wires real on-chain execution of the Python-VM contract `CALL` path — the token launcher and DEX included — behind `FORK_VM_EXEC`, gated at mainnet height **75,000** (0 on testnet and devnet).
+
+Since 6.0.0 the raw-`exec()` contract path had been fail-closed: a call reverted. 9.6.0 replaces that stub with an interpreter that is safe by construction rather than by an `ANIMICA_VM_ALLOW_UNSAFE_EXEC` escape hatch.
+
+- **`vm_py/runtime/tree_engine.py`** is a deterministic, gas-metered tree-walking interpreter over the compiler's structured IR. It supports arbitrary-precision integers (the DEX price math overflows 2^256, and masking would corrupt it), polymorphic `+` and bytes concatenation, bytes comparisons, short-circuit boolean operators, user-function calls with a shared gas meter and a depth cap, the stdlib builtins, `int.from_bytes`/`to_bytes`/`bit_length`, and stdlib dispatch through a bound host surface. There is no `import`, `exec`, `eval` or attribute escape, so a hostile contract can only revert, run out of gas, or touch its own namespaced storage.
+- **`vm_py/runtime/exec_validate.py`** is a closed-subset gate (source and AST bounds; rejects `**`, comprehensions and non-stdlib imports) for early rejection and denial-of-service protection on top of the interpreter's structural safety.
+- **`execution/runtime/contracts.py`** now compiles (validate and lower, cached by code hash) and runs on the tree engine with state-backed storage and treasury hosts, so native-ANM legs settle; one gas meter is shared across a whole inter-contract call tree.
+
+**Activation semantics.** Below 75,000 a `CALL` reverts exactly as it always has, so history is byte-identical and activation is state-safe. Read-only `simulate_call` is ungated, as an RPC query. Because the rule changes state from H, every node must run ≥ 9.6.0 (or set `ANIMICA_FORK_VM_EXEC_HEIGHT`) before the height or it will compute a divergent state.
+
+**Proven before ship.** The existing token + DEX integration test — deploy, init, create pair, approve, add liquidity, swap — passes without the unsafe flag; the full token lifecycle, bignum math beyond 2^256, and determinism across hash seeds were verified.
+
+9.6.1 (2026-08-11) followed with `animica up` serving ENA on any GPU, decoupled from training-pool status. The companion reward-split forks at the same height shipped in 9.7.0.

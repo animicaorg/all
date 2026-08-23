@@ -1,0 +1,141 @@
+---
+title: "Mainnet genesis: the chain reset of April 6, 2026"
+description: "What the 2026-04-06 genesis of Animica mainnet fixed in place — chain id, premine, block timing, emission, difficulty — and why every rule change since has been height-gated rather than another reset."
+date: 2026-04-06
+updated: 2026-08-23
+author: "Animica Team"
+tags: ["genesis", "mainnet", "consensus", "emission", "chain-reset"]
+---
+
+Animica mainnet as it runs today begins at a genesis block timestamped `2026-04-06T00:00:00Z`. This post records what that genesis pinned down, how it differs from the earlier resets of January and February 2026, and why the project has treated every consensus change since as a forward-only, height-gated rule rather than a new genesis. Everything here is read from the genesis files, `spec/params.yaml` and `core/network_params.py` in the repository.
+
+## The genesis record
+
+The canonical mainnet genesis lives in `core/genesis/mainnet.json` (a copy is at `core/genesis/genesis.json`). Its metadata block reads:
+
+```json
+{
+  "description": "Animica mainnet genesis (chainId=1) - Reset 2026-04-06",
+  "genesis_version": "reset-2026-04-06",
+  "seed_message": "Animica Mainnet Genesis 2026-04-06",
+  "version": 2
+}
+```
+
+The fields that matter for anyone verifying a node:
+
+| Field | Value |
+|---|---|
+| Chain id | `1` |
+| Genesis time | `2026-04-06T00:00:00Z` (header timestamp `1775433600`) |
+| Genesis hash (pinned) | `0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de` |
+| forkId | `3511060514` |
+| Unit | ANM, 9 decimals (1 ANM = 1,000,000,000 nANM) |
+| Genesis header `thetaMicro` | `1000000` |
+| Parent hash | all zeros |
+
+The pinned hash is what `core/network_params.py` stores as `MAINNET_GENESIS_HASH_HEX` and what `mainnet/genesis.meta.json` records next to `genesis_version: reset-2026-04-06`. A node compares the block-0 it holds against this pin at boot; a mismatch is treated as "wrong chain", not as a fork to resolve.
+
+The genesis file was produced by `tools/genesis/make_genesis.py`, and the file itself notes that every balance is an integer in base units. That convention — integers only, never floats — runs through the whole consensus layer.
+
+## The allocation
+
+The genesis state contains exactly one funded account. `alloc` credits `81,000,000 ANM` (`81000000000000000` nANM) to
+
+```
+anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208
+```
+
+plus a zero-balance `system:genesis-marker` entry. `spec/params.yaml` records the intended breakdown of that premine — foundation 45,000,000 ANM under a one-year cliff with 36 months of linear vesting, treasury 20,000,000, AICF 7,000,000, founders 9,000,000 — but the on-chain genesis state is the single 81M credit; the breakdown is a policy document, not a consensus rule. The premine is counted inside the 900,000,000 ANM hard cap enforced in `consensus/rewards.py` (`MAX_MONEY`), so it does not sit on top of the emission schedule.
+
+## Timing and emission, as fixed at genesis
+
+The mainnet section of `spec/params.yaml` sets the block schedule the retarget aims for:
+
+| Parameter | Value |
+|---|---|
+| `target_block_interval_ms` | 60,000 (60 s) |
+| `min_block_spacing_ms` | 60,000 |
+| `max_block_time_s` | 3,600 |
+| `subsidy.start_nANM_per_block` | 300,000,000,000 (300 ANM) |
+| `subsidy.epoch_length_blocks` | 1,350,000 |
+| `subsidy.decay_pct_per_epoch` | 50 (a true halving) |
+| `subsidy.tail_nANM_per_block` | 100,000 (0.0001 ANM) |
+| `subsidy.max_halvings` | 64 |
+
+At 60-second blocks an epoch of 1,350,000 blocks is about 937 days, or roughly 2.57 years. The first epoch therefore issues 300 ANM × 1,350,000 = 405,000,000 ANM on top of the 81M premine, and each later epoch issues half of the one before until the 0.0001 ANM tail. `consensus/rewards.py` computes the subsidy for an epoch `e` as `floor(300e9 · 50^e / 100^e)` nANM and additionally clamps cumulative issuance to `MAX_MONEY`; the schedule itself converges to about 891,000,000 ANM including the premine, so the 900,000,000 ANM cap is a ceiling the chain never reaches.
+
+The genesis-era split of the subsidy was `miner: 100, aicf: 0, treasury: 0`. That split has since changed twice by height-gated fork — 85/15 at block 42,001 and 50/25/25 at block 75,000 — without touching the total. Those changes are covered in [/learn/anm-tokenomics-and-emission](/learn/anm-tokenomics-and-emission) and in the separate post on the block 75,000 fork.
+
+Measured against the target, the chain is slightly slow: the explorer reports an average interval of about 67 seconds as of 2026-08-23, with the head near block 81,200.
+
+## Difficulty at genesis
+
+Animica's acceptance rule is PoIES: a block is accepted when its score clears a threshold Θ expressed in micro-nats,
+
+```
+S = H(u) + Σψ ≥ Θ        where H(u) = −ln(u), u drawn from the header hash
+```
+
+The genesis header carries `thetaMicro = 1000000`; the retarget parameters in `spec/params.yaml` give the controller its own starting point and bounds:
+
+| Parameter | Value |
+|---|---|
+| `theta_initial_munats` | 24,000,000 |
+| `theta_min_munats` | 12,000,000 |
+| `theta_max_munats` | 3,000,000,000 |
+| `retarget.window_blocks` | 720 (about 12 hours) |
+| `retarget.ema_beta` | 0.15 |
+| `retarget.clamp_ratio_per_window` | 0.5 to 2.0 |
+
+The retarget is an exponential moving average on the log ratio of observed to target block time; the full derivation is in [/learn/difficulty-adjustment-and-theta](/learn/difficulty-adjustment-and-theta). One honesty note that applies to every block since genesis: on mainnet today the Σψ term is zero. The reference miner does not attach useful-work proofs, and a block is accepted on hash work alone. The protocol defines the useful-work path; the network does not yet exercise it. See [/learn/useful-work-ai-and-quantum](/learn/useful-work-ai-and-quantum) for what is live and what is only designed.
+
+## Why there were resets, and why this was the last one
+
+The git history shows a sequence of genesis resets before April: 2026-01-28, 2026-01-30, 2026-02-02, 2026-02-03 and 2026-02-08, each "updating genesis files and pinned hashes". `docs/CHAIN_RESET.md` documents the January 28 reset in detail — a new genesis hash (`0xec39…7ca0`), a 300-second target interval, and the same chain id 1 — and it is the clearest description of the reset machinery itself:
+
+- P2P nodes refuse connections to peers presenting a different genesis hash.
+- A datadir guard refuses to reuse old chain data under chain id 1 once the genesis changes.
+- Operators run `animica node down`, `animica node reset --network mainnet --yes`, `animica node up`, or set `ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1` to let the node wipe and resync on its own.
+
+The April 6 commit ("Reset genesis hashes and update premine wallet address") replaced the hashes in the four genesis files, the chain manifests and the pins in `core/network_params.py`. The 60-second schedule above is what `spec/params.yaml` carries for the chain that runs from that genesis, and it is the state the network has run from since.
+
+What changed after April is the attitude toward rule changes. The comment block above the activation table in `core/network_params.py` states the policy plainly: a tightening "activates at height ≥ its activation height and is grandfathered below it, so existing history stays valid: forward-only, never a genesis reset, never rejects a block produced before the height." Every consensus change since — the post-quantum hardening at 40,000, the address freeze at 42,000, the foundation split at 42,001, state commitment at 44,444, IOU settlement at 50,000, and the reward split and its companions at 75,000 — followed that shape. Each one is listed with its height in `docs/ANIMICA_2026_STATE.md` and `docs/CHANGELOG.md`.
+
+A reset is a coordination failure made permanent: it orphans every balance and every integration. A height-gated fork is a coordination task with a deadline. The second is strictly harder to get wrong, and the 1.9.17 release (2026-06-23) added a "chain-reset guard" specifically so that a node could not wander onto a different genesis by accident.
+
+## Verifying your node against genesis
+
+A node operator can confirm they are on the April genesis with two read-only calls. The chain identity:
+
+```bash
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainIdentity","params":{}}'
+```
+
+and block zero:
+
+```bash
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getBlockByHeight","params":[0, true]}'
+```
+
+The block hash should match the pinned genesis hash above and the header timestamp should be `1775433600`. The explorer shows the same block at `https://explorer.animica.org/block/0`. Running your own node is covered in [/learn/run-a-node](/learn/run-a-node).
+
+## Key takeaways
+
+- Mainnet genesis is `2026-04-06T00:00:00Z`, chain id 1, hash `0xa089…b7de`, with a single 81,000,000 ANM premine credit.
+- The schedule fixed at genesis is 60-second blocks, 300 ANM per block, halving every 1,350,000 blocks, and a 900,000,000 ANM cap enforced in code.
+- Θ retargets every block by an EMA controller (`spec/params.yaml` lists a 720-block window and `ema_beta` 0.15; the importer derives a half-life of about 4.3 blocks from that β) between 12,000,000 and 3,000,000,000 µ-nats; Σψ is zero on mainnet today.
+- Earlier genesis resets (January–February 2026; the documented January 28 reset kept chain id 1) preceded it; April 6 is the genesis the network runs from, and all later rule changes are height-gated rather than resets.
+
+## Sources
+
+- `core/genesis/mainnet.json`, `core/genesis/genesis.json`
+- `mainnet/genesis.meta.json`
+- `core/network_params.py`
+- `spec/params.yaml`
+- `consensus/rewards.py`
+- `docs/CHAIN_RESET.md`
+- `docs/ANIMICA_2026_STATE.md`, `docs/CHANGELOG.md`
+- git history: commit `aec907bb3` (2026-04-06) and the January–February 2026 reset commits

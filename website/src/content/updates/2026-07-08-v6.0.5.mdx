@@ -1,0 +1,16 @@
+---
+title: "Animica 6.0.5: reorg recovery, the ANM-2026-07 clawback and an address freeze-list"
+description: "Fixes nodes stuck at height 38,914, returns funds swept in the wallet-export key leak to victim recovery addresses at block 39,584, and adds an operator freeze-list."
+date: 2026-07-08
+tags: ["release", "node", "sync", "incident", "security"]
+---
+
+Animica 6.0.5 ships three things: a sync fix, a coordinated incident recovery, and a new operator control.
+
+**Sync-reorg recovery.** Nodes on 6.0.3/6.0.4 could not sync past a reorg boundary and sat at height 38,914. When an import failed with "missing parent", the RPC-pull path had no way to fetch the parent chain. It now backfills by hash and walks to a common ancestor, bounded by `ANIMICA_MAX_REORG_DEPTH` (default 96), so the importer's orphan cascade can reorg onto the heavier branch. A related `AttributeError` in `force_canonical_reorg` is fixed by adding `_select_sync_target_peer`.
+
+**ANM-2026-07 incident clawback.** Funds swept by the attacker in the `/wallet-export` key-leak incident are returned to two fresh victim recovery addresses by a one-time, height-gated state migration at mainnet block **39,584** (`execution/migrations/clawback_2026_07.py`, env `ANIMICA_CLAWBACK_2026_07_HEIGHT`). The migration is deterministic, value-preserving (debit equals credit), non-fatal, and reorg-safe — it runs inside block 39,584's state transition through the sanctioned balance chokepoint. It was verified live on mainnet: 867,387.244 ANM recovered.
+
+**Operator address freeze-list.** `mempool/address_denylist.py` lets an operator reject, at ingress and in block templates, any transaction from or to a listed account (`ANIMICA_ADDRESS_DENYLIST` or `/data/.animica/address_denylist.json`). This is node-local: it stops the operator's own nodes from admitting or mining a frozen spend and nothing more. The network-wide, consensus-level version of the same idea arrived two days later as `FORK_ADDRESS_FREEZE` in 7.0.0, activating at block 42,000.
+
+The release is an additive cherry-pick onto main; existing code and tests are untouched. Preceding patch releases in the line: 6.0.2 (2026-07-07) fixed an event-loop wedge in the P2P headers anchor scan and enabled peer banning for wrong-genesis peers; 6.0.3 exempted NAT/docker-proxy sources from per-IP inbound caps and raised the global inbound default from 40 to 300; 6.0.4 improved ENA QLoRA trainer reliability.

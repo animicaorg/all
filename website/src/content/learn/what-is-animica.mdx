@@ -1,0 +1,166 @@
+---
+title: "What is Animica? A technical overview of the chain"
+description: "Animica is an open-source proof-of-work Layer-1 with ML-DSA-65 post-quantum signatures, bech32m addresses, a deterministic Python VM and a PoIES consensus design. What is live, and what is not."
+date: 2026-08-23
+updated: 2026-08-23
+category: "protocol"
+tags: ["overview", "mainnet", "consensus", "ml-dsa", "anm"]
+readingLevel: "beginner"
+sources:
+  - AGENTS.md
+  - docs/ANIMICA_2026_STATE.md
+  - docs/README.md
+  - README.md
+  - core/network_params.py
+  - consensus/rewards.py
+  - spec/params.yaml
+  - python/pyproject.toml
+order: 1
+---
+
+Animica is a proof-of-work Layer-1 blockchain whose accounts are secured with a NIST-standardised post-quantum signature scheme instead of elliptic curves. This article explains what the network actually consists of, which rules are enforced on mainnet today, and where the design goes further than the current deployment. Every figure below comes from the repository or from a read-only call to the public node.
+
+## The chain in one table
+
+| Property | Value |
+|---|---|
+| Chain id | `1` (mainnet); CAIP-2 `animica:1` |
+| Genesis | `2026-04-06T00:00:00Z`, hash `0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de` |
+| forkId | `3511060514` |
+| Native coin | ANM, 9 decimals (1 ANM = 1,000,000,000 nANM) |
+| Signatures | ML-DSA-65 (FIPS 204), scheme id `0x1003`; the only scheme accepted for new transactions |
+| Addresses | bech32m, HRP `anim`, payload `u16be(alg_id) ‖ SHA3-256(pubkey)`; accounts start `anim1zqp` |
+| Consensus | PoIES (score-vs-threshold Θ); mainnet blocks are accepted on SHA3-256 hash work today |
+| Target block time | 60 s (measured average ≈ 67 s on 2026-08-23) |
+| Execution | Deterministic Python VM (`vm_py/`), gas-metered |
+| Transaction model | v2 nonce-less body with a block-height validity window and a random salt |
+| Licence | Apache-2.0; monorepo https://github.com/animicaorg/all, node https://github.com/animicaorg/animica-core |
+| Software line | 10.x (`python/pyproject.toml` declares 10.4.4 as of 2026-08-23); `pip install animica` |
+
+The genesis values were confirmed against the live node with `chain.getChainIdentity`; the genesis block's `timestamp` field is `1775433600`, which is 2026-04-06 00:00:00 UTC.
+
+## Why "post-quantum" is the defining choice
+
+Most blockchains authorise spending with ECDSA (secp256k1) or Ed25519. Both rest on the discrete-logarithm problem, which a sufficiently large quantum computer running Shor's algorithm would break. Animica made a different choice from the start: every account key is an **ML-DSA-65** keypair, the FIPS 204 standardisation of the CRYSTALS-Dilithium3 lattice scheme. Public keys are 1,952 bytes and signatures are 3,309 bytes, roughly fifty times larger than an ECDSA signature, and the chain's transaction and block size limits are sized around that.
+
+Two details matter for anyone reading older documentation:
+
+- "Dilithium3" in older files is the lineage name for ML-DSA-65. The canonical registry `pq/alg_ids.yaml` lists a deprecated `0x1001 dilithium3` entry that is a commitment-style stub, not a real signature scheme, and the node's transaction verifier only accepts `0x1003`.
+- SPHINCS+ (`0x1002`) appears in code and documents as a "backup" scheme. It is legacy and consensus-stranded: a SPHINCS+ address cannot sign a transaction on mainnet.
+
+The full story, including why the stub schemes had to be hard-rejected, is in [Post-quantum signatures on Animica](/learn/post-quantum-signatures-ml-dsa-65).
+
+## Accounts, addresses and transactions
+
+An Animica address is a bech32m string (BIP-350, not plain bech32) whose 34-byte payload is a two-byte algorithm id followed by the SHA3-256 digest of the public key. For an ML-DSA-65 account the string is 66 characters long and begins `anim1zqp`; contract addresses carry algorithm id `0x0000` and begin `anim1qqq`. The state database keys accounts by the 32-byte digest, which is why the RPC sometimes shows a `0x…` digest where the explorer shows an `anim1…` address. See [Animica addresses: bech32m explained](/learn/animica-addresses-bech32m) for a worked decode.
+
+Transactions are canonical CBOR. The current "v2" body has no nonce: instead it carries `validAfter` and `validUntil` block heights and a random 16- or 32-byte `salt`, and the transaction id (SHA3-256 of the signed envelope) must be unique. A plain transfer costs 21,000 gas at the mainnet gas price of 1 nANM per gas, so the fee is 21,000 nANM, or 0.000021 ANM. Legacy v1 nonce transactions are still accepted. Details and a fee worked example are in [Transactions and fees](/learn/transactions-and-fees).
+
+## Consensus: what PoIES is, and what runs today
+
+Animica's consensus design is called PoIES. A candidate block carries a score
+
+```
+S = H(u) + Σ ψ(p)
+```
+
+where `H(u) = −ln(u)` is the hash-work component derived from the block's SHA3-256 header hash, and each `ψ(p)` is a capped, policy-weighted score for a verified piece of external evidence (AI compute, quantum, storage, VDF proofs). The block is valid when `S ≥ Θ`, the network's current threshold, which is stored in every header as `thetaMicro` (micro-nats, 1 nat = 1,000,000 µ-nats).
+
+It is important to be precise about the current state. On mainnet today:
+
+- Blocks are accepted on hash work alone. The import path checks `header_hash ≤ target(Θ)`, which is `S = H(u)` with `Σψ = 0`.
+- Every mainnet block stored so far carries an empty proof list and a zero `proofsRoot`. The reference miner does not attach useful-work proofs.
+- The useful-work verification rule activated at block 75,000 is presence-gated (a block with no proofs is always valid) and runs in shadow mode by default on mainnet. It can only reject a malformed proof; it never grants score credit and never requires a proof.
+
+So Animica is, operationally, a SHA3-256 proof-of-work chain with a difficulty expressed in nats. The evidence half of the predicate is implemented, tested and policy-committed, but not yet exercised by block production. [PoIES consensus explained](/learn/poies-consensus-explained) walks through the scorer, and [Difficulty adjustment and Θ](/learn/difficulty-adjustment-and-theta) explains how the threshold is retargeted every block.
+
+## Issuance and the foundation split
+
+The emission schedule is fixed in `spec/params.yaml` and `consensus/rewards.py`:
+
+- Block subsidy starts at **300 ANM per block** and halves every 1,350,000 blocks, down to a tail of 0.0001 ANM per block.
+- A **premine of 81,000,000 ANM** was issued at genesis to a single foundation-managed address (`anim1zqp2rdpnhwvvfe03ts9tf9rnp7p449xhnvh0u0wpvle3wahtce64zwgz8m208`).
+- `MAX_MONEY` is 900,000,000 ANM.
+- Circulating supply reported by the explorer was ≈ 110.8 M ANM as of 2026-08-23.
+
+How the subsidy is split has changed at fixed heights. From block 42,001 it was 85% miner / 15% foundation treasury. From block 75,000 the split became 50% miner / 25% treasury / 25% "service carve" reserved for inference and service claims, with any unclaimed carve rolling to the treasury. Total emission per block is unchanged by these splits. The economics are covered in [ANM tokenomics and emission](/learn/anm-tokenomics-and-emission).
+
+ANM trades on NonKYC (ANM/USDT): https://nonkyc.io/market/ANM_USDT. There is no mainnet faucet; coins are obtained by mining, trading, or accepting payments.
+
+## Consensus forks: forward-only and height-gated
+
+Animica does not have a governance token or on-chain voting. Rule changes ship in node releases and activate at a fixed mainnet height; blocks below that height are grandfathered. The mainnet table in `core/network_params.py` as of 10.4.x:
+
+| Height | Rule | Effect |
+|---|---|---|
+| 40,000 | PQ hardening, root commitment | Block import rejects transactions signed with forgeable stub schemes; reward computation fails closed |
+| 42,000 | Address freeze | Rejects blocks containing a non-coinbase transaction from or to a single known-compromised address |
+| 42,001 | Foundation split | Subsidy split 85/15 miner/treasury |
+| 44,444 | State commitment (7.1.9, inclusion ⇒ execution) | Enforcement of sealed state roots, self-gating on non-zero roots so premature activation cannot split zero-root miners |
+| 50,000 | IOU settlement (relay rewards) | Blocks may settle operator-signed service IOUs out of the miner subsidy, capped at 50 ANM per block; inert until an anchor is posted |
+| 75,000 | Treasury 25, service carve, bounded retarget, value-carrying CALL, finality depth, quantum beacon, VM execution, useful-work verify | The reward split above; a stall eases difficulty by a bounded step instead of jumping to the floor; contract CALLs execute on chain (every CALL before this height reverted); uniform reorg-depth bound |
+
+Several of these are deliberately inert until some on-chain object appears (a settlement anchor, a sealed root, a beacon commitment, a proof). That is a recurring design pattern in this codebase: activate the rule at a height, but make the rule a no-op against current block production so that activation itself cannot split honest miners.
+
+## Execution: a Python VM
+
+Smart contracts are written in a restricted, deterministic subset of Python and executed by a gas-metered tree interpreter (`vm_py/`). Storage values are bytes; gas costs come from `vm_py/gas_table.json`; the interpreter is a closed sandbox with no import, exec or attribute escape. Contract calls have executed on chain since block 75,000. Start with [Python-VM smart contracts](/learn/python-vm-smart-contracts) and the [Hello Counter tutorial](/learn/hello-counter-contract-tutorial).
+
+## Beyond the base layer
+
+The monorepo also contains components that sit next to the L1 rather than inside consensus:
+
+- **L2 rollup** (`l2/`): an ANM-native rollup with SMT state and validity by re-execution, exposed through flat `l2_*` RPC methods. See [The Animica L2 rollup](/learn/animica-l2-rollup).
+- **AICF** (`aicf/`): the AI-compute framework that turns inference requests into jobs that registered miners claim and serve, with ML-DSA-65-signed proof-of-inference receipts. A free, keyless OpenAI-compatible endpoint runs at `https://animica.dev/v1` (30 requests per minute per IP). See [AICF: the AI compute framework](/learn/aicf-ai-compute-framework).
+- **x402**: a pay-per-request facilitator at `https://x402.animica.dev` with an ANM-native lane using CAIP-2 `animica:1`. See [x402 agent payments](/learn/x402-agent-payments).
+
+These are real services, but none of them changes how a block is validated.
+
+## Talking to the network
+
+The public node answers JSON-RPC 2.0 at `POST https://rpc.animica.org/rpc`; the `/rpc` path is required. A minimal call and a trimmed live response:
+
+```bash
+curl -s -X POST https://rpc.animica.org/rpc \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":{}}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"height":81211,"hash":"0x00000000038da2dc…",
+ "chainId":1,"thetaMicro":26361622,"mixSeed":"0xce53af01…","nonce":19131463485,
+ "canonicalHeight":81210,"autoMine":false}}
+```
+
+There is no `chain.getHeight`; read `height` from `chain.getHead`. Namespaces are `chain.*`, `state.*`, `tx.*`, `mempool.*`, `net.*`, `aicf.*` and flat `l2_*`; the full method list is served at `https://rpc.animica.org/openrpc.json`. The [JSON-RPC API guide](/learn/json-rpc-api-guide) covers the common calls.
+
+Other live properties: the explorer at https://explorer.animica.org (with a free REST API under `/api/`), the mining pool at `stratum+tcp://pool.animica.org:3333` (PPS; `:3334` is solo), and the wallet downloads at https://animica.org/downloads (the former web wallet at https://wallet.animica.org was discontinued in July 2026 and now shows a notice). Running your own node is covered in [Run a node](/learn/run-a-node).
+
+## What Animica is not
+
+Reading the repository honestly, a few things should be stated plainly:
+
+- There is no finality gadget. The chain has a reorg-depth bound (96 blocks by default in the fork-choice code, made uniform by the finality-depth fork at 75,000), but confirmations are the practical measure of settlement. `tx.getStatus` flips `finalized` to `true` once a transaction has 12 confirmations (the node-local default `ANIMICA_TX_FINALITY_CONFIRMATIONS`); that is a depth label, not a consensus guarantee.
+- Useful work is designed and verified in code but not produced or required on mainnet.
+- The root of the repository contains hundreds of `*_SUMMARY.md` and `*_FIX*.md` files. They are historical work logs. Canonical documentation lives in `spec/`, `docs/` and module READMEs, and `docs/ANIMICA_2026_STATE.md` is the authority when older documents disagree.
+
+## Key takeaways
+
+- Animica is a live proof-of-work L1 (chain id 1, genesis 2026-04-06) whose only accepted signature scheme is ML-DSA-65 (`0x1003`).
+- Addresses are bech32m `anim1…`; amounts are integer nANM with 9 decimals; a transfer costs 21,000 nANM.
+- Consensus is specified as PoIES (`S = H(u) + Σψ ≥ Θ`) but mainnet accepts blocks on hash work alone today; the evidence lane is implemented but unused.
+- Emission is 300 ANM per block halving every 1,350,000 blocks on top of an 81 M premine; the split is 50/25/25 miner/treasury/carve since block 75,000.
+- Rule changes are forward-only, height-gated forks listed in `core/network_params.py`.
+
+## Sources
+
+- `AGENTS.md`
+- `docs/ANIMICA_2026_STATE.md`
+- `docs/README.md`
+- `README.md`
+- `core/network_params.py` (fork table and rationale comments)
+- `consensus/rewards.py` (subsidy constants, premine, split percentages)
+- `spec/params.yaml` (issuance schedule, block limits)
+- `pq/alg_ids.yaml`
+- `python/pyproject.toml`
+- Live reads of `chain.getHead`, `chain.getChainIdentity` and `chain.getBlockByHeight [0]` on 2026-08-23

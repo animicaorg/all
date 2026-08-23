@@ -1,0 +1,22 @@
+---
+title: "Animica 10.2.2: block template no longer overstates miner income after 75,000"
+description: "getBlockTemplate advertised 225 ANM to a miner that receives 150 once the inference carve activates; pools crediting from the template would overpay 75 ANM per block. Also: useful-work verification armed in shadow (10.2.0) and the AICF state fix (10.2.1)."
+date: 2026-08-15
+tags: ["release", "mining", "pool", "consensus"]
+---
+
+Animica 10.2.2 restores a fix that 10.1.0, 10.2.0 and 10.2.1 had all shipped without, roughly 1,000 blocks before it would have mattered.
+
+`compute_block_reward` does not apply `FORK_SERVICE_CARVE` — the carve happens during block application — so from height 75,000 `miner.getBlockTemplate` overstated the miner's income by 75 ANM per block. Reproduced against `spec/params.yaml`:
+
+| Height | Advertised (old) | Actual (restored) | Carve |
+|---|---|---|---|
+| 69,999 | 255.00 ANM | 255.00 ANM | 0% |
+| 74,999 | 255.00 ANM | 255.00 ANM | 0% |
+| 75,001 | 225.00 ANM | 150.00 ANM | 25% |
+
+`submitBlock` prefers the state balance delta, so this was never a validity bug. It was a payout bug: a pool crediting shares from the advertised figure would pay out 75 ANM per block it never received, from its own hot wallet. An operator preparing a public node and private pool reported that the original fix commit was not an ancestor of the 10.1.0 tree; the cause was a later commit that had restored the old line. Below 75,000 the two formulas are identical, so applying the fix early is a no-op. 10.2.2 also identifies the miner slice by **address** rather than list position, so a future ordering change cannot turn a treasury amount into the advertised miner reward.
+
+**10.2.0 (same day): useful-work verification armed at 75,000, shadow by default.** `FORK_USEFUL_WORK_VERIFY` verifies every useful-work proof a block carries — structure, canonical CBOR, an ML-DSA-65 signature with the scheme id pinned by the verifier, miner equals worker, receipt freshness, single-use nullifier, payment reference — and recomputes Σψ under code-committed caps. It is presence-gated: a block with no proofs is valid at every height, and every stored mainnet block carried an empty proof list, so activation changes nothing observable. Mainnet defaults to shadow (advisory verdicts) because headers commit `receiptsRoot = 0`, so a snapshot-synced node and an executing node could disagree on the first block that carries a proof; `ANIMICA_USEFUL_WORK_ENFORCE=1` opts in. This is not "serve or don't mine".
+
+**10.2.1 (same day): `aicf.*` and `ena.*` RPC resolve state from the right context.** A handler parameter named `ctx` receives a per-request transport object with no database handle; the state lives on the dependency context reached through `deps.get_ctx()`. `aicf.status` had reported `enabled: false` and height 0 on a live chain; verified against mainnet, it now reports the real pool balance, height and epoch.

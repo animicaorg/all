@@ -14,6 +14,8 @@ interface Props {
   bodyClass?: string;
   ogType?: string;
   jsonLd?: Record<string, any> | Array<Record<string, any>>;
+  /** Load the Google AdSense tag (publisher ca-pub-9929942639121200). Default on; disable on app/admin pages. */
+  ads?: boolean;
 }
 
 const {
@@ -28,6 +30,7 @@ const {
   bodyClass = "",
   ogType = "website",
   jsonLd,
+  ads = true,
 } = Astro.props as Props;
 
 // Avoid "Foo · Animica" doubling when the page title already mentions the brand.
@@ -86,6 +89,16 @@ const jsonLdPayload = Array.isArray(jsonLd) ? jsonLd : (jsonLd ? [jsonLd] : []);
     {jsonLdPayload.map((obj) => (
       <script type="application/ld+json" set:html={JSON.stringify(obj)} />
     ))}
+    {ads && (
+      <>
+        <meta name="google-adsense-account" content="ca-pub-9929942639121200" />
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9929942639121200"
+          crossorigin="anonymous"
+        ></script>
+      </>
+    )}
   </head>
 
   <body class={`theme tokens ${bodyClass}`}>

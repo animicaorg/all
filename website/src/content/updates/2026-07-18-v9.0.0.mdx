@@ -1,0 +1,22 @@
+---
+title: "Animica 9.0.0: GPU Studios and on-chain IOU settlement at block 50,000"
+description: "Video, audio and Blender render-farm jobs dispatched to GPU miners, and the block 50,000 fork realized: service IOUs are paid from the block reward, carved from the miner subsidy and capped at 50 ANM per block."
+date: 2026-07-18
+tags: ["release", "consensus", "fork", "gpu", "media"]
+---
+
+Animica 9.0.0 adds three GPU products to animica.dev and makes every service IOU payable from the block reward.
+
+**GPU Studios.** All three are dispatch-only through the existing media queue; no model or renderer runs on the gateway.
+
+- **Video Studio** (`/video`): upscale (Real-ESRGAN 2×/4×), frame interpolation (RIFE, ffmpeg fallback), auto subtitles (Whisper → SRT, soft or burned), background removal, auto-shorts.
+- **Audio Studio** (`/audio`): stem separation and vocal isolation (HDemucs), enhancement, mastering with LUFS presets.
+- **Render Farm** (`/render`): upload a packed `.blend`; frames are split into chunk jobs rendered across GPU miners (Blender 4.2.9, auto-fetched, sha256-pinned, always `--disable-autoexec` because untrusted files must never auto-run scripts), then assembled to MP4 or a frames zip.
+
+Each job kind carries a fixed IOU reward in ANM (for example 3 ANM for an upscale, 2.5 ANM per render chunk) and a lease length; rewards are env-overridable per kind. Large inputs and results moved off inline base64 in Postgres to a disk-backed upload store (512 MB video/blend, 200 MB audio) with streamed artifacts, per-kind leases and progress heartbeats.
+
+**On-chain IOU settlement (the 50,000 fork).** The consensus mechanism already in tree — `consensus/iou_settlement.py`, hooked into block import under `FORK_VPN_RELAY_REWARDS` = `FORK_IOU_SETTLEMENT` at mainnet 50,000 — is now exercised. Settlement anchors are ordinary treasury-signed transfer transactions carrying `ANMSETL1` plus a JSON payout list. Blocks at or after 50,000 carve the anchored payouts **from the miner subsidy** (never minted), capped at 50 ANM per block halving with emission — a constant 16.67% of the subsidy, always under the 20% ceiling. Tests cover strict parse/encode round-trips, authority binding, the cap and scale invariants (miner plus settlement equals the pre-fork miner output), the ≤ 20% invariant across halvings, pre-fork inertness and non-interference with pinned checkpoints.
+
+Around it: an `animica settle` CLI to build, inspect and post anchors from the operator wallet, refusing anchors over the cap or before the fork height; a gateway settlement worker on a systemd timer that reads the marketplace IOU ledgers (media miners, VPN exits, hosting pins), computes payable amounts of at least 5 ANM and posts one anchor per cycle only at or after the fork height; and `settledNanm` columns so accrued versus settled is visible on the register/me endpoints.
+
+Also fixed: a `NameError` in the image-generation OOM downshift path that crashed instead of retrying.

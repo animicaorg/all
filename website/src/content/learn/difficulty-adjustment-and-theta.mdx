@@ -1,0 +1,146 @@
+---
+title: "Difficulty adjustment and Θ: how Animica holds a 60-second block"
+description: "Θ (theta) is Animica's difficulty in micro-nats. Derives the per-block EMA retarget, its mainnet constants and clamp, stall handling after block 75,000, and checks the math against live Θ history."
+date: 2026-08-23
+updated: 2026-08-23
+category: "protocol"
+tags: ["difficulty", "theta", "retarget", "mining", "consensus"]
+readingLevel: "intermediate"
+sources:
+  - docs/DIFFICULTY_ADJUSTMENT.md
+  - docs/THETA_SCALING_UPDATE.md
+  - docs/UNBOUNDED_THETA.md
+  - consensus/difficulty.py
+  - core/chain/block_import.py
+  - spec/params.yaml
+order: 6
+---
+
+Every Animica header carries a field called `thetaMicro`: the threshold Θ that the block's score had to clear, in micro-nats. Θ is adjusted after every block by a small control loop rather than every 2,016 blocks as in Bitcoin. This article explains what Θ measures, derives the controller and the exact constants the mainnet node uses, and then checks those constants against six consecutive live blocks, where the predicted step sizes match the observed ones to the µ-nat.
+
+## Θ is difficulty in the log domain
+
+A block is accepted when its hash-work score `H(u) = −ln(hash / 2^256)` is at least Θ (see [PoIES consensus explained](/learn/poies-consensus-explained)). Because `H(u)` is Exponential(1)-distributed, the probability that one hash clears Θ is `e^(−Θ)` and the expected number of attempts is `e^Θ`. Some reference points:
+
+| Θ (nats) | thetaMicro | Expected hashes per block |
+|---|---|---|
+| 1.0 (genesis header) | 1,000,000 | 2.7 |
+| 12.0 (mainnet floor, `spec/params.yaml`) | 12,000,000 | 1.6 × 10^5 |
+| 26.39 (block 81,213) | 26,392,958 | 2.9 × 10^11 ≈ 2^38.1 |
+| 3,000 (hard cap) | 3,000,000,000 | effectively unreachable |
+
+Adding 0.693 nats (ln 2) doubles the work; adding 1 nat multiplies it by e. Bitcoin stores the same quantity as a 256-bit target in compact `bits`; Animica stores its logarithm, which makes additive control arithmetic natural.
+
+The genesis header carried `thetaMicro = 1,000,000`. The chain reached its current level by the controller described below raising Θ one bounded step at a time as hashrate arrived.
+
+## The controller
+
+`consensus/difficulty.py` implements a fractional retarget loop. For each new block with observed interval `dt` (seconds since the previous block) and target `T`:
+
+```
+r_k   = ln(dt / T)                                  # log error: >0 slow, <0 fast
+r̂_k   = (1−α)^m · r̂_{k−1} + (1 − (1−α)^m) · r_k     # EMA, m = blocks skipped (usually 1)
+τ_k+1 = τ_k − β · r̂_k                               # proportional step in nats
+Θ_k+1 = clamp_global( clamp_step( Θ_k + round((τ_k+1 − τ_k) · 10^6) ) )
+```
+
+- `α` is the EMA smoothing factor, derived from a half-life `H` in blocks as `α = 1 − 2^(−1/H)`.
+- `β` is the proportional gain.
+- `clamp_step` limits `|ΔΘ|` per block to `step_clamp_micro`.
+- `clamp_global` keeps Θ within `[Θ_min, Θ_max]`.
+
+Slow blocks (`dt > T`) make `r̂` positive and lower Θ; fast blocks raise it. The EMA means a single anomalous interval cannot swing Θ much; a sustained change in hashrate does.
+
+**Directional guard.** The code adds one refinement not in the older documents. Alongside the EMA target it computes a "latest-only" target `τ_k − β · r_k` from the most recent interval alone. If the latest block was slow but the EMA (still remembering earlier fast blocks) would raise Θ, the node takes the smaller of the two targets and at least `Θ_k − 1`; symmetrically for a fast block. Θ therefore always moves in the direction the most recent interval indicates, with the EMA setting the magnitude when it agrees and the latest-only value capping it when it does not.
+
+## Mainnet constants, derived
+
+`spec/params.yaml` sets for `animica:1`: target interval 60,000 ms, `retarget.ema_beta = 0.15`, clamp ratio per window 0.5–2.0, `theta_min_munats = 12,000,000`, `theta_max_munats = 3,000,000,000`, `max_block_time_s = 3600`. `core/chain/block_import.py` converts those into `RetargetParams`, with two deliberate choices documented in its comments:
+
+- The half-life is derived from the smoothing factor, not from the 720-block window. Using the window as a half-life would give `α ≈ 0.001` and effectively freeze Θ, which is what caused earlier stalls when hashrate fell. So `H = −1 / log2(1 − 0.15) = 4.265 blocks`.
+- The gain is fixed at `β = 0.5` for non-oscillating convergence.
+- The per-block clamp spreads the "at most ×2 per window" bound across the half-life: `step = ln(2) · 10^6 / 4.265 = 162,518 µ-nats`, then bounded into [100,000, 1,000,000].
+
+| Parameter | Mainnet value |
+|---|---|
+| Target interval `T` | 60 s |
+| EMA half-life | 4.265 blocks (`α = 0.15`) |
+| Gain `β` | 0.5 |
+| Step clamp | 162,518 µ-nats per block (≈ ×1.176 in expected work) |
+| Θ_min | 12,000,000 µ-nats |
+| Θ_max | 3,000,000,000 µ-nats (hard cap, `THETA_HARD_CAP_MICRO`) |
+| Stall threshold | 3,600 s |
+
+Note that `docs/DIFFICULTY_ADJUSTMENT.md`, `docs/THETA_SCALING_UPDATE.md` and `docs/UNBOUNDED_THETA.md` quote a 12-second target, an 8- or 24-block half-life and a ±1-nat clamp. Those describe the mining RPC's local simulator and an earlier parameter set; the consensus values above are what the block importer builds from the current `spec/params.yaml`.
+
+## Checking the constants against live blocks
+
+The explorer's `/api/head` endpoint publishes recent `thetaHistory`. Six consecutive mainnet blocks on 2026-08-23:
+
+| Height | Timestamp | Θ in header | dt of previous block | ΔΘ vs previous header |
+|---|---|---|---|---|
+| 81,208 | 1787488987 | 26,199,104 | 64 s | −32,269 |
+| 81,209 | 1787489034 | 26,361,622 | 8 s | +162,518 |
+| 81,210 | 1787489177 | 26,524,140 | 47 s | +162,518 |
+| 81,211 | 1787489195 | 26,361,622 | 143 s | −162,518 |
+| 81,212 | 1787489273 | 26,524,140 | 18 s | +162,518 |
+| 81,213 | 1787489353 | 26,392,958 | 78 s | −131,182 |
+
+The Θ in header `N` is the threshold computed after importing block `N−1`, using `dt = t(N−1) − t(N−2)`. Reading the table:
+
+- After an 8-second or 47-second block (fast), Θ rose by exactly 162,518: the controller wanted more and the step clamp capped it. After 143 seconds (slow) it fell by the same clamp. The clamp of 162,518 µ-nats is confirmed directly.
+- After the 78-second block, Θ fell by 131,182, less than the clamp. `ln(78/60) = 0.26236`, and `β · r_k · 10^6 = 0.5 × 0.26236 × 10^6 = 131,182`. That is the directional guard at work: the EMA, still weighted by the preceding 18-second block, would have raised Θ, so the node used the latest-only target instead.
+- The interval for 81,208 (64 s, slightly slow) gave a −32,269 step, and `0.5 × ln(64/60) × 10^6 = 32,269`: again the latest-only target, because the EMA still carried memory of earlier fast blocks.
+
+The arithmetic of `consensus/difficulty.py` and the derived constants reproduce the chain's actual behaviour. It also illustrates why Θ jitters by about ±0.16 nats per block at steady state: with a 4-block half-life and intervals that are inherently exponential around a 60-second mean, the controller is responsive rather than smooth. The measured average interval was ≈ 67 seconds on 2026-08-23, slightly above target.
+
+## Stalls and the floor
+
+Two edge cases are handled outside the normal loop.
+
+**Long gaps.** If `dt` exceeds `max_block_time_s` (3,600 s), the original code set Θ straight to `Θ_min`. That "trapdoor" could wedge the chain at the floor, because on-target blocks give `r_k = ln(1) = 0` and the ordinary loop then has no reason to raise Θ again. `FORK_BOUNDED_RETARGET`, active from mainnet block 75,000, replaces it with a bounded ease: one stalled block lowers Θ by `8 × step = 1,300,144 µ-nats` (≈ 3.67× easier) and resets the EMA, and a prolonged stall walks down one such step per block until it reaches the floor, never overshooting it.
+
+**Floor escape.** From the same height, if Θ sits at `Θ_min` and a block arrives on or under target, Θ is ratcheted up by one step. Without this, a chain that had fallen to the floor could never leave it even as hashrate returned. Both rules are height-gated and grandfathered, so no historical Θ is recomputed.
+
+**Caps.** Θ's upper bound has changed over time (`docs/THETA_SCALING_UPDATE.md`): 40 M → 60 M µ-nats, then briefly unbounded, now a 3,000,000,000 µ-nat hard cap in `consensus/difficulty.py` with a warning logged at 90% and an overflow guard at 10^15. At the current ≈ 26 M, the cap is more than a hundred nats away and has no practical effect; it exists so that a runaway value cannot break integer arithmetic or block production.
+
+## Shares for pools
+
+Pools need a lower threshold so that miners can prove work between blocks. `compute_share_micro` derives it from Θ: to expect about `K` shares per block,
+
+```
+τ_share = Θ_nats − ln(K)
+```
+
+At Θ = 26.39 nats and `K = 16`, the share threshold is 23.62 nats; a hash clearing it happens 16 times as often as a block. `spec/params.yaml` also lists a `share_target_munats` of 4,000,000 for useful-work micro-shares, and the hash-share proof type in the PoIES policy credits `ψ` by `ln(1 + d_ratio)` where `d_ratio` is how far a share exceeds its target. How the public pool prices shares, and the current status of sub-block shares on the live pool, is described in the [mining guide](/learn/mining-guide).
+
+## Timestamps and related rules
+
+Because the controller consumes header timestamps, a miner could in principle bias Θ by lying about time. The importer rejects headers more than 5 seconds in the future (`ANIMICA_MAX_FUTURE_SECONDS`, default 5), and the EMA plus the step clamp limit how much any single timestamp can move Θ. `spec/params.yaml` additionally lists a 60-second minimum block spacing for mainnet; observed intervals as short as 8 seconds in the table above show that this spacing is not binding on the live network as of 2026-08-23, so do not rely on it when reasoning about block timing.
+
+## Monitoring Θ
+
+- `chain.getHead` returns `thetaMicro` for the current head.
+- `chain.getBlockByHeight [h, false]` returns the Θ and timestamp of any block, which is enough to reproduce the table above.
+- `https://explorer.animica.org/api/head` returns `thetaHistory` (last 20 blocks) and `avgBlockTime`.
+
+A reasonable health check for an operator is: Θ moving by at most the clamp per block, block intervals averaging within roughly 10% of 60 seconds over a few hundred blocks, and no emergency easing events in the logs.
+
+## Key takeaways
+
+- Θ is difficulty in nats: expected hashes per block are `e^Θ`; at 26.39 nats that is about 2.9 × 10^11.
+- The retarget is a per-block EMA/proportional controller with mainnet constants `T = 60 s`, half-life 4.265 blocks, `β = 0.5`, step clamp 162,518 µ-nats, floor 12 M, hard cap 3 B.
+- Live Θ history confirms the constants: fast or slow blocks move Θ by exactly the clamp, and a 78-second block moved it by `0.5 · ln(78/60) · 10^6 = 131,182`.
+- Since block 75,000 a stall eases Θ by a bounded 1.3 nats per block instead of dropping to the floor, and a floor-pinned Θ can ratchet back up.
+- Older difficulty documents describe a 12-second, ±1-nat configuration that is not the mainnet consensus parameter set.
+
+## Sources
+
+- `consensus/difficulty.py` (controller, clamps, bounded retarget, share thresholds)
+- `core/chain/block_import.py` (derivation of `RetargetParams` from `spec/params.yaml`, timestamp checks)
+- `core/network_params.py` (`FORK_BOUNDED_RETARGET`)
+- `spec/params.yaml`
+- `docs/DIFFICULTY_ADJUSTMENT.md`
+- `docs/THETA_SCALING_UPDATE.md`
+- `docs/UNBOUNDED_THETA.md`
+- Live reads of `chain.getHead`, `chain.getBlockByHeight [0]` and the explorer `/api/head` `thetaHistory` on 2026-08-23

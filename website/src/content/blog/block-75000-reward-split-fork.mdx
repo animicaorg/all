@@ -1,0 +1,97 @@
+---
+title: "Block 75,000: the reward-split fork and its six companions"
+description: "What changed at mainnet block 75,000 — the 50/25/25 subsidy split, the inference carve, value-carrying calls, bounded retargeting, a uniform reorg bound, the optional quantum beacon and on-chain contract execution — and the two bugs found after activation."
+date: 2026-08-11
+updated: 2026-08-23
+author: "Animica Team"
+tags: ["consensus", "emission", "fork", "9.7.0", "service-carve", "vm"]
+---
+
+Block 75,000 is the largest coordinated rule change on Animica mainnet so far: eight height-gated fork flags activated in one step (two of them make up the reward split), shipped by 9.6.0 and 9.7.0 and later armed by 10.2.0. This post walks through each rule, the exact reward arithmetic, the silent-divergence failure mode that made the upgrade mandatory for every balance-tracking node, and two defects found in the first week after activation. Everything is taken from `consensus/service_carve.py`, `consensus/rewards.py`, `core/network_params.py` and the release commits.
+
+## The reward split, by era
+
+The mainnet subsidy is 300 ANM per block in the current epoch. Its division has changed twice by fork; the total never has.
+
+| Height range | Miner | Foundation treasury | Inference carve | Rule |
+|---|---|---|---|---|
+| 1 – 42,000 | 300 (100%) | 0 | 0 | genesis `subsidy_split_pct` |
+| 42,001 – 74,999 | 255 (85%) | 45 (15%) | 0 | `FORK_FOUNDATION_SPLIT` (7.1.0) |
+| 75,000 → | 150 (50%) | 75 (25%) | 75 (25%) | `FORK_TREASURY_25` + `FORK_SERVICE_CARVE` (9.7.0) |
+
+Two separate rules make up the new split. `FORK_TREASURY_25` raises the treasury share from 15% to 25% inside `compute_block_reward` (via `_treasury_split_pct`). It had been defined in 9.4.0 with a height of 70,000, but — as the 9.7.0 commit records — the flag "was never read", so it never fired; 9.7.0 moved it to 75,000 so the whole split changes in one block. `FORK_SERVICE_CARVE` reserves a further 25% for inference providers, withheld from the miner whether or not anyone claims it.
+
+## The carve arithmetic
+
+`consensus/service_carve.py` keeps the arithmetic apart from block import "because it is the part that must be provably emission-conserving". In integers:
+
+```
+carve    = floor(TOTAL_subsidy * 25 / 100)     # of the TOTAL, not the miner remainder
+paid     = sum of anchor outputs, each clamped so paid never exceeds carve
+residual = carve - paid                         # >= 0 by construction
+miner    = miner_reward - carve                 # NOT minus paid: that is the rule
+```
+
+So `paid + residual == carve` and `miner + carve ==` the pre-carve miner slice. Nothing is minted or burned, and there is no floating point. The base matters: 25% is measured against the reconstructed pre-split subsidy (miner + treasury + aicf). Taking 25% of the post-treasury miner slice would have been 18.75% of the block.
+
+Where the carve goes is decided by one question — did any provider claim in this block?
+
+- **No claim** (`paid == 0`): the slice goes to the foundation treasury. This is the common case today.
+- **Any claim** (`paid > 0`): the *whole* slice is paid to the claiming providers, pro-rata by claim size. Nothing falls to the treasury.
+
+That second rule was a deliberate 10.2.5 simplification of an earlier "partial claim, remainder to escrow" case; the escrow address resolved to the treasury anyway, so the middle case was indistinguishable from revenue on chain while paying providers less than the block had reserved for them. The practical consequence, which the module states plainly: a provider anchored for a small claim receives the whole carve of that block. Claim size sets the split *between* providers, not the total. The settlement authority — the foundation treasury, which signs the anchors — is what bounds payouts to what was earned.
+
+## Why the chain does not pay "miners who serve"
+
+The obvious design would pay the inference slice to a miner who served inference. The module's docstring explains why it does not: nothing in a block can prove that. There is no on-chain worker keyring, no job ids, no result hashes, and `header.extra` is miner-authored, so "a stub box with no ML stack could sign 'I served 100 jobs' and no validator could contradict it." A rule that pays on self-attestation pays everyone who edits a config value, out of the honest miners' subsidy. So the chain never measures serving; it only declines to hand the service slice to the block producer, and leaves the question of *who* earned it to settlement anchors.
+
+This is also the honest framing for the useful-work rule below: as of the 2026-08-15 reconnaissance, every stored mainnet block carried an empty proof list. See [/learn/useful-work-ai-and-quantum](/learn/useful-work-ai-and-quantum).
+
+## The failure mode that made 9.7.0 mandatory
+
+The comment on `FORK_SERVICE_CARVE` in `core/network_params.py` describes a failure mode that is unusual and worth understanding: coinbase amounts are never validated against the schedule, yet state application credits balances from the node's *own* `compute_block_reward`. An un-upgraded node therefore does not fork or stall. It accepts identical blocks and credits different balances — silently and permanently. Liveness is safe; the ledger is not. Every full node, pool and balance-tracker had to be on a wired release before 75,000, and 9.7.0 (2026-08-11) was the release that actually wired the flags. `FORK_FOUNDATION_SPLIT` at 42,001 had exactly the same shape, and the project's upgrade notices for both say so.
+
+## The other six rules at 75,000
+
+**`FORK_VALUE_CALL`.** A contract `CALL` may now carry ANM: `TxCall` gains an optional `amount`, omitted from the canonical object when zero so every historical valueless call encodes and hashes byte-identically. `debit_credit_for_call` moves it from caller to callee.
+
+**`FORK_BOUNDED_RETARGET`.** The difficulty controller had a one-way trapdoor: its emergency valve, on a slow block, set Θ directly to the floor — from about 26.8 million to 12 million µ-nats in one step, a reduction in per-block work of roughly e^14.8 — and the chain could then stay on the floor. From 75,000 a stall eases Θ by one bounded step and resets the EMA, and a floor-escape lifts Θ off the floor when blocks are not slow. Grandfathered below H, so no historical Θ is recomputed. Details in [/learn/difficulty-adjustment-and-theta](/learn/difficulty-adjustment-and-theta).
+
+**`FORK_FINALITY_DEPTH`.** The reorg bound is clamped into `[MIN_REORG_DEPTH, FINALITY_DEPTH]` per candidate, so no operator override can accept an arbitrarily deep rewrite or self-wedge by refusing every reorg. It never rejects a block; it only declines to make a tip canonical.
+
+**`FORK_QUANTUM_BEACON`.** The canonical chain may commit to attested quantum randomness. Presence-gated: a block carrying no beacon is valid at every height forever, so a QRNG outage cannot halt the chain; only a present commitment is verified.
+
+**`FORK_VM_EXEC` (9.6.0, 2026-08-10).** On-chain execution of Python-VM contract calls turns on, replacing a fail-closed stub with a deterministic, gas-metered tree-walking interpreter over the compiler's IR. Arbitrary-precision integers (the DEX price math exceeds 2^256), a closed-subset validation gate, one gas meter shared across an inter-contract call tree, and no `import`/`exec`/`eval`/attribute escape. Below H a call reverts exactly as before, so history is byte-identical. See [/learn/python-vm-smart-contracts](/learn/python-vm-smart-contracts).
+
+**`FORK_USEFUL_WORK_VERIFY` (10.2.0, 2026-08-15).** Every useful-work proof a block *does* carry is verified at import — structure, canonical CBOR, ML-DSA-65 signature with the scheme id pinned by the verifier, miner equals worker, receipt freshness, single-use nullifier, payment reference — and Σψ is recomputed under code-committed caps. It never requires a proof and never grants Σψ credit toward Θ; it can only reject. Mainnet defaults to **shadow** at 75,000 (advisory verdicts, `ANIMICA_USEFUL_WORK_ENFORCE=1` to opt in) because headers commit `receiptsRoot = 0`, so a snapshot-synced node and an executing node could reach opposite verdicts on the first block that carried a proof.
+
+## Two defects found after activation
+
+**The template over-advertised the miner's income (10.2.2, 2026-08-15).** `compute_block_reward` does not apply the carve — that happens during block application — so `miner.getBlockTemplate` kept advertising 225 ANM from 75,000 while the miner actually received 150. Reproduced against `spec/params.yaml`:
+
+| Height | Advertised (old) | Actual | Carve |
+|---|---|---|---|
+| 69,999 | 255.00 ANM | 255.00 ANM | 0% |
+| 74,999 | 255.00 ANM | 255.00 ANM | 0% |
+| 75,001 | 225.00 ANM | 150.00 ANM | 25% |
+
+Not a validity bug — `submitBlock` prefers the state balance delta — but a payout bug: a pool crediting shares from the template would pay 75 ANM per block it never received. The fix had been written earlier and then lost when a later commit restored the old line; 10.2.2 restored it, and identifies the miner slice by address rather than list position so an ordering change cannot repeat the mistake.
+
+**The carve had no way to reach providers (10.2.7, 2026-08-17).** Consensus reads a settlement anchor from `TxTransfer.data` (magic `ANMSETL1` followed by strict JSON), but `animica tx send` hard-coded that field to empty bytes. For the first 411 blocks after activation — about 30,825 ANM — every carve rolled to the treasury because no anchor could be constructed with the shipped tooling. 10.2.7 added `tx send --data`, verified a real 24-claimant anchor through the consensus module's own parser, and committed `consensus/service_carve.py` to git, which had been shipping in wheels since 10.2.5 without ever being added.
+
+## Key takeaways
+
+- From block 75,000 the 300 ANM subsidy splits 150 miner / 75 treasury / 75 inference carve; total emission and the halving schedule are unchanged.
+- An unclaimed carve goes to the treasury; any claim pays the whole carve pro-rata. The chain never measures serving because it cannot verify it.
+- The upgrade was mandatory because an un-upgraded node silently credits different balances rather than forking.
+- Six companion rules activated at the same height; contract execution went live and useful-work verification is armed in shadow.
+- 10.2.2 fixed a 75 ANM/block template overstatement; 10.2.7 made settlement anchors constructible.
+
+## Sources
+
+- git commit `7eecba556` (9.7.0), `cda168138` (9.6.0), `662f09164` (10.2.0 arming), `d532917b0`/`b480d9473` (10.2.2), `af8935c8f` (10.2.7)
+- `consensus/service_carve.py`
+- `consensus/rewards.py`
+- `core/network_params.py`
+- `spec/params.yaml`
+- `docs/ANIMICA_2026_STATE.md`

@@ -1,0 +1,119 @@
+---
+title: "A new HD derivation standard for ML-DSA-65 wallets (m/44'/4279885')"
+description: "Why BIP-32 cannot apply to lattice keys, how Animica derives a 32-byte ML-DSA-65 seed from a BIP-39 mnemonic along m/44'/4279885'/account'/0'/index', and the test vectors every wallet must reproduce."
+date: 2026-08-22
+updated: 2026-08-23
+author: "Animica Team"
+tags: ["wallets", "hd-derivation", "bip-39", "slip-0010", "ml-dsa-65"]
+---
+
+On 2026-08-22 Animica published `docs/wallet/HD_DERIVATION.md` as the normative rule for turning a 12- or 24-word mnemonic into ML-DSA-65 accounts. The goal is the one every chain with hierarchical wallets needs: any wallet — Animica's own, a third-party multi-chain wallet, a hardware device — must recover the same addresses from the same words. This post explains why the usual BIP-32 machinery does not apply to post-quantum keys, what the standard does instead, and the vectors you can check an implementation against. Wallet operations more generally are covered in [/learn/wallets-and-hd-derivation](/learn/wallets-and-hd-derivation).
+
+## The problem: no elliptic curve, no BIP-32
+
+BIP-32 derives child keys by arithmetic on an elliptic-curve group: a child public key can be computed from a parent public key and a chain code, which is what makes watch-only wallets and non-hardened derivation work. ML-DSA-65 (FIPS 204, Animica scheme id `0x1003`) is a module-lattice signature. There is no group law to exploit, so BIP-32 public derivation cannot exist for it, and an "xpub" in the Bitcoin sense has no meaning.
+
+What FIPS 204 does provide is a deterministic key generator. Key generation is a pure function of a 32-byte seed ξ:
+
+```
+(pk, sk) = ML-DSA-65.KeyGen_internal(ξ)     // ξ = 32 random bytes, FIPS 204 Algorithm 1
+```
+
+So an HD wallet only needs one thing: a deterministic way to turn a mnemonic into one ξ per account. Everything downstream — a 1,952-byte public key, a 4,032-byte secret key, an address — follows from ξ and the standard.
+
+## The scheme
+
+The standard reuses two existing, widely implemented primitives and adds exactly one Animica-specific step at the end.
+
+**1. Mnemonic → seed (BIP-39).** `seed = PBKDF2-HMAC-SHA512(mnemonic_NFKD, "mnemonic" + passphrase_NFKD, 2048 rounds, 64 bytes)`. Any BIP-39 library produces this.
+
+**2. Seed → node (SLIP-0010, ed25519 family).** HMAC-SHA512 with the master key `"ed25519 seed"`, hardened-only children, child data `0x00 || k_par || ser32(i)`. This is the exact derivation that Solana, Sui, Aptos, NEAR and Massa wallets already ship for their ed25519 keys; only the final step differs. Choosing it means a multi-chain wallet adds Animica by adding a coin type, not a derivation engine.
+
+**3. Path (BIP-44).**
+
+```
+m / 44' / 4279885' / account' / 0' / address_index'
+```
+
+The coin type `4279885` is `0x414E4D`, the ASCII bytes of **"ANM"**. Every level is hardened because SLIP-0010's ed25519 branch has no non-hardened children. The default account is `m/44'/4279885'/0'/0'/0'`. A SLIP-0044 registration for coin type 4279885 is open as `satoshilabs/slips#2053`.
+
+**4. Node → ξ.** The 32-byte private-key half of the final node *is* ξ. No extra hashing.
+
+**5. ξ → address.**
+
+```
+(pk, sk) = ML-DSA-65.KeyGen_internal(ξ)
+address  = bech32m("anim", u16be(0x1003) || SHA3-256(pk))
+```
+
+The payload is 34 bytes — a two-byte big-endian scheme id followed by the SHA3-256 of the public key — which encodes to a 66-character string beginning `anim1zqp`. Two details the standard underlines because they are the usual sources of incompatibility: SHA3-256 means NIST SHA-3, not Keccak-256; and the checksum is bech32m (BIP-350, constant `0x2bc830a3`), not the original bech32. A plain bech32 checksum is invalid on Animica. The address format is covered in detail in [/learn/animica-addresses-bech32m](/learn/animica-addresses-bech32m).
+
+Because `KeyGen_internal` is deterministic, a wallet may store the 32-byte ξ instead of the 4,032-byte secret key and regenerate the keypair on load. That is a material saving for hardware wallets and encrypted keystores.
+
+## Test vectors
+
+The standard ships vectors against the BIP-39 reference mnemonic (no passphrase):
+
+```
+abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
+seed = 5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1
+       9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4
+```
+
+| Path | ξ (ML-DSA-65 seed) | Address |
+|---|---|---|
+| `m/44'/4279885'/0'/0'/0'` | `e3bb5b745b1da91201e7b9744038def07dfd02da9a85682d30468b9355c50835` | `anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7` |
+| `m/44'/4279885'/0'/0'/1'` | `5b7ea6e7ab17f7f78900e57dae759104518bca0e55f7fa69b6d0b9986e130595` | `anim1zqpmznku3ddgyhl27d0p38jq7qyjgsnvafzd8pwh27gednh0x09s2egxyv9ej` |
+| `m/44'/4279885'/1'/0'/0'` | `cf68ab2eb4222e81656973cc01769ab28b794f8907e214c1f615a5da6a5c0260` | `anim1zqpn2j43cqempqfke6rzvwf6f4529xwrexgpcw8gfd8dg8agmcqw6qqu83f7t` |
+
+The addresses were produced with `@noble/post-quantum` 0.6.1 (`ml_dsa65.keygen(ξ)`) and cross-checked against the mainnet node's Python implementation (`pq/py/address.py::address_from_pubkey`), which uses the node's own ML-DSA-65 key generator. The SLIP-0010 implementation passes SLIP-0010 test vector 1. An implementation that reproduces the first row has the whole chain right; an implementation that reproduces the seed but not the address has almost certainly used Keccak or bech32.
+
+## The reference implementation
+
+The TypeScript reference is `packages/animica-crypto/src/hd.ts`, with tests in `packages/animica-crypto/tests/hd.test.ts`. Its exported surface maps one-to-one onto the steps above:
+
+```ts
+export const ANIMICA_COIN_TYPE = 4279885;
+export function mnemonicToSeed(mnemonic: string, passphrase = ''): Uint8Array;
+export function masterNodeFromSeed(seed: Uint8Array): HDNode;
+export function deriveHardenedChild(parent: HDNode, index: number): HDNode;
+export function parsePath(path: string): number[];
+export function deriveNodeFromSeed(seed: Uint8Array, path: string | number[]): HDNode;
+export function animicaPath(account = 0, index = 0): string;
+export function deriveAnimicaSeed(seed: Uint8Array, account = 0, index = 0): Uint8Array;
+export function deriveAnimicaSeedFromMnemonic(/* mnemonic, account, index, passphrase */): Uint8Array;
+```
+
+A wallet integrating Animica needs `deriveAnimicaSeedFromMnemonic` to obtain ξ, an ML-DSA-65 key generator that accepts a seed, SHA3-256, and a bech32m encoder. None of those is Animica-specific except the coin type and the HRP.
+
+## Signing, for completeness
+
+Derivation gives you keys; the standard also records how they are used. A transaction is signed as
+
+```
+ML-DSA-65.Sign(sk, M = SHA3-512(sign_bytes), ctx = "")
+```
+
+over the canonical CBOR preimage defined in `spec/tx_format.cddl` (the browser extension's `apps/wallet-extension/src/tx/signing.ts` is the reference), and broadcast with `tx.sendRawTransaction` at `https://rpc.animica.org/rpc`. The transaction model — v2 nonce-less bodies with a validity window and salt, the `animica:sign/v1` wrapper that binds chain id and forkId — is described in [/learn/transactions-and-fees](/learn/transactions-and-fees).
+
+## What changes for users and wallet authors
+
+- **Scope.** The document's status line is "normative for third-party wallets (2026-08-22)". It defines how a mnemonic maps to accounts; it does not change any key that already exists, so existing backups remain exactly as valid as they were.
+- **Recovery is now portable.** A mnemonic created under this standard recovers the same `anim1zqp…` addresses in any compliant wallet. That is the property that makes hardware-wallet and multi-chain support possible at all.
+- **Legacy SPHINCS+ addresses are outside this standard.** Scheme `0x1002` is consensus-stranded on mainnet and cannot sign transactions; the derivation targets `0x1003` only. See [/learn/post-quantum-signatures-ml-dsa-65](/learn/post-quantum-signatures-ml-dsa-65).
+
+Wallet downloads are at [/downloads](/downloads) and the wallet overview page is [/wallet](/wallet); the former web wallet at wallet.animica.org was discontinued in July 2026.
+
+## Key takeaways
+
+- BIP-32 public derivation is impossible for lattice keys, but FIPS 204 key generation is deterministic in a 32-byte seed, so HD wallets only need a mnemonic → seed mapping.
+- Animica uses BIP-39, then SLIP-0010 (ed25519 family, hardened-only) along `m/44'/4279885'/account'/0'/index'`; coin type 4279885 is ASCII "ANM".
+- The final node's 32-byte key is the ML-DSA-65 seed; the address is bech32m over `0x1003 || SHA3-256(pk)`, 66 characters starting `anim1zqp`.
+- Published test vectors and a TypeScript reference let any wallet verify compatibility before shipping.
+
+## Sources
+
+- `docs/wallet/HD_DERIVATION.md`
+- `packages/animica-crypto/src/hd.ts`, `packages/animica-crypto/tests/hd.test.ts`
+- `pq/py/address.py`
+- `spec/tx_format.cddl`, `apps/wallet-extension/src/tx/signing.ts`

@@ -1,113 +1,200 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 
-const title = "Support";
+const title = "Support and contact";
 const description =
-  "Get help with Animica: wallets, mining, RPC, AICF compute, and provider workers — via GitHub issues, email, or X.";
+  "Where to get help with Animica: documentation, guides, GitHub issues, security disclosure, and what to include so your question can be answered quickly.";
+
+const helpChannels = [
+  {
+    name: "Guides and explainers",
+    href: "/learn/faq",
+    label: "animica.org/learn",
+    detail:
+      "Long-form, source-grounded articles: mining, running a node, wallets, transactions, the RPC API, contracts, L2 and AICF. Start with the FAQ and the mining and node guides.",
+  },
+  {
+    name: "Documentation hub",
+    href: "/docs",
+    label: "animica.org/docs",
+    detail:
+      "Reference pages rendered from the repository, plus the EVM- and Bitcoin-compatible RPC notes. The canonical docs live under docs/ in the monorepo.",
+  },
+  {
+    name: "GitHub issues",
+    href: "https://github.com/animicaorg/all/issues",
+    label: "github.com/animicaorg/all/issues",
+    detail:
+      "Bugs, regressions, documentation errors and feature requests. Issues are public and searchable, so check for an existing report first.",
+  },
+  {
+    name: "Email",
+    href: "mailto:contact@animica.org",
+    label: "contact@animica.org",
+    detail:
+      "General questions, partnership and listing enquiries, and anything that should not be public. Security reports go to a separate address (below).",
+  },
+];
+
+const checklist = [
+  "Which version you are running: `pip show animica` (the current line is 10.x) and, for a wallet, the app version from its About screen.",
+  "The network: mainnet is chain id 1. Testnet and devnet use different chain ids and different ports, and a transaction signed for one will be rejected on another (error -32011).",
+  "The exact command you ran and the exact error text. Copy the JSON-RPC error object if there is one; the code (for example -32013 insufficient funds, -32017 fee too low) usually identifies the cause.",
+  "A transaction hash or address when the question is about a payment, so it can be checked on explorer.animica.org. Never include a seed phrase, private key or keystore file.",
+  "The output of `animica node doctor` (node problems) or `animica ena doctor` (ENA problems), and whether `curl -X POST https://rpc.animica.org/rpc` with `chain.getHead` works from the same machine.",
+  "What you expected to happen and what happened instead, including timestamps, so logs on our side can be correlated.",
+];
 ---
 
 <BaseLayout title={title} description={description}>
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Support</span>
-      <h1 class="aicf-heading">Get Help with Animica</h1>
+      <h1 class="aicf-heading">Getting help with Animica</h1>
       <p class="aicf-subheading">
-        Whether you are running a wallet, mining on the pool, calling the RPC, or operating an AICF
-        provider worker — here is how to reach us and what to include so we can help fast.
+        Animica is an open-source project run by a small group of maintainers. Most questions are
+        answered faster by the written guides than by email, so this page points you at the right
+        document first, explains how to report bugs and security issues, and tells you what to include.
+      </p>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="/faq">Read the FAQ</a>
+        <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all/issues" target="_blank" rel="noopener noreferrer">Open a GitHub issue</a>
+        <a class="aicf-ghost-btn" href="/security">Report a vulnerability</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Where to look</span>
+      <div class="aicf-grid-2" style="margin-top:0.95rem;">
+        {helpChannels.map((c) => (
+          <article class="aicf-card">
+            <h2 style="font-size:1.15rem;">{c.name}</h2>
+            <p class="aicf-muted" style="margin-top:0.5rem;">{c.detail}</p>
+            <p style="margin-top:0.6rem;"><a href={c.href}><code>{c.label}</code></a></p>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>Troubleshooting guides by topic</h2>
+      <p>
+        These are the pages that resolve the majority of support requests. Each one is written from the
+        repository documentation and kept in step with the current 10.x release line.
+      </p>
+      <ul>
+        <li>
+          <a href="/learn/mining-guide">Mining guide</a>: installing <code>animica</code>, running
+          <code>animica up</code>, pointing an external miner at <code>stratum+tcp://pool.animica.org:3333</code>
+          (PPS) or <code>:3334</code> (solo), reading pool statistics, and why rewards take time to appear.
+        </li>
+        <li>
+          <a href="/learn/run-a-node">Running a node</a>: <code>animica node up</code>, ports 8545 (RPC) and
+          30333 (P2P), data directories, sync behaviour, and the <code>animica node doctor</code> checks.
+        </li>
+        <li>
+          <a href="/learn/wallets-and-hd-derivation">Wallets and recovery</a>: which wallet to use, how
+          the 12/24-word mnemonic maps to an <code>anim1zqp…</code> address, and why an address from a
+          different derivation path is not "lost".
+        </li>
+        <li>
+          <a href="/learn/transactions-and-fees">Transactions and fees</a>: the 21,000 nANM transfer fee,
+          the <code>validAfter</code>/<code>validUntil</code> window, and what each RPC error code means.
+        </li>
+        <li>
+          <a href="/learn/block-explorer-guide">Reading the explorer</a>: confirmations versus
+          "finalized", what a zero <code>stateRoot</code> in the head means, and how to verify a payment.
+        </li>
+        <li>
+          <a href="/learn/faq">Extended FAQ</a>: the long-form version of the <a href="/faq">site FAQ</a>,
+          covering protocol, mining, building and economics.
+        </li>
+      </ul>
+
+      <h2>Before you ask: a short checklist</h2>
+      <p>
+        Including the following in a first message usually turns a multi-day back-and-forth into a
+        single reply. None of it requires sharing secrets.
+      </p>
+      <ol>
+        {checklist.map((item) => (
+          <li set:html={item.replace(/`([^`]+)`/g, "<code>$1</code>")} />
+        ))}
+      </ol>
+
+      <h2>Reporting a bug</h2>
+      <p>
+        Open an issue at
+        <a href="https://github.com/animicaorg/all/issues" target="_blank" rel="noopener noreferrer">github.com/animicaorg/all/issues</a>.
+        Give it a title that names the component (<code>rpc</code>, <code>mining</code>,
+        <code>wallet-extension</code>, <code>vm_py</code>, <code>l2</code>, <code>aicf</code>,
+        <code>website</code>) and the symptom. Paste the checklist items above. If the problem is a
+        wallet balance or a missing payout, include the address and transaction hash; if it is a node
+        that will not sync, include the head height from <code>animica node status</code> and from the
+        public explorer so the gap is visible. Pull requests are welcome for documentation fixes and
+        small, well-tested changes; discuss larger changes in an issue first.
+      </p>
+
+      <h2>Security disclosure</h2>
+      <p>
+        Do not file security vulnerabilities as public issues. Email
+        <a href="mailto:security@animica.org">security@animica.org</a> with the affected component,
+        version or commit, reproduction steps, and your assessment of impact. The published policy
+        (<code>docs/legal/SECURITY_POLICY.md</code>) commits to acknowledging reports within
+        <strong>3 business days</strong>, an initial severity assessment (CVSS v3.1) within 7 days, and a
+        fix window that is typically 30 to 90 days depending on severity. Good-faith research that avoids
+        privacy violations, service degradation and data exfiltration is covered by the policy's safe
+        harbour. The machine-readable contact record is at
+        <a href="/.well-known/security.txt">/.well-known/security.txt</a>. The
+        <a href="/security">Security page</a> has the scope, the threat-model summary and key-handling
+        advice for users.
+      </p>
+
+      <h2>What to expect</h2>
+      <p>
+        There is no paid support tier and no service-level agreement for community support. GitHub issues
+        are read by the maintainers; clear, reproducible reports are usually answered within a few days,
+        and fixes ship in the next <code>animica</code> release on PyPI. Email to
+        <code>contact@animica.org</code> is answered on a best-effort basis. Security reports follow the
+        timelines above. Hosted services (the public RPC, explorer, pool and wallet) are operated by the
+        project and their live state is visible on the <a href="/status">Status page</a>; if one of them
+        is down, that page is the fastest way to confirm it before reporting.
+      </p>
+      <p>
+        We cannot recover funds sent to the wrong address, reverse a confirmed transaction, or restore a
+        wallet without its mnemonic. Animica wallets are non-custodial: the project never holds your keys
+        and cannot move your ANM.
+      </p>
+
+      <h2>Things we will never ask for</h2>
+      <ul>
+        <li>Your seed phrase, private key, keystore file or wallet password.</li>
+        <li>A payment to "verify", "unlock" or "synchronise" a wallet.</li>
+        <li>Remote access to your machine.</li>
+      </ul>
+      <p class="aicf-muted">
+        We do not currently operate a Discord or Telegram channel. Official announcements are posted on
+        <a href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg</a> and in GitHub releases.
+      </p>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/legal/SECURITY_POLICY.md · docs/security/RESPONSIBLE_DISCLOSURE.md · docs/TROUBLESHOOTING.md ·
+        docs/MINING_TROUBLESHOOTING.md · docs/network-docker-compose.md · website/public/.well-known/security.txt
       </p>
     </div>
   </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-3">
-      <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">GitHub Issues</h2>
-        <p class="aicf-muted" style="margin-top:0.55rem;">
-          Best for bugs, feature requests, and anything reproducible — node, wallets, miner bundles,
-          SDKs, and pool tooling all live in one monorepo.
-        </p>
-        <div class="aicf-btn-row" style="margin-top:0.9rem;">
-          <a class="aicf-btn" href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">Open an Issue</a>
-        </div>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">Email</h2>
-        <p class="aicf-muted" style="margin-top:0.55rem;">
-          Best for account-specific questions, payout issues, billing disputes, and anything you'd
-          rather not post publicly.
-        </p>
-        <div class="aicf-btn-row" style="margin-top:0.9rem;">
-          <a class="aicf-btn" href="mailto:contact@animica.org">contact@animica.org</a>
-        </div>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">X / Twitter</h2>
-        <p class="aicf-muted" style="margin-top:0.55rem;">
-          Best for quick questions and staying current — release announcements and network updates are
-          posted there first.
-        </p>
-        <div class="aicf-btn-row" style="margin-top:0.9rem;">
-          <a class="aicf-btn" href="https://x.com/animicaorg" target="_blank" rel="noopener noreferrer">@animicaorg</a>
-        </div>
-      </article>
-    </div>
-  </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-3">
-      <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">Wallets &amp; Transactions</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Wallet install, restore, and checksum verification</li>
-          <li>Stuck or missing transactions (include the tx hash)</li>
-          <li>anim1&hellip; address questions</li>
-        </ul>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">Mining &amp; Pool</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Miner setup, shares, and dual-mining XMR</li>
-          <li>Pool payouts and hashrate reporting</li>
-          <li>Connection and stratum issues</li>
-        </ul>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.15rem;">AICF Compute</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Provider worker install and benchmark troubleshooting</li>
-          <li>Failed model calls and usage/settlement questions</li>
-          <li>Payout, reputation, and staking support</li>
-        </ul>
-      </article>
-    </div>
-  </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">What to Include</h2>
-        <ol style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.42rem;">
-          <li>What you were doing, what you expected, and what happened instead.</li>
-          <li>Timestamps, and a transaction hash or anim1&hellip; address where relevant.</li>
-          <li>Logs or error output (miner logs, worker logs, API responses).</li>
-          <li>Your platform and version (wallet build, CLI version, miner bundle).</li>
-        </ol>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Self-Service</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.42rem;">
-          <li>Network status: <a href="/status">/status</a></li>
-          <li>Documentation: <a href="/docs">/docs</a></li>
-          <li>Mining guides: <a href="/mine">/mine</a></li>
-          <li>Wallet downloads: <a href="/wallet">/wallet</a></li>
-          <li>Explorer: <a href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">explorer.animica.org</a></li>
-        </ul>
-      </article>
-    </div>
-  </section>
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2rem; }
+  .page-prose p, .page-prose ul, .page-prose ol { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose ol { padding-left: 1.4rem; list-style: decimal; }
+  .page-prose li { margin-top: 0.4rem; }
+  .page-prose code { font-size: 0.92em; }
+</style>

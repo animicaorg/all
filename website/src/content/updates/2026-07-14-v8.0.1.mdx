@@ -1,0 +1,18 @@
+---
+title: "Animica 8.0.1: dVPN, one-click .anm, and an inert relay-rewards fork at 50,000"
+description: "A WireGuard-based decentralized VPN built into the node, a browser proxy in the extension, and a consensus fork at block 50,000 that ships deliberately inert."
+date: 2026-07-14
+tags: ["release", "dvpn", "consensus", "fork", "extension"]
+---
+
+Animica 8.0.1 follows 8.0.0 (the same day: ANM-native marketplace, generative media job types served by miners, ENA checkpoint distribution, the `.anm` registry and gateway, and a file-toggleable shadow for state-root observability) with a decentralized VPN and one gated consensus change.
+
+**Client.** `animica vpn exits | up | status | doctor | down`. A real WireGuard tunnel (kernel `wg-quick`, `boringtun`/`wireguard-go` fallback) with a fail-closed killswitch. `doctor` is a leak self-test that *gates* the "connected" claim: handshake live, apparent IP changed, no IPv6 leak, killswitch present.
+
+**Exit operator.** `animica vpn exit register | serve`, off by default and opt-in behind a wallet-signed terms acceptance. The exit installs an isolated nftables table that masquerades the tunnel subnet and blocks LAN, loopback, link-local, cloud-metadata and abuse ports without touching the host or Docker firewall. Byte accounting is signed on both sides; the registry reconciles client and exit counts and flags a divergence above 10%.
+
+**Browser proxy.** Extension v1.2.0 adds a VPN tab that routes just that browser through a chosen exit via `chrome.proxy`. It is labelled honestly: a single-hop browser proxy, not a system VPN and not Tor. `animica.dev/browser` is a zero-install `.anm` gateway.
+
+**`FORK_VPN_RELAY_REWARDS` at mainnet block 50,000 — shipped inert.** When live, a capped slice of each block's subsidy is paid from the coinbase to relay operators, carved from the miner's share: never more than 50 ANM per block, with the cap decaying with the halving, and emission-conserving. In 8.0.1 the on-chain distribution source returns empty, so at and after 50,000 the block reward is byte-identical to no-fork — verified by three independent adversarial reviews (mint, split, inertness) and a runtime stress test. Going live required sealing a relay-contribution root behind a fresh activation; until then dVPN rewards were off-chain IOUs with no spendable balance. The same fork key was realized as `FORK_IOU_SETTLEMENT` in 9.0.0.
+
+The release is non-mandatory for consensus but recommended so nodes carry the dVPN and reward code ahead of block 50,000. 8.0.2, also on 2026-07-14, added a pinned checkpoint at 44,854 to un-wedge nodes stuck on the losing side of a natural one-block fork.

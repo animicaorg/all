@@ -2,11 +2,147 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import { architectureLayers, modelCatalog } from "../data/aicf";
+import CodeBlock from "../components/CodeBlock.astro";
 
 const title = "Developers";
 const description =
-  "Build on Animica: deterministic Python smart contracts on a post-quantum L1, a public JSON-RPC endpoint, and AICF's OpenAI-compatible compute APIs billed in ANM.";
+  "Developer hub for Animica: Python and TypeScript SDKs, the JSON-RPC API, Python-VM smart contracts, the ANM-native L2, AICF compute, the MCP server and x402 agent payments, each with a working snippet.";
+
+const pyCli = `pip install --upgrade animica
+
+animica wallet new                 # creates an ML-DSA-65 account, prints anim1zqp... address
+animica wallet list
+animica wallet show 0              # balance in ANM and nANM
+animica node status --rpc-url https://rpc.animica.org/rpc`;
+
+const pyRpc = `import requests
+
+RPC = "https://rpc.animica.org/rpc"
+
+def call(method, params=None):
+    r = requests.post(RPC, json={"jsonrpc": "2.0", "id": 1,
+                                 "method": method, "params": params or []})
+    r.raise_for_status()
+    body = r.json()
+    if "error" in body:
+        raise RuntimeError(body["error"])      # e.g. {"code": -32013, "message": "insufficient funds"}
+    return body["result"]
+
+head = call("chain.getHead")
+print(head["height"], head["thetaMicro"])
+
+bal_hex = call("state.getBalance", ["anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7"])
+print(int(bal_hex, 16) / 1_000_000_000, "ANM")   # balances are integer nANM`;
+
+const tsSdk = `// sdk/typescript in the monorepo (package name @animica/sdk)
+import { RpcHttp } from '@animica/sdk/rpc/http'
+
+const rpc = new RpcHttp({ url: 'https://rpc.animica.org/rpc', timeoutMs: 10_000 })
+const head = await rpc.call('chain.getHead', [])
+console.log(head.height, head.hash)
+
+// Dry-run admission before broadcasting a signed, CBOR-encoded tx:
+const verdict = await rpc.call('mempool.simulateAdmission', ['0x<cbor>'])`;
+
+const rpcCurl = `# Head
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}'
+
+# Balance (hex nANM)
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":2,"method":"state.getBalance","params":["anim1zqp..."]}'
+
+# Status of a transaction: read confirmations; finalized only flips at 12 confirmations
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":3,"method":"tx.getStatus","params":["0x<txhash>"]}'
+
+# Broadcast
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":4,"method":"tx.sendRawTransaction","params":["0x<cbor-envelope>"]}'
+
+# Discover every method
+curl -s https://rpc.animica.org/openrpc.json | jq '.methods[].name'`;
+
+const contract = `# vm_py/examples/counter/contract.py (abridged)
+from typing import Final
+from stdlib import abi, events, storage
+
+K_COUNTER: Final[bytes] = b"counter:value"
+
+def _load() -> int:
+    raw = storage.get(K_COUNTER)          # storage values are bytes; missing key -> b""
+    return int.from_bytes(raw, "big", signed=True) if raw else 0
+
+def get() -> int:
+    return _load()
+
+def inc() -> None:
+    new = _load() + 1
+    storage.set(K_COUNTER, new.to_bytes(32, "big", signed=True))
+    events.emit(b"Counter.Incremented", {b"new": new})
+
+def set(n: int) -> None:
+    abi.require(n >= 0, b"counter: negative")
+    storage.set(K_COUNTER, n.to_bytes(32, "big", signed=True))
+    events.emit(b"Counter.Set", {b"value": n})`;
+
+const contractCli = `# Validate + compile to IR and get a static gas estimate
+python -m vm_py.cli.compile vm_py/examples/counter/contract.py --out /tmp/counter.ir
+
+# Deploy and call with the in-repo Python SDK (sdk/python, omni_sdk)
+PYTHONPATH=sdk/python python -m omni_sdk.cli.main deploy package ...
+PYTHONPATH=sdk/python python -m omni_sdk.cli.main call read  <address> get
+PYTHONPATH=sdk/python python -m omni_sdk.cli.main call write <address> inc`;
+
+const l2 = `# Run the L2 sequencer/verifier inside your node process
+ANIMICA_L2_ENABLE=1 animica node up
+
+# Flat l2_* methods on the same RPC server
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"l2_status","params":[]}'
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":2,"method":"l2_getBalance","params":["anim1zqp..."]}'`;
+
+const aicf = `# Free, keyless, OpenAI-compatible (30 requests/min/IP)
+curl -s https://animica.dev/v1/chat/completions \\
+  -H 'content-type: application/json' \\
+  -d '{"model":"animica-chat","messages":[{"role":"user","content":"What is PoIES?"}]}'
+
+# Models and their serving flags
+curl -s https://animica.dev/v1/models
+
+# Chain-side AICF registry (59 aicf.* methods)
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"aicf.listProviders","params":[]}'`;
+
+const mcp = `pip install animica-mcp
+animica-mcp                          # stdio transport (Claude Desktop, Claude Code, Cursor)
+animica mcp serve --transport http   # streamable HTTP, same tools
+
+# Claude Desktop / Cursor config
+{
+  "mcpServers": {
+    "animica": { "command": "animica-mcp" }
+  }
+}`;
+
+const x402 = `# Discover paid products and their 402 requirements
+curl -s https://x402.animica.dev/x402
+
+# First call returns 402 + PAYMENT-REQUIRED; your x402 client signs a payment and retries.
+# The ANM-native lane identifies the chain as CAIP-2 "animica:1" (never "eip155:1").
+curl -i https://x402.animica.dev/x402/qrng`;
+
+const errorCodes = [
+  ["-32010", "Invalid transaction (decode or structural failure)"],
+  ["-32011", "Chain id mismatch (signed for a different network)"],
+  ["-32012", "Bad signature"],
+  ["-32013", "Insufficient funds for amount + gasLimit × gasPrice"],
+  ["-32016", "Gas limit too low"],
+  ["-32017", "Fee (gas price) below the floor"],
+  ["-32018", "Transaction too large (limit 131,072 bytes)"],
+  ["-32020", "Duplicate transaction id"],
+];
 ---
 
 <BaseLayout title={title} description={description}>
@@ -14,257 +150,171 @@ const description =
 
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">Developer Platform</span>
+      <span class="aicf-kicker">Developers</span>
       <h1 class="aicf-heading">Build on Animica</h1>
       <p class="aicf-subheading">
-        Two tracks, one chain. Write deterministic Python smart contracts on a live post-quantum L1, or ship AI products on AICF's
-        OpenAI-compatible compute APIs with ANM-native billing. Both settle on the same mainnet.
+        Everything below runs against mainnet today. Each section gives you the shortest working snippet
+        and links to the long-form guide. Amounts are integer nANM (1 ANM = 10⁹ nANM), addresses are
+        bech32m <code>anim1…</code>, signatures are ML-DSA-65, and the RPC path <code>/rpc</code> is required.
       </p>
       <div class="aicf-btn-row">
-        <a class="aicf-btn" href="https://github.com/animicaorg/all">GitHub</a>
-        <a class="aicf-ghost-btn" href="/docs">Docs</a>
-        <a class="aicf-ghost-btn" href="https://explorer.animica.org">Explorer</a>
+        <a class="aicf-btn" href="/learn/json-rpc-api-guide">JSON-RPC guide</a>
+        <a class="aicf-ghost-btn" href="/learn/hello-counter-contract-tutorial">Contract tutorial</a>
+        <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">Monorepo</a>
       </div>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container">
-      <span class="aicf-kicker">Track 1 — Build on the Chain</span>
-      <h2 class="aicf-heading" style="font-size:1.6rem;">Deterministic Python Contracts on a Post-Quantum L1</h2>
-      <p class="aicf-subheading">
-        Animica contracts are plain Python modules executed in a deterministic, gas-metered VM. Accounts use post-quantum
-        signatures (ML-DSA-65, FIPS 204) and bech32m addresses (anim1...). The CLI ships with the pip package.
+    <div class="aicf-container page-prose">
+      <h2 id="python">Python: the <code>animica</code> package</h2>
+      <p>
+        <code>pip install animica</code> installs the node, the CLI, the wallet, the miners and the MCP
+        server in one package (current line 10.x). The CLI is the quickest way to create an account and
+        query the chain; for code, the JSON-RPC surface is small enough that a plain HTTP client is often
+        all you need. The richer in-repo SDK (<code>sdk/python</code>, module <code>omni_sdk</code>) adds
+        transaction builders, keystores and contract clients.
       </p>
-      <div class="aicf-grid-2" style="margin-top:0.95rem;">
-        <article class="aicf-card">
-          <span class="aicf-kicker">Quickstart</span>
-          <div class="aicf-code" style="margin-top:0.8rem;">
-<pre style="margin:0;"><code>{`# Install the complete Animica client (Python 3.10+)
-pip install animica
-
-# ...or pull in every optional extra (quote the brackets for zsh/macOS)
-pip install "animica[all]"
-
-# Create a post-quantum wallet (ML-DSA-65)
-animica wallet create --label dev
-
-# Compile, deploy, and call a Python contract
-animica contract compile contract.py
-animica contract deploy --help
-animica contract call --help`}</code></pre>
-          </div>
-          <p class="aicf-muted" style="margin-top:0.7rem;">
-            <code>pip install animica</code> is the complete client — everything to mine, run a node, use the wallet, deploy
-            Python contracts, run <code>animica up</code> (the unified miner: PoW + useful-work + GPU train/serve + Studio
-            functions), and use the Studio SDK; the native CPU miner (animica-fastpow) is included by default. This is what
-            most people want. <code>pip install "animica[all]"</code> adds every optional extra on top — Qt desktop-wallet QR
-            codes, the full distributed Studio client (cloudpickle closures + omni-sdk for on-chain ANM escrow), and all
-            pinned server/operator dependencies — use it for the kitchen sink or pool/API infrastructure.
-          </p>
-          <p class="aicf-muted" style="margin-top:0.7rem;">
-            The <code>animica</code> CLI also covers transactions, chain queries, mining, and node tooling — run
-            <code>animica --help</code> for the full command tree.
-          </p>
-          <div class="aicf-btn-row">
-            <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all">Browse the Source</a>
-            <a class="aicf-ghost-btn" href="/docs">Contract Docs</a>
-          </div>
-        </article>
-
-        <article class="aicf-card">
-          <span class="aicf-kicker">Contract Shape</span>
-          <p class="aicf-muted" style="margin-top:0.6rem;">
-            Illustrative example, adapted from the Counter contract in the repo. Contracts import deterministic stdlib
-            modules for storage, events, and ABI checks.
-          </p>
-          <div class="aicf-code" style="margin-top:0.7rem;">
-<pre style="margin:0;"><code>{`# contract.py — illustrative example
-from stdlib import abi, events, storage
-
-K_COUNTER = b"counter:value"
-
-def get() -> int:
-    raw = storage.get(K_COUNTER)
-    return int.from_bytes(raw, "big") if raw else 0
-
-def inc() -> None:
-    new = get() + 1
-    storage.set(K_COUNTER, new.to_bytes(32, "big"))
-    events.emit(b"Counter.Incremented", {b"new": new})
-
-def set(n: int) -> None:
-    abi.require(n >= 0, b"counter: value must be >= 0")
-    storage.set(K_COUNTER, n.to_bytes(32, "big"))
-    events.emit(b"Counter.Set", {b"value": n})`}</code></pre>
-          </div>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="aicf-section" id="rpc">
-    <div class="aicf-container">
-      <span class="aicf-kicker">Public RPC</span>
-      <h2 class="aicf-heading" style="font-size:1.6rem;">JSON-RPC Endpoint</h2>
-      <div class="aicf-grid-2" style="margin-top:0.95rem;">
-        <article class="aicf-card">
-          <table class="aicf-table">
-            <tbody>
-              <tr>
-                <td><strong>Endpoint</strong></td>
-                <td><code>https://rpc.animica.org/rpc</code></td>
-              </tr>
-              <tr>
-                <td><strong>Protocol</strong></td>
-                <td>JSON-RPC 2.0 over HTTPS (POST only)</td>
-              </tr>
-              <tr>
-                <td><strong>Chain ID</strong></td>
-                <td>1 (Animica mainnet)</td>
-              </tr>
-              <tr>
-                <td><strong>Discovery</strong></td>
-                <td>Unknown methods return <code>did_you_mean</code> suggestions</td>
-              </tr>
-            </tbody>
-          </table>
-          <p class="aicf-muted" style="margin-top:0.7rem;">
-            GET requests are not served — send JSON-RPC payloads via POST. Verify any result against the
-            <a href="https://explorer.animica.org">block explorer</a>.
-          </p>
-        </article>
-
-        <article class="aicf-card">
-          <span class="aicf-kicker">Try It</span>
-          <div class="aicf-code" style="margin-top:0.8rem;">
-<pre style="margin:0;"><code>{`curl -s -X POST https://rpc.animica.org/rpc \\
-  -H "Content-Type: application/json" \\
-  -d '{"jsonrpc":"2.0","id":1,
-       "method":"chain.getHead","params":{}}'
-
-# => {"jsonrpc":"2.0","id":1,"result":{
-#      "height": ..., "hash": "0x...",
-#      "chainId": 1, ... }}`}</code></pre>
-          </div>
-          <div class="aicf-btn-row">
-            <a class="aicf-ghost-btn" href="https://explorer.animica.org">Open Explorer</a>
-            <a class="aicf-ghost-btn" href="https://github.com/animicaorg/all">RPC Source on GitHub</a>
-          </div>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container">
-      <span class="aicf-kicker">Track 2 — Build with AICF Compute</span>
-      <h2 class="aicf-heading" style="font-size:1.6rem;">OpenAI-Compatible APIs, Settled in ANM</h2>
-      <p class="aicf-subheading">
-        AICF gives teams OpenAI-compatible chat and embedding endpoints, project-level ANM budgets, and settlement on Animica.
+      <CodeBlock lang="bash" title="CLI" code={pyCli} />
+      <CodeBlock lang="python" title="JSON-RPC from Python" code={pyRpc} />
+      <p class="aicf-muted">
+        Guides: <a href="/learn/wallets-and-hd-derivation">wallets and HD derivation</a> ·
+        <a href="/learn/transactions-and-fees">transactions and fees</a>.
       </p>
-      <div class="aicf-btn-row">
-        <a class="aicf-btn" href="https://aicf.animica.org">Create API Key</a>
-        <a class="aicf-ghost-btn" href="/compute-pricing">Pricing in ANM</a>
-      </div>
-      <div class="aicf-grid-3" style="margin-top:0.95rem;">
-        <article class="aicf-card">
-          <h3 style="font-size:1.2rem;">OpenAI-Compatible Endpoints</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            Drop-in semantics for chat and embeddings. Keep your SDK and middleware shape while switching execution to AICF.
-          </p>
-        </article>
-        <article class="aicf-card">
-          <h3 style="font-size:1.2rem;">ANM-Native Billing</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            Fund project balances with ANM, enforce per-job caps, and inspect usage rows with transparent settlement records.
-          </p>
-        </article>
-        <article class="aicf-card">
-          <h3 style="font-size:1.2rem;">Contract-Driven Jobs</h3>
-          <p class="aicf-muted" style="margin-top:0.55rem;">
-            Contracts can escrow ANM budgets and trigger compute workloads through AICF orchestration, with receipts settled on-chain.
-          </p>
-        </article>
-      </div>
-    </div>
-  </section>
 
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <span class="aicf-kicker">Quickstart</span>
-        <div class="aicf-code" style="margin-top:0.8rem;">
-<pre style="margin:0;"><code>{`curl https://aicf.animica.org/api/v1/chat/completions \\
-  -H "Authorization: Bearer $AICF_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "aicf-chat-1",
-    "messages": [
-      {"role": "system", "content": "You are an infra copilot"},
-      {"role": "user", "content": "Explain this GPU trace"}
-    ],
-    "max_tokens": 400
-  }'`}</code></pre>
-        </div>
-        <div class="aicf-code" style="margin-top:0.8rem;">
-<pre style="margin:0;"><code>{`curl https://aicf.animica.org/api/v1/embeddings \\
-  -H "Authorization: Bearer $AICF_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "aicf-embed-1",
-    "input": ["decentralized compute", "anm settlement"]
-  }'`}</code></pre>
-        </div>
-      </article>
+      <h2 id="typescript">TypeScript SDK</h2>
+      <p>
+        <code>@animica/sdk</code> lives in <code>sdk/typescript</code> and targets Node 18+ and modern
+        browsers: typed JSON-RPC, address and bech32m helpers, transaction builders and contract clients.
+        It never signs server-side; keys stay in the application or in the user's wallet (the browser
+        extension injects <code>window.animica</code>). Build it from the monorepo with pnpm; the package
+        exports are documented in <code>sdk/typescript/README.md</code>.
+      </p>
+      <CodeBlock lang="ts" title="Typed RPC" code={tsSdk} />
 
-      <article class="aicf-card">
-        <span class="aicf-kicker">Model Surface</span>
-        <table class="aicf-table" style="margin-top:0.8rem;">
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Indicative Price</th>
-            </tr>
-          </thead>
+      <h2 id="rpc">JSON-RPC</h2>
+      <p>
+        <code>POST https://rpc.animica.org/rpc</code>, JSON-RPC 2.0, CORS <code>*</code>. Namespaces are
+        <code>chain.*</code>, <code>state.*</code>, <code>tx.*</code>, <code>mempool.*</code>,
+        <code>net.*</code>, <code>aicf.*</code> and flat <code>l2_*</code>; EVM-style aliases such as
+        <code>eth_chainId</code> and <code>eth_gasPrice</code> (returns <code>0x1</code>) exist for tooling
+        compatibility. There is no <code>chain.getHeight</code> (use <code>chain.getHead</code>) and no public
+        WebSocket. Use <code>mempool.simulateAdmission</code> to dry-run a signed transaction before
+        broadcasting it, and <code>tx.decodeRawTransaction</code> to inspect one.
+      </p>
+      <CodeBlock lang="bash" title="Common calls" code={rpcCurl} />
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Error code</th><th>Meaning</th></tr></thead>
           <tbody>
-            {modelCatalog.map((m) => (
-              <tr>
-                <td><strong>{m.model}</strong></td>
-                <td>{m.type}</td>
-                <td>{m.status}</td>
-                <td>{m.price}</td>
-              </tr>
+            {errorCodes.map(([c, m]) => (
+              <tr><td><code>{c}</code></td><td class="aicf-muted">{m}</td></tr>
             ))}
           </tbody>
         </table>
-        <p class="aicf-muted" style="margin-top:0.7rem; font-size:0.85rem;">
-          Indicative — final rates are shown at key creation. The live registry is at
-          <code>GET https://aicf.animica.org/api/models</code>.
-        </p>
-        <div class="aicf-btn-row">
-          <a class="aicf-btn" href="https://aicf.animica.org">Launch App</a>
-          <a class="aicf-ghost-btn" href="/docs">Read Full Docs</a>
-        </div>
-      </article>
-    </div>
-  </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container">
-      <span class="aicf-kicker">Architecture</span>
-      <div class="aicf-grid-4" style="margin-top:0.95rem;">
-        {architectureLayers.map((layer) => (
-          <article class="aicf-card">
-            <h3>{layer.layer}</h3>
-            <p class="aicf-muted" style="margin-top:0.45rem;">{layer.detail}</p>
-          </article>
-        ))}
       </div>
+      <p class="aicf-muted">
+        Full method list: <a href="https://rpc.animica.org/openrpc.json">rpc.animica.org/openrpc.json</a> ·
+        guide: <a href="/learn/json-rpc-api-guide">JSON-RPC API</a>.
+      </p>
+
+      <h2 id="contracts">Smart contracts: the Python VM</h2>
+      <p>
+        Contracts are a strict, deterministic subset of Python: integers, bytes, booleans and addresses;
+        <code>if</code>/<code>while</code>/<code>for range</code>; integer arithmetic and bit operations; and
+        only <code>from stdlib import storage, events, hash, abi, treasury, syscalls</code>. No floats, no
+        I/O, no <code>time</code> or <code>random</code>, no <code>eval</code>. The compiler validates the
+        AST, lowers it to a small IR, and produces a static gas upper bound; the interpreter meters gas at
+        runtime from <code>vm_py/gas_table.json</code>. Storage values are bytes, and a missing key reads as
+        empty bytes. On-chain CALL execution has been live since block 75,000. Contract addresses use
+        scheme id <code>0x0000</code>.
+      </p>
+      <CodeBlock lang="python" title="Counter contract" code={contract} />
+      <CodeBlock lang="bash" title="Compile, deploy, call" code={contractCli} />
+      <p class="aicf-muted">
+        Guides: <a href="/learn/python-vm-smart-contracts">Python-VM smart contracts</a> ·
+        <a href="/learn/hello-counter-contract-tutorial">Hello Counter tutorial</a> ·
+        <a href="https://studio.animica.org" target="_blank" rel="noopener noreferrer">Studio</a> for a browser workflow.
+      </p>
+
+      <h2 id="l2">The ANM-native L2</h2>
+      <p>
+        The 10.x L2 (<code>l2/</code>) is a payment rollup whose only asset is ANM and whose transactions
+        are ML-DSA-65 signed end to end. A designated sequencer orders transactions into batches; anyone
+        can re-derive the committed state root from the published DA blob; the bridge enforces that
+        withdrawable L2 ANM never exceeds ANM locked on L1; and forced inclusion via L1 bounds censorship.
+        L2 chain id is 1001 on mainnet. Treat soft confirmations as a promise by the sequencer and
+        <code>L1_FINALIZED</code> as the only final state.
+      </p>
+      <CodeBlock lang="bash" title="Enable and query" code={l2} />
+      <p class="aicf-muted">Guide: <a href="/learn/animica-l2-rollup">Animica L2 rollup</a>.</p>
+
+      <h2 id="aicf">AICF: AI compute</h2>
+      <p>
+        AICF is the framework that turns AI work into on-chain accounting: providers register and stake,
+        jobs are matched and served off-chain, and receipts settle in ANM. As a developer you can use it
+        two ways. The free, keyless OpenAI-compatible endpoint at <code>animica.dev/v1</code> is served by
+        registered miners and returns ML-DSA-65-signed proof-of-inference receipts you can verify offline
+        with <code>animica ai verify</code>. For paid, budgeted access, mint a key at
+        <a href="https://console.animica.org" target="_blank" rel="noopener noreferrer">console.animica.org</a>.
+        The contract-side syscalls (<code>ai_enqueue</code>, <code>read_result</code>) are specified in
+        <code>docs/aicf/CLIENT_GUIDE.md</code>; use the HTTP APIs for production work today.
+      </p>
+      <CodeBlock lang="bash" title="Inference and registry" code={aicf} />
+      <p class="aicf-muted">
+        Guides: <a href="/learn/aicf-ai-compute-framework">AICF explained</a> · <a href="/providers">become a provider</a> ·
+        <a href="/compute-pricing">pricing</a>.
+      </p>
+
+      <h2 id="mcp">MCP server for AI agents</h2>
+      <p>
+        <code>animica-mcp</code> exposes chain reads, mining information and AICF inference as Model
+        Context Protocol tools, so Claude Desktop, Claude Code, Cursor or any MCP client can query the
+        network and use inference. It holds no private keys and cannot sign transactions; it is safe to
+        give to an agent. The server is also available as <code>animica mcp serve</code> inside the main
+        package.
+      </p>
+      <CodeBlock lang="bash" title="Install and configure" code={mcp} />
+
+      <h2 id="x402">x402: per-call payments for agents</h2>
+      <p>
+        Animica runs an x402 gateway and facilitator at
+        <a href="https://x402.animica.dev" target="_blank" rel="noopener noreferrer">x402.animica.dev</a>.
+        A request to a paid resource returns HTTP 402 with machine-readable payment requirements; the
+        client signs a payment, retries, and receives the resource with a receipt. Products include
+        quantum randomness, bulk chain data, address history, web search and inference. The ANM-native
+        lane uses the CAIP-2 identifier <code>animica:1</code>, and the payer pays its own gas, which is
+        why ANM-lane prices are lower than the USDC lane.
+      </p>
+      <CodeBlock lang="bash" title="Discovery" code={x402} />
+      <p class="aicf-muted">Guide: <a href="/learn/x402-agent-payments">x402 agent payments</a>.</p>
+
+      <h2>Accepting ANM</h2>
+      <p>
+        For a checkout flow, <a href="https://pay.animica.dev" target="_blank" rel="noopener noreferrer">pay.animica.dev</a>
+        offers a merchant REST API (<code>/api/v1/payment-intents</code>, Bearer key plus an
+        <code>Idempotency-Key</code> header, amounts in base units) with a 2.00% fee. For self-hosted
+        acceptance, watch an address with <code>state.getBalance</code> or the explorer API and wait for
+        the confirmation depth you are comfortable with. See
+        <a href="/learn/how-to-buy-and-accept-anm">how to buy and accept ANM</a>.
+      </p>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        AGENTS.md · spec/openrpc.json · docs/rpc-quickstart.md · sdk/typescript/README.md · sdk/python/README.md ·
+        docs/vm/OVERVIEW.md · vm_py/examples/counter/contract.py · docs/tutorials/HELLO_COUNTER.md · docs/l2/ARCHITECTURE.md ·
+        docs/l2/RUNNING.md · docs/l2/SECURITY_ASSUMPTIONS.md · docs/AICF.md · docs/aicf/CLIENT_GUIDE.md · docs/x402.md · animica-mcp/README.md
+      </p>
     </div>
   </section>
 
   <Footer slot="footer" />
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2.2rem; }
+  .page-prose p { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; }
+  .page-prose :global(.not-prose) { margin-top: 0.9rem; }
+</style>

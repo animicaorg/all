@@ -1,0 +1,18 @@
+---
+title: "Pool 9.2.0: sub-block findings closed, found blocks no longer lost"
+description: "Re-enables sub-block shares after 9.1.2's security fixes, retries block submission on RPC transport faults, and defers clamped PPS credit instead of destroying it."
+date: 2026-08-06
+tags: ["release", "pool", "mining", "security"]
+---
+
+Pool 9.2.0 clears the review backlog that kept sub-block shares switched off in 9.1.2 and fixes a way the pool was throwing away real money.
+
+**9.1.2, earlier the same day.** An adversarial review of 9.1.0 found two ways an opted-in miner could steal PPS credit, both harmless before sub-block shares existed. First, credit was priced from a miner-supplied field: `r` came from the submit payload, so a miner could mine the easy sub-block target and stamp `d_ratio = 1.0` on every share to be paid a whole block reward each time — a 64× over-credit at S = 64, silently. The pool now overwrites both fields with the target it assigned. Second, there was no replay guard on non-block shares, which never reached the node; one valid share could be replayed for unlimited credit. A pool-wide `(job_id, nonce, extranonce2)` guard is recorded only on accept, so a share that failed transiently stays re-submittable. Sub-block sessions stopped feeding the pool-wide vardiff, `shares_per_block` was capped at 1,024, and the feature shipped default-off.
+
+**Blocks are no longer lost to a timeout.** On 2026-08-06 a worker found a block, the node RPC timed out under load, and the block was discarded — about 255 ANM gone for a fault entirely on the pool's side of the socket, because a transport failure was treated like a rejection. `miner.submitBlock` is now retried (default three attempts, 250 ms linear backoff). Safe because submission is idempotent at the node: a block that did land returns `duplicate = true`. Only blocks, and only for transport faults — an `RpcError` means the node reasoned about it.
+
+**Clamped credit is deferred, not destroyed.** Cap headroom arrives in block-sized lumps while credit is issued continuously, so a share landing at the wrong moment was paid nothing, permanently — hardest on sub-block miners. The shortfall is now recorded per worker and flushed from later headroom before new credit. Deferred amounts are not payable, so the cap's guarantee (never credit more than mined) is untouched.
+
+**Per-share work was wrong for every share.** The stratum job object had no `share_target_int`, so expected work fell through to a Bitcoin-style `difficulty × 2^32` unrelated to Animica's targets, about 34× off at the block target. It now derives the real target from Θ and the assigned ratio.
+
+Sub-block shares are **on by default again**, with `ANIMICA_POOL_SUBBLOCK_SHARES=0` as the kill switch.

@@ -1,0 +1,14 @@
+---
+title: "Animica 10.0.0: the ANM-native L2 ships in the wheel"
+description: "pip install animica now includes the Layer 2 rollup package; 10.0.1 fixes the deposit indexer against the live node RPC and 10.1.0 makes CLI contract deploys sign with ML-DSA-65."
+date: 2026-08-13
+tags: ["release", "l2", "rollup", "sdk"]
+---
+
+Animica 10.0.0 packages the `l2/` rollup into the `animica` wheel, so `pip install animica` ships the Layer 2 alongside the node. The L2 itself — an ANM-only payment rollup with ML-DSA-65 signatures end to end, a depth-256 sparse Merkle state tree, a component-parallel deterministic executor, zlib-compressed DA blobs, validity by universal re-execution, and a bridge that credits deposits only at 64 L1 confirmations — is documented in `docs/l2/` and in the blog post on 10.0. The release also sanitizes non-numeric repository tags into a valid NSIS version for the Windows wallet-Qt build.
+
+Enable it with `ANIMICA_L2_ENABLE=1 animica node up`; `ANIMICA_L2_MODE=node` runs a follower that re-executes batches and serves read RPC. The `l2_*` JSON-RPC methods are served by the node's main RPC server. Mainnet L2 chain id is 1001; the L1 anchor fork height is 80,000. Settlement submission to L1 stays off unless `ANIMICA_L2_SETTLEMENT_ENABLED=1`.
+
+**10.0.1 (same day): the deposit indexer never credited real deposits.** Three mismatches against the node's actual RPC: it called an unserved block method instead of `chain.getBlockByNumber`, which returns transaction hashes; it assumed full transaction objects in the block instead of resolving each with `tx.getTransactionByHash`; and it required an `ANML2D1` memo while the wallet tells users to send a plain transfer. A memo-less deposit now credits the L1 sender as the L2 beneficiary (L1 and L2 share the same address), keeping the explicit-memo path for third-party beneficiaries. Verified live: a plain 0.1 ANM transfer to the bridge is observed and credits at L1 finality.
+
+**10.1.0 (same day): contract deploys were impossible from the CLI.** `animica contract deploy`/`send` signed through `omni_sdk`, whose signer capped algorithm names to the legacy stubs and explicitly rejected `ml_dsa_65` — the only scheme the node's transaction allowlist accepts. So a stub-signed wallet was rejected by the node and an ML-DSA-65 wallet could not be signed by the CLI at all. 10.1.0 allows `ml_dsa_65` in the signer (the backend already produced the same preimage the node verifies), vendors `omni_sdk` into the wheel, and declares its runtime dependencies. Verified on mainnet: a real ANM20 deploy from an ML-DSA-65 wallet confirmed at block 71,724 for about 0.0002 ANM of gas.

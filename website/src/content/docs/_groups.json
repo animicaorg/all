@@ -1,0 +1,38 @@
+[
+  {
+    "key": "getting-started",
+    "title": "Getting started"
+  },
+  {
+    "key": "protocol",
+    "title": "Protocol"
+  },
+  {
+    "key": "contracts",
+    "title": "Smart contracts (Python VM)"
+  },
+  {
+    "key": "tutorials",
+    "title": "Tutorials"
+  },
+  {
+    "key": "l2",
+    "title": "Layer 2 rollup"
+  },
+  {
+    "key": "aicf",
+    "title": "AICF and compute"
+  },
+  {
+    "key": "wallets",
+    "title": "Wallets"
+  },
+  {
+    "key": "mining",
+    "title": "Mining"
+  },
+  {
+    "key": "compat",
+    "title": "Compatibility and payments"
+  }
+]

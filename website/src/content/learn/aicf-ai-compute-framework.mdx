@@ -1,0 +1,149 @@
+---
+title: "AICF: Animica's AI compute framework, from credits to inference receipts"
+description: "What the AI Compute Fund is: the on-chain credit and epoch mechanism, the job pipeline and provider registry as specified, the aicf.* RPC surface, and which parts serve the free animica.dev API today."
+date: 2026-08-23
+updated: 2026-08-23
+category: "build"
+tags: ["aicf", "ai", "inference", "providers", "rpc"]
+readingLevel: "intermediate"
+sources:
+  - docs/AICF.md
+  - docs/aicf/OVERVIEW.md
+  - docs/aicf/JOB_API.md
+  - docs/aicf/CLIENT_GUIDE.md
+  - docs/aicf/PROVIDER_REGISTRY.md
+  - docs/aicf/SLA.md
+  - docs/AICF_JOBS.md
+  - docs/AICF_MINING_FLOW.md
+  - docs/ai.md
+  - docs/tutorials/PROVIDER_GPU.md
+  - docs/ANIMICA_2026_STATE.md
+  - vm_py/runtime/syscalls_api.py
+order: 5
+---
+
+The AI Compute Fund, AICF, is the part of Animica that connects block rewards to AI work: a protocol-level pool funded by a slice of issuance and fees, an epoch-and-credit accounting scheme, a job pipeline that matches requests to providers, and a growing `aicf.*` RPC namespace that the free inference API at `animica.dev/v1` runs on. This article separates the three layers (the on-chain fund, the specified job system, and what is serving traffic today) because the documentation was written at different times and the pieces are at different stages.
+
+## Layer 1: the fund and its parameters
+
+`docs/AICF.md` describes the mechanism that is enforced by the node. Parameters are chain parameters, and `chain.getParams` on the public RPC returned these values on 2026-08-23:
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| `epoch_length_blocks` | 100 | Epoch = `floor(height / 100)` |
+| `block_reward_slice_bps` | 500 | 5% of the block subsidy flows into the pool |
+| `fee_slice_bps` | 2000 | 20% of transaction priority fees flow into the pool |
+| `ena_call_fee_base_nano` / `ena_call_fee_aicf_bps` | 10,000 / 8000 | ENA call fee of 0.00001 ANM, 80% to the pool |
+| `epoch_payout_bps` | 5000 | Half of an epoch's inflow is distributable; half stays as reserve |
+| `credits_per_block` | 1,000,000 | Credits awarded to the miner of each block |
+| `max_claim_epochs` | 100 | Epochs per claim transaction |
+| `phase2.maturity_depth_blocks` | 50 | Depth before rewards mature |
+| `phase2.min_provider_bond` | 500,000,000 nANM | 0.5 ANM bond to register as a provider (`registration_mode: bond`) |
+| `phase2.payout_mode` | `pull` | Providers claim; nothing is pushed |
+| `phase2.provider_heartbeat_timeout_blocks` | 1,000 | Heartbeat window |
+| `phase2.receipt_min_fee` / `receipt_per_block_cap` | 10,000 / 100 | Training-receipt economics |
+
+The designed flow: each accepted block credits its miner `credits_per_block` in that epoch and moves the reward and fee slices into the pool. On mainnet, however, neither slice is actually applied: `consensus/rewards.py` sets the AICF share of the subsidy to zero for chain id 1 (the subsidy is split miner/treasury/service-carve instead, see [Tokenomics](/learn/anm-tokenomics-and-emission)), and the fee runtime's AICF tip share (`aicf_tip_bps` in `execution/runtime/fees.py`) defaults to 0, so `block_reward_slice_bps` and `fee_slice_bps` are published parameters rather than live inflows. At an epoch boundary the previous epoch is finalised (two blocks after completion), and its budget is `min(inflow × 50%, pool_balance)`. A miner's claimable share of a finalised epoch is `credits_user / credits_total × budget`. Claims are idempotent and tracked by `aicf.last_claimed_epoch.{address}`; calling twice pays nothing the second time. `aicf.getClaimable ["anim1…", true]` returns the per-epoch breakdown; `aicf.claim` is a read-only explanation and a real claim is a transaction.
+
+Live, `aicf.status` reported `enabled: true`, `pool_balance: 0x68a1bf1a1` (28,086,890,913 nANM, about 28.09 ANM), `current_epoch: 812`, `last_finalized_epoch: 810` at height 81,211. The pool is small because, as explained above, no subsidy or fee slice reaches it on mainnet; its balance moves only through AICF's own job payments and claims.
+
+Three older documents describe different splits and should be read as design history rather than current rules: `docs/AICF_MINING_FLOW.md` talks about a 10% `aicf_slice_bps` minting "credits" worth 1 nANM each; `docs/aicf/OVERVIEW.md` sketches a 1.5% mint slice with an 80/15/5 provider/miner/fund split and daily epochs; `docs/AICF_JOBS.md` labels the job marketplace "Phase 2 (Future)". The live parameters above are what the node enforces.
+
+## Layer 2: the job system as specified
+
+`docs/aicf/OVERVIEW.md`, `JOB_API.md`, `CLIENT_GUIDE.md`, `PROVIDER_REGISTRY.md` and `SLA.md` together specify how compute requests are supposed to move from a requester to a paid provider.
+
+**Deterministic task ids.** A job's identity is derived, not assigned:
+
+```
+task_id = SHA3-256(domain("AICF_TASK_ID") || uvarint(chainId) || uvarint(enqueue_height)
+                   || tx_hash || caller_address || canonical_cbor(job_payload))
+```
+
+The same inputs always give the same id, and a different height, caller or payload gives a different one. Payloads are `JobSpecAI` (model name, prompt bytes, `max_tokens`, temperature, a QoS hint) or `JobSpecQuantum` (circuit bytes, shots, depth hint), encoded as deterministic CBOR.
+
+**Lifecycle.** `QUEUED → ASSIGNED → RUNNING → COMPLETED`, with `FAILED` (invalid proof or provider error), `EXPIRED` (lease timed out; re-queued if retries remain) and `CANCELED`. A provider holds a lease (`ttl_seconds`, renewals up to `max_renewals`) and must heartbeat to keep it. Only `COMPLETED` jobs settle.
+
+**Results and proofs.** A `ResultRecord` binds the task id to an output digest, computed units, QoS metrics and one or more proof references (`AI_V1` or `QUANTUM_V1` envelopes with a hash, a nullifier, and the block that carried them). A `ProofClaim` links an on-chain proof envelope to a job; the nullifier enforces one-time claiming.
+
+**Providers.** The registry specifies a provider id `provider:<sha3_256(pubkey || alg_id)[:12]>`, capability flags (`ai`, `quantum`), a stake with a lock period, a status machine `REGISTERED → ACTIVE → JAILED/UNSTAKING → DEREGISTERED`, signed heartbeats with an exponential-decay health score, and attestation bundles (TEE evidence such as SGX/TDX, SEV-SNP or Arm CCA for AI; identity certificates and trap-circuit support for quantum) validated against pinned vendor roots. The SLA document defines latency (p95), availability, a quality score, a traps ratio, k-of-n redundancy agreement and a composite score `S`, with fault classes from minor (assignment weight reduced) to critical (jail plus a 2 to 5% stake slash).
+
+**Contract-side interface.** `CLIENT_GUIDE.md` shows contracts calling `ai_enqueue(model, prompt, max_units)` and later `read_result(task_id)` from the Python VM's `stdlib.syscalls`, with results available from the block after the proof lands. That is the intended design. In the shipped VM runtime (`vm_py/runtime/syscalls_api.py`) the default provider is `_LocalNoOpProvider`: `ai_enqueue` returns a deterministic task id tagged `"local-noop"` and `read_result` never reports a result unless a host installs a real provider with `set_provider(...)`. Contracts cannot consume inference on mainnet today; applications do it off-chain through the RPC, as described next. The [Python-VM article](/learn/python-vm-smart-contracts) covers the rest of that stdlib.
+
+## Layer 3: what is serving traffic
+
+`docs/ANIMICA_2026_STATE.md` is the authority when documents disagree, and it describes the operating model: `animica.dev/v1` is a free, keyless, OpenAI-compatible API (30 requests per minute per IP), funded by the foundation treasury; a request becomes an AICF job; whichever registered miner worker claims it serves the response. Models are exposed as `animica-chat`, `animica-chat-small` and `animica-chat-flagship` via `GET /v1/models`.
+
+The worker side is one command:
+
+```bash
+animica miner aicf-worker start --address <your-reward-address> --tiers standard,small,flagship
+```
+
+A GPU is recommended for the `flagship` tier. Workers register, claim the next job, run it locally, and submit the result; the `aicf.*` namespace has a method for each step.
+
+**The `aicf.*` namespace.** The published `https://rpc.animica.org/openrpc.json` lists 57 `aicf.*` methods (the live `rpc.discover` lists 59). Grouped:
+
+| Family | Methods | Purpose |
+|---|---|---|
+| Fund and credits | `status`, `getStatus`, `getParams`, `getEpochStatus`, `getClaimable`, `claim`, `buildClaimTx`, `creditsByAddress`, `recentEvents`, `summary`, `getTreasuryAddress`, `getMaturityDepth`, `topUp` (governance, not implemented) | Layer 1 above |
+| Providers | `registerProvider`, `listProviders`, `getProvider`, `getProviderRewards`, `claimProviderRewards` | Registry views |
+| Inference jobs | `estimateJobCost`, `submitInferenceJob`, `jobStatus`, `streamJob`, `settleJob` | Client side of an inference request |
+| Workers | `workerRegister`, `workerStatus`, `workerClaimNextJob`, `workerSubmitResult`, `workerEarnings` | Miner-side serving loop |
+| Pipeline | `pipelineClaimStage`, `pipelineGetStageInfo`, `pipelineGetUpstreamActivation`, `pipelineSubmitDecodeStep`, `pipelineFeedToken`, … (9 methods) | Splitting one model across several workers stage by stage, with worker-to-worker transport |
+| Useful-work jobs | `work.createJob`, `work.claimNext`, `work.heartbeatClaim`, `work.submitResult`, `work.verifyResult`, `work.approvePayout`, `work.listJobs`, `work.registerWorker`, … (13 methods) | Generic task leasing with verification and payout |
+| Training receipts | `submitTrainingReceipt`, `getTrainingReceipt` | Credit for training contributions |
+| Studio functions | `fn.deploy`, `fn.get`, `fn.list`, `fn.delete` | Deployable functions for the Studio product |
+
+The `state.*` namespace adds `getAicfSummary` and `getAicfMinerCredits` for credit balances. Full request shapes are in the catalog; the [RPC guide](/learn/json-rpc-api-guide) shows the transport rules and a live `aicf.status` response.
+
+**Proof-of-inference receipts.** Since 7.1.1 (`docs/ai.md`, the Verifiable Inference Engine), a served response can carry a receipt: SHA3-256 content hash over the canonical record, ML-DSA-65 signature under the domain `animica.ai.proof-of-inference.v1` by a node key that controls no funds, the model id, a hash of the prompt, a hash of the output, and the sampling seed with its provenance (randomness beacon when available, CSPRNG otherwise). `animica ai verify receipt.json` recomputes the hash and checks the signature fully offline; `animica ai replay` re-runs generation with the recorded seed and reports `verified`, `best_effort` or `unsupported` depending on whether the backend is bit-for-bit reproducible. This is the mainnet verification story: signed, replayable receipts, rather than the TEE attestation the registry specification describes. The `aicf.getProvider` view is where any attestation a provider did supply would be visible.
+
+## The `animica ai` command namespace
+
+`docs/ai.md` collects the client and operator tooling under one command group:
+
+```
+animica ai doctor        # readiness checks with exact fix commands
+animica ai setup         # writes ~/.animica/config.toml
+animica ai chat          # REPL or one-shot against the configured provider
+animica ai serve         # local OpenAI-compatible API, receipts on by default
+animica ai job estimate / submit / result / list     # paid AICF jobs, quote first
+animica ai provider register / start                 # run as a provider
+animica ai earnings / balance                         # provider earnings, wallet balance
+animica ai receipt verify / verify / replay           # proof-of-inference
+```
+
+`job submit` always quotes first, enforces a `max_spend_anm` cap and refuses to spend without confirmation or `--yes`; payment is a signed transfer to the AICF treasury built with the canonical wallet signer.
+
+## Running a GPU provider
+
+`docs/tutorials/PROVIDER_GPU.md` is an older, more elaborate tutorial (Docker Compose with the NVIDIA runtime, a `provider.env` with lease and heartbeat settings, Prometheus on port 9108, `python -m aicf.cli.provider_register` and `provider_stake`). It describes the registry-and-stake model from Layer 2 and references a placeholder container image. The shorter path that matches the current node is `pip install animica` followed by `animica miner aicf-worker start` or `animica ai provider register` plus `animica ai provider start`, and the bond parameter to budget for is the 0.5 ANM `min_provider_bond` above. Pool mining and AICF serving are independent: a machine can do either or both (see [the mining guide](/learn/mining-guide)).
+
+## Reading the three layers together
+
+The honest summary is that AICF today is: a small on-chain pool with enforced epoch accounting; a specified job, registry and SLA system whose RPC surface is live and whose attestation and slashing machinery is designed rather than demonstrated on mainnet; and a working inference path in which miner-run workers claim jobs from the free `animica.dev/v1` gateway and can sign replayable receipts for what they served. [Useful work, AI and quantum](/learn/useful-work-ai-and-quantum) covers the related question of whether AI work influences block acceptance (it does not today).
+
+## Key takeaways
+
+- `chain.getParams` publishes a 5% subsidy slice and a 20% fee slice for AICF with 100-block epochs and a 50% payout ratio, but on mainnet both slices resolve to zero in the reward and fee code; the pool held about 28 ANM on 2026-08-23.
+- Task ids, job states, leases, proofs and provider status are fully specified; contract-side `ai_enqueue` is a no-op shim in the shipped runtime.
+- `aicf.*` has 57 published methods across credits, providers, inference jobs, worker serving, pipeline inference, useful-work jobs, training receipts and Studio functions.
+- Free inference at `https://animica.dev/v1` is served by miner workers started with `animica miner aicf-worker start`.
+- Verification on mainnet is by ML-DSA-65-signed proof-of-inference receipts that can be checked and replayed offline.
+
+## Sources
+
+- docs/AICF.md
+- docs/aicf/OVERVIEW.md
+- docs/aicf/JOB_API.md
+- docs/aicf/CLIENT_GUIDE.md
+- docs/aicf/PROVIDER_REGISTRY.md
+- docs/aicf/SLA.md
+- docs/AICF_JOBS.md
+- docs/AICF_MINING_FLOW.md
+- docs/ai.md
+- docs/tutorials/PROVIDER_GPU.md
+- docs/ANIMICA_2026_STATE.md
+- vm_py/runtime/syscalls_api.py
+- Live `chain.getParams`, `aicf.status` and https://rpc.animica.org/openrpc.json, 2026-08-23

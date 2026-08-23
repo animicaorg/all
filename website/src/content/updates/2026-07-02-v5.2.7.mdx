@@ -1,0 +1,19 @@
+---
+title: "Animica 5.2.7: no more instant-block towers"
+description: "Nodes could wedge on a locally mined tower of no-PoW blocks and appear to reset at random. 5.2.7 closes both sources of those blocks."
+date: 2026-07-02
+tags: ["release", "node", "mining", "sync"]
+---
+
+Animica 5.2.7 fixes a failure mode that operators reported as "my node randomly resets and gets stuck syncing". The underlying cause was a local **instant-block tower**.
+
+An instant block is a no-PoW block (nonce 0) that advances the local head immediately. Peers require valid proof of work, so such blocks never propagate. On a networked node they therefore fork the local head *above* the real chain: the node reads a height higher than the network, believes it is ahead, stops syncing down, and its sync watchdog churns. From the outside this looks like the head going backwards and a sync starting over. The size of the gap is exactly `head − canonicalHeight`, the counter that excludes instant blocks.
+
+Two code paths produced those blocks, and both are closed:
+
+- **Mining.** A non-empty mempool no longer silently downgrades to an instant block that bypassed the sync and offline-mining gate. Mempool traffic is mined into a real PoW block, which propagates and is network-canonical. The explicit `instant_block=True` path is unchanged.
+- **`tx send` force-chain.** With `ANIMICA_TX_SEND_FORCE_CHAIN=1` on a node that has connected peers, `tx send` no longer mints a local no-PoW block to "persist" the transaction. The transaction is relayed and included in a real block; the response reports it as pending. Isolated single-node setups keep the immediate-persist behaviour.
+
+Recovery of an already-wedged node is a one-time operation: restore from a current snapshot, or roll the head back to the last non-instant height, and let the node re-sync. Upgrading stops the tower from growing but does not abandon an existing one.
+
+One thing 5.2.7 deliberately does not do: exclude instant blocks from fork choice at the consensus level. That would be a consensus change, and a patch keying fork choice on the grindable instant-block marker would not be safe against chain splits; it would need a coordinated, versioned fork.

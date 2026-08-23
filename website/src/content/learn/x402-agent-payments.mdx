@@ -1,0 +1,136 @@
+---
+title: "x402 on Animica: HTTP 402 payments for agents, with an ANM lane"
+description: "What the x402 protocol is, how the paywall, facilitator and marketplace Animica runs are put together, and how the animica:1 lane lets a client pay in ANM by signing an ordinary transfer."
+date: 2026-08-23
+updated: 2026-08-23
+category: "build"
+tags: ["x402", "agents", "payments", "http-402", "anm"]
+readingLevel: "intermediate"
+sources:
+  - docs/x402.md
+  - docs/exposure/x402/dossier.md
+  - apps/x402-gateway/src/facilitator-anm/index.js
+  - apps/x402-gateway/src/protocol.js
+order: 6
+---
+
+x402 is a small HTTP protocol that lets a program pay for a web resource per request, with no account and no API key, by answering a `402 Payment Required` with machine-readable terms and accepting a signed payment on the retry. Animica runs an x402 deployment that accepts two currencies, USDC on Base and native ANM on Animica itself. This article explains the protocol generically, then what Animica operates (`docs/x402.md`, the gateway source, and the live endpoints as of 2026-08-23), with particular attention to how the ANM lane differs from the EVM one.
+
+## The protocol, generically
+
+The specification lives at `github.com/x402-foundation/x402` (Apache-2.0; version 2 has been in force since 2025-12-09, per `docs/x402.md`). One request goes like this:
+
+1. The client requests a paid resource with no payment attached.
+2. The server answers `402`. In v2 the terms are a base64-encoded JSON object in the `payment-required` response header; a v1-style rendering is also placed in the body for older clients. The object names the resource, a description and MIME type, and a list of `accepts` entries, each with a `scheme` (`exact` is the common one: pay exactly this amount), a `network` as a CAIP-2 identifier, an `amount` in the asset's atomic units, the `asset`, a `payTo` address, a timeout, and an `extra` block with scheme-specific details.
+3. The client picks an entry it can satisfy, signs a payment locally, and retries the same request with a `payment-signature` header carrying the signed payload and an echo of the accepted terms.
+4. The server hands the payload to a **facilitator** through three endpoints defined by the spec, `/verify`, `/settle` and `/supported`. The facilitator checks the signature and terms, submits the payment on-chain, and reports the result.
+5. The server delivers the resource with a `payment-response` header containing the settlement outcome (transaction hash, network, payer, amount).
+
+Two design points matter for anyone integrating. First, the client never defines price or recipient; it can only echo terms the server offered, and the server compares them canonically. Second, the facilitator is a separable component: a gateway can run its own or point at any spec-compliant URL.
+
+On EVM chains the `exact` scheme is usually implemented with EIP-3009 `transferWithAuthorization`: the payer signs an authorisation off-chain and the facilitator pays the gas to submit it, so the payer spends no gas. That detail is why the ANM lane below is shaped differently.
+
+## What Animica runs
+
+There are two hosts, and they have different jobs.
+
+**The product gateway at `https://animica.dev/x402`** (`apps/x402-gateway/`). Free, unpaid discovery is served at `https://animica.dev/.well-known/x402`; on 2026-08-23 that catalog listed 72 products, from signed random bytes (`/x402/qrng/draw`) and bulk chain exports, through web search, fetch-and-extract, embeddings, notarisation and DA blob storage, to text classification, entity extraction and JSON repair. The gateway talks to its own self-hosted facilitator for Base USDC (`X402_FACILITATOR_MODE=self`; `docs/x402.md` is explicit that no third-party settlement service is involved) and to an ANM facilitator for the native lane. It only ever reads the local Animica node over JSON-RPC.
+
+**The marketplace at `https://x402.animica.dev`.** Its `/.well-known/x402` describes an open directory of machine-payable APIs with discovery, semantic search, price comparison, quoting, payment routing and an agent job network, with an OpenAPI 3.1 document at `/openapi.json`. Listings, discovery and scanning are free; the marketplace charges 0.5% on top of the seller's price only on transactions it routes, and states that the seller always receives the advertised price. Its `payment_networks` entry lists exactly two lanes:
+
+```json
+[{"id": "anm-native", "asset": "ANM",  "network": "animica:1",   "scheme": "exact-anm-split"},
+ {"id": "base-usdc",  "asset": "USDC", "network": "eip155:8453", "scheme": "exact-split"}]
+```
+
+The FACTS about these hosts are easy to confuse: the paid product routes live under `animica.dev/x402`; `x402.animica.dev` is the marketplace and router in front of many sellers, Animica's own products included.
+
+## A real 402
+
+Requesting `https://animica.dev/x402/qrng/draw?bytes=8` without payment on 2026-08-23 returned `HTTP/2 402` with `access-control-expose-headers: payment-required, payment-response, x-payment-response` and a `payment-required` header that decodes to a v2 object with two `accepts` entries (recipient addresses elided):
+
+```json
+{"x402Version": 2,
+ "resource": {"url": "https://animica.dev/x402/qrng/draw", "mimeType": "application/json",
+              "serviceName": "Animica", "description": "Random bytes from the Animica node's randomness service …"},
+ "accepts": [
+   {"scheme": "exact", "network": "eip155:8453", "amount": "5820",
+    "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "payTo": "0x…",
+    "maxTimeoutSeconds": 60, "extra": {"name": "USD Coin", "version": "2", "decimals": 6}},
+   {"scheme": "exact", "network": "animica:1", "amount": "69862355953",
+    "asset": "ANM", "payTo": "anim1…", "maxTimeoutSeconds": 60,
+    "extra": {"native": true, "decimals": 9, "unit": "nANM", "chain_id": 1,
+              "genesis_hash": "0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de",
+              "discount_percent": 25, "price_display": "69.862355953 ANM",
+              "usd_list_price": "0.005820", "usd_equivalent": "0.004365",
+              "rate_source": "nonkyc", "rate_side": "bid", "rate_observed_at": "2026-08-23T12:50:50.000Z",
+              "how_to_pay": "Sign a TRANSFER of at least `amount` nANM to payTo on Animica (chainId 1) and send the signed raw transaction as payload.rawTransaction. You pay the chain fee; we submit it. …"}}]}
+```
+
+Several things are visible here. The USDC entry carries the EIP-712 domain in `extra` (`"USD Coin"`, version 2; `docs/x402.md` notes that using the Sepolia name `"USDC"` on mainnet makes every signature fail). The ANM entry quotes the price in nANM, states the discount, publishes the exchange rate it used and when it observed it, and includes the genesis hash so a careful client can confirm which chain `animica:1` refers to. The v1 body rendering of the same offer uses the slug `base` for the EVM network and `animica:1` unchanged (`src/protocol.js`). Prices are quoted per request from a live rate, so the numbers above are an example, not a price list.
+
+## The ANM lane in detail
+
+The header comment of `apps/x402-gateway/src/facilitator-anm/index.js` states the reason the lane exists and the rules it follows; this section paraphrases it.
+
+**Why it exists.** On Base the gateway sponsors gas for every settlement and refuses to settle when reserved gas exceeds a fraction of the payment, which puts a hard floor under every USDC price. On Animica the payer signs and pays the fee from their own balance; the gateway submits an already-signed transaction and spends nothing. The floor does not shrink, it disappears, and that avoided cost is what funds the 25% ANM discount.
+
+**The scheme.** The payer builds an ordinary Animica `TRANSFER` to the `payTo` address for at least the quoted nANM, signs it with their ML-DSA-65 key (see [Transactions and fees](/learn/transactions-and-fees)), and sends the signed raw bytes as `payload.rawTransaction`. The facilitator verifies it without submitting (decode, verify signature and terms), then submits it to settle and confirms from the transaction status. No authorisation contract is involved because on Animica any party may broadcast an already-signed transaction.
+
+**Network id.** The lane is advertised as `animica:1`, never `eip155:1`. Animica's chain id is 1, and an agent that read `eip155:1` would try to pay on Ethereum mainnet and lose the money. A CAIP-2 namespace registration for `animica` is open as ChainAgnostic/namespaces#200; the genesis hash in `extra` disambiguates in the meantime.
+
+**Rules inherited from payments work on this chain.**
+
+- Only a `TRANSFER` is payment evidence. A contract `CALL` carries no amount field, so a call that merely mentions the right reference is never accepted as payment.
+- Inclusion is not execution. A transaction in a block may still have failed; settlement is confirmed from status and receipt, never from inclusion alone.
+- Amounts are BigInt end to end; nANM balances overflow a JavaScript number.
+- A signed transaction is a bearer instrument, so the facilitator keeps a replay ledger of settled payments.
+- Fail closed: anything that cannot be verified is not a payment, and if the ANM price feed is stale the lane is simply not offered while the USDC lane continues.
+
+From the payer's side the cost is the quoted amount plus the normal chain fee of 21,000 nANM for a transfer at the 1 nANM gas floor.
+
+## The EVM lane and the threat model
+
+`docs/x402.md` documents the Base lane at length. The facts that affect integrators: the network is `eip155:8453`, the asset is the USDC contract at `0x8335…2913` with 6 decimals, and the facilitator computes the EIP-712 domain separator locally and compares it with the live contract's `DOMAIN_SEPARATOR()` at startup and on every readiness check, so a misconfigured token or chain refuses to serve. Settlement is a state machine in a persistent ledger: full re-verification, an atomic claim keyed by the authorisation hash, gas estimation as the simulation step, the signed raw transaction persisted before broadcast, and a row marked `settled` only after a receipt with the expected `AuthorizationUsed` and `Transfer` logs and the configured confirmations. A transaction merely submitted to an RPC is not treated as settled.
+
+The threat-model table in the same document is worth reading in full; the items that shape client behaviour are:
+
+| Threat | Defence |
+|---|---|
+| Replay of a payment authorisation | The token's on-chain nonce state, a `UNIQUE authorization_hash` ledger, and simulation that reverts on a consumed nonce |
+| Substitution of amount, asset, network or recipient | The client must echo the offered terms; the facilitator re-checks them against its own allowlist |
+| Charging for an unavailable service | Availability hooks return `503` without emitting a `402`; settle-first products re-check readiness immediately before settlement |
+| Double charge on retry | `Idempotency-Key` plus payment fingerprint; a delivered outcome is replayed from the store with no second settlement |
+| Paid but not served | Signed HMAC error receipts and an incidents ledger with a reconciliation CLI |
+
+Products are sequenced either execute-then-settle (cheap reads: a failure charges nobody) or settle-then-execute (exports, inference: readiness re-check, settle, execute with one bounded retry, and a signed error receipt if it still fails).
+
+## Honesty in the catalog
+
+The randomness products are the clearest example of how the catalog describes itself. `docs/exposure/x402/dossier.md` requires that randomness be described as verifiable (recomputable and signed) but not hardware-attested: the serving node runs a software CSPRNG with a software signer, so every response and every free catalog entry reports `source.is_quantum: false` and `attestation.attested: false`, and those fields would change only if a hardware provider were connected. Priority inference is listed but gated on worker capacity and returns `503` while unavailable. The development `echo` route is disabled in production. The same rules bind this article: no product here is described as doing more than its own response says.
+
+## Using it
+
+As a buyer on the EVM lane, the standard client libraries work once the offer carries `extra.name`/`extra.version` (which the live offer above does): `@x402/fetch` with `@x402/evm` wraps `fetch`, signs the EIP-3009 authorisation with a `viem` account, and retries automatically; `decodePaymentResponseHeader` returns the settlement transaction. `docs/x402.md` includes the snippet and the bundled `smoke-pay.mjs` test client.
+
+As a buyer on the ANM lane, you need a funded Animica wallet and a way to produce a signed `TRANSFER` (the CLI, the extension, or the SDK signer described in [Wallets](/learn/wallets-and-hd-derivation)); the `how_to_pay` string in the offer is the whole protocol. ANM for this purpose trades on NonKYC (ANM/USDT): https://nonkyc.io/market/ANM_USDT.
+
+As a seller, the marketplace's `POST /api/v1/resources` lists a resource for free, and `/api/v1/resources/{id}/claim` lets a provider claim a listing; routing through `/api/v1/route/execute` is where the 0.5% applies. The marketplace also exposes an agent job network where a task can be posted with a budget and claimed by another agent.
+
+Merchant-style payments with invoices and webhooks are a different product, `https://pay.animica.dev` (2.00% fee); see [How to buy and accept ANM](/learn/how-to-buy-and-accept-anm).
+
+## Key takeaways
+
+- x402 is `402` plus machine-readable terms, a locally signed payment on the retry, and a facilitator with `/verify`, `/settle`, `/supported`.
+- Animica runs a product gateway (`animica.dev/x402`, 72 products listed on 2026-08-23) with a self-hosted Base USDC facilitator, and a free-to-list marketplace and router (`x402.animica.dev`, 0.5% on routed transactions).
+- The ANM lane is `animica:1`: sign an ordinary `TRANSFER` to `payTo` for the quoted nANM and send the raw bytes; you pay the 21,000 nANM chain fee and the gateway sponsors nothing, which funds a 25% discount.
+- Never read `animica:1` as `eip155:1`; the offer carries the genesis hash to prove which chain is meant.
+- Only `TRANSFER` counts as payment, inclusion is not execution, and unavailable products answer `503` rather than a `402`.
+
+## Sources
+
+- docs/x402.md
+- docs/exposure/x402/dossier.md
+- apps/x402-gateway/src/facilitator-anm/index.js
+- apps/x402-gateway/src/protocol.js
+- Live `GET https://animica.dev/.well-known/x402`, `GET https://x402.animica.dev/.well-known/x402`, `GET https://x402.animica.dev/openapi.json`, and an unpaid `GET https://animica.dev/x402/qrng/draw`, 2026-08-23

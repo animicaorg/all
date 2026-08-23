@@ -1,0 +1,22 @@
+---
+title: "Animica 7.1.0: the 85/15 foundation split at block 42,001"
+description: "From block 42,001 the per-block subsidy is split 85% miner / 15% Animica Foundation treasury. Total emission is unchanged; every balance-tracking node must upgrade."
+date: 2026-07-10
+tags: ["release", "consensus", "fork", "emission"]
+---
+
+Animica 7.1.0 introduces `FORK_FOUNDATION_SPLIT`, active on mainnet from block **42,001**. At and after that height the per-block coinbase subsidy is divided **85% to the miner and 15% to the Animica Foundation treasury** instead of 100% to the miner.
+
+The base subsidy is unchanged: still 300 ANM per block in the current epoch, halving on the same schedule. The 15% is a redistribution of the same total, not new issuance, so total emission and the 900,000,000 ANM supply cap are unaffected. Every block, `miner + treasury` equals the pre-split amount; the split uses integer floor with the remainder to the miner, so it is exact, float-free and deterministic.
+
+The treasury address is a code-committed constant in `consensus/rewards.py`:
+
+```
+anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga
+```
+
+Block import classifies that output as treasury and credits it through the same 32-byte account key that `getbalance` reads and the miner is credited on, so the 15% is visible and spendable. Below 42,001 the treasury reward is zero and the node is byte-identical to 7.0.0.
+
+**Why this upgrade is mandatory in a different way from 7.0.0.** The address-freeze fork is a reject rule: a violating block is loudly orphaned. The foundation split is a **state-mutating emission change**, and this chain did not yet enforce a state root. A node that does not run 7.1.0 accepts the same PoW-valid blocks as everyone else but keeps crediting 100% to the miner — a silent balance divergence, not a head split, with no loud reject available. Every full node, the pool and miner, and every exchange or explorer that tracks balances must run 7.1.0 (or set `ANIMICA_FORK_FOUNDATION_SPLIT_HEIGHT`) before 42,001, or their balances will diverge from the network.
+
+The activation height is one block after the address freeze so the two rule changes are never co-located. 7.1.0 is a strict superset of 7.0.0. Twenty-four new tests cover emission conservation across halvings, credit-key parity and determinism; the multi-agent design and adversarial verification returned GO with zero must-fix findings.

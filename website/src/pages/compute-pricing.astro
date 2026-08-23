@@ -2,11 +2,34 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
+import CodeBlock from "../components/CodeBlock.astro";
 import { pricingRows } from "../data/aicf";
 
-const title = "Pricing";
+const title = "Compute pricing";
 const description =
-  "ANM-based AICF pricing for model inference, embeddings, batch compute, and agent workloads with transparent provider and treasury splits.";
+  "How AICF compute is priced on Animica: per-token and per-request rates in ANM from the live model registry, provider and treasury splits, the free keyless tier, and where the numbers come from.";
+
+const registryCurl = `curl -s https://aicf.animica.org/api/models | jq '.data[] | {id, pricing}'
+
+# Excerpt (2026-08-23): values are nANM per unit
+# "inputTokenAnmNanos":  "12000"    ->  0.000012 ANM / input token  = 0.012 ANM per 1K
+# "outputTokenAnmNanos": "18000"    ->  0.000018 ANM / output token = 0.018 ANM per 1K
+# "requestBaseAnmNanos": "150000"   ->  0.00015  ANM / request
+# "providerShareBps": 8500, "treasuryShareBps": 1500`;
+
+const worked = `1,000 input tokens × 0.000012 ANM  = 0.012  ANM
+  300 output tokens × 0.000018 ANM = 0.0054 ANM
+  request base fee                 = 0.00015 ANM
+  ------------------------------------------------
+  total                            = 0.01755 ANM  (17,550,000 nANM)
+  provider 85%                     = 0.0149175 ANM
+  treasury 15%                     = 0.0026325 ANM`;
+
+const tiers = [
+  ["Free (animica.dev/v1)", "No key, no signup", "30 requests per minute per IP", "Funded by the foundation treasury; served by the miner network; ML-DSA-65 proof-of-inference receipts"],
+  ["Paid key (console.animica.org)", "API key, project budget", "Per-plan rate limits", "Billed from an ANM balance at the registry rates below"],
+  ["Per-call (x402.animica.dev)", "None; pay per request", "Per product", "HTTP 402 flow; ANM lane (animica:1) or USDC lane; price is in the 402 response"],
+];
 ---
 
 <BaseLayout title={title} description={description}>
@@ -14,38 +37,58 @@ const description =
 
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">ANM-Native Billing</span>
-      <h1 class="aicf-heading">Compute Pricing in ANM</h1>
+      <span class="aicf-kicker">Pricing</span>
+      <h1 class="aicf-heading">AICF compute pricing</h1>
       <p class="aicf-subheading">
-        Developers pay in ANM. Jobs reserve ANM in escrow before execution. Settlements distribute ANM to providers and treasury with transparent economics.
-        Rates below are indicative — final rates are shown at key creation.
+        Prices on this page are read from the live AICF model registry, not typed in by hand. They are
+        quoted in ANM per unit; the registry stores them as integer nANM. The final rate for a key is
+        shown at key creation on console.animica.org and governs if the two ever differ.
       </p>
       <div class="aicf-btn-row">
-        <a class="aicf-btn" href="https://aicf.animica.org">Get API Access</a>
-        <a class="aicf-ghost-btn" href="/providers">Become a Provider</a>
+        <a class="aicf-btn" href="https://console.animica.org" target="_blank" rel="noopener noreferrer">Get an API key</a>
+        <a class="aicf-ghost-btn" href="https://animica.dev" target="_blank" rel="noopener noreferrer">Use the free tier</a>
+        <a class="aicf-ghost-btn" href="/providers">Provider economics</a>
       </div>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container">
-      <div class="aicf-card" style="padding:0; overflow:auto;">
+    <div class="aicf-container page-prose">
+      <h2>Three ways to pay (or not)</h2>
+      <div style="overflow-x:auto;">
         <table class="aicf-table">
-          <thead>
-            <tr>
-              <th>Workload</th>
-              <th>Unit</th>
-              <th>Indicative Price</th>
-              <th>Provider Share</th>
-              <th>Treasury Share</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Tier</th><th>Auth</th><th>Limits</th><th>Notes</th></tr></thead>
+          <tbody>
+            {tiers.map(([t, a, l, n]) => (
+              <tr><td><strong>{t}</strong></td><td>{a}</td><td>{l}</td><td class="aicf-muted">{n}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Most people should start with the free endpoint. It is OpenAI-compatible, so existing client
+        libraries work by changing the base URL to <code>https://animica.dev/v1</code> and omitting the key.
+        Capacity is community GPU: check each model's <code>serving</code> flag in <code>/v1/models</code>,
+        because a model with no worker online can queue or return 503. Paid keys exist for budgets, higher
+        rate limits and per-project accounting; x402 exists for autonomous agents that cannot hold an
+        account.
+      </p>
+
+      <h2>Registry rates</h2>
+      <p>
+        The table is generated from <code>GET https://aicf.animica.org/api/models</code> and was last
+        re-verified against the live registry on 2026-08-23. Rates are indicative; the registry is the
+        source of truth.
+      </p>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Item</th><th>Unit</th><th>Base price</th><th>Provider share</th><th>Treasury share</th></tr></thead>
           <tbody>
             {pricingRows.map((row) => (
               <tr>
                 <td><strong>{row.item}</strong></td>
                 <td>{row.unit}</td>
-                <td>{row.basePrice}</td>
+                <td><code>{row.basePrice}</code></td>
                 <td>{row.providerShare}</td>
                 <td>{row.treasuryShare}</td>
               </tr>
@@ -53,46 +96,63 @@ const description =
           </tbody>
         </table>
       </div>
-      <p class="aicf-muted" style="margin-top:0.75rem; font-size:0.9rem;">
-        Indicative — final rates are shown at key creation. Values above are read from the live AICF model registry
-        (<code>GET https://aicf.animica.org/api/models</code>) and may change with governance updates.
+      <CodeBlock lang="bash" title="Read the registry yourself" code={registryCurl} />
+
+      <h2>A worked example</h2>
+      <p>
+        A chat completion on <code>aicf-chat-1</code> with a 1,000-token prompt and a 300-token answer:
       </p>
-    </div>
-  </section>
+      <CodeBlock lang="text" title="aicf-chat-1, 1,000 in / 300 out" code={worked} showLineNumbers={false} />
+      <p>
+        At the ANM/USDT rate on NonKYC the request costs a small fraction of a cent in USD terms; we do
+        not quote a dollar figure here because it changes continuously. What does not change without a
+        registry update is the ANM rate and the split.
+      </p>
 
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-3">
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Developer Billing Rules</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>All projects maintain ANM-denominated balances.</li>
-          <li>Budget caps are enforced per request and per async job.</li>
-          <li>Escrow reserves budget before provider execution starts.</li>
-          <li>Usage rows include charge, provider, and settlement identifiers.</li>
-        </ul>
-      </article>
+      <h2>How the model works</h2>
+      <p>
+        Pricing is per model, not per provider. Each registry entry carries an input-token rate, an
+        output-token rate (or a per-vector rate for embeddings), a per-request base fee, and the
+        provider/treasury split in basis points. When a job settles, the provider share is credited to the
+        worker that served it and the treasury share to the AICF treasury. The split is what funds the
+        free tier and trap-prompt evaluation; it is also why providers see 82 to 85% of list price rather
+        than all of it. Separately from per-job billing, 25% of each block subsidy has been earmarked for
+        inference providers since block 75,000; that subsidy is a reward for serving, not a charge to
+        users, and is described on the <a href="/providers">Providers page</a>.
+      </p>
+      <p>
+        The node software also ships a general billing module (<code>billing/</code>, described in
+        <code>docs/monetization.md</code>) with a free mode (the default: no key, rate-limited, zero fees)
+        and a paid mode with an <code>x-animica-key</code> header, per-plan rate limits (free 60, pro 600,
+        enterprise 6,000 requests per minute by default), optional per-byte DA fees and flat RPC fees. The
+        public RPC at rpc.animica.org runs in free mode; those knobs exist for operators hosting their own
+        paid infrastructure.
+      </p>
 
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Provider Earnings Rules</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Rewards accrue from successful verified completions.</li>
-          <li>Higher benchmark class unlocks premium queues.</li>
-          <li>Reputation and stake influence routing confidence.</li>
-          <li>Disputes/slashing can reduce rewards for faulty execution.</li>
-        </ul>
-      </article>
+      <h2>What this page does not tell you</h2>
+      <ul>
+        <li>Prices for x402 products are not listed here; each product's 402 response is authoritative and can change with gas conditions on the USDC lane.</li>
+        <li>There is no published SLA for the free tier. Paid keys are governed by the terms shown in the console.</li>
+        <li>Training, fine-tuning and batch job classes are described in the AICF docs as asynchronous job types; they have no fixed public rate on the registry today, so none is shown.</li>
+      </ul>
 
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Network Economics</h2>
-        <ul style="margin-top:0.65rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Treasury can subsidize strategic workloads with ANM credits.</li>
-          <li>Governance can tune provider/treasury split by model class.</li>
-          <li>Contract jobs can lock dedicated ANM budgets in escrow.</li>
-          <li>Economics are transparent and auditable by design.</li>
-        </ul>
-      </article>
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        live aicf.animica.org/api/models (2026-08-23) · website/src/data/aicf.ts · docs/monetization.md · docs/aicf/SLA.md ·
+        docs/ANIMICA_2026_STATE.md · docs/x402.md
+      </p>
     </div>
   </section>
 
   <Footer slot="footer" />
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2.2rem; }
+  .page-prose p, .page-prose ul { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose li { margin-top: 0.4rem; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; }
+  .page-prose :global(.not-prose) { margin-top: 0.9rem; }
+</style>

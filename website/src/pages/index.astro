@@ -5,6 +5,27 @@ import Footer from "../components/Footer.astro";
 import AdBanner from "../components/AdBanner.astro";
 import StudioBanner from "../components/StudioBanner.astro";
 import ParticleLogo from "../components/ParticleLogo.astro";
+import { getCollection } from "astro:content";
+
+const learnEntries = (await getCollection("learn", ({ data }) => !data.draft)).sort(
+  (a, b) => a.data.order - b.data.order,
+);
+const learnWords = learnEntries.reduce((n, e) => n + (e.body ? e.body.split(/\s+/).length : 0), 0);
+const latestPosts = (await getCollection("blog", ({ data }) => !data.draft))
+  .sort((a, b) => new Date(b.data.date).getTime() - new Date(a.data.date).getTime())
+  .slice(0, 3);
+const latestUpdates = (await getCollection("updates", ({ data }) => !data.draft))
+  .sort((a, b) => new Date(b.data.date).getTime() - new Date(a.data.date).getTime())
+  .slice(0, 4);
+const fmtDate = (d: Date | string) =>
+  new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "2-digit" });
+const learnTracks: Array<{ key: string; title: string; blurb: string }> = [
+  { key: "protocol", title: "Protocol", blurb: "Signatures, addresses, transactions, consensus, difficulty." },
+  { key: "operate", title: "Operate", blurb: "Mining, nodes, wallets, the explorer, networking, security." },
+  { key: "build", title: "Build", blurb: "Python-VM contracts, JSON-RPC, the L2, AICF, x402 payments." },
+  { key: "economy", title: "Economy", blurb: "Issuance and fees, useful work, comparisons, buying and accepting ANM." },
+  { key: "reference", title: "Reference", blurb: "Glossary and the long-form FAQ." },
+];
 
 const title = "Animica — Post-Quantum Blockchain for Verifiable Compute";
 const description =
@@ -147,7 +168,7 @@ const corePillars = [
   {
     title: "Useful-Work Consensus",
     detail:
-      "PoIES points mining power at useful compute — the pool supports XMR dual-mining and Bittensor GPU workloads on the same rig.",
+      "Blocks are accepted when hash work clears the threshold Θ; the protocol defines how verified useful-work evidence (AI inference, attested quantum randomness) can count toward the same threshold.",
   },
   {
     title: "Deterministic Python VM",
@@ -165,7 +186,7 @@ const startPaths = [
   {
     title: "Mine ANM",
     description:
-      "Point a miner at the pool and earn ANM — with optional XMR dual-mining and Bittensor GPU compute on the same hardware.",
+      "Point a CPU or GPU miner at the pool (PPS) or mine solo, and earn ANM per block — see the mining guide for expected returns.",
     href: "/mine",
   },
   {
@@ -186,13 +207,13 @@ const ecosystemProducts = [
   {
     title: "Mining Pool",
     description:
-      "Mine ANM with XMR dual-mining and Bittensor GPU compute, with a public dashboard at pool.animica.org.",
+      "Stratum pool at pool.animica.org:3333 (PPS) and :3334 (solo), with a public dashboard and stats API.",
     href: "/mine",
   },
   {
     title: "Wallet",
     description:
-      "Web wallet at wallet.animica.org plus desktop releases for key management, transfers, and day-to-day ANM operations.",
+      "Browser extension, desktop and mobile wallets for key management, transfers, and day-to-day ANM operations.",
     href: "/wallet",
   },
   {
@@ -259,12 +280,13 @@ const ecosystemProducts = [
       </div>
       <div class="aicf-hero-spine anm-spine">
         <span class="aicf-kicker anm-reveal">Live mainnet · Post-quantum L1 · Native coin ANM</span>
-        <h1 class="aicf-heading anm-reveal-2">The post-quantum chain where mining does <span class="anm-grad-text">useful work</span></h1>
+        <h1 class="aicf-heading anm-reveal-2">An open-source proof-of-work blockchain with <span class="anm-grad-text">post-quantum signatures</span></h1>
         <p class="aicf-subheading anm-reveal-2">
-          Animica mainnet is live: ML-DSA-65 (FIPS 204) post-quantum signatures, smart contracts in
-          deterministic Python, and PoIES consensus that rewards useful compute — including
-          attested, <span class="anm-grad-text">verifiable quantum randomness</span> — instead of
-          wasted hashes.
+          Animica mainnet has run since April 2026. Every account signs with ML-DSA-65 (FIPS 204), a
+          NIST-standardised lattice signature, instead of ECDSA. Smart contracts are written in a
+          deterministic subset of Python. Consensus is PoIES: hash work gates each block, and the
+          protocol defines how verified useful-work evidence — AI inference, attested quantum
+          randomness — can be credited toward the same threshold.
         </p>
       </div>
 
@@ -304,6 +326,38 @@ const ecosystemProducts = [
           </li>
         ))}
       </ul>
+    </div>
+  </section>
+
+<section class="aicf-section" id="learn">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Learn · {learnEntries.length} guides · {Math.round(learnWords / 1000)}k words</span>
+      <h2 class="aicf-heading aicf-h2">Understand the chain before you use it</h2>
+      <p class="aicf-subheading">
+        The <a href="/learn">Learn</a> section is a set of long-form guides written from Animica's own
+        specifications and documentation — not marketing. Each article lists the repository files it was written
+        from. If you only read three: <a href="/learn/what-is-animica">What is Animica?</a>,
+        <a href="/learn/post-quantum-signatures-ml-dsa-65">why ML-DSA-65</a>, and
+        <a href="/learn/transactions-and-fees">how transactions and fees work</a>.
+      </p>
+      <div class="aicf-grid-3" style="margin-top:1.25rem;">
+        {learnTracks.map((t) => {
+          const items = learnEntries.filter((e) => e.data.category === t.key).slice(0, 3);
+          return (
+            <article class="aicf-card">
+              <h3><a href={`/learn#${t.key}`}>{t.title}</a></h3>
+              <p class="aicf-muted" style="margin-top:0.5rem;">{t.blurb}</p>
+              {items.length > 0 && (
+                <ul class="aicf-muted" style="margin:0.75rem 0 0; padding-left:1.1rem; line-height:1.6;">
+                  {items.map((e) => (
+                    <li><a href={`/learn/${e.slug}`}>{e.data.title}</a></li>
+                  ))}
+                </ul>
+              )}
+            </article>
+          );
+        })}
+      </div>
     </div>
   </section>
 
@@ -523,6 +577,37 @@ const ecosystemProducts = [
             <span class="aicf-link-card-cta">Open -></span>
           </a>
         ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="aicf-section" id="latest">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Latest writing</span>
+      <h2 class="aicf-heading aicf-h2">Engineering notes and release notes</h2>
+      <div class="aicf-grid-2" style="margin-top:1.25rem;">
+        <article class="aicf-card">
+          <h3><a href="/blog">From the blog</a></h3>
+          <ul style="margin:0.75rem 0 0; padding-left:1.1rem; line-height:1.6;">
+            {latestPosts.map((p) => (
+              <li>
+                <a href={`/blog/${p.slug}`}>{p.data.title}</a>
+                <span class="aicf-muted"> — {fmtDate(p.data.date)}</span>
+              </li>
+            ))}
+          </ul>
+        </article>
+        <article class="aicf-card">
+          <h3><a href="/updates">Release notes</a></h3>
+          <ul style="margin:0.75rem 0 0; padding-left:1.1rem; line-height:1.6;">
+            {latestUpdates.map((u) => (
+              <li>
+                <a href={`/updates/${u.slug}`}>{u.data.title}</a>
+                <span class="aicf-muted"> — {fmtDate(u.data.date)}</span>
+              </li>
+            ))}
+          </ul>
+        </article>
       </div>
     </div>
   </section>

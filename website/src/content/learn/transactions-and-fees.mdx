@@ -1,0 +1,191 @@
+---
+title: "Transactions and fees on Animica"
+description: "The v2 nonce-less transaction: validity window, salt and txid uniqueness, the signed envelope, intrinsic gas, the 21,000 nANM transfer fee, admission checks and error codes, with a mainnet example."
+date: 2026-08-23
+updated: 2026-08-23
+category: "protocol"
+tags: ["transactions", "fees", "gas", "mempool", "json-rpc", "cbor"]
+readingLevel: "intermediate"
+sources:
+  - docs/TX_WORKFLOW.md
+  - docs/tx-signing.md
+  - docs/pq-tx-signing-canonicalization.md
+  - spec/tx_format.cddl
+  - docs/economics/FEES.md
+  - docs/TX_PROPAGATION_TROUBLESHOOTING.md
+  - core/types/tx.py
+  - execution/gas/intrinsic.py
+  - rpc/errors.py
+order: 4
+---
+
+An Animica transaction is a small canonical-CBOR map plus a large post-quantum signature, and since the v2 format it has no account nonce. This article explains the v2 body field by field, how replay protection works without a nonce, what a transaction costs and where the fee goes, which checks the mempool applies, and how to follow a transaction from submission to confirmation. A real transfer from mainnet block 81,213 is used throughout.
+
+## Transaction kinds
+
+The node's `core/types/tx.py` implements four kinds, discriminated by an integer tag in the payload:
+
+| Tag | Kind | Payload | Notes |
+|---|---|---|---|
+| 0 | TRANSFER | `to`, `amount` | Native ANM transfer |
+| 1 | DEPLOY | code, manifest, optional endowment | Stores a Python-VM contract |
+| 2 | CALL | `to`, `data`, optional `amount` | Invokes a contract; value-carrying CALL and on-chain execution are active from block 75,000 |
+| 3 | COINBASE | reward outputs | Protocol-generated; never submitted by users |
+
+`spec/tx_format.cddl` additionally reserves `blob_pin` and randomness commit/reveal kinds and describes an EIP-1559-style fee header (`maxFeePerGas`, `maxPriorityFeePerGas`). Those parts of the CDDL document the intended wire schema; the executing node uses the simpler `gas.price`/`gas.limit` pair shown below. When the two disagree, the type definitions in `core/types/tx.py` are what the network runs.
+
+## The v2 body
+
+`UnsignedTx.to_obj()` produces the canonical map that is encoded, signed and hashed:
+
+| Field | Type | v2 meaning |
+|---|---|---|
+| `v` | uint | Transaction version, `2` |
+| `chainId` | uint | `1` on mainnet; a mismatch is rejected with `-32011` |
+| `from` | 32 bytes | `SHA3-256(pubkey)`, the account key |
+| `gas` | `{price, limit}` | Gas price in nANM per gas and the gas limit |
+| `payload` | `{t, v}` | Kind tag and kind-specific body |
+| `accessList` | array | Optional declared storage accesses; may be empty |
+| `validAfter` | uint | First block height at which the transaction may be included |
+| `validUntil` | uint | Last block height at which it may be included; must be ≥ `validAfter` |
+| `salt` | 16 or 32 bytes | Random bytes that make the transaction id unique |
+| `forkId` | uint, optional | `3511060514` on mainnet |
+
+A v1 body has a `nonce` instead of the three window fields; the validator enforces that a v2 body has no nonce and a v1 body has no window. v1 is still accepted for compatibility.
+
+Encoding follows RFC 8949 §4.2.1 deterministic CBOR: map keys sorted, integers minimally encoded, definite lengths only. The same bytes are produced by every conforming encoder, which is what makes the transaction id stable across implementations.
+
+## Replay protection without a nonce
+
+In a nonce-based design, each account has a counter and a transaction is valid only if it carries the next value. That serialises an account's transactions, creates "stuck" queues when one is under-priced, and lets a gap block everything behind it. The v2 body replaces the counter with two properties:
+
+1. **Uniqueness.** The transaction id is `SHA3-256` of the canonical signed envelope. Because the body contains a random salt, two transfers with identical amount, recipient and window still have different ids, and a node refuses to admit or include an id it has already seen (`-32020`, `DUPLICATE`).
+2. **Expiry.** The body is only includable while `validAfter ≤ height ≤ validUntil`. Once the chain passes `validUntil`, the transaction can never be included, so a sender who waits out the window knows with certainty that it did not and will not execute. The mempool's admission reasons for the two failure cases are `not_yet_valid` and `expired`.
+
+The CLI defaults the window to 120 blocks (`DEFAULT_TX_TTL_BLOCKS`), about two hours at the 60-second target. In the live example below, `validAfter` is 81,211 and `validUntil` is 81,331. Choosing `validAfter` equal to the current head height makes the transaction admissible immediately; choosing a future height schedules it.
+
+The trade-off is that a wallet must know the approximate head height to build a transaction, and must keep a record of salts it has used if it wants to detect its own resubmissions.
+
+## The signed envelope
+
+Signing is described in detail in [Post-quantum signatures on Animica](/learn/post-quantum-signatures-ml-dsa-65). In short: the body is placed in a canonical-CBOR preimage under the domain `animica.tx.v1` together with the chain id, genesis hash, network name and version; that preimage is wrapped by `animica:sign/v1` (which adds the fork id and algorithm id), hashed with SHA3-512, and signed with ML-DSA-65. The result is the envelope that `tx.sendRawTransaction` accepts as hex:
+
+```
+{ "tx":   <canonical body map>,
+  "sigs": [ { "alg": 4099, "pubkey": <1952 bytes>, "sig": <3309 bytes> } ] }
+```
+
+`alg` must be 4099 (`0x1003`); any other scheme id is refused with `scheme_deprecated` or `unsupported_scheme`. Several signatures may be attached and the node can require a minimum count, but ordinary accounts use exactly one. A signed transfer is therefore roughly 5.4 KB, almost all of it signature.
+
+## Gas and the transfer fee
+
+Animica meters execution in gas like an EVM chain, but the numbers are simpler on mainnet today.
+
+**Intrinsic gas.** Every transaction pays a fixed amount before any code runs. Defaults in `execution/gas/intrinsic.py`:
+
+| Component | Gas |
+|---|---|
+| Base, TRANSFER | 21,000 |
+| Base, CALL | 21,000 |
+| Base, DEPLOY | 53,000 |
+| Calldata, zero byte | 4 |
+| Calldata, non-zero byte | 16 |
+| Access list, per address | 2,400 |
+| Access list, per storage key | 1,900 |
+
+A transfer with empty `data` uses exactly the base: 21,000 gas. Contract calls add VM opcode costs from `vm_py/gas_table.json` on top (see [Python-VM smart contracts](/learn/python-vm-smart-contracts)).
+
+**Gas price.** The public node answers `eth_gasPrice` with `0x1`, and the transfers in block 81,213 carry `gas.price = 1`. The mempool's minimum fee rate is also 1 nANM per gas (`ANIMICA_MIN_FEE_RATE`, default 1). There is no fee auction in practice: blocks are far from full, and 1 nANM per gas is the floor and what wallets normally use. Nothing stops a sender from paying more (the pool's payout transactions in block 81,202, for example, carry `gasPrice = 3585891`); the node does not lower a price, and the whole `gasLimit × gasPrice` is simply credited to the block producer.
+
+**Worked example.** Transaction `0x72637302…88df9`, included in block 81,213:
+
+```
+value      = 198,000 nANM
+gas limit  = 21,000
+gas price  = 1 nANM/gas
+fee        = 21,000 × 1 = 21,000 nANM  (0.000021 ANM)
+debit      = 198,000 + 21,000 = 219,000 nANM
+```
+
+The sender must hold at least `amount + gasLimit × gasPrice` at admission, minus anything already committed by its pending transactions; otherwise the node returns `-32013 insufficient funds`. Block application charges `gasUsed × gasPrice`, so a transaction that reserves more gas than it uses is only charged for what it used.
+
+## Where fees go
+
+`docs/economics/FEES.md` describes a two-market design: a base fee per gas that is burned and a priority tip that is split between the block producer, the treasury and the AICF pool, with a controller that moves the base fee with block utilisation. `spec/params.yaml` lists split percentages for that design.
+
+The executing code supports it (`execution/runtime/fees.py` computes burn, treasury, AICF and coinbase shares), but on mainnet today the block environment's base fee is 0 and the fee-split configuration defaults to 0 basis points for treasury and AICF. The practical result is that the entire `gasUsed × gasPrice` of every transaction is credited to the block producer together with the block subsidy (`core/chain/block_import.py` credits `miner_reward + fees` in one step). Nothing is burned. Treat the burn and split in the economics document as the designed fee model, not the operating one; see [ANM tokenomics and emission](/learn/anm-tokenomics-and-emission) for how the subsidy itself is divided.
+
+## What the mempool checks
+
+`mempool2/admission.py` lists the core admission steps in order, and the RPC admission path adds the v2 window and duplicate-id checks; a rejection at any step returns immediately and never throws:
+
+1. Format validation (canonical CBOR, required fields, version rules).
+2. ML-DSA-65 signature verification, including the scheme allowlist and the `from` ↔ pubkey binding.
+3. Chain id equals the node's.
+4. Size: at most 131,072 bytes (`ANIMICA_MAX_TX_BYTES`).
+5. Fee rate: `gas.price ≥ 1`.
+6. Validity window (`not_yet_valid` / `expired`) and duplicate transaction id.
+7. Funds: balance minus pending debits ≥ `amount + gasLimit × gasPrice`.
+
+The JSON-RPC error codes map onto these:
+
+| Code | Meaning |
+|---|---|
+| `-32010` | Invalid transaction (format, window, or other admission failure) |
+| `-32011` | Chain id mismatch |
+| `-32012` | Bad signature |
+| `-32013` | Insufficient funds |
+| `-32016` | Gas limit too low |
+| `-32017` | Fee too low |
+| `-32018` | Transaction too large |
+| `-32020` | Duplicate transaction id |
+
+Two diagnostic methods avoid trial-and-error. `mempool.simulateAdmission ["0x<cbor>"]` runs the full admission path without inserting, returning the same error a real submission would produce. `tx.decodeRawTransaction ["0x<cbor>"]` decodes the envelope without verifying it, which is the quickest way to confirm a client's encoder is producing the expected field names.
+
+## From submission to confirmation
+
+1. **Submit.** `tx.sendRawTransaction ["0x<cbor hex>"]` returns the transaction hash on success. The method also accepts `{"tx": …}`/`{"rawTx": …}` objects and the alias `eth_sendRawTransaction`.
+2. **Gossip.** The admitting node announces the id to peers (`TX_INV`); peers that do not have it request it (`TX_GET`) and receive the bytes (`TX_DATA`), then run the same admission checks. `docs/TX_PROPAGATION_TROUBLESHOOTING.md` documents this flow and the log lines to look for when a transaction does not spread.
+3. **Inclusion.** A miner selects admitted transactions within the block gas limit (40,000,000 on mainnet) and the 2,000,000-byte block envelope.
+4. **Status.** `tx.getStatus` reports where the transaction is. For the example:
+
+```json
+{"status":"confirmed","state":"included_block","included_height":81213,
+ "confirmations":2,"finalized":false,"finalized_in_pow":true,
+ "reorged_out":false,"reason":"included_in_pow"}
+```
+
+Animica is a proof-of-work chain with no finality gadget; `tx.getStatus` flips `finalized` to `true` once a transaction has 12 confirmations (the node-local default `ANIMICA_TX_FINALITY_CONFIRMATIONS`); that is a depth label, not a consensus guarantee. Use `confirmations`, and note the fork-choice reorg-depth bound of 96 blocks described in [PoIES consensus explained](/learn/poies-consensus-explained) when deciding how many to wait for. `tx.getTransactionByHash` returns the decoded body with `blockHash`, `blockNumber` and `transactionIndex` once included; the explorer shows the same at `https://explorer.animica.org/tx/<hash>`.
+
+## Building one
+
+With the CLI (`pip install animica`):
+
+```bash
+animica tx send --from 0 \
+  --to anim1zqpe6a5hvup7kggxdutt3tgswz4aa9rwlpsz8ywf73m4l5cmzhfk7pcqsu3y9 \
+  --value 0.000198 --gas-limit 21000 --max-fee 1
+```
+
+`--value` is in ANM (converted to nANM internally); `--max-fee` is the gas price in nANM per gas. The CLI reads the head height, sets a 120-block window, draws a 16-byte salt, signs with the selected wallet key and submits. The Python and TypeScript SDKs under `sdk/` expose the same build → sign → send steps for programmatic use, and the [JSON-RPC API guide](/learn/json-rpc-api-guide) lists the query methods you will use afterwards.
+
+## Key takeaways
+
+- v2 bodies have no nonce; replay protection comes from a unique txid (random salt) and a `validAfter`/`validUntil` height window, 120 blocks by default.
+- A transfer is 21,000 gas at 1 nANM per gas: a fee of 21,000 nANM (0.000021 ANM); admission needs `amount + limit × price` available.
+- Envelopes are `{tx, sigs:[{alg:4099, pubkey, sig}]}` in canonical CBOR; only ML-DSA-65 is accepted; max size 131,072 bytes.
+- Fees currently go entirely to the block producer; the burn/split model in the economics document is not what executes today.
+- Use `mempool.simulateAdmission` to dry-run, `tx.getStatus` to track, and confirmations rather than the `finalized` flag (a node-local label that turns true at 12 confirmations).
+
+## Sources
+
+- `core/types/tx.py` (v2 body, envelope, txid)
+- `python/animica/tx/signing.py`, `python/animica/cli/tx.py` (`DEFAULT_TX_TTL_BLOCKS`)
+- `execution/gas/intrinsic.py`, `execution/runtime/fees.py`, `core/chain/block_import.py` (fee charging and crediting)
+- `mempool2/admission.py`, `mempool2/policy.py`, `rpc/mempool2_service.py` (admission limits)
+- `rpc/errors.py`, `rpc/methods/tx.py` (error codes, `simulateAdmission`, `decodeRawTransaction`)
+- `spec/tx_format.cddl`
+- `docs/TX_WORKFLOW.md`, `docs/tx-signing.md`, `docs/pq-tx-signing-canonicalization.md`
+- `docs/economics/FEES.md`, `spec/params.yaml`
+- `docs/TX_PROPAGATION_TROUBLESHOOTING.md`
+- Live reads of `chain.getBlockByHeight [81213, true]`, `tx.getTransactionByHash`, `tx.getStatus`, `eth_gasPrice` on 2026-08-23

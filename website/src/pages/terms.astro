@@ -1,162 +1,187 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
 
-const title = "Terms of Service";
+const title = "Terms of Use";
 const description =
-  "The rules and conditions for using the Animica website, SDKs, wallets, and related services.";
-const lastUpdated = "October 9, 2025";
+  "Terms for using animica.org and its hosted services: content provided as is, no financial advice, open-source software licences, third-party services, and crypto-asset risk. Effective 2026-08-23.";
+const effective = "2026-08-23";
 
-// Optional: override jurisdiction/company via environment at build time
-const ORG_NAME = (import.meta.env.PUBLIC_ORG_NAME as string) || "Animica";
-const JURISDICTION =
-  (import.meta.env.PUBLIC_TOS_JURISDICTION as string) || "Delaware, USA";
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  name: title,
+  description,
+  url: "https://animica.org/terms",
+  dateModified: effective,
+};
 ---
 
-<BaseLayout title={title} description={description}>
-  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14 prose prose-invert prose-a:no-underline">
-    <h1 class="mb-2">{title}</h1>
-    <p class="text-sm opacity-70">Last updated: {lastUpdated}</p>
+<BaseLayout title={title} description={description} jsonLd={jsonLd}>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Legal</span>
+      <h1 class="aicf-heading">Terms of Use</h1>
+      <p class="aicf-subheading">
+        These terms govern your use of <strong>animica.org</strong> and the hosted services operated by the
+        Animica project. By using the site or those services you agree to them. If you do not agree, do not
+        use the site.
+      </p>
+      <p class="aicf-muted">Effective date: {effective}.</p>
+    </div>
+  </section>
 
-    <p>
-      These Terms of Service (“Terms”) govern your access to and use of {ORG_NAME}
-      websites, documentation, SDKs, software, wallets, and related services (collectively, the “Services”).
-      By accessing or using the Services, you agree to be bound by these Terms.
-      If you do not agree, do not use the Services.
-    </p>
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>1. What these terms cover</h2>
+      <p>
+        "The site" means animica.org. "Hosted services" means the public JSON-RPC endpoint
+        (rpc.animica.org), the block explorer (explorer.animica.org), the mining pool (pool.animica.org)
+        and academy.animica.org. Services that require an account,
+        such as animica.dev, console.animica.org and pay.animica.dev, present their own terms at sign-up;
+        where those conflict with this page, the service-specific terms apply to that service.
+      </p>
+      <p>
+        The Animica <em>protocol</em> is not a service we provide. It is software that anyone can run.
+        Nothing in these terms gives us control over the network, the ledger, or transactions that other
+        participants include in blocks.
+      </p>
 
-    <h2>1) Eligibility</h2>
-    <p>
-      You represent that you are legally capable of entering into these Terms and that your use complies
-      with applicable laws in your jurisdiction. You may not use the Services if you are subject to any
-      sanctions or on any restricted list applicable to {ORG_NAME}.
-    </p>
+      <h2>2. Site content is provided "as is"</h2>
+      <p>
+        We try hard to keep the documentation, guides, parameters and live figures on this site accurate
+        and dated, and we correct errors when they are reported. Even so, the content is provided "as is"
+        and "as available", without warranty of any kind, express or implied, including warranties of
+        accuracy, completeness, merchantability, fitness for a particular purpose or non-infringement.
+        Protocol rules change through height-gated forks; the repository and the live chain are
+        authoritative over any description on this site.
+      </p>
 
-    <h2>2) Non-custodial nature</h2>
-    <p>
-      The Services are non-custodial. {ORG_NAME} does not control your private keys, wallets, or funds,
-      and cannot reverse on-chain transactions. You are solely responsible for safeguarding
-      your keys, backing up seed phrases, and verifying transaction details before signing.
-    </p>
+      <h2>3. No financial, legal or tax advice</h2>
+      <p>
+        Nothing on this site is investment advice, a recommendation, a solicitation or an offer to buy or
+        sell any asset. Where we mention that ANM trades on NonKYC (ANM/USDT), we do so as a statement of
+        fact about where a market exists, not as an endorsement of that venue or of buying ANM. Market
+        figures shown on the site are fetched from third parties and may be delayed or wrong. You are
+        responsible for your own decisions and for complying with the laws that apply to you, including
+        tax and securities law in your jurisdiction.
+      </p>
 
-    <h2>3) On-chain transactions & risk</h2>
-    <ul>
-      <li>Blockchain activity is public and generally irreversible.</li>
-      <li>Smart contracts may contain bugs or be exploited; use at your own risk.</li>
-      <li>Asset prices are volatile; you may lose value.</li>
-      <li>{ORG_NAME} does not provide investment, legal, or tax advice.</li>
-    </ul>
+      <h2>4. Crypto-asset risk disclosure</h2>
+      <p>
+        ANM is a proof-of-work crypto-asset on a young network. Its price can move sharply and may go to
+        zero. The network has no finality gadget: a transaction that appears in a block can, in principle,
+        be reorganised out until it is buried deeply enough (the protocol enforces a 100-block reorg bound
+        since block 75,000, and you should wait for an appropriate number of confirmations for the value
+        at stake). Software bugs, consensus faults, key loss, phishing and exchange failures can all result
+        in total loss. Transactions are irreversible; funds sent to a wrong or mistyped address cannot be
+        recovered by anyone. Mining revenue depends on hashrate, difficulty (Θ) and price, all of which
+        change continuously, and the emission schedule is fixed in code rather than guaranteed by us.
+        Useful-work rewards described in the protocol documentation are not enforced on mainnet today.
+      </p>
 
-    <h2>4) Software licenses</h2>
-    <p>
-      Source code may be provided under open-source licenses indicated in the relevant repositories.
-      To the extent any component is not open-sourced, {ORG_NAME} grants you a limited, revocable,
-      non-exclusive, non-transferable license to use the Services in accordance with these Terms.
-    </p>
+      <h2>5. Software licences</h2>
+      <p>
+        The Animica software is open source. The repository at
+        <a href="https://github.com/animicaorg/all" target="_blank" rel="noopener noreferrer">github.com/animicaorg/all</a>
+        is licensed under the Apache License, Version 2.0 (its root <code>LICENSE</code> file), and
+        <code>docs/legal/LICENSING.md</code> additionally offers most packages under the MIT licence at
+        your option. The code for this website is MIT-licensed and the documentation under
+        <code>docs/</code> is CC BY-SA 4.0 unless a file says otherwise. Your use of the software is
+        governed by those licences, not by these terms, and they include their own disclaimers of
+        warranty and limitations of liability. Third-party components keep their original licences.
+      </p>
+      <p>
+        The prose content of this site (articles, guides, page copy) may be quoted with attribution and a
+        link. Wholesale reproduction of the site as a competing resource is not permitted.
+      </p>
 
-    <h2>5) Acceptable use</h2>
-    <p>When using the Services, you will not:</p>
-    <ul>
-      <li>Violate any law, regulation, or third-party right;</li>
-      <li>Attempt to circumvent security, rate limits, or access controls;</li>
-      <li>Deploy malware, spam, or engage in denial-of-service activity;</li>
-      <li>Submit unlawful content or infringing materials;</li>
-      <li>Impersonate others or misrepresent affiliation with {ORG_NAME}.</li>
-    </ul>
+      <h2>6. Trademarks</h2>
+      <p>
+        "Animica", the Animica logo and wordmark are trademarks and are not licensed under the open-source
+        licences above. You may refer to the project by name to describe compatibility ("wallet X for
+        Animica") or in commentary. You may not use the marks in a product name, company name, domain or
+        social handle, alter the logo, or suggest endorsement or partnership without written permission.
+        Full rules are in <code>docs/legal/TRADEMARKS.md</code>.
+      </p>
 
-    <h2>6) APIs, rate limits, and third-party services</h2>
-    <p>
-      We may impose or adjust rate limits. The Services may link to or rely on third-party services
-      (e.g., RPC providers, analytics, package registries). {ORG_NAME} does not control third-party services
-      and is not responsible for their availability or behavior.
-    </p>
+      <h2>7. Hosted services: acceptable use</h2>
+      <p>
+        The public RPC, explorer, pool and wallet are provided free of charge for the benefit of the
+        network. We may rate-limit, block or suspend access to protect them, and we may change or
+        discontinue any of them at any time. You agree not to attempt to overload or circumvent rate
+        limits, probe or attack the services except under the safe-harbour terms of our
+        <a href="/security">security policy</a>, scrape in a way that degrades service for others, or use
+        the services for anything unlawful. For anything that needs guaranteed availability, run your own
+        node; the <a href="/learn/run-a-node">node guide</a> explains how.
+      </p>
+      <p>
+        Our wallet software is non-custodial. We never hold your keys, cannot recover them, and cannot reverse
+        or block transactions you sign. The pool pays according to its published scheme (PPS on port 3333; solo with a 95/5 split on port 3334); statistics and payout history are shown
+        on pool.animica.org so you can verify them.
+      </p>
 
-    <h2>7) Privacy</h2>
-    <p>
-      Our <InlineLink href="/privacy">Privacy Policy</InlineLink> describes how we handle information.
-      By using the Services, you consent to the practices described therein.
-    </p>
+      <h2>8. Third-party services</h2>
+      <p>
+        The site links to and depends on services we do not control, including GitHub (source code and
+        issues), PyPI (package distribution), NonKYC (the ANM/USDT market), Google (fonts and
+        advertising), A-Ads (a banner on the home page) and X. Each has its own terms and privacy
+        practices. We are not responsible for their availability, content or conduct, and a link is not
+        an endorsement. Our <a href="/privacy">Privacy Policy</a> explains what data those services
+        receive when you use this site.
+      </p>
 
-    <h2>8) Disclaimers</h2>
-    <p>
-      THE SERVICES ARE PROVIDED “AS IS” AND “AS AVAILABLE.” TO THE MAXIMUM EXTENT PERMITTED BY LAW,
-      {ORG_NAME} AND ITS CONTRIBUTORS DISCLAIM ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT
-      LIMITED TO MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
-      WE DO NOT WARRANT THAT THE SERVICES WILL BE ERROR-FREE, SECURE, OR UNINTERRUPTED.
-    </p>
+      <h2>9. Advertising</h2>
+      <p>
+        Advertisements on the site are labelled as such. An advertisement is not a recommendation by us,
+        and advertisers do not influence the site's editorial content.
+      </p>
 
-    <h2>9) Limitation of liability</h2>
-    <p>
-      TO THE MAXIMUM EXTENT PERMITTED BY LAW, {ORG_NAME}, ITS CONTRIBUTORS, AND AFFILIATES WILL NOT BE
-      LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR ANY
-      LOSS OF PROFITS, REVENUE, DATA, OR GOODWILL, ARISING OUT OF OR RELATED TO YOUR USE OF THE SERVICES,
-      EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. IN NO EVENT WILL THE AGGREGATE LIABILITY OF
-      {ORG_NAME} EXCEED THE GREATER OF (A) USD $100 OR (B) THE AMOUNTS PAID BY YOU TO {ORG_NAME} (IF ANY)
-      FOR THE SERVICES IN THE TWELVE MONTHS PRECEDING THE CLAIM.
-    </p>
+      <h2>10. Limitation of liability</h2>
+      <p>
+        To the fullest extent permitted by applicable law, the Animica project, its maintainers and
+        contributors will not be liable for any indirect, incidental, special, consequential or punitive
+        damages, or for any loss of funds, profits, data or goodwill, arising out of or related to your
+        use of the site, the hosted services or the software, even if advised of the possibility of such
+        damages. Where liability cannot be excluded, it is limited to the amount you paid us for the
+        service concerned, which for the site and the hosted services listed above is nothing.
+      </p>
 
-    <h2>10) Indemnification</h2>
-    <p>
-      You will defend, indemnify, and hold harmless {ORG_NAME} and its contributors from and against any
-      claims, liabilities, damages, losses, and expenses (including reasonable attorneys’ fees) arising from
-      or related to your use of the Services or violation of these Terms.
-    </p>
+      <h2>11. Indemnity</h2>
+      <p>
+        You agree to indemnify the project and its maintainers against claims arising from your breach of
+        these terms or your unlawful use of the site or hosted services.
+      </p>
 
-    <h2>11) Changes to the Services and Terms</h2>
-    <p>
-      We may modify or discontinue parts of the Services at any time. We may update these Terms from time
-      to time; material changes will be reflected by updating the “Last updated” date. Your continued use
-      of the Services constitutes acceptance of the revised Terms.
-    </p>
+      <h2>12. Changes to these terms</h2>
+      <p>
+        We may update these terms. The effective date at the top will change, and material changes will
+        be noted in the site's release notes or announcements. Continued use after a change means you
+        accept the updated terms.
+      </p>
 
-    <h2>12) Termination</h2>
-    <p>
-      We may suspend or terminate your access to the Services immediately if we believe you have violated
-      these Terms or applicable law. Upon termination, your right to use the Services ceases immediately,
-      but sections intended to survive (e.g., Disclaimers, Limitation of liability, Indemnification,
-      Governing law) will continue to apply.
-    </p>
+      <h2>13. Severability and no waiver</h2>
+      <p>
+        If any part of these terms is found unenforceable, the rest remains in effect. Our failure to
+        enforce a provision is not a waiver of it.
+      </p>
 
-    <h2>13) Governing law & disputes</h2>
-    <p>
-      These Terms are governed by the laws of {JURISDICTION}, without regard to conflicts of law principles.
-      The exclusive venue for disputes arising out of or relating to these Terms or the Services will be the
-      courts located in {JURISDICTION}, unless otherwise required by applicable law.
-    </p>
+      <h2>14. Contact</h2>
+      <p>
+        Questions about these terms: <a href="mailto:contact@animica.org">contact@animica.org</a>.
+        Trademark permissions: the same address. Security: <a href="mailto:security@animica.org">security@animica.org</a>.
+      </p>
 
-    <h2>14) Export & sanctions compliance</h2>
-    <p>
-      You represent that you are not located in, under the control of, or a national or resident of any
-      country or person on any U.S., U.K., EU, or UN sanctions list, and you will not use the Services in
-      violation of export control or sanctions laws.
-    </p>
-
-    <h2>15) Contact</h2>
-    <p>
-      Questions about these Terms? Contact
-      <InlineLink href="mailto:legal@animica.dev">legal@animica.dev</InlineLink> or
-      <InlineLink href="mailto:support@animica.dev">support@animica.dev</InlineLink>.
-    </p>
-
-    <hr />
-
-    <p class="text-xs opacity-70">
-      <strong>Notice:</strong> Nothing in these Terms is intended to, or shall, limit rights that cannot
-      be limited under applicable law. If any provision is held unenforceable, the remaining provisions
-      will remain in full force and effect.
-    </p>
-
-    <script type="application/ld+json" is:inline>
-      {JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "TermsOfService",
-        name: "Animica Terms of Service",
-        dateModified: lastUpdated,
-        url: "/terms",
-        publisher: { "@type": "Organization", name: ORG_NAME },
-        inLanguage: "en",
-        isAccessibleForFree: true
-      })}
-    </script>
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        LICENSE · docs/legal/LICENSING.md · docs/legal/TRADEMARKS.md · docs/legal/SECURITY_POLICY.md ·
+        consensus/finality.py (100-block reorg bound) · docs/ANIMICA_2026_STATE.md
+      </p>
+    </div>
   </section>
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.4rem; margin-top: 2rem; }
+  .page-prose p { margin-top: 0.7rem; line-height: 1.65; }
+  .page-prose code { font-size: 0.92em; }
+</style>

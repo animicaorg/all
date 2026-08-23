@@ -1,0 +1,17 @@
+---
+title: "Animica 10.4.0: animica up asks which models to serve"
+description: "An opt-in model picker at startup with download sizes and disk headroom, a dedicated catalog-vocabulary variable for serving tiers, and the same-day 10.2.6/10.2.7 releases: BC3 side-mining and settlement anchors."
+date: 2026-08-17
+tags: ["release", "aicf", "mining", "cli"]
+---
+
+Animica 10.4.0 changes what `animica up` does on a machine that can serve inference. Instead of auto-pulling every hardware-eligible model tier, it now asks which tiers to serve. The picker shows each tier's estimated download size (from parameter count and precision), the current free disk space, and the disk that would remain after the selection, then downloads and advertises only what the operator picks.
+
+- Choose by number or name, or `none` to decline. The choice is persisted to `~/.animica/aicf-models.json` and reused; re-choose with `ANIMICA_AICF_RESELECT=1`.
+- Non-TTY and systemd safe: the picker never prompts without a terminal and can never raise into `up` startup.
+- The selection drives both download (`ANIMICA_AICF_AUTOPULL_TIERS`) and advertising (`ANIMICA_AICF_SERVE_TIERS`). The serving variable deliberately uses the model-catalog vocabulary (`tiny/small/flagship/large`) and is distinct from the stratum-vocabulary `ANIMICA_AICF_TIERS` (`free/standard/premium/elite`) baked into the miner subprocess environment. Overloading one for the other had fed the serving worker the wrong tier names and advertised nothing; 10.4.2 followed with a bidirectional mapping between the two vocabularies from a single source.
+- The AICF worker honours the serving variable as a tier override, so a de-selected but still-installed tier stops being advertised.
+
+The same wheel carries version-gate plumbing, a payout wallet-balance clamp and a compute-broker CLI for the pool. 10.4.1 added an opt-in CPU serving path for the MoE flagship scaled to available RAM; 10.4.3 made the default serving prompt a general assistant; 10.4.4 fixed a worker path that read the prompt from the wrong level of the claim response and answered every job with an empty prompt.
+
+**Also on 2026-08-17: 10.2.6 and 10.2.7.** 10.2.6 adds BC3 (BitcoinIII) mining alongside Animica on the same stratum connection — separate work, not merged mining, since BC3's triple SHA3-256 over an 80-byte header and Animica's SHA3-256 over a CBOR header cannot be satisfied by one hash; clients older than 10.2.6 ignore the jobs. It also lets a pool retain its fee in the payout wallet (`ANIMICA_POOL_FEE_RETAIN_IN_WALLET=1`, default off). 10.2.7 adds `tx send --data` so settlement anchors (`ANMSETL1` + JSON in the transfer data field) can actually be posted: for the first 411 blocks after 75,000, about 30,825 ANM of inference carve had rolled to the treasury because no anchor was constructible with the shipped tooling. Both releases also commit packages that had shipped in wheels without ever being added to git.

@@ -1,0 +1,21 @@
+---
+title: "Animica 7.0.0: the address-freeze fork at block 42,000"
+description: "Turns the node-local freeze-list into a network-wide consensus rule: from block 42,000 a block that moves funds from or to a code-committed frozen account is rejected."
+date: 2026-07-10
+tags: ["release", "consensus", "fork", "security"]
+---
+
+Animica 7.0.0 introduces `FORK_ADDRESS_FREEZE`, a forward-only consensus rule active on mainnet from block **42,000**.
+
+The 6.0.5 freeze-list was node-local and trivially bypassable: it only stopped the operator's own nodes from admitting or mining a frozen spend. Taking the seed node offline was enough to drain a labelled address through any other miner. 7.0.0 makes the rule a property of the chain. At or after the height, block import **rejects** any block containing a non-coinbase transaction whose authoritative sender or recipient is a frozen account.
+
+Design properties, as recorded in `core/network_params.py`:
+
+- **Deterministic.** The frozen set is a compiled constant in `execution/migrations/address_freeze_2026.py`, identical on every node — never an environment variable or a file. At release it contains a single entry: the already-clawed-back ANM-2026-07 attacker address. No ordinary address is affected.
+- **Writes no state.** A rule-violating block is loudly orphaned, never a silent balance fork. There is no environment or shadow valve in the verdict, for split safety.
+- **Forward-only and grandfathered.** Nothing below 42,000 is re-examined.
+- **Miner pre-gates.** The mempool selection and block-template paths check both sender and recipient so an upgraded miner never builds a block its own rule would orphan.
+
+Because this is a reject rule with the shape of a coordinated upgrade, every block producer must run 7.0.0 before the height, or a post-height block they mine that moves frozen funds will be orphaned by upgraded nodes. The P2P parameters hash stays pinned, so 7.0.0 and 6.x nodes keep peering through the runway.
+
+7.0.0 also fixes an RPC authentication spoof: the is-local and admin-allowlist checks now use only the real transport peer and treat any forwarding header (`X-Forwarded-For: 127.0.0.1`, a spoofed allowlisted IP) as remote — the same class of hole the 6.1.0 `wallet.*` incident fixed from the other side. Fourteen freeze tests and nine access-policy tests were added; an adversarial verification pass returned GO.

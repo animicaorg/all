@@ -1,77 +1,178 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
+import CodeBlock from "../components/CodeBlock.astro";
 
-const pageTitle = "Run a Node — mainnet-ready";
-const pageDesc =
-  "Start an Animica node with Docker or native install. Includes ports, troubleshooting, and monitoring tips.";
+const title = "Run a node";
+const description =
+  "How to run an Animica mainnet node: install with pip, start with animica node up, the ports it uses, data directories, hardware guidance from the docs, and why running your own node is worth it.";
+
+const install = `# Python 3.10+ required
+python3 -m pip install --upgrade animica
+
+# Select the network once (mainnet is the default anyway)
+animica network set mainnet
+
+# Start the node (uses ops/docker/docker-compose.mainnet.yml under the hood)
+animica node up
+
+# Check sync state, head height and peers
+animica node status
+
+# Diagnose common misconfigurations
+animica node doctor`;
+
+const verify = `curl -s -X POST http://127.0.0.1:8545/rpc \\
+  -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}'
+
+# Compare with the public node
+curl -s -X POST https://rpc.animica.org/rpc \\
+  -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}'`;
+
+const envOverrides = `export ANIMICA_NETWORK=mainnet
+export ANIMICA_RPC_URL="http://127.0.0.1:8545/rpc"
+# Optional: run the ANM-native L2 inside the same process
+export ANIMICA_L2_ENABLE=1`;
+
+const ports = [
+  ["8545", "JSON-RPC (HTTP, POST /rpc)", "Bind to localhost unless you intend to serve the public; the mainnet profile applies a strict CORS policy by default."],
+  ["30333", "P2P (TCP)", "Open this inbound if you want other nodes to connect to you. Outbound-only nodes still sync."],
+  ["9000", "Prometheus metrics", "Local by default. Do not expose without authentication."],
+  ["8551 / 8552", "L2 RPC / L2 P2P (reserved)", "Only when ANIMICA_L2_ENABLE=1 and a standalone L2 deployment is used; in the all-in-one node l2_* methods are served on 8545."],
+];
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-12">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Run a Node</h1>
-    <p class="mt-3 opacity-80">
-      Production nodes are the backbone of the network. Use Docker for speed or run the native
-      service for deeper control.
-    </p>
-
-    <div class="mt-8 grid gap-6 md:grid-cols-2">
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h2 class="text-xl font-semibold">Quickstart (Docker)</h2>
-        <div class="mt-3 text-sm font-mono rounded-lg p-4 bg-black/40">
-          animica node up
-          <br />
-          animica node status
-          <br />
-          animica peer list
-        </div>
-        <p class="mt-3 text-xs opacity-70">Default RPC: http://127.0.0.1:8545/rpc</p>
-        <p class="mt-1 text-xs opacity-70">
-          Public RPC: <code>https://rpc.animica.org/rpc</code> (JSON-RPC, POST only) — useful for
-          wallets and SDKs while your node syncs.
-        </p>
-      </div>
-
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h2 class="text-xl font-semibold">Native install</h2>
-        <div class="mt-3 text-sm font-mono rounded-lg p-4 bg-black/40">
-          source .venv/bin/activate
-          <br />
-          python -m core.boot --genesis core/genesis/genesis.json
-        </div>
-        <p class="mt-3 text-xs opacity-70">See docs for full boot sequence.</p>
-      </div>
-    </div>
-
-    <div class="mt-10 rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h3 class="text-lg font-semibold">Required ports</h3>
-      <ul class="mt-3 text-sm opacity-80 list-disc pl-5 space-y-2">
-        <li>P2P: 30333 (TCP/QUIC)</li>
-        <li>RPC: 8545 (HTTP JSON-RPC)</li>
-        <li>WS: 8545/ws (WebSocket subscriptions)</li>
-        <li>Metrics: 9000 (optional)</li>
-      </ul>
-    </div>
-
-    <div class="mt-10 grid gap-6 md:grid-cols-2">
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-semibold">Troubleshooting</h3>
-        <ul class="mt-3 text-sm opacity-80 list-disc pl-5 space-y-2">
-          <li>Verify P2P ports are open and reachable.</li>
-          <li>Confirm seeds via ANIMICA_P2P_SEEDS if peer count stays 0.</li>
-          <li>Check logs: <code>animica node logs --tail 50</code>.</li>
-        </ul>
-      </div>
-      <div class="rounded-2xl border p-6 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-semibold">Need the full guide?</h3>
-        <p class="mt-2 text-sm opacity-80">The docs include config files, security, and monitoring.</p>
-        <InlineLink href="https://github.com/animicaorg/all/tree/main/docs/ops">Read node operations docs →</InlineLink>
+<BaseLayout title={title} description={description}>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Operate</span>
+      <h1 class="aicf-heading">Run an Animica node</h1>
+      <p class="aicf-subheading">
+        A full node downloads and verifies every block, keeps its own copy of state, and serves JSON-RPC
+        to your wallets, miners and applications. The <code>animica</code> package on PyPI includes the
+        node, so a mainnet node is a pip install and one command away. This page is the overview; the
+        step-by-step guide is at <a href="/learn/run-a-node">/learn/run-a-node</a>.
+      </p>
+      <div class="aicf-btn-row">
+        <a class="aicf-btn" href="/learn/run-a-node">Full node guide</a>
+        <a class="aicf-ghost-btn" href="/learn/p2p-networking-and-sync">P2P networking and sync</a>
+        <a class="aicf-ghost-btn" href="https://pypi.org/project/animica/" target="_blank" rel="noopener noreferrer">animica on PyPI</a>
       </div>
     </div>
   </section>
+
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>Why run one</h2>
+      <p>
+        The public endpoint at <code>rpc.animica.org</code> is convenient, but it is one node operated by
+        the project, it is rate-limited, and trusting it means trusting whoever runs it to report state
+        honestly. Running your own node gives you an independent view of the chain: you verify every
+        signature and every block yourself, you are not affected by public rate limits or outages, and you
+        can point wallets, the explorer software, a pool, or an AICF worker at <code>127.0.0.1:8545</code>.
+        Solo mining on port 3334 of the pool does not require a node, but mining directly with your own
+        block templates does. Exchanges, payment processors and anyone tracking balances should run a node
+        rather than rely on the hosted RPC, not least because the emission-changing forks silently
+        mis-credit balances on outdated software.
+      </p>
+
+      <h2>Install and start</h2>
+      <CodeBlock lang="bash" title="Mainnet node in four commands" code={install} />
+      <p>
+        <code>animica node up</code> selects the compose file for the active network, creates the data
+        directory and volumes for that chain id, and starts the node container. The network is resolved in
+        this order: a <code>--network</code> flag, the <code>ANIMICA_NETWORK</code> environment variable,
+        the value persisted by <code>animica network set</code>, and finally the default, mainnet. Each
+        network has its own data directory (<code>~/.animica/chain-1</code> for mainnet) and its own
+        Docker volumes, so you can run mainnet and devnet side by side without mixing their databases.
+      </p>
+      <p>
+        If you prefer not to use Docker, the repository's <code>ops/run.sh --profile mainnet node</code>
+        starts the node from a checkout, and <code>python -m core.boot</code> is the lowest-level entry
+        point. These paths are documented in <code>docs/cli-commands.md</code> and
+        <code>docs/BOOTSTRAP.md</code>.
+      </p>
+
+      <h2>Verify it is working</h2>
+      <CodeBlock lang="bash" title="Compare your head with the public node" code={verify} />
+      <p>
+        A freshly started node begins in the <code>HEADERS</code> sync phase and the height climbs as
+        blocks are fetched from peers. Once the two responses agree on height and hash (allowing a block
+        or two of lag), you are on the canonical chain. <code>animica node status</code> prints the same
+        information plus the network hashrate estimate and peer count.
+      </p>
+
+      <h2>Ports and environment</h2>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Port</th><th>Service</th><th>Notes</th></tr></thead>
+          <tbody>
+            {ports.map(([p, s, n]) => (
+              <tr><td><strong>{p}</strong></td><td>{s}</td><td class="aicf-muted">{n}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <CodeBlock lang="bash" title="Common overrides" code={envOverrides} />
+      <p>
+        Testnet (chain id 2) uses RPC port 18546 and P2P port 31334; devnet (chain id 1337) uses 28545 and
+        31335. These are the defaults in <code>docs/network-docker-compose.md</code> and can be changed with
+        the corresponding <code>ANIMICA_*</code> variables.
+      </p>
+
+      <h2>Hardware</h2>
+      <p>
+        The node is pure Python and verifies ML-DSA-65 signatures in software, so CPU matters more than
+        GPU. The repository's multi-node Docker guide assumes a host with <strong>8 GB of RAM and 20 GB of
+        free disk</strong> for a three-node local setup; a single mainnet node needs less, and the chain
+        state at block 81,000 fits comfortably within that disk budget. Use an SSD: the database is
+        SQLite-backed and sync is I/O-bound. A stable network connection with inbound port 30333 open
+        helps the network more than it helps you, but is not required.
+      </p>
+      <p>
+        Because verification is single-threaded Python, a fast core beats many slow ones. The project has
+        observed that heavy unrelated workloads on the same machine (large builds, other containers) can
+        starve the node and cause RPC timeouts, so give a production node its own CPU headroom.
+      </p>
+
+      <h2>Keeping up with forks</h2>
+      <p>
+        Consensus rules activate at fixed heights and are announced ahead of time on the
+        <a href="/network">Network page</a>, the <a href="/roadmap">Roadmap</a>, and in GitHub releases.
+        Upgrade with <code>pip install --upgrade animica</code> and restart the node before the activation
+        height. A node on old software keeps peering past an emission fork but will report wrong balances,
+        and will be forked off at the first block that uses a new reject rule. The current release line is
+        10.x.
+      </p>
+
+      <h2>Troubleshooting</h2>
+      <ul>
+        <li><strong>RPC not reachable.</strong> Run <code>animica node doctor</code>; check that the container is up and that <code>ANIMICA_RPC_URL</code> includes the <code>/rpc</code> path.</li>
+        <li><strong>Port already in use.</strong> Another network's node or an old container is bound to 8545; stop it or change <code>rpc_port</code>.</li>
+        <li><strong>No peers.</strong> Check outbound connectivity to port 30333 and that your clock is correct; peer discovery uses DNS seeds and the handshake rejects large clock skew.</li>
+        <li><strong>Head stuck.</strong> Compare with the explorer. If you are on a stale fork, restart the node; the reorg bound and pinned checkpoints will bring it back to the canonical chain.</li>
+      </ul>
+      <p class="aicf-muted">
+        More in <code>docs/TROUBLESHOOTING.md</code>, <code>docs/MULTI_NODE_DOCKER_SETUP.md</code> and
+        <code>docs/VERIFIER_NODE_RESTART.md</code>, and on the <a href="/support">Support page</a>.
+      </p>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/network-docker-compose.md · docs/MULTI_NODE_DOCKER_SETUP.md · docs/cli-commands.md ·
+        docs/BOOTSTRAP.md · docs/rpc-quickstart.md · docs/l2/RUNNING.md · docs/TROUBLESHOOTING.md · python/README.md
+      </p>
+    </div>
+  </section>
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2rem; }
+  .page-prose p, .page-prose ul { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose li { margin-top: 0.4rem; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; }
+  .page-prose :global(.not-prose) { margin-top: 0.9rem; }
+</style>

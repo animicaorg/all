@@ -1,119 +1,241 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
 
 const title = "Privacy Policy";
-const description = "How we collect, use, and protect information across the Animica website, apps, and services.";
-const lastUpdated = "October 9, 2025";
+const description =
+  "How animica.org handles data: server logs, fonts, advertising (Google AdSense and A-Ads), RPC and explorer request logging, retention, and your rights. Effective 2026-08-23.";
+const effective = "2026-08-23";
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  name: title,
+  description,
+  url: "https://animica.org/privacy",
+  dateModified: effective,
+};
+
+const retention = [
+  ["Web server access logs", "Up to 30 days", "Security monitoring, abuse prevention, capacity planning"],
+  ["RPC / explorer / pool request logs", "Up to 30 days raw; aggregates up to 180 days", "Rate limiting, abuse prevention, performance statistics"],
+  ["Crash and error reports (opt-in only)", "Up to 90 days", "Stability of first-party software"],
+  ["Email correspondence", "As long as needed to handle the request", "Support, security disclosure, legal obligations"],
+  ["Blockchain data", "Indefinitely, by design", "Public ledger; cannot be altered or deleted"],
+];
 ---
 
-<BaseLayout title={title} description={description}>
-  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14 prose prose-invert prose-a:no-underline">
-    <h1 class="mb-2">{title}</h1>
-    <p class="text-sm opacity-70">Last updated: {lastUpdated}</p>
+<BaseLayout title={title} description={description} jsonLd={jsonLd}>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Legal</span>
+      <h1 class="aicf-heading">Privacy Policy</h1>
+      <p class="aicf-subheading">
+        This policy explains what data is processed when you use <strong>animica.org</strong> and the
+        first-party services linked from it, why, for how long, and what choices you have. It is written
+        to be specific rather than generic: if something is not listed here, we do not do it.
+      </p>
+      <p class="aicf-muted">Effective date: {effective}. Supersedes all earlier versions.</p>
+    </div>
+  </section>
 
-    <p>
-      This Privacy Policy explains what information we collect when you use Animica websites, apps, SDKs,
-      wallets, and related services (the “Services”), how we use it, and the choices you have. “We”, “us”,
-      and “our” refer to the Animica project and maintainers.
-    </p>
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>1. Who we are and scope</h2>
+      <p>
+        "Animica", "we" and "us" refer to the maintainers of the Animica open-source project, who operate
+        this website and the hosted services listed in section 6. This policy covers animica.org and
+        those services. It does not cover third-party websites we link to, independent node operators,
+        mining pools run by others, exchanges, or forks of our software. The software itself (node,
+        wallets, SDKs) ships with telemetry <strong>disabled by default</strong>; its opt-in telemetry
+        behaviour is described in <code>docs/legal/PRIVACY.md</code> in the repository and summarised in
+        section 7.
+      </p>
 
-    <h2>1) What we <em>don’t</em> collect</h2>
-    <ul>
-      <li>No private keys or seed phrases. Keys stay on your device or in your wallet.</li>
-      <li>No contract source or user data from the on-chain execution unless you explicitly upload it to our services.</li>
-      <li>No invasive device identifiers (we avoid fingerprinting).</li>
-    </ul>
+      <h2>2. Data we collect on this website</h2>
+      <h3>2.1 Server access logs</h3>
+      <p>
+        Like almost every web server, ours records a line for each request: the requesting IP address,
+        the time, the URL requested, the HTTP status, the referring page if your browser sends one, and
+        the user-agent string. We use these logs to keep the site up, to block abusive traffic, and to
+        understand which pages are read. We do not combine them with any other data to identify you.
+      </p>
+      <h3>2.2 No analytics script is loaded</h3>
+      <p>
+        This site does <strong>not</strong> currently load Google Analytics, Plausible, PostHog, or any
+        other analytics or session-recording script. The site's source code contains optional, opt-in
+        adapters for Plausible and PostHog, but they are not enabled in the published build. If that
+        changes, this policy will be updated before any such script is served, and the adapters are
+        written to honour the Do Not Track and Global Privacy Control signals.
+      </p>
+      <h3>2.3 Web fonts</h3>
+      <p>
+        Pages load the IBM Plex Mono and Space Grotesk typefaces from Google Fonts
+        (<code>fonts.googleapis.com</code> and <code>fonts.gstatic.com</code>). When your browser fetches
+        those files, Google receives your IP address and the usual request headers. Google's handling of
+        that data is described in its
+        <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">privacy policy</a>.
+      </p>
+      <h3>2.4 Browser storage</h3>
+      <p>
+        We use a small amount of browser-local storage for convenience, never for tracking: for example,
+        <code>sessionStorage</code> remembers that you dismissed the advertising banner on the home page
+        for the rest of that tab's session. This data never leaves your browser, and we do not set
+        first-party cookies for identification.
+      </p>
 
-    <h2>2) Information we may collect</h2>
-    <ul>
-      <li><strong>Basic telemetry</strong> (optional): anonymous performance metrics to improve reliability (e.g., load times, crash reports).</li>
-      <li><strong>Web server logs</strong>: IP address, user-agent, referrer, and timestamps for security and abuse prevention. Logs are rotated and retained briefly.</li>
-      <li><strong>Support messages</strong>: content you send to us (e.g., email, forms).</li>
-      <li><strong>Analytics</strong> (opt-in): privacy-focused tools like Plausible/PostHog (cookie-free or minimal, if enabled).</li>
-    </ul>
+      <h2>3. Advertising</h2>
+      <h3>3.1 Google AdSense</h3>
+      <p>
+        We may display advertisements served by Google AdSense. Google, as a third-party vendor, uses
+        cookies and similar identifiers (such as advertising IDs) to serve ads based on your prior visits
+        to this and other websites and to measure ad performance. How Google uses information from sites
+        that use its services is explained at
+        <a href="https://policies.google.com/technologies/partner-sites" target="_blank" rel="noopener noreferrer">policies.google.com/technologies/partner-sites</a>.
+        You can opt out of personalised advertising at
+        <a href="https://www.google.com/settings/ads" target="_blank" rel="noopener noreferrer">google.com/settings/ads</a>,
+        and out of many third-party vendors' cookies at
+        <a href="https://www.aboutads.info/choices/" target="_blank" rel="noopener noreferrer">aboutads.info/choices</a>.
+      </p>
+      <p>
+        If you are in the European Economic Area, the United Kingdom or Switzerland, personalised ads are
+        shown only with your consent, collected through a consent prompt that meets the IAB Transparency
+        and Consent Framework requirements Google applies to publishers. Where consent is not given, any
+        ads shown are non-personalised and rely only on contextual information such as the page content
+        and coarse location derived from your IP address.
+      </p>
+      <h3>3.2 A-Ads</h3>
+      <p>
+        The home page includes a single, clearly labelled "Sponsored" banner served in an iframe by
+        A-Ads (<code>acceptable.a-ads.com</code>). The banner can be closed, and that choice is kept for
+        the session. A-Ads describes its unit as cookieless; its own policy is at
+        <a href="https://a-ads.com/privacy-policy" target="_blank" rel="noopener noreferrer">a-ads.com/privacy-policy</a>.
+        As with any embedded third-party resource, A-Ads receives your IP address and request headers
+        when the iframe loads.
+      </p>
 
-    <h2>3) Cookies & local storage</h2>
-    <p>
-      We prefer no or minimal cookies. Where needed (e.g., remembering theme, network selection, or session
-      state), we use local storage or short-lived cookies. You can clear them in your browser settings.
-    </p>
+      <h2>4. Data processed by our blockchain services</h2>
+      <h3>4.1 Public RPC (rpc.animica.org)</h3>
+      <p>
+        The JSON-RPC endpoint logs the requesting IP address, the RPC method name, the response code and
+        the request duration. It does not persist request bodies beyond what is needed to serve the call.
+        Transactions you submit through <code>tx.sendRawTransaction</code> are, by design, broadcast to
+        the peer-to-peer network and recorded permanently on the public ledger, together with the sending
+        address, recipient, amount and fee. An IP address in our logs is not linked to an on-chain address
+        unless you submit a transaction from that IP, in which case the two appear in the same log line
+        for the retention period below.
+      </p>
+      <h3>4.2 Block explorer (explorer.animica.org)</h3>
+      <p>
+        The explorer is a read-only view of public chain data. Its web server and API log requests in the
+        same way as this site (section 2.1), including the addresses and transaction hashes you search
+        for, because they are part of the URL.
+      </p>
+      <h3>4.3 Mining pool (pool.animica.org)</h3>
+      <p>
+        To pay miners, the pool must record the payout address you connect with, the IP address of each
+        stratum connection, share submissions, and payout transactions. The pool's public statistics
+        pages show aggregate hashrate and, for a given payout address, that address's worker statistics;
+        they do not show IP addresses.
+      </p>
+      <h3>4.4 Wallet apps</h3>
+      <p>
+        The browser-based web wallet at wallet.animica.org was discontinued on 2026-07-11 and now serves a
+        notice only; it never held keys. The wallet apps we publish (browser extension, desktop, mobile)
+        are non-custodial: keys are generated and used on your device and are never sent to us. They make
+        RPC calls on your behalf, so the RPC logging in 4.1 applies to those calls.
+      </p>
+      <h3>4.5 AI API and developer services</h3>
+      <p>
+        animica.dev, console.animica.org and pay.animica.dev have their own account-based terms and
+        notices shown at sign-up or on first use, because they process API keys, prompts and payment
+        records that this site does not. This policy does not replace them.
+      </p>
 
-    <h2>4) How we use information</h2>
-    <ul>
-      <li>To operate the Services (routing requests to RPC/WS endpoints, delivering docs and assets).</li>
-      <li>To secure our infrastructure (rate limiting, DDoS mitigation, fraud prevention).</li>
-      <li>To improve performance and user experience (aggregated, anonymized metrics).</li>
-      <li>To communicate with you when you contact us (support replies, critical notices).</li>
-    </ul>
+      <h2>5. Retention</h2>
+      <table class="aicf-table">
+        <thead><tr><th>Data</th><th>Retention</th><th>Purpose</th></tr></thead>
+        <tbody>
+          {retention.map(([d, r, p]) => (
+            <tr><td><strong>{d}</strong></td><td>{r}</td><td>{p}</td></tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="aicf-muted">
+        Logs may be kept longer in the specific case of an ongoing security investigation or a legal
+        obligation, and only for as long as that reason exists.
+      </p>
 
-    <h2>5) Third-party processors</h2>
-    <p>
-      We may use reputable providers for hosting, analytics (opt-in), crash reporting, or email delivery. We
-      require contractual safeguards and minimize data sharing. Current providers may be listed in our
-      <InlineLink href="/humans.txt">humans.txt</InlineLink> or documentation.
-    </p>
+      <h2>6. Services covered by this policy</h2>
+      <p>
+        animica.org, rpc.animica.org, explorer.animica.org, pool.animica.org and
+        academy.animica.org. Services with their own notices are listed in 4.5.
+      </p>
 
-    <h2>6) Data retention</h2>
-    <p>
-      Server logs are retained for a short period (typically ≤ 30 days) unless needed to investigate abuse.
-      Support messages are kept as long as reasonably necessary to address your request.
-    </p>
+      <h2>7. Software telemetry (opt-in)</h2>
+      <p>
+        The <code>animica</code> package, the wallets and the SDKs send no telemetry unless you turn it
+        on (<code>ANIMICA_TELEMETRY=1</code>, <code>--telemetry=on</code>, or a wallet's Settings → Privacy
+        toggle). When enabled, the data is limited to version, platform, feature flags, timings and error
+        counts. It never includes private keys, mnemonics, wallet addresses, transaction bodies, clipboard
+        contents or precise location. Details are in <code>docs/legal/PRIVACY.md</code>.
+      </p>
 
-    <h2>7) Your choices & rights</h2>
-    <ul>
-      <li>Opt out of analytics in the UI (where available) or block via your browser.</li>
-      <li>Request deletion of support messages by contacting us.</li>
-    </ul>
+      <h2>8. Legal basis and international transfers</h2>
+      <p>
+        Where the GDPR or UK GDPR applies, we rely on our legitimate interest in running secure, reliable
+        services for access logging and abuse prevention, and on your consent for personalised advertising
+        and for any opt-in telemetry. Our servers and those of the third parties named above may be located
+        outside your country; Google's and A-Ads' transfer mechanisms are described in their own policies.
+      </p>
 
-    <h2>8) Security</h2>
-    <p>
-      We use transport encryption (HTTPS), least-privilege access, and defense-in-depth practices. Despite
-      these measures, no system is perfectly secure—please handle secrets (seed phrases, private keys) with care.
-    </p>
+      <h2>9. Your rights</h2>
+      <p>
+        Depending on where you live, you may have the right to access, correct, delete or restrict the
+        processing of personal data, to object to processing based on legitimate interest, to data
+        portability, and to lodge a complaint with a supervisory authority. Because the only personal data
+        we ordinarily hold is an IP address in a rotating log, we can usually act on a request only if you
+        tell us the IP address and approximate times involved. Data recorded on the blockchain cannot be
+        deleted by anyone, including us.
+      </p>
 
-    <h2>9) Children’s privacy</h2>
-    <p>
-      The Services are not directed to children under 13 (or the equivalent age in your jurisdiction). We do
-      not knowingly collect personal information from children.
-    </p>
+      <h2>10. Children</h2>
+      <p>
+        This site is not directed at children under 16 and we do not knowingly collect data from them.
+      </p>
 
-    <h2>10) International transfers</h2>
-    <p>
-      Our infrastructure and providers may operate globally. Where required, we implement appropriate
-      safeguards for cross-border data transfers.
-    </p>
+      <h2>11. Third-party links</h2>
+      <p>
+        We link to GitHub, PyPI, NonKYC, X and other sites. Their privacy practices are their own. A link
+        is not an endorsement and does not make us responsible for that site's data handling.
+      </p>
 
-    <h2>11) Changes to this policy</h2>
-    <p>
-      We may update this policy from time to time. Material changes will be noted here with a new “Last updated”
-      date. Your continued use of the Services after changes take effect indicates acceptance.
-    </p>
+      <h2>12. Changes</h2>
+      <p>
+        We will update this page when our practices change and revise the effective date at the top. If a
+        change materially expands what we collect (for example, enabling an analytics script), we will
+        note it here before it takes effect.
+      </p>
 
-    <h2>12) Contact us</h2>
-    <p>
-      Questions or requests? Email
-      <InlineLink href="mailto:privacy@animica.dev">privacy@animica.dev</InlineLink>
-      or <InlineLink href="mailto:security@animica.dev">security@animica.dev</InlineLink>.
-    </p>
+      <h2>13. Contact</h2>
+      <p>
+        Privacy questions and requests: <a href="mailto:privacy@animica.org">privacy@animica.org</a>.
+        General contact: <a href="mailto:contact@animica.org">contact@animica.org</a>.
+        Security issues: <a href="mailto:security@animica.org">security@animica.org</a> (see <a href="/security">Security</a>).
+      </p>
 
-    <hr />
-
-    <p class="text-xs opacity-70">
-      Note: On-chain data (transactions, addresses, events) is public by design and may be mirrored by third-party
-      indexers and explorers. Exercise caution when associating addresses with personal identities.
-    </p>
-
-    <script type="application/ld+json" is:inline>
-      {JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "PrivacyPolicy",
-        name: "Animica Privacy Policy",
-        dateModified: lastUpdated,
-        url: "/privacy",
-        publisher: { "@type": "Organization", name: "Animica" },
-        inLanguage: "en"
-      })}
-    </script>
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/legal/PRIVACY.md · website/src/layouts/BaseLayout.astro (fonts) · website/src/components/AdBanner.astro ·
+        website/src/utils/analytics.ts (opt-in adapters, not enabled) · Google partner-sites policy
+      </p>
+    </div>
   </section>
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.4rem; margin-top: 2rem; }
+  .page-prose h3 { font-size: 1.05rem; margin-top: 1.1rem; }
+  .page-prose p { margin-top: 0.7rem; line-height: 1.65; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; }
+</style>

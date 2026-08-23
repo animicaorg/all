@@ -1,0 +1,18 @@
+---
+title: "Animica 7.1.9: state-commitment enforcement at block 44,444"
+description: "Promotes the shadow state-root check to a self-gating consensus rule, closes the phantom-deposit admission hole from 7.1.8, and recovers the ANM-2026-07 treasury-scam funds."
+date: 2026-07-12
+tags: ["release", "consensus", "fork", "security", "incident"]
+---
+
+Animica 7.1.9 is the consensus-level answer to the phantom-deposit incident: transactions that sat in confirmed blocks but had reverted in-block without moving funds, which an integrator crediting on inclusion mistook for deposits.
+
+**7.1.8 (same weekend): fail closed at admission.** The RPC balance check had been silently skipping because its state handle was `None` on the live node, so unfundable transfers reached blocks and reverted there. The sender balance is now read through the authoritative path behind `state.getBalance`; the force-chain submit path rejects an unresolvable sender or unverifiable balance instead of skipping. A consensus-level "execution must succeed" gate was considered and rejected as split-unsafe. The guidance to integrators stands: credit on executed state change, not on inclusion.
+
+**`FORK_STATE_COMMITMENT` at mainnet block 44,444.** From that height, a block that commits a *non-zero* `stateRoot` must commit the real post-execution root. Every node re-applies the block to its parent state — on the same `_apply_state_reorg` path used for both tip extension and reorgs, which is the bypass that sank an earlier attempt — and rejects a mismatch. The rule is self-gating: a zero or uncommitted root is accepted, so a not-yet-upgraded miner's blocks are never false-rejected and adoption cannot split the chain. Fork choice gains `mark_invalid`, backed by a durable invalid set, so a rejected block cannot remain the heaviest tip and be re-selected forever. A compute error inside the check fails open on that one block rather than halting. Miners seal the root via `compute_sealed_state_root`, the identical apply.
+
+The rule shipped dormant on mainnet pending real root sealing by miners, a live zero-mismatch shadow window, and adversarial review; enforcement being live is safe meanwhile because every current block committed a zero root.
+
+**Treasury-scam clawback, also at 44,444.** A one-time, height-gated migration recovers funds scammed from the foundation treasury — about 4,000,799.837 ANM from an ML-DSA-65 account, about 9,248.762 ANM from a stranded SPHINCS+ account, and about 1,643,614.049 ANM from a third source added in a follow-up commit — to the foundation treasury, and freezes the source accounts at the same height. Same contract as the 6.0.5 clawback: deterministic, debit equals credit, never raises out of block application, reorg-safe.
+
+7.1.9 was merged to main on 2026-07-13 with consensus code verified byte-identical to the deployed mainnet node and the published wheel.

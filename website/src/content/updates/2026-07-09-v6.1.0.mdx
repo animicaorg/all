@@ -1,0 +1,19 @@
+---
+title: "Animica 6.1.0: closing the unauthenticated wallet RPC oracle"
+description: "Behind a reverse proxy every RPC request looked local, so wallet.send, wallet.createAddress and backupwallet were reachable from the internet. 6.1.0 treats forwarded requests as remote."
+date: 2026-07-09
+tags: ["release", "security", "rpc", "incident"]
+---
+
+Animica 6.1.0 fixes a serious authorization hole in the node's JSON-RPC server, found and closed on 2026-07-09.
+
+Behind nginx, every `/rpc` request reached the node over loopback. The node's `_is_local_ip()` check therefore authorized the `wallet.*` namespace for the whole internet. Two live, unauthenticated oracles resulted:
+
+- **`wallet.send` / `wallet.createAddress`** — remote spend and address minting from the node's own key store.
+- **`backupwallet`** (the Bitcoin-compatible RPC) — a `shutil.copy2` of the plaintext node key store, containing the secret key of every wallet the node held, to an arbitrary path. Chained with `snapshot.downloadChunk`, this allowed exfiltration of all node keys.
+
+The fix adds a public-edge detector, `_is_public_edge_request`, which treats any request carrying `X-Real-IP`, `X-Forwarded-For` or `X-Animica-Public-Edge` as **remote**, so the localhost bypass no longer applies behind a reverse proxy. `backupwallet` now calls `_authorize_wallet_rpc(ctx)` exactly as `wallet.send` does. Direct-localhost callers, private-network callers and admin-token callers are unaffected.
+
+Operators running a node behind any proxy should upgrade immediately. The same class of problem — trusting a forwarding header as evidence of locality — was closed from the other direction in 7.0.0, which stopped a spoofed `X-Forwarded-For: 127.0.0.1` from *gaining* local status: the is-local and admin-allowlist checks now use only the real transport peer and treat any forwarding header as remote.
+
+Together with the 6.0.0 release's at-rest wallet encryption (`animica wallet encrypt`, `ANIMICA_WALLET_PASSPHRASE`), this removes the two ways a node's key store could leave the machine through RPC. Self-hosted node operators need the new package; `pip install -U animica` and restart.

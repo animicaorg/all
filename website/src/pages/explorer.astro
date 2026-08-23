@@ -6,124 +6,189 @@ import MetricTicker from "../components/MetricTicker.astro";
 import StatusBadge from "../components/StatusBadge.astro";
 import { links } from "../config/links";
 
-const pageTitle = "Explorer — browse blocks, txs, events";
+const pageTitle = "Explorer";
 const pageDesc =
-  "Animica Explorer is a lightweight web app to browse blocks, transactions, receipts, logs, and network metrics in real time.";
+  "What the Animica block explorer shows and how to read it: blocks, transactions, confirmations, addresses, the rich list, mempool, L2 batches and the public REST API.";
+
+const headCurl = `curl -s -X POST ${links.rpc.url} \\
+  -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq .`;
+
+const restCurl = `# Same data through the explorer's REST API (GET, no key)
+curl -s https://explorer.animica.org/api/head | jq '.head.height, .stats.avgBlockTime'
+curl -s https://explorer.animica.org/api/tx/0x<txhash> | jq .
+curl -s https://explorer.animica.org/api/address/anim1zqp... | jq .
+curl -s https://explorer.animica.org/api/circulating-supply`;
+
+const pages = [
+  ["/", "Home", "Head height, Θ (thetaMicro), peer count, mempool size, measured average block time, latest blocks and transactions."],
+  ["/block/{n}", "Block", "Header fields (hash, parent, timestamp, nonce, mixSeed, roots), coinbase reward split, and every transaction the block contains."],
+  ["/tx/{hash}", "Transaction", "Sender, recipient, amount in ANM and nANM, gas limit and price, validity window, status, block, and the confirmation count."],
+  ["/address/{anim1…}", "Address", "Balance, account kind (ML-DSA-65 account or contract), and a paginated history of incoming and outgoing transactions and coinbase credits."],
+  ["/richlist", "Rich list", "Addresses ranked by balance with supply concentration metrics; the foundation treasury address is identifiable here."],
+  ["/mempool", "Mempool", "Transactions admitted by the explorer's node but not yet included in a block."],
+  ["/search?q=", "Search", "Accepts a height, a block hash, a transaction hash or an address."],
+];
+
+const apiRoutes = [
+  ["GET /api/head", "Head, canonical height, peer and mempool stats, recent Θ history"],
+  ["GET /api/blocks?limit=&cursor=", "Paginated block list"],
+  ["GET /api/block/:hashOrHeight", "Block detail"],
+  ["GET /api/tx/:hash", "Transaction detail with confirmations"],
+  ["GET /api/address/:addr", "Balance and history"],
+  ["GET /api/mempool", "Pending transactions"],
+  ["GET /api/richlist, /api/richlist/summary", "Rich list and supply metrics"],
+  ["GET /api/circulating-supply", "Circulating supply in ANM (plain number)"],
+  ["GET /api/search?q=", "Unified search"],
+  ["GET /api/l2/status, /api/l2/batch/:n, /api/l2/tx/:hash", "ANM-native L2 rollup views"],
+  ["GET /api/aicf/summary, /api/aicf/workers", "AICF registry and worker views"],
+  ["GET /api/mining/info", "Miner-facing template availability and sync phase"],
+];
 ---
 
 <BaseLayout title={pageTitle} description={pageDesc}>
-  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
-    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Explorer</h1>
-    <p class="mt-3 text-base opacity-80">
-      The Explorer gives you a live view into the chain: heads, finalized blocks, transaction
-      receipts, contract events, and data-availability commitments. It connects directly to your
-      configured RPC endpoint and never requires wallet permissions for read-only views.
-    </p>
+  <section class="aicf-section">
+    <div class="aicf-container">
+      <span class="aicf-kicker">Explorer</span>
+      <h1 class="aicf-heading">Reading the Animica block explorer</h1>
+      <p class="aicf-subheading">
+        <a href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">explorer.animica.org</a>
+        is the project's open-source block explorer (<code>explorer2/</code> in the monorepo). It indexes
+        mainnet from its own node and exposes everything it shows through a public REST API. This page
+        explains what each view means; the longer walkthrough is at
+        <a href="/learn/block-explorer-guide">/learn/block-explorer-guide</a>.
+      </p>
+      <div class="aicf-btn-row" style="align-items:center;">
+        <a class="aicf-btn" href={links.explorer.home()} target="_blank" rel="noopener noreferrer">Open Explorer</a>
+        <MetricTicker compact />
+        <StatusBadge size="sm" />
+      </div>
+      <p class="aicf-muted" style="margin-top:0.5rem; font-size:0.9rem;">
+        The ticker and badge above are your browser polling <code>{links.rpc.url}</code> directly.
+      </p>
+    </div>
+  </section>
 
-    <div class="mt-6 flex flex-wrap gap-3">
-      <a
-        href={links.explorer.home()}
-        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-               bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
-               hover:opacity-90"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        Open Explorer
-      </a>
+  <section class="aicf-section">
+    <div class="aicf-container page-prose">
+      <h2>What the explorer shows</h2>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Path</th><th>View</th><th>What you see</th></tr></thead>
+          <tbody>
+            {pages.map(([p, v, d]) => (
+              <tr><td><code>{p}</code></td><td><strong>{v}</strong></td><td class="aicf-muted">{d}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>How to read a transaction</h2>
+      <p>
+        Open <code>/tx/&lt;hash&gt;</code>. The two fields that matter most are <strong>status</strong> and
+        <strong>confirmations</strong>. A transaction is <em>pending</em> while it sits in the mempool,
+        <em>included</em> once a block contains it, and its confirmation count is the number of blocks
+        built on top of that block. Animica has no finality gadget: the <code>finalized</code> flag that <code>tx.getStatus</code> sets
+        at 12 confirmations is a node-side convention, not a consensus guarantee. Each confirmation makes a reorg less likely and, since block 75,000, the
+        protocol refuses reorgs deeper than 100 blocks. Six confirmations is a reasonable threshold for
+        everyday payments; wait longer for large amounts.
+      </p>
+      <p>
+        Amounts are shown in ANM with nine decimals; the RPC underneath returns integer nANM. A plain
+        transfer shows a gas limit of 21,000 and a gas price of 1 nANM, giving the 0.000021 ANM fee.
+        The <code>validAfter</code> and <code>validUntil</code> heights are the v2 transaction's validity
+        window: Animica transactions carry no nonce, and replay protection comes from the unique
+        transaction id within that window. A transaction rejected before inclusion never appears on the
+        explorer at all; check the RPC error code you received instead (for example -32013 for
+        insufficient funds, -32017 for fee too low).
+      </p>
+
+      <h2>How to read a block</h2>
+      <p>
+        The block page shows the header that miners hashed: parent hash, timestamp, <code>thetaMicro</code>
+        (the acceptance threshold Θ at that height), the nonce, <code>mixSeed</code>, and the root fields.
+        You will notice that <code>stateRoot</code>, <code>txsRoot</code> and <code>receiptsRoot</code> on
+        recent blocks are all zero. That is expected on mainnet today: the state-commitment rule
+        activated at 44,444 self-gates on non-zero roots, and the reference miner does not yet seal them,
+        so header roots are not a guarantee you should rely on. Validity comes from every node executing
+        every block, not from the roots. The coinbase transaction lists the reward split in force at that
+        height (50% miner / 25% treasury / 25% inference since 75,000, with the unclaimed inference share
+        rolling to the treasury).
+      </p>
+
+      <h2>How to read an address</h2>
+      <p>
+        Every mainnet account address is 66 characters and starts with <code>anim1zqp</code>, because the
+        bech32m payload begins with the ML-DSA-65 scheme id <code>0x1003</code>. Contract addresses use
+        scheme id <code>0x0000</code> and therefore look different after the prefix. The address page shows
+        the current balance and a history that includes coinbase credits for miners, so a miner's payout
+        address accumulates entries with no sender. The rich list is a useful sanity check: the foundation
+        treasury that receives its share of each block subsidy is visible there, and the explorer's
+        <code>/api/circulating-supply</code> endpoint is the source of the supply figure quoted on this site
+        (about 110.8 million ANM as of 2026-08-23).
+      </p>
+
+      <h2>Head statistics</h2>
+      <p>
+        The home page reports the explorer node's own view: its peer count (inbound and outbound), the
+        mempool size, a transactions-per-second estimate and an average block time computed over the
+        recent window (about 69 s on 2026-08-23 against the 60 s target). The Θ history chart shows the
+        retarget reacting to hashrate changes. Because these are one node's statistics, they can differ
+        slightly from your own node's numbers; the head height and hash should agree.
+      </p>
+
+      <h2>The REST API</h2>
+      <p>
+        Everything the UI renders is available as JSON. The API is read-only, needs no key, and is
+        rate-limited like the other public endpoints. If you are building something that polls
+        continuously, run your own node and the explorer software against it.
+      </p>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Route</th><th>Returns</th></tr></thead>
+          <tbody>
+            {apiRoutes.map(([r, d]) => (
+              <tr><td><code>{r}</code></td><td class="aicf-muted">{d}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <CodeBlock lang="bash" title="REST examples" code={restCurl} />
+      <p>
+        The explorer is a convenience layer over the same JSON-RPC anyone can call. The head it shows is
+        exactly what <code>chain.getHead</code> returns:
+      </p>
+      <CodeBlock lang="bash" title="Query the head via JSON-RPC" code={headCurl} />
+
+      <h2>Running your own explorer</h2>
+      <p>
+        <code>explorer2/</code> is a Node.js 18+ application with an API server and a web UI. It connects
+        to <code>http://127.0.0.1:8545/rpc</code> by default, so it works out of the box next to a
+        <a href="/node">local node</a>, and it can alternatively read a local <code>~/.animica</code>
+        database. Running your own copy is the only way to be independent of the hosted instance when
+        verifying balances or payments.
+      </p>
+
       {links.explorer2 && (
-        <a
-          href={links.explorer2.home()}
-          class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
-                 border border-[color-mix(in_srgb,var(--text-primary)_/_20%,transparent)]
-                 hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Open Explorer 2
-        </a>
+        <p>
+          A secondary explorer instance is configured for this site:
+          <InlineLink href={links.explorer2.home()} underline>{links.explorer2.home()}</InlineLink>.
+        </p>
       )}
-    </div>
-    <p class="mt-2 text-sm opacity-70">
-      Deep link: <InlineLink href={links.explorer.home()} underline>{links.explorer.home()}</InlineLink>
-    </p>
-  </section>
 
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 -mt-6 sm:mt-0">
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="text-sm font-medium opacity-80">Live Head &amp; Blocks</h3>
-        <div class="mt-3">
-          <MetricTicker compact />
-        </div>
-        <p class="text-xs opacity-70 mt-2">
-          Full block, tx, and event detail on the{" "}
-          <InlineLink href={links.explorer.home()} underline>Explorer</InlineLink>.
-        </p>
-      </div>
-
-      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="text-sm font-medium opacity-80">Network Metrics</h3>
-        <p class="mt-3 text-2xl font-semibold tracking-tight">Realtime</p>
-        <p class="text-xs opacity-70 mt-1">
-          Throughput and mining stats live on the{" "}
-          <InlineLink href="https://pool.animica.org" underline>pool dashboard</InlineLink>.
-        </p>
-      </div>
-
-      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="text-sm font-medium opacity-80">RPC Endpoint</h3>
-        <p class="mt-3 font-mono text-sm break-all">{links.rpc.url}</p>
-        <div class="mt-2 flex items-center gap-2">
-          <StatusBadge size="sm" />
-          <span class="text-xs opacity-70">JSON-RPC · POST only</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  {links.explorer2 && (
-    <section id="explorer-2" class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-10">
-      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-medium">Explorer 2</h3>
-        <p class="mt-2 text-sm opacity-80">
-          Secondary explorer endpoint for redundancy, custom indexes, or experimental features.
-        </p>
-        <InlineLink href={links.explorer2.home()}>Open Explorer 2 →</InlineLink>
-      </div>
-    </section>
-  )}
-
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-12 sm:mt-16">
-    <div class="grid gap-6 sm:grid-cols-2">
-      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-medium">Features</h3>
-        <ul class="mt-3 space-y-2 text-sm opacity-85 list-disc pl-5">
-          <li>Live head, recent blocks &amp; finalized checkpoints</li>
-          <li>Transaction details with receipts &amp; event logs</li>
-          <li>Contract views (ABI-aware decoding when available)</li>
-          <li>Data Availability commitments &amp; proofs</li>
-          <li>WebSocket subscriptions for new heads &amp; pending txs</li>
-        </ul>
-      </div>
-
-      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-        <h3 class="font-medium">Quickstart (API)</h3>
-        <p class="mt-2 text-sm opacity-85">Explorer uses the same JSON-RPC you can call directly:</p>
-        <div class="mt-3">
-          <CodeBlock lang="bash" title="Query head via JSON-RPC">
-{`curl -s -X POST ${links.rpc.url} \\
-  -H 'content-type: application/json' \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq .`}
-          </CodeBlock>
-        </div>
-      </div>
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        explorer2/README.md · explorer2/api/src/server.ts (routes) · docs/TX_WORKFLOW.md · consensus/finality.py ·
+        core/network_params.py · live explorer.animica.org/api/head on 2026-08-23
+      </p>
     </div>
   </section>
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2rem; }
+  .page-prose p { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; }
+  .page-prose :global(.not-prose) { margin-top: 0.9rem; }
+</style>

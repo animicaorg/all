@@ -1,0 +1,154 @@
+---
+title: "Useful work on Animica: what PoIES defines, and what mainnet enforces today"
+description: "The AI, quantum and storage proof lanes that PoIES can score, the quantum RNG beacon, AICF inference receipts, and an honest account of which of these are live on mainnet versus designed."
+date: 2026-08-23
+updated: 2026-08-23
+category: "economy"
+tags: ["poies", "useful-work", "aicf", "quantum", "qrng", "service-carve"]
+readingLevel: "advanced"
+sources:
+  - docs/QUANTUM_USEFUL_WORK.md
+  - docs/useful-work/hash_work_overview.md
+  - docs/useful-work/hybrid_demo.md
+  - docs/useful-work-demo.md
+  - docs/QUANTUM_AICF_CONTRIBUTE.md
+  - docs/quantum/OVERVIEW.md
+  - docs/quantum/PROOFS.md
+  - docs/quantum/BEACON_MIXING.md
+  - docs/quantum/QUANTUM_WORK_BLUEPRINT.md
+  - docs/ena_useful_work_and_mining.md
+  - spec/uwp_policy.yaml
+  - spec/poies_policy.yaml
+  - docs/consensus/poies_overview.md
+  - docs/ANIMICA_2026_STATE.md
+  - core/network_params.py
+  - consensus/useful_work_verify.py
+  - consensus/service_carve.py
+order: 2
+---
+
+Animica's consensus, PoIES, is designed so that verified external work (AI inference, quantum circuit runs, storage proofs, delay functions) can count toward block acceptance alongside hash work. This article describes that design, the quantum-entropy beacon and the AI receipt formats that exist in the codebase, and then draws a hard line around what is actually enforced on mainnet as of 2026-08-23. The short version: blocks are accepted on hash work alone; the useful-work verifier is armed in observe-only mode; no mainnet block has yet carried a useful-work proof; and AI providers are paid through a subsidy carve and off-chain settlement rather than through consensus scoring.
+
+## The PoIES acceptance rule
+
+PoIES (Proof-of-Integrated-External-Services) scores a candidate block as
+
+```text
+S = H(u) + Σ ψ(p_i)   and accepts it when   S ≥ Θ
+```
+
+`H(u) = −ln(u)` is the entropy of the hash draw: a miner searches nonces until the SHA3-256 header hash lands below a target derived from Θ, and the rarer the hash, the larger `H(u)`. Each `ψ(p_i)` is a non-negative credit for a verified external proof, computed from the proof's metrics under a policy table and then capped. Θ is the retargeted threshold, expressed in micro-nats (`thetaMicro` in `chain.getHead`; about 26.4 million µ-nats, i.e. 26.4 nats, as of 2026-08-23). The intended effect is that hashing guarantees liveness and permissionless entry while useful proofs shift the odds toward miners who also deliver real services. The math is in `spec/poies_math.md` and the walkthrough in [PoIES consensus explained](/learn/poies-consensus-explained).
+
+### The proof lanes and their caps
+
+`spec/poies_policy.yaml` is hashed into a policy root that headers commit to. For mainnet it defines these lanes (all figures in µ-nats):
+
+| Lane | Per-block cap | What drives ψ | Attestation required |
+|---|---|---|---|
+| HashShare | 7,000,000 | `k × log1p(d_ratio)` with floor 100,000 and ceiling 3,500,000 per share | none (it is the hash work) |
+| AI | 3,000,000 | 12,000 per `ai_units`, plus redundancy and trap bonuses, QoS multiplier | TEE quote (SGX/SEV/CCA) |
+| Quantum | 2,000,000 | 32,000 per `quantum_units`, trap-ratio and QoS modifiers | provider certificate + trap verification |
+| Storage, VDF | policy-defined | availability heartbeats; Wesolowski proof | per lane |
+| Global Γ | 12,000,000 | total Σψ allowed per block before comparing with Θ | — |
+
+Two further rules shape fairness: per-entity caps (no single AI or quantum provider may supply more than 20% of Γ in one block) and escort rules that require diversity for the top credit tier. Each proof carries a nullifier so it cannot be reused within a TTL window (65,536 blocks on mainnet). A hash-work lane (`HASH_WORK`, proof type 0x06) also exists for externally posted SHA-256/Scrypt jobs, documented in `docs/useful-work/hash_work_overview.md`.
+
+Put the numbers together and you see the design intent: with Γ capped at 12 nats against a Θ of roughly 26 nats, useful work could at most cover a little under half of the required score. It is meant to tilt the race, not to replace hashing.
+
+## The quantum lanes
+
+Animica uses the word "quantum" for two unrelated things. It is worth separating them.
+
+### Quantum useful work (QUW): attested entropy for the beacon
+
+`docs/QUANTUM_USEFUL_WORK.md` describes a lane in which a node with a hardware quantum random number generator (for example an ID Quantique Quantis card) contributes entropy to Animica's randomness beacon. The pipeline is:
+
+1. Raw bytes pass a NIST SP 800-90B health gate (repetition-count and adaptive-proportion tests, minimum 7.0 bits of min-entropy per byte by default).
+2. A YubiHSM 2 or TPM 2.0 signs a domain-separated transcript (`animica/qrng/attest/v1`) covering the entropy, the health report and a fresh round nonce. The trust root is the HSM/TPM, not the QRNG card.
+3. Every node re-runs the health tests, verifies the signature, checks freshness and replay, and accepts or rejects; acceptance is a pure function so all nodes agree.
+4. The winning contribution is mixed into the beacon and the contributor is credited under `ProofType.QUANTUM` via the same scorer as quantum compute proofs.
+
+The beacon mixing rule (`docs/quantum/BEACON_MIXING.md`) is a hedged SHA3-256 extractor over the VDF output and the hashes of accepted QRNG samples, so the output stays unpredictable if either source is sound, and the beacon never blocks on QRNG availability. A software fallback and a "pseudo-quantum" source exist so the pipeline can run with no hardware, but they are flagged non-attested and scored near zero. The beacon also backs a verifiable randomness service (`rand.quantumDraw`, `rand.getQuantumBeacon`, lottery/shuffle/dice primitives that anyone can recompute offline) and a `quantum_seed_for(job)` helper that seeds ENA training runs so that a worker cannot cherry-pick a favourable seed.
+
+### Quantum compute proofs: trap circuits
+
+`docs/quantum/OVERVIEW.md` and `docs/quantum/PROOFS.md` define a `QuantumProof v1` envelope for circuit-execution jobs: provider attestation, benchmark parameters (depth × width × shots), QoS, a nullifier and trap-circuit statistics. Traps are circuits with publicly known output distributions (Clifford stabilizer traps, randomized-benchmarking probes, heavy-output checks, IQP parity traps) inserted on a seed-derived schedule, so a provider cannot know which shots are audited. Per-family p-values are combined (Fisher's method) and a fraud proof can be assembled from the seed and the raw shot commitments. The documents are explicit that this is an audit mechanism, not a proof of quantum advantage.
+
+Note that `docs/QUANTUM_AICF_CONTRIBUTE.md` also offers a `quantum_stub_vdf` plan that any CPU can run. That is a VDF-like stand-in for testing the contribution pipeline and earns AICF credits; it is not quantum computation and is labelled `stub_v1` in its capability record.
+
+## The AI lanes
+
+### AICF jobs and proof-of-inference receipts
+
+The live AI layer is AICF. An OpenAI-compatible request to `https://animica.dev/v1` becomes an AICF job; a registered worker (`animica miner aicf-worker start --address … --tiers …`) claims and serves it. Since release 7.1.1 each response can carry a proof-of-inference receipt: the model id, a hash of the prompt, a hash of the output and the sampling seed, signed with ML-DSA-65 under the domain `animica.ai.proof-of-inference.v1`, and replayable offline with `animica ai verify | receipt | replay`. This is a non-consensus feature: it lets a client verify a response without trusting the server, and it is the input that a future consensus AI lane would consume. The framework itself is covered in [AICF: the AI compute framework](/learn/aicf-ai-compute-framework).
+
+### ENA useful-work jobs and the UWP policy
+
+ENA is the open training and data layer. `docs/ena_useful_work_and_mining.md` lists the job categories (scrape, extract, clean, dedupe, chunk, classify, label, summarize, embed, index, eval, dataset build, training prep) and the receipt fields each verified job produces. Receipts are mirrored into a local AICF credit ledger. The same document states the boundary plainly: "Direct chain anchoring still depends on the node-side submission hook that will consume the exported receipt envelope."
+
+`spec/uwp_policy.yaml` is a separate, pool-level mechanism: a miner's stratum share may attach up to 3 small proofs (`ena.eval.micro`, `compute.receipt.v1`; the `zkml.infer.v1` scheme is defined but disabled) and earn bonus credits from an AICF-funded epoch budget (2,000,000 credits per epoch on mainnet). `require_proofs: false` applies on every network, so shares are never rejected for lacking one. This is a pool-payout incentive, not a consensus rule.
+
+## What mainnet enforces today
+
+This section is the one to read if you are deciding whether to build or invest effort on useful work. Every statement below comes from the consensus code and its own documentation.
+
+**Block acceptance is hash work only.** `core/chain/block_import.py::_pow_sanity` accepts a block when `header_hash ≤ target(Θ)`. That is `S = H(u)` with `Σψ = 0`. No ψ credit is fed into acceptance for any lane.
+
+**No mainnet block has carried a proof.** A reconnaissance on 2026-08-15 found every stored mainnet block with `proofs: []` and `proofsRoot = ZERO32` (`consensus/useful_work_verify.py`). The reference miner does not attach useful-work proofs.
+
+**The verifier is armed, in shadow mode.** `FORK_USEFUL_WORK_VERIFY` activated at block 75,000. When a block does carry proofs it verifies each envelope: structure, canonical CBOR, ML-DSA-65 signature with the scheme id pinned by the verifier, miner == worker, requester ≠ worker, receipt freshness against an ancestor anchor, single-use nullifier and a payment reference, and it recomputes Σψ under code-committed caps. But on mainnet the verdict is advisory by default (`_useful_work_shadow()` returns true unless an operator sets `ANIMICA_USEFUL_WORK_ENFORCE=1`), and the rule is presence-gated: a block with zero proofs is valid at every height, forever. Enforcement is blocked on a concrete prerequisite: headers commit `receiptsRoot = 0`, so payment status is read from a node-local side table, and a snapshot-synced node would fail closed where an executing node accepts. The maintainers' own wording is that the fork "buys the observation window, not enforcement".
+
+**It is not "serve or don't mine", and it cannot force real inference in its present shape.** Because the rule requires `worker == coinbase`, the receipt is always signed by the miner's own key. The signature proves custody of the payout key and nothing about inference; a miner running a null worker with `outputDigest = sha3_256(b"garbage")` passes every check. The repository pins this with a regression test (`test_forged_proof_for_zero_inference_is_accepted`) precisely so nobody can later describe the rule as anti-fake-work. A related cost is that a miner who honestly buys inference from a third-party GPU cannot attach that worker's receipt at all.
+
+**The quantum beacon commitment is activated and dormant.** `FORK_QUANTUM_BEACON` (also 75,000) lets the canonical chain commit to an attested quantum beacon, but it is presence-gated: a block without a commitment is always valid, and only a block that carries one must carry a correct one. It can sit inert indefinitely, and it is expected to.
+
+**Where AI providers actually get paid is the service carve.** Since block 75,000, 25% of every subsidy (75 ANM) is withheld from the miner regardless of what the block contains. Settlement anchors, authority-signed transfers placed in a block by the settlement process, decide whether that slice goes to claiming providers or to the foundation treasury (`consensus/service_carve.py`). Any claim in a block takes the whole carve, pro-rata between claimants; no claim sends it to the treasury. What bounds payouts to work actually done is the settlement authority that decides who appears in an anchor, not consensus. See [ANM tokenomics](/learn/anm-tokenomics-and-emission) for the split and its history.
+
+### Status summary
+
+| Component | Where it is defined | Mainnet status (2026-08-23) |
+|---|---|---|
+| PoIES scoring `S = H(u) + Σψ ≥ Θ` | `spec/poies_math.md`, `consensus/scorer.py` | Σψ is always 0; acceptance is `header_hash ≤ target(Θ)` |
+| AI / quantum / storage / VDF proof lanes | `spec/poies_policy.yaml`, `proofs/*` | Policy committed in headers; no block has carried a proof |
+| Useful-work proof verification | `consensus/useful_work_verify.py`, fork at 75,000 | Active in shadow (observe-only); presence-gated; never requires a proof; never grants ψ |
+| Quantum beacon commitment | `FORK_QUANTUM_BEACON` at 75,000 | Active, dormant; no commitments produced |
+| QUW attested-entropy lane | `randomness/qrng/*`, `docs/QUANTUM_USEFUL_WORK.md` | Code and CLI exist; contribution accepted via RPC; not part of block acceptance |
+| Quantum compute proofs (trap circuits) | `docs/quantum/PROOFS.md`, `proofs/quantum_attest/*` | Verifier code and devnet demos; no mainnet proofs |
+| Proof-of-inference receipts (VIE) | release 7.1.1, `animica ai verify` | Live, non-consensus; client-side verification of AI responses |
+| AICF inference jobs | `aicf/*`, `aicf.*` RPC | Live; served by registered workers |
+| Service carve (25% of subsidy) | `consensus/service_carve.py`, fork at 75,000 | Live; paid to anchored providers or the treasury |
+| UWP pool-share bonuses | `spec/uwp_policy.yaml` | Pool-level credits; `require_proofs: false` on every network |
+| ENA receipt anchoring | `docs/ena_useful_work_and_mining.md` | Local ledger only; chain submission hook not yet wired |
+
+## Why the design is staged this way
+
+It would be easy to read the gap between design and enforcement as a failure of nerve. The code comments argue the opposite: each step is gated so that activation cannot split honest nodes. A rule that requires proofs is a 100% fleet cutover and is deliberately not co-located with the verification fork. Crediting Σψ toward Θ would relax the work requirement and needs a matching miner-side change, so it is out of scope until the verifier has an observation window. And the service carve is structured so that it cannot be gamed by self-attestation, at the cost of pushing the "who really served" question to the settlement authority. `docs/quantum/QUANTUM_WORK_BLUEPRINT.md` describes the same staging for quantum jobs: trusted staked workers first, committee verification second, cryptographic proofs third.
+
+The practical guidance that follows from all this:
+
+- If you mine, mine for hash work. Attaching proofs today changes nothing about your block's acceptance and, in shadow mode, cannot even get it rejected.
+- If you run a GPU, the paid path is an AICF worker claiming jobs, not consensus. Payment arrives via settlement anchors against the service carve.
+- If you are a researcher, the lanes, caps and trap families are specified in enough detail to implement against, and devnet (`animica:1337`) enforces the useful-work verifier from genesis so you can test the rejection path.
+
+## Key takeaways
+
+- PoIES defines a scored acceptance rule where verified external proofs add capped credit (Γ = 12 nats) to hash entropy; the policy is committed in headers.
+- On mainnet, acceptance is hash work only, every block to date carries no proofs, and the reference miner attaches none.
+- The useful-work verifier (fork at 75,000) runs in observe-only mode, never requires a proof, never grants ψ, and by its own documentation cannot prove that inference occurred.
+- The quantum entropy beacon, trap-circuit proofs and proof-of-inference receipts exist as working code; only the receipts are in routine live use, and none affects block acceptance.
+- AI providers are paid from the 25% service carve via settlement anchors, with the treasury receiving unclaimed blocks.
+
+## Sources
+
+- `docs/QUANTUM_USEFUL_WORK.md`
+- `docs/useful-work/hash_work_overview.md`
+- `docs/useful-work/hybrid_demo.md`
+- `docs/useful-work-demo.md`
+- `docs/QUANTUM_AICF_CONTRIBUTE.md`
+- `docs/quantum/OVERVIEW.md`, `docs/quantum/PROOFS.md`, `docs/quantum/BEACON_MIXING.md`, `docs/quantum/QUANTUM_WORK_BLUEPRINT.md`
+- `docs/ena_useful_work_and_mining.md`
+- `spec/uwp_policy.yaml`, `spec/poies_policy.yaml`
+- `docs/consensus/poies_overview.md`
+- `docs/ANIMICA_2026_STATE.md`
+- `core/network_params.py`, `core/chain/block_import.py`
+- `consensus/useful_work_verify.py`, `consensus/service_carve.py`

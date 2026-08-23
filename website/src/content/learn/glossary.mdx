@@ -1,0 +1,319 @@
+---
+title: "Animica glossary"
+description: "Alphabetical definitions of the terms used across Animica's protocol, wallets, mining, AI layer and documentation, each linked to the article that explains it in depth."
+date: 2026-08-23
+updated: 2026-08-23
+category: "reference"
+tags: ["glossary", "reference", "terminology"]
+readingLevel: "beginner"
+sources:
+  - docs/GLOSSARY.md
+  - docs/ANIMICA_2026_STATE.md
+  - AGENTS.md
+  - spec/params.yaml
+  - spec/poies_policy.yaml
+  - docs/wallet/HD_DERIVATION.md
+  - core/network_params.py
+order: 1
+---
+
+This glossary defines the vocabulary you will meet in Animica's specifications, code, wallets and RPC. Entries are alphabetical; each gives a short definition and, where one exists, a link to the learn article that goes deeper. Terms marked "design" describe mechanisms that exist in the specification or code but are not enforced on mainnet as of 2026-08-23; the [useful-work article](/learn/useful-work-ai-and-quantum) has the full status table.
+
+## A
+
+**Address** — The identifier that receives ANM. Animica addresses are bech32m strings with human-readable part `anim`; the payload is a 2-byte algorithm id followed by the SHA3-256 hash of the public key. An ML-DSA-65 account address is 66 characters and starts `anim1zqp`. See [addresses and bech32m](/learn/animica-addresses-bech32m).
+
+**Address freeze** — A validation-only rule active since block 42,000 (`FORK_ADDRESS_FREEZE`) under which a block is rejected if it contains a non-coinbase transaction touching a known-compromised address. The frozen set contains a single entry, the 2026-07 attacker address. See [security and threat model](/learn/security-and-threat-model).
+
+**AICF (AI Compute Fund / AI compute framework)** — Animica's off-chain AI layer: job matching, provider registry, inference serving, credits and settlement, exposed through the `aicf.*` RPC namespace. An OpenAI-compatible request to `https://animica.dev/v1` becomes an AICF job served by a registered worker. See [AICF](/learn/aicf-ai-compute-framework).
+
+**AICF credits** — An accounting unit earned by workers and contributors inside AICF (block credits, job receipts, contribution plans) and claimed through `animica aicf claim`. Credits are not ANM until settled.
+
+**AICF worker** — A process started with `animica miner aicf-worker start --address … --tiers …` that registers to claim and serve inference jobs. A GPU is recommended for the `flagship` tier.
+
+**Alpha tuner (α-tuner)** — A slow fairness corrector in the PoIES policy that nudges relative scoring of under-represented proof types over rolling windows, bounded to avoid oscillation. Design; no proofs are scored on mainnet today.
+
+**Animica Pay** — The hosted merchant payment service at https://pay.animica.dev: payment intents, hosted checkout, invoices, point of sale and signed webhooks, with a 2.00% fee and all amounts in integer nANM. See [how to buy and accept ANM](/learn/how-to-buy-and-accept-anm).
+
+**ANM** — The native coin of Animica. It pays transaction fees and contract gas, settles AI compute, and is what the block subsidy mints. 9 decimals. See [ANM tokenomics](/learn/anm-tokenomics-and-emission).
+
+**`anim1zqp…`** — The prefix every ML-DSA-65 account address shares, because the bech32m encoding of algorithm id 0x1003 produces the characters `zqp` directly after the separator.
+
+## B
+
+**Base fee** — In the fee runtime, the per-gas component of a fee that can be burned or routed rather than paid to the miner; `spec/params.yaml` describes a 50% burn, but the runtime's mainnet default base fee is 0, so today the whole fee goes to the block producer. See [transactions and fees](/learn/transactions-and-fees).
+
+**Base units (nANM)** — The integer unit all APIs use. 1 ANM = 1,000,000,000 nANM (nano-ANM). Never send floats.
+
+**bech32m** — The checksummed address encoding defined in BIP-350, using the constant 0x2bc830a3. Animica requires bech32m; a plain bech32 (BIP-173) checksum is invalid.
+
+**BIP-39** — The mnemonic-phrase standard Animica wallets use as the root of HD derivation: a 12- or 24-word phrase becomes a 64-byte seed. See [wallets and HD derivation](/learn/wallets-and-hd-derivation).
+
+**Block** — A header plus its transactions and (optionally) proofs. Mainnet blocks are limited to 2,000,000 bytes, 40,000,000 gas and 20,000 transactions.
+
+**Block subsidy** — The new ANM a block mints: 300 ANM per block in the first epoch, halving every 1,350,000 blocks, with a 0.0001 ANM tail. Often called the block reward. See [ANM tokenomics](/learn/anm-tokenomics-and-emission).
+
+**Block time** — The target interval between blocks, 60 seconds on mainnet. The measured average is about 67 seconds (2026-08-23); a 60-second minimum-spacing parameter exists but is not binding on the live network.
+
+**Bounded retarget** — A rule active since block 75,000 (`FORK_BOUNDED_RETARGET`) that clamps the emergency difficulty reduction and adds a floor escape, closing a trapdoor in which one slow block could pin Θ at its minimum permanently. See [difficulty adjustment and Θ](/learn/difficulty-adjustment-and-theta).
+
+## C
+
+**CAIP-2 chain id** — The cross-chain identifier format `namespace:reference`. Animica mainnet is `animica:1`, testnet `animica:2`, devnet `animica:1337`; the `animica` namespace registration is an open pull request.
+
+**Canonical CBOR** — The deterministic CBOR encoding (RFC 8949 §4.2.1: sorted keys, minimal integers) used for transactions, headers and signing preimages so every node hashes identical bytes.
+
+**Chain id** — The integer identifying the network inside signed transactions; mainnet is 1. A mismatch is rejected with RPC error -32011.
+
+**Checkpoint (pinned)** — A block hash that nodes refuse to reorg past, pinned in code after specific past incidents. An operational safety net, not a finality mechanism.
+
+**Circulating supply** — The explorer endpoint `/api/circulating-supply` returns the node's `state.getTotalSupply` in whole ANM (about 110.79 M as of 2026-08-23). It is the ledger total, not adjusted for vesting.
+
+**Coinbase** — The address credited with the block subsidy and fees; also the name of the special transaction that pays it. Since block 75,000 the coinbase output is split between the miner, the foundation treasury and the service carve.
+
+**Confirmations** — The number of blocks built on top of the block containing a transaction. Because there is no finality gadget, confirmations are how settlement risk is measured; `tx.getStatus` reports them.
+
+**Contract address** — An address whose algorithm id is 0x0000, assigned to a deployed Python-VM contract. See [Python-VM smart contracts](/learn/python-vm-smart-contracts).
+
+**CDDL** — The schema language (Concise Data Definition Language) used for Animica's CBOR wire formats such as `spec/tx_format.cddl` and `spec/header_format.cddl`.
+
+## D
+
+**Data availability (DA)** — The subsystem that stores blobs as erasure-coded, namespaced leaves committed to by a DA root in the header, so light clients can sample for availability. Design-level on L1; the L2 has its own DA encoding.
+
+**DAS (Data availability sampling)** — Probabilistic sampling of DA shares with Merkle proofs to assert that a blob is available without downloading it.
+
+**Devnet / testnet** — Networks `animica:1337` and `animica:2` used for development. They have faucets and lower premines; mainnet has no faucet.
+
+**Difficulty** — On Animica, the threshold Θ. The Bitcoin-compatible RPC reports a synthetic difficulty `exp(thetaMicro / 10^6)` for tools that expect one.
+
+**Dilithium3** — The lineage name of ML-DSA-65 used in older documents. It refers to the same current scheme.
+
+**Domain separation** — Prefixing signed or hashed data with a fixed tag (for example `animica.tx.v1`, `animica.l2.tx.v1`, `animica.ai.proof-of-inference.v1`) so a signature valid in one context cannot be replayed in another.
+
+## E
+
+**Emission epoch** — A run of 1,350,000 blocks during which the subsidy is constant. Epoch 0 is heights 1 to 1,350,000; each later epoch halves the subsidy.
+
+**ENA** — The open training and data layer: CPU useful-work jobs (scrape, extract, embed, index, eval and others) and GPU fine-tuning, coordinated off-chain with local receipts and credits.
+
+**Escort rules** — PoIES policy requirements that a block include a mix of proof types to reach the top credit tier, preventing any single lane from dominating. Design.
+
+**Explorer** — https://explorer.animica.org, with pages `/tx/…`, `/address/…`, `/block/…` and a REST API under `/api/`. See [block explorer guide](/learn/block-explorer-guide).
+
+## F
+
+**Fee** — `gasLimit × gasPrice`, paid in nANM. A transfer is 21,000 gas at 1 nANM per gas, i.e. 21,000 nANM. Admission requires the sender's balance to cover amount plus fee.
+
+**Finality depth** — Since block 75,000 (`FORK_FINALITY_DEPTH`) the maximum reorg depth a node accepts is clamped into a code-committed range, so a block deep enough is irreversible on every node regardless of local configuration. It does not reject blocks and does not prevent one-block forks.
+
+**Fork (consensus fork)** — A rule change that activates at a fixed block height and applies only from that height onward (forward-only, grandfathered). Mainnet heights: 40,000 (PQ hardening, root commitment), 42,000 (address freeze), 42,001 (foundation split), 44,444 (inclusion implies execution), 50,000 (IOU settlement), 75,000 (treasury 25%, service carve, bounded retarget, value-carrying CALL, finality depth, quantum beacon, VM execution, useful-work verify).
+
+**Fork choice** — The rule that picks the canonical chain among competing tips: weight-based with deterministic tie-breakers and a maximum reorg depth.
+
+**forkId** — A 32-bit identifier (`3511060514` on mainnet) included in the transaction signing wrapper alongside the chain id, so signatures bind to a specific rule set.
+
+**Foundation treasury** — The address `anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga`, hard-coded in `consensus/rewards.py`, that has received 15% of each subsidy since block 42,001 and 25% (plus unclaimed service carve) since block 75,000.
+
+## G
+
+**Gamma cap (Γ)** — The ceiling on total useful-work credit Σψ in one block: 12,000,000 µ-nats on mainnet, with per-type and per-entity sub-caps. Design.
+
+**Gas** — The unit of execution cost. A transfer costs 21,000 gas; contract calls are metered against `vm_py/gas_table.json`; blocks hold up to 40,000,000 gas.
+
+**Gas price** — The nANM paid per gas unit. `eth_gasPrice` returns `0x1`: 1 nANM per gas on mainnet today.
+
+**Gas table** — `vm_py/gas_table.json`, the per-operation cost schedule for the Python VM.
+
+**Genesis** — Block 0, 2026-04-06T00:00:00Z, hash `0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de`. It credits the 81 M ANM premine and pays no subsidy.
+
+## H
+
+**H(u)** — The hash-work term of the PoIES score, `−ln(u)`, where `u` is the header hash treated as a uniform draw. Rarer hashes give larger `H(u)`. On mainnet today acceptance is equivalent to `H(u) ≥ Θ`.
+
+**Halving** — The 50% reduction of the block subsidy at each emission-epoch boundary (every 1,350,000 blocks). The first is expected around late 2028 to early 2029.
+
+**HashShare** — The proof type that represents ordinary hash work within PoIES; the only lane that contributes on mainnet, where it is evaluated directly as the header-hash target check.
+
+**HD derivation** — Deriving many keys from one seed. Animica uses BIP-39 → SLIP-0010 hardened derivation along `m/44'/4279885'/account'/0'/index'` to a 32-byte ML-DSA-65 seed; coin type 4279885 is ASCII "ANM". See [wallets and HD derivation](/learn/wallets-and-hd-derivation).
+
+**Head** — The current best block. `chain.getHead` returns its height, hash, chain id and `thetaMicro`. There is no `chain.getHeight`.
+
+**Header** — The block header: parent hash, roots, height, timestamp, Θ, nonce and related fields, encoded as canonical CBOR. The header hash is SHA3-256 of that encoding.
+
+**HRP** — The human-readable part of a bech32m string; `anim` for Animica.
+
+## I
+
+**Inclusion implies execution** — The rule active since block 44,444 (`FORK_STATE_COMMITMENT`): a block that commits a non-zero state root must commit the true post-execution root, so inclusion cannot be used to fake a payment that never ran. It self-gates on zero roots, which mainnet headers still carry, so it is armed rather than exercised; services such as Animica Pay wait for a receipt.
+
+**Intrinsic gas** — The up-front gas charged for a transaction's kind, size and signature before any execution. A plain transfer's intrinsic gas is its whole cost.
+
+**IOU settlement** — The mechanism (fork at 50,000, realised in release 9.0.0) by which authority-signed settlement-anchor transactions distribute carved rewards, originally designed for dVPN relays and now used for service claims.
+
+## J
+
+**JSON-RPC** — The node API: `POST https://rpc.animica.org/rpc`, JSON-RPC 2.0, namespaces `chain.*`, `state.*`, `tx.*`, `mempool.*`, `net.*`, `aicf.*` and flat `l2_*`. Described by `https://rpc.animica.org/openrpc.json`. See [JSON-RPC API guide](/learn/json-rpc-api-guide).
+
+## K
+
+**Keccak vs SHA3** — Animica's SHA3-256 is the NIST FIPS 202 function, which differs in padding from the pre-standard Keccak-256 that Ethereum uses. Using the wrong one produces wrong addresses and hashes.
+
+**Kyber-768 / ML-KEM** — The post-quantum key-encapsulation mechanism used in the P2P handshake, with HKDF-SHA3-256 for session keys. See [P2P networking and sync](/learn/p2p-networking-and-sync).
+
+## L
+
+**L2 (ANM-native rollup)** — The payment rollup in `l2/` (release 10.x): ANM is the only asset, every transaction is ML-DSA-65 signed, batches settle to L1 with a designated sequencer. RPC methods are `l2_status`, `l2_getBalance` and related. See [the Animica L2 rollup](/learn/animica-l2-rollup).
+
+**Light client** — A client that verifies headers and inclusion proofs rather than executing every block. Animica's SDKs expose `light_client/verify` helpers; watch-only address books use them.
+
+## M
+
+**Mempool** — The node's pool of admitted, unconfirmed transactions. `mempool.simulateAdmission` dry-runs the admission checks.
+
+**Merkle root** — A hash committing to a set (transactions, receipts, proofs, state) so membership can be proven with a short path. Headers carry several.
+
+**Miner** — A node or process searching nonces so the header hash falls under the target. `animica up` runs the reference miner; a GPU miner and a Qt GUI exist. See [mining guide](/learn/mining-guide).
+
+**Mining pool** — `stratum+tcp://pool.animica.org:3333` (PPS) and `:3334` (solo, 95/5). Stats at https://pool.animica.org/api/pool/summary.
+
+**ML-DSA-65** — The lattice-based digital signature scheme standardised in FIPS 204 and the only signature scheme mainnet accepts: scheme id 0x1003, public key 1,952 bytes, secret key 4,032 bytes, signature 3,309 bytes. See [post-quantum signatures](/learn/post-quantum-signatures-ml-dsa-65).
+
+**Minimum block spacing** — A `spec/params.yaml` parameter (60,000 ms on mainnet) intended to stop bursts of fast blocks. Intervals as short as 8 seconds are observed on the live chain, so it is not an enforced rule today.
+
+## N
+
+**Nats / µ-nats** — The unit of PoIES scores and of Θ: natural-log units, stored as integers of micro-nats (1 nat = 1,000,000 µ-nats). `thetaMicro` is Θ in µ-nats.
+
+**NMT (Namespaced Merkle Tree)** — A Merkle tree whose leaves carry namespace ranges, used by the DA layer so a client can prove all leaves of one namespace. Design-level on L1.
+
+**Nonce (header)** — The field a miner varies to search for a valid header hash.
+
+**Nonce-less transaction (v2)** — The current transaction body, which has no account nonce; replay protection comes from a `validAfter`/`validUntil` height window, a random salt and transaction-id uniqueness. Legacy v1 nonce transactions are still accepted.
+
+**Nullifier** — A domain-separated digest attached to a proof so the same proof body cannot be credited twice within a TTL window (65,536 blocks on mainnet).
+
+## O
+
+**OpenRPC** — The machine-readable description of the JSON-RPC surface, in `spec/openrpc.json` and served live at `https://rpc.animica.org/openrpc.json`; `rpc.discover` returns it.
+
+## P
+
+**P2P** — The gossip network over which blocks, transactions and headers propagate; TCP port 30333 and QUIC on UDP 443 on mainnet.
+
+**PoIES** — Proof-of-Integrated-External-Services, the consensus rule `S = H(u) + Σψ ≥ Θ`. On mainnet Σψ is zero for every block, so acceptance reduces to hash work. See [PoIES consensus explained](/learn/poies-consensus-explained).
+
+**Policy root** — A Merkle hash of `spec/poies_policy.yaml` committed in headers, so all nodes score under the same policy.
+
+**Post-quantum (PQ)** — Cryptography believed secure against quantum computers. Animica signs with ML-DSA-65 and negotiates P2P sessions with ML-KEM; SPHINCS+ is legacy.
+
+**PPS** — Pay-per-share, the pool's payout mode: miners are credited per valid share at its expected value. Sub-block shares were built in pool 9.1.0, but the live pool currently hands every worker the block target, so shares and blocks coincide in practice (2026-08-23).
+
+**Premine** — The 81,000,000 ANM created at genesis, credited to one foundation-managed address and described in `spec/params.yaml` as foundation, treasury, AICF and founder buckets.
+
+**Proof envelope** — The uniform container for a useful-work proof: a type id, a body and a nullifier, plus typed metrics. Design on mainnet.
+
+**Proof-of-inference receipt** — A non-consensus receipt introduced in release 7.1.1 (the VIE): the model id, prompt hash, output hash and sampling seed of an AI response, signed with ML-DSA-65 under `animica.ai.proof-of-inference.v1`, verifiable offline with `animica ai verify`.
+
+**Provider** — In AICF, a registered entity that serves AI or quantum jobs, subject to SLA metrics and, by design, slashing.
+
+**ψ (psi)** — The capped, policy-mapped credit of one useful-work proof in the PoIES score. Σψ is the sum over a block's proofs. Zero on mainnet today.
+
+**Python-VM (vm_py)** — Animica's deterministic, gas-metered contract runtime that executes a restricted subset of Python. Storage values are bytes; `from stdlib import hash` provides SHA3. Live on mainnet since block 75,000. See [Python-VM smart contracts](/learn/python-vm-smart-contracts) and the [Hello Counter tutorial](/learn/hello-counter-contract-tutorial).
+
+## Q
+
+**QRNG** — A quantum random number generator. Animica's QUW lane accepts hardware-attested QRNG entropy into the randomness beacon; software fallbacks are flagged non-attested.
+
+**Quantum beacon** — A randomness beacon value built from accepted attested entropy. `FORK_QUANTUM_BEACON` (block 75,000) lets the chain commit to one, but commitments are optional and none are produced; the rule is dormant by design.
+
+**Quantum proof / trap circuits** — A `QuantumProof v1` envelope with provider attestation, benchmark parameters and trap-circuit statistics (Clifford stabilizer, randomized benchmarking, heavy-output and IQP traps) that make cheating statistically detectable. Design; no mainnet proofs.
+
+## R
+
+**Receipt** — The record of a transaction's execution: status, gas used, logs. Merchants should treat a payment as made only when its receipt proves that specific transaction executed.
+
+**Reorg** — Replacement of the chain tip by a competing branch. Possible on any proof-of-work chain; bounded in depth since block 75,000; the reason confirmations matter.
+
+**Retarget** — The per-block adjustment of Θ toward the 60-second target using a bounded exponential moving average. See [difficulty adjustment and Θ](/learn/difficulty-adjustment-and-theta).
+
+**RPC error codes** — Animica's structured rejections: -32010 invalid transaction, -32011 chain-id mismatch, -32012 bad signature, -32013 insufficient funds, -32016 gas too low, -32017 fee too low, -32018 transaction too large, -32020 duplicate.
+
+## S
+
+**Salt** — The random field in a v2 transaction that makes two otherwise identical transactions produce different ids.
+
+**Scheme id** — The 16-bit algorithm identifier at the front of an address payload and in the signature envelope: 0x1003 (4099) for ML-DSA-65, 0x1002 for legacy SPHINCS+, 0x0000 for contracts.
+
+**Service carve** — Since block 75,000, 25% of every subsidy (75 ANM) withheld from the miner and paid either entirely to providers named in a settlement anchor (pro-rata) or, if none, to the foundation treasury. Emission-conserving. See [ANM tokenomics](/learn/anm-tokenomics-and-emission).
+
+**Settlement anchor** — An authority-signed in-block transfer that distributes carved rewards to providers; the mechanism by which AI work is actually paid.
+
+**SHA3-256 / SHA3-512** — NIST SHA-3 hash functions. SHA3-256 hashes public keys into addresses and headers into block hashes; SHA3-512 hashes transaction signing preimages.
+
+**Signature envelope** — The signed transaction wrapper `{tx, sigs: [{alg: 4099, pubkey, sig}]}`, CBOR-encoded and submitted as hex via `tx.sendRawTransaction`.
+
+**SLIP-0010** — The hardened key-derivation scheme (HMAC-SHA512 chaining) Animica uses beneath BIP-39 to reach ML-DSA-65 seeds.
+
+**Solo mining** — Mining against your own node, or via the pool's `:3334` port with a 95/5 split.
+
+**SPHINCS+** — A hash-based post-quantum signature scheme (scheme id 0x1002) present in the code and early wallets but consensus-stranded: it cannot sign on mainnet. Do not send funds to a SPHINCS+ address.
+
+**State root** — The Merkle commitment to all account balances and contract storage after a block executes. Enforced for non-zero roots from block 44,444; mainnet headers currently commit a zero root.
+
+**Stratum** — The mining wire protocol the pool speaks (`stratum+tcp://`). ASIC and GPU miners connect with it.
+
+## T
+
+**Tail emission** — The 0.0001 ANM per-block floor below which the subsidy never falls; it applies from roughly epoch 22 onward and adds about 52.6 ANM per year.
+
+**Θ (theta)** — The PoIES acceptance threshold, the chain's difficulty, expressed in µ-nats. Returned as `thetaMicro` by `chain.getHead` (about 26.4 million as of 2026-08-23).
+
+**Tip (priority fee)** — The per-gas component of a fee paid to the block producer. `spec/params.yaml` describes a 90/10 split with the AICF pool, but the runtime default is 0 bps, so the whole tip goes to the producer today.
+
+**Transaction kinds** — `transfer` (move ANM), `deploy` (create a contract) and `call` (invoke one). A `call` may carry ANM value since block 75,000.
+
+**Treasury 25** — The fork at 75,000 (`FORK_TREASURY_25`) that raised the foundation treasury's share of the subsidy from 15% to 25%.
+
+**Trap circuits** — See quantum proof. Circuits with known outputs mixed unpredictably into a quantum job so that a provider cannot skip or spoof verification.
+
+**TEE** — Trusted execution environment (SGX, SEV-SNP, Arm CCA). The PoIES AI lane requires a TEE quote for proofs on mainnet; devnets may allow software attestation. Design.
+
+**txid** — The transaction hash, a SHA3 digest of the canonical body; uniqueness within the validity window is the v2 replay protection.
+
+## U
+
+**Useful work** — External computation (AI, quantum, storage, delay functions) that PoIES can credit toward block acceptance. Designed and partly implemented; not credited on mainnet. See [useful work: AI and quantum](/learn/useful-work-ai-and-quantum).
+
+**Useful-work verify** — The fork at 75,000 (`FORK_USEFUL_WORK_VERIFY`) that verifies any proofs a block carries. It never requires a proof, never grants ψ, and runs in observe-only mode on mainnet by default.
+
+**UWP (Useful Work Proof policy)** — `spec/uwp_policy.yaml`: a pool-level scheme letting stratum shares carry small proofs for bonus credits from an AICF budget. `require_proofs` is false everywhere.
+
+## V
+
+**validAfter / validUntil** — The block-height window inside which a v2 transaction may be included. Outside it the transaction is simply invalid, which is how an unconfirmed transaction expires.
+
+**Value-carrying CALL** — Since block 75,000 (`FORK_VALUE_CALL`) a contract call may transfer ANM to the callee, debited before execution and returned on revert.
+
+**VDF** — Verifiable delay function (Wesolowski construction) used in the randomness beacon and defined as a PoIES proof lane.
+
+**VIE (Verifiable Inference Engine)** — The release 7.1.1 component that produces proof-of-inference receipts and the `animica ai verify | receipt | replay` tooling.
+
+## W
+
+**Wallet** — Software holding ML-DSA-65 keys and signing transactions: the browser extension, Qt desktop, Flutter mobile and the CLI (the web wallet at wallet.animica.org was discontinued in July 2026). Downloads at https://animica.org/downloads.
+
+**Watch-only** — An address-book entry with no private key; it can show balances and detect payments but cannot sign.
+
+## X
+
+**x402** — An HTTP-level payment protocol (status 402) that Animica runs a paywall and facilitator for at https://x402.animica.dev, with an ANM-native lane identified as `animica:1`. See [x402 agent payments](/learn/x402-agent-payments).
+
+## Sources
+
+- `docs/GLOSSARY.md`
+- `docs/ANIMICA_2026_STATE.md`
+- `AGENTS.md`
+- `spec/params.yaml`, `spec/poies_policy.yaml`, `spec/uwp_policy.yaml`
+- `docs/wallet/HD_DERIVATION.md`
+- `core/network_params.py`, `consensus/rewards.py`, `consensus/service_carve.py`

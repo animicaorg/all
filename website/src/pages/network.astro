@@ -2,40 +2,50 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
+import MetricTicker from "../components/MetricTicker.astro";
+import StatusBadge from "../components/StatusBadge.astro";
 
 const title = "Network";
 const description =
-  "The Animica network: live post-quantum L1 chain endpoints (explorer, RPC, mining pool) plus AICF compute telemetry fetched from the live status endpoint.";
+  "Animica mainnet: chain parameters, consensus fork history with block heights, what confirmations mean on a chain without finality, public endpoints, and live chain and AICF telemetry.";
 const aicfApiBaseUrl =
   (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
   (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
   "https://aicf.animica.org/api";
 
-const chainEndpoints = [
-  {
-    name: "Block Explorer",
-    detail: "Blocks, transactions, and addresses on Animica mainnet (chain id 1).",
-    href: "https://explorer.animica.org",
-    label: "explorer.animica.org",
-  },
-  {
-    name: "Public JSON-RPC",
-    detail: "JSON-RPC 2.0 over HTTPS, POST only. See the developer docs for a curl example.",
-    href: "/developers#rpc",
-    label: "rpc.animica.org/rpc",
-  },
-  {
-    name: "Mining Pool",
-    detail: "PoIES useful-work mining with XMR dual-mining and live pool stats.",
-    href: "https://pool.animica.org",
-    label: "pool.animica.org",
-  },
-  {
-    name: "Web Wallet",
-    detail: "Post-quantum accounts with bech32m addresses (anim1...).",
-    href: "https://wallet.animica.org",
-    label: "wallet.animica.org",
-  },
+const chainParams = [
+  ["Chain id", "1", "Mainnet. Testnet is 2, devnet 1337. Signatures commit to the chain id, so a tx cannot be replayed across networks."],
+  ["Genesis time", "2026-04-06T00:00:00Z", "Header timestamp 1775433600."],
+  ["Genesis hash", "0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de", "Returned by chain.getChainIdentity and chain.getBlockByHeight [0]."],
+  ["Fork id", "3511060514", "Included in the signing wrapper animica:sign/v1 together with the chain id."],
+  ["Native coin", "ANM, 9 decimals", "1 ANM = 1,000,000,000 nANM. All RPC amounts are integer nANM (often hex-encoded)."],
+  ["Block target", "60 s", "Measured average is higher (about 67-70 s on 2026-08-23) because Θ retargets with an EMA and hashrate moves."],
+  ["Proof of work", "SHA3-256 over header || nonce", "PoIES acceptance: S = H(u) + Σψ ≥ Θ, with Σψ = 0 for every mainnet block so far."],
+  ["Difficulty", "thetaMicro (Θ, micro-nats)", "EMA retarget on ln(dt/T); bounded per-step and globally since block 75,000."],
+  ["Signature scheme", "ML-DSA-65 (FIPS 204), id 0x1003", "The only scheme accepted for new transactions. SPHINCS+ (0x1002) is legacy and cannot sign on mainnet."],
+  ["Address format", "bech32m, HRP anim", "Payload u16be(alg_id) || SHA3-256(pubkey); accounts start anim1zqp, contracts use alg id 0x0000."],
+  ["Transfer fee", "21,000 gas × 1 nANM", "0.000021 ANM on mainnet today; eth_gasPrice returns 0x1."],
+  ["Max tx size", "131,072 bytes", "Enough for several ML-DSA-65 signatures (3,309 B each) plus CBOR body."],
+  ["Reorg bound", "100 blocks", "Uniform finality depth enforced since block 75,000 (consensus/finality.py)."],
+  ["Emission", "300 ANM/block at genesis, halving every 1,350,000 blocks", "Code-enforced hard cap of 900,000,000 ANM; 81,000,000 ANM premine at height 0."],
+];
+
+const forks = [
+  ["40,000", "6.0.1", "FORK_PQ_HARDENING, FORK_ROOT_COMMITMENT", "Mandatory signature verification (ML-DSA-65 only) and header root checks.", "Reject rule"],
+  ["42,000", "7.0.0", "FORK_ADDRESS_FREEZE", "Blocks containing a non-coinbase tx touching a known-compromised address are rejected. One address is frozen.", "Reject rule"],
+  ["42,001", "7.1.0", "FORK_FOUNDATION_SPLIT", "Block subsidy re-split 85% miner / 15% foundation treasury. Total emission unchanged.", "Emission"],
+  ["44,444", "7.1.9", "FORK_STATE_COMMITMENT", "\"Inclusion implies execution\": state-commitment enforcement plus a value-preserving clawback migration.", "Reject rule + migration"],
+  ["50,000", "8.0.1 / 9.0.0", "FORK_VPN_RELAY_REWARDS (IOU settlement)", "Service IOUs (dVPN, AI, media) settled from the coinbase, at most 50 ANM/block carved from the miner share. Shipped inert; no extra minting.", "Emission (carve)"],
+  ["75,000", "9.5.0 - 9.6.0", "FORK_BOUNDED_RETARGET, FORK_FINALITY_DEPTH, FORK_VALUE_CALL, FORK_VM_EXEC, FORK_SERVICE_CARVE, FORK_TREASURY_25, FORK_QUANTUM_BEACON, FORK_USEFUL_WORK_VERIFY", "Bounded Θ retarget; 100-block reorg bound; value-carrying CALL; on-chain Python-VM execution; reward split 50% miner / 25% treasury / 25% inference providers (unclaimed inference share rolls to treasury). Quantum beacon and useful-work verification are presence-gated and, for mainnet, shadow-mode.", "Mixed"],
+];
+
+const endpoints = [
+  ["JSON-RPC", "POST https://rpc.animica.org/rpc", "JSON-RPC 2.0, CORS *. Namespaces chain.*, state.*, tx.*, mempool.*, net.*, aicf.*, l2_*. Discover with rpc.discover or /openrpc.json."],
+  ["Explorer REST", "https://explorer.animica.org/api/head", "Also /blocks, /block/:hashOrHeight, /tx/:hash, /address/:addr, /mempool, /richlist, /circulating-supply, /search?q=, /l2/status."],
+  ["Pool statistics", "https://pool.animica.org/api/pool/summary", "Network and pool hashrate, shares, blocks found. Stratum at pool.animica.org:3333 (PPS) and :3334 (solo)."],
+  ["ENA statistics", "https://pool.animica.org/api/ena/stats", "Useful-work jobs, receipts, training runs and contributor counts for the ENA layer."],
+  ["AICF status", `${aicfApiBaseUrl}/status`, "Service status and registry counts (providers, jobs, settlements) used by the telemetry below."],
+  ["Free AI API", "https://animica.dev/v1", "OpenAI-compatible, keyless, 30 requests/min/IP. Responses carry ML-DSA-65 proof-of-inference receipts."],
 ];
 
 const summaryMetrics = [
@@ -63,33 +73,123 @@ const healthMetrics = [
   <section class="aicf-section">
     <div class="aicf-container">
       <span class="aicf-kicker">Animica Network</span>
-      <h1 class="aicf-heading">One Chain, Two Workloads: Consensus + Compute</h1>
+      <h1 class="aicf-heading">Mainnet parameters, history and endpoints</h1>
       <p class="aicf-subheading">
-        Animica mainnet is a live post-quantum L1 secured by useful-work consensus (PoIES). The chain endpoints below are
-        always available; AICF compute telemetry further down is fetched live from the AICF status endpoint.
+        Everything on this page can be re-derived from the public RPC or from the repository. Live values
+        are polled from <code>rpc.animica.org</code> by your browser; the tables below are protocol
+        constants and dated facts.
       </p>
+      <div class="aicf-btn-row" style="align-items:center;">
+        <MetricTicker />
+        <StatusBadge size="sm" />
+      </div>
       <div class="aicf-btn-row">
-        <a class="aicf-btn" href="https://explorer.animica.org">Open Explorer</a>
-        <a class="aicf-ghost-btn" href="/mine">Start Mining</a>
-        <a class="aicf-ghost-btn" href="/developers#rpc">RPC Reference</a>
+        <a class="aicf-btn" href="https://explorer.animica.org" target="_blank" rel="noopener noreferrer">Open Explorer</a>
+        <a class="aicf-ghost-btn" href="/learn/poies-consensus-explained">How PoIES consensus works</a>
+        <a class="aicf-ghost-btn" href="/learn/block-explorer-guide">Reading the explorer</a>
       </div>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container">
-      <span class="aicf-kicker">Chain Endpoints</span>
-      <div class="aicf-grid-4" style="margin-top:0.95rem;">
-        {chainEndpoints.map((ep) => (
-          <article class="aicf-card">
-            <h3 style="font-size:1.1rem;">{ep.name}</h3>
-            <p class="aicf-muted" style="margin-top:0.45rem;">{ep.detail}</p>
-            <p style="margin-top:0.6rem;"><a href={ep.href}><code>{ep.label}</code></a></p>
-          </article>
-        ))}
+    <div class="aicf-container page-prose">
+      <h2>Chain parameters</h2>
+      <p>
+        Animica is a single-chain proof-of-work network. There is no validator set, no staking and no
+        checkpointing authority; the canonical chain is the heaviest valid chain under the PoIES
+        acceptance rule, with a reorg depth bound enforced since block 75,000.
+      </p>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Parameter</th><th>Value</th><th>Notes</th></tr></thead>
+          <tbody>
+            {chainParams.map(([k, v, n]) => (
+              <tr><td><strong>{k}</strong></td><td><code>{v}</code></td><td class="aicf-muted">{n}</td></tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <p class="aicf-muted" style="margin-top:0.75rem; font-size:0.9rem;">
-        The RPC endpoint accepts JSON-RPC over POST only — <code>https://rpc.animica.org/rpc</code>. GET requests are not served.
+      <p class="aicf-muted">
+        The 60-second target and the emission schedule are read from <code>spec/params.yaml</code> and
+        <code>consensus/rewards.py</code>; the reward split is the one in force since block 75,000. See
+        <a href="/learn/anm-tokenomics-and-emission">ANM tokenomics and emission</a> for the full schedule and
+        <a href="/learn/difficulty-adjustment-and-theta">difficulty adjustment and Θ</a> for the retarget maths.
+      </p>
+
+      <h2>Consensus forks</h2>
+      <p>
+        Rule changes are forward-only and height-gated: blocks below the activation height are validated
+        under the old rules, so history is never rewritten, and a node that has not upgraded keeps peering
+        until the first rule-violating block appears. Activation heights are pinned in
+        <code>core/network_params.py</code> and are not folded into the params hash, which is why upgraded
+        and legacy nodes can still talk during the upgrade runway.
+      </p>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Height</th><th>Release</th><th>Flags</th><th>Effect</th><th>Kind</th></tr></thead>
+          <tbody>
+            {forks.map(([h, r, f, e, k]) => (
+              <tr><td><strong>{h}</strong></td><td>{r}</td><td><code style="font-size:0.8em;">{f}</code></td><td>{e}</td><td class="aicf-muted">{k}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Two things are worth stating explicitly. First, the emission-changing forks (42,001, 50,000,
+        75,000) are not reject rules: a node running old code stays on the same chain but mis-credits
+        balances, so exchanges and explorers must upgrade even though peering continues. Second, the
+        useful-work verification rule armed at 75,000 is presence-gated and runs in shadow mode on
+        mainnet: blocks carry no proofs today, the rule logs rather than enforces, and it does not force
+        a miner to run a model. The <a href="/learn/useful-work-ai-and-quantum">useful-work article</a>
+        explains what is designed versus what is live.
+      </p>
+
+      <h2>Confirmations without finality</h2>
+      <p>
+        Animica has no finality gadget. The RPC method <code>tx.getStatus</code> returns a
+        <code>finalized</code> flag that becomes <code>true</code> after 12 confirmations (a node-side convention,
+        not a consensus guarantee); what you should read is
+        <code>confirmations</code>, the number of blocks built on top of the one containing your
+        transaction. Each additional block makes a reorg that excludes the transaction exponentially less
+        likely, and since block 75,000 the protocol refuses any reorg deeper than 100 blocks, so a
+        transaction with more than 100 confirmations cannot be undone by consensus at all.
+      </p>
+      <p>
+        A practical rule: for small payments, 6 confirmations (about 6 to 7 minutes) is the figure the
+        project's own payment services use; for large transfers or exchange deposits, wait longer, up to
+        the 100-block bound (roughly 1 hour 50 minutes at the measured block time). Two signals in the
+        head deserve a note. <code>chain.getHead</code> currently reports zeroed <code>stateRoot</code>
+        and <code>txsRoot</code> values because sealed header roots are armed but not yet populated by
+        the miner; this does not affect transaction validity. The explorer also exposes a
+        <code>canonicalHeight</code> one block behind the head, which is the height it treats as settled
+        for indexing.
+      </p>
+
+      <h2>Public endpoints</h2>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Service</th><th>URL</th><th>Notes</th></tr></thead>
+          <tbody>
+            {endpoints.map(([s, u, n]) => (
+              <tr><td><strong>{s}</strong></td><td><code>{u}</code></td><td class="aicf-muted">{n}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="aicf-muted">
+        The RPC path <code>/rpc</code> is required and only POST is served; there is no public WebSocket.
+        There is no <code>chain.getHeight</code> method; use <code>chain.getHead</code>. Full method list
+        and error codes: <a href="/learn/json-rpc-api-guide">JSON-RPC API guide</a>. Rate limits apply to
+        all public endpoints; for sustained load <a href="/node">run your own node</a>.
+      </p>
+
+      <h2>Live snapshot (2026-08-23)</h2>
+      <p>
+        As of 2026-08-23 the head was around block 81,200, network hashrate about 52 MH/s (pool summary),
+        circulating supply about 110.8 million ANM (explorer <code>/api/circulating-supply</code>), and the
+        explorer reported 4 connected peers on its node and an average block time of about 69 s over its
+        sample window. These are dated observations, not constants; the ticker at the top of the page and
+        the explorer show the current values.
       </p>
     </div>
   </section>
@@ -97,10 +197,11 @@ const healthMetrics = [
   <section class="aicf-section">
     <div class="aicf-container" data-aicf-network-root data-aicf-api-base={aicfApiBaseUrl}>
       <span class="aicf-kicker">AICF Compute Telemetry</span>
-      <h2 class="aicf-heading" style="font-size:1.6rem;">Live Compute Network Metrics</h2>
+      <h2 class="aicf-heading" style="font-size:1.6rem;">Live compute network metrics</h2>
       <p class="aicf-subheading">
-        Values below are fetched live from the AICF status endpoint. If the endpoint cannot be reached, metrics are marked
-        unavailable instead of showing placeholders.
+        Fetched by your browser from the AICF status endpoint. If the endpoint cannot be reached the
+        values read "Unavailable" rather than showing placeholders. The registry is small today; the
+        counts are real.
       </p>
       <div class="aicf-grid-4" style="margin-top:0.95rem;">
         {summaryMetrics.map((metric) => (
@@ -116,7 +217,7 @@ const healthMetrics = [
   <section class="aicf-section">
     <div class="aicf-container aicf-grid-2">
       <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Status Health</h2>
+        <h2 style="font-size:1.25rem;">Status health</h2>
         <div class="aicf-grid-2" style="margin-top:0.85rem;">
           {healthMetrics.map((metric) => (
             <div class="aicf-card" style="padding:0.75rem; background:rgba(7,15,28,0.56);">
@@ -129,51 +230,19 @@ const healthMetrics = [
       </article>
 
       <article class="aicf-card">
-        <h2 style="font-size:1.25rem;">Live Count Breakdown</h2>
+        <h2 style="font-size:1.25rem;">Registry counts</h2>
         <table class="aicf-table" style="margin-top:0.8rem;">
-          <thead>
-            <tr>
-              <th>Metric</th>
-              <th>Value</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Metric</th><th>Value</th></tr></thead>
           <tbody>
-            <tr>
-              <td><strong>Users</strong></td>
-              <td data-aicf-network-metric="users">--</td>
-            </tr>
-            <tr>
-              <td><strong>Projects</strong></td>
-              <td data-aicf-network-metric="projects">--</td>
-            </tr>
-            <tr>
-              <td><strong>Providers</strong></td>
-              <td data-aicf-network-metric="providers">--</td>
-            </tr>
-            <tr>
-              <td><strong>Nodes</strong></td>
-              <td data-aicf-network-metric="nodes">--</td>
-            </tr>
-            <tr>
-              <td><strong>Jobs</strong></td>
-              <td data-aicf-network-metric="jobs">--</td>
-            </tr>
-            <tr>
-              <td><strong>Contract Jobs</strong></td>
-              <td data-aicf-network-metric="contractJobs">--</td>
-            </tr>
-            <tr>
-              <td><strong>Agent Tasks</strong></td>
-              <td data-aicf-network-metric="agentTasks">--</td>
-            </tr>
-            <tr>
-              <td><strong>Usage Records</strong></td>
-              <td data-aicf-network-metric="usage">--</td>
-            </tr>
-            <tr>
-              <td><strong>Settlements</strong></td>
-              <td data-aicf-network-metric="settlements">--</td>
-            </tr>
+            <tr><td><strong>Users</strong></td><td data-aicf-network-metric="users">--</td></tr>
+            <tr><td><strong>Projects</strong></td><td data-aicf-network-metric="projects">--</td></tr>
+            <tr><td><strong>Providers</strong></td><td data-aicf-network-metric="providers">--</td></tr>
+            <tr><td><strong>Nodes</strong></td><td data-aicf-network-metric="nodes">--</td></tr>
+            <tr><td><strong>Jobs</strong></td><td data-aicf-network-metric="jobs">--</td></tr>
+            <tr><td><strong>Contract Jobs</strong></td><td data-aicf-network-metric="contractJobs">--</td></tr>
+            <tr><td><strong>Agent Tasks</strong></td><td data-aicf-network-metric="agentTasks">--</td></tr>
+            <tr><td><strong>Usage Records</strong></td><td data-aicf-network-metric="usage">--</td></tr>
+            <tr><td><strong>Settlements</strong></td><td data-aicf-network-metric="settlements">--</td></tr>
           </tbody>
         </table>
       </article>
@@ -183,13 +252,17 @@ const healthMetrics = [
   <section class="aicf-section">
     <div class="aicf-container">
       <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Raw Status Payload</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">Direct payload from the live AICF status endpoint.</p>
+        <h2 style="font-size:1.2rem;">Raw status payload</h2>
+        <p class="aicf-muted" style="margin-top:0.6rem;">Direct response from the AICF status endpoint.</p>
         <div class="aicf-code" style="margin-top:0.75rem;">
           <pre style="margin:0;" data-aicf-network-raw>{`Loading...`}</pre>
         </div>
       </article>
       <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-network-message>Loading live AICF metrics...</p>
+      <p class="aicf-muted" style="margin-top:1.2rem; font-size:0.9rem;">
+        Sources: core/network_params.py · consensus/finality.py · docs/ANIMICA_2026_STATE.md · docs/CHANGELOG.md ·
+        docs/exposure/recon/chain-facts.md · spec/openrpc.json · explorer2/api/src/server.ts · live RPC and explorer reads on 2026-08-23.
+      </p>
     </div>
   </section>
 
@@ -265,3 +338,10 @@ const healthMetrics = [
 
   <Footer slot="footer" />
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2rem; }
+  .page-prose p { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose table { margin-top: 0.9rem; min-width: 640px; }
+  .page-prose code { font-size: 0.92em; word-break: break-all; }
+</style>

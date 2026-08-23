@@ -1,0 +1,20 @@
+---
+title: "Animica 7.1.1: the Verifiable Inference Engine"
+description: "Every AI completion can carry a SHA3-256-hashed, ML-DSA-65-signed proof-of-inference receipt, verifiable and replayable offline. Non-consensus, additive, opt-in."
+date: 2026-07-10
+tags: ["release", "ai", "aicf", "ml-dsa-65"]
+---
+
+Animica 7.1.1 adds the Verifiable Inference Engine (VIE) to the `animica ai serve` gateway and the ENA coordinator. It is a **non-consensus** upgrade: no fork, no genesis change, and nothing in block validation is touched. All behaviour is additive and backward compatible.
+
+**Proof-of-inference receipts.** Every completion from `/v1/chat/completions` and `/v1/completions` can carry an `animica_receipt` — a SHA3-256 content hash over `(model, provider, prompt-hash, output-hash, tokens, seed, nonce)`, signed with ML-DSA-65 under the domain `animica.ai.proof-of-inference.v1` — plus an `X-Animica-Receipt` response header. The mode is `ANIMICA_AI_RECEIPTS=off|hash|signed` (default `signed`, degrading to `hash` when no signing key or PQ backend is available); `off` is byte-identical to 7.1.0. Receipts are signed by a dedicated inference key that controls no funds, on a thread pool so the post-quantum signature never blocks the event loop.
+
+**Quantum-seeded sampling.** Opt in per request with `{"animica":{"quantum_seed":true}}` or `ANIMICA_AI_QUANTUM_SEED=1`. The seed derives from the node's randomness beacon, falling back — honestly labelled — to the node CSPRNG and then a local seed, with provenance recorded in the receipt.
+
+**Offline verification and replay.** `animica ai verify <receipt.json>` recomputes the hash and checks the signature with no node or model. `animica ai replay <receipt.json> --prompt "…"` re-runs seed-honouring local backends and checks the output hash, reporting `verified` only for reproducible local backends and `best_effort` for remote ones. New: `animica ai receipt show|verify`, `POST /v1/verify`, `GET /v1/signer`.
+
+**Provider mesh and router.** Remote-provider adapters behind `providers.register_adapter`, a policy router with ordered fallback chains, EWMA latency telemetry and a SQLite circuit breaker (`GET /v1/router/status`). With no policy configured, routing is a pure pass-through.
+
+**Changed.** `ModelAdapter.generate(...)` gains a keyword-only `seed=`; the gateway version string is `7.1.1` and `/health` reports the receipt mode and public signer identity.
+
+**Boundaries, stated plainly.** The receipt signature is post-quantum; the beacon attestation is classical (Ed25519 software self-signer unless a hardware QRNG is attached), and the schema keeps the two distinct. On-chain anchoring degrades to a local envelope because the node RPC `aicf.anchorReceipt` does not exist yet.

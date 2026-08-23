@@ -1,0 +1,119 @@
+---
+title: "Animica compared with Bitcoin and Ethereum"
+description: "A property-by-property comparison: signature scheme, address format, transaction model, virtual machine, consensus, block time, decimals, supply and finality, with the trade-offs each choice implies."
+date: 2026-08-23
+updated: 2026-08-23
+category: "economy"
+tags: ["comparison", "bitcoin", "ethereum", "ml-dsa", "consensus", "evm"]
+readingLevel: "beginner"
+sources:
+  - AGENTS.md
+  - docs/ANIMICA_2026_STATE.md
+  - docs/EVM_RPC_COMPAT.md
+  - docs/BITCOIN_RPC_COMPAT.md
+  - spec/params.yaml
+  - docs/wallet/HD_DERIVATION.md
+  - core/network_params.py
+order: 3
+---
+
+This article lines Animica up against the two networks most readers already know, Bitcoin and Ethereum, on properties that are documented for all three: how transactions are signed, how addresses are formed, how state is modelled, what executes contracts, how blocks are produced, how long they take, how value is denominated and how supply is issued. The goal is to make the design choices legible, not to rank the chains. Where Animica's documentation states that a feature is partial or unenforced, that is reported as such.
+
+## The one-page table
+
+| Property | Bitcoin | Ethereum | Animica |
+|---|---|---|---|
+| Launched | 2009 | 2015 | mainnet genesis 2026-04-06 |
+| Consensus | Proof of work (SHA-256d) | Proof of stake (since the 2022 Merge) | Proof of work, PoIES rule; accepted on SHA3-256 header hash vs target today |
+| Target block time | 10 minutes | 12-second slots | 60 seconds (measured ≈ 67 s) |
+| Difficulty adjustment | every 2,016 blocks | n/a (PoS) | per-block EMA retarget of Θ, bounded steps |
+| Finality | probabilistic (confirmations) | Casper FFG finality after two epochs | probabilistic; reorg-depth bound clamped from block 75,000; use confirmations |
+| Signature scheme | ECDSA and Schnorr (BIP-340) on secp256k1 | ECDSA on secp256k1 | ML-DSA-65 (FIPS 204), scheme id 0x1003 |
+| Signature size | ~64–72 bytes | 65 bytes | 3,309 bytes; public key 1,952 bytes |
+| Post-quantum signatures | no | no | yes, the only accepted scheme |
+| Address format | base58check (`1…`, `3…`), bech32 (`bc1q…`), bech32m (`bc1p…`) | `0x` + 20 bytes of keccak256(pubkey), optional EIP-55 checksum | bech32m, HRP `anim`, 34-byte payload `alg_id ‖ SHA3-256(pubkey)`, 66 characters |
+| State model | UTXO | accounts with nonces | accounts; v2 transactions are nonce-less with a validity window and salt |
+| Contract execution | Bitcoin Script (non-Turing-complete) | EVM (Solidity, Vyper, …) | deterministic Python-VM, gas-metered |
+| Smallest unit | satoshi (10^-8 BTC) | wei (10^-18 ETH) | nANM (10^-9 ANM) |
+| Issuance | 50 BTC halving every 210,000 blocks; 21 M cap | no cap; base fee burned (EIP-1559) | 300 ANM halving every 1,350,000 blocks, 0.0001 ANM tail; ≈ 891 M asymptote |
+| Genesis allocation | none | crowdsale + premine (2014/2015) | 81 M ANM premine to a foundation-managed account |
+| Transfer fee today | market-priced per vbyte | market-priced per gas (base fee + tip) | 21,000 gas × 1 nANM = 0.000021 ANM |
+| Layer 2 | Lightning and others | many rollups | ANM-native rollup (`l2/`, 10.x), designated sequencer |
+
+The Bitcoin and Ethereum columns contain only widely documented public facts. The Animica column comes from `spec/params.yaml`, `docs/ANIMICA_2026_STATE.md`, `AGENTS.md` and the consensus code.
+
+## Signatures: why 3,309-byte signatures are the point
+
+Bitcoin and Ethereum both rely on the secp256k1 elliptic curve. ECDSA and Schnorr signatures on that curve are compact (about 64 bytes) and fast to verify, which is why they were chosen. Their security rests on the hardness of the discrete-logarithm problem, which a sufficiently large fault-tolerant quantum computer running Shor's algorithm would break. Neither network has deployed a post-quantum signature scheme at the protocol level; discussion of migration paths exists in both communities, but nothing is live as of early 2026.
+
+Animica started from the other end. The only signature scheme mainnet accepts for new transactions is ML-DSA-65, the lattice-based scheme standardised by NIST as FIPS 204 (the lineage is CRYSTALS-Dilithium; older Animica docs say "Dilithium3" and mean the same thing). The trade-off is size: a public key is 1,952 bytes and a signature 3,309 bytes, so the authentication data on a single transfer is about 5.3 kB, roughly fifty times the hundred or so bytes a Bitcoin or Ethereum signature and public key occupy. That is why Animica's maximum transaction size is 131,072 bytes, why the L2 documentation says the data-availability layer "exists largely to amortize" signatures, and why block size is 2 MB with a 40 M gas ceiling. A hash-based alternative, SPHINCS+ (scheme 0x1002), exists in the code but is consensus-stranded: it cannot sign on mainnet. See [post-quantum signatures: ML-DSA-65](/learn/post-quantum-signatures-ml-dsa-65).
+
+Animica's transaction signing also differs in shape. The signing preimage is canonical CBOR under a domain tag (`animica.tx.v1` inside an `animica:sign/v1` wrapper) that includes the chain id and a forkId, hashed with SHA3-512 before signing. Ethereum achieves replay protection with the EIP-155 chain id inside the signed payload; Bitcoin has no chain id in the signature at all and relies on distinct address prefixes and network magic.
+
+## Addresses: three answers to "what do I hash?"
+
+- **Bitcoin** addresses encode a script or a key hash. Modern addresses use bech32 (`bc1q`, BIP-173) for SegWit v0 and bech32m (`bc1p`, BIP-350) for Taproot.
+- **Ethereum** addresses are the last 20 bytes of keccak256 of the uncompressed public key, written as 40 hex characters after `0x`. The EIP-55 mixed-case checksum is optional; an all-lowercase address has no checksum at all.
+- **Animica** addresses are bech32m with the human-readable part `anim`. The payload is the 2-byte algorithm id followed by the SHA3-256 hash of the public key, 34 bytes in total, which is why every ML-DSA-65 account address is 66 characters and begins `anim1zqp` (the `zqp` encodes 0x1003). Contract addresses use algorithm id 0x0000. Two details trip up newcomers: SHA3 here is NIST SHA-3, not the pre-standard Keccak that Ethereum uses, and plain bech32 checksums are rejected, so a library that only implements BIP-173 will produce invalid Animica addresses. Details in [addresses and bech32m](/learn/animica-addresses-bech32m).
+
+Animica's HD derivation follows BIP-39 mnemonics into SLIP-0010 hardened derivation along `m/44'/4279885'/account'/0'/index'` to a 32-byte ML-DSA-65 seed (coin type 4279885 = 0x414E4D = ASCII "ANM"). That is the same "mnemonic → path → key" shape Bitcoin and Ethereum wallets use, with hardened-only derivation because lattice keys have no equivalent of non-hardened public derivation.
+
+## State and transactions: UTXO, nonce, or neither
+
+Bitcoin tracks unspent outputs; a transaction consumes some and creates others, and replay is impossible because an output can be spent once. Ethereum tracks accounts, and each account carries a strictly increasing nonce that orders transactions and prevents replay, which is why a stuck low-nonce transaction blocks everything behind it.
+
+Animica is account-based like Ethereum but its v2 transaction body has no nonce. Instead it carries a `validAfter`/`validUntil` block-height window and a random salt; uniqueness of the transaction id within the window is the replay protection. The practical consequences: transactions from one account are not forced into a sequence, a transaction that never lands simply expires at `validUntil`, and there is no nonce gap to repair. Legacy v1 nonce transactions are still accepted. Fees are gas-based (`gasLimit × gasPrice`), and admission requires the sender's balance to cover `amount + gasLimit × gasPrice`. See [transactions and fees](/learn/transactions-and-fees).
+
+One rule has no Bitcoin or Ethereum analogue: since block 44,444 (`FORK_STATE_COMMITMENT`, "inclusion implies execution") a block that commits a non-zero state root must commit the true post-execution root, so a block cannot claim an execution that did not happen. The rule self-gates on zero roots, and mainnet headers still commit zero roots, so it is armed rather than exercised; integrators credit on executed balance change, not on inclusion. Ethereum instead includes failed transactions and records the failure in the receipt, charging gas.
+
+## Contracts: Script, EVM, Python-VM
+
+Bitcoin Script is deliberately limited: it validates spending conditions and cannot loop. The EVM is a Turing-complete stack machine with a gas table; contracts are written in Solidity or Vyper and compiled to bytecode. Animica's VM executes a deterministic subset of Python, gas-metered from `vm_py/gas_table.json`, with bytes-only storage values and a sandboxed standard library (`from stdlib import hash` gives SHA3). The design goal is the same as the EVM's, that every node computes an identical result, reached with a mainstream language instead of a purpose-built one. Contract deployment and calls became live on mainnet with the `FORK_VM_EXEC` activation at block 75,000, and a CALL has been able to carry ANM value since the same height. See [Python-VM smart contracts](/learn/python-vm-smart-contracts).
+
+Animica does not run EVM bytecode at the consensus level. `docs/EVM_RPC_COMPAT.md` describes an Ethereum-RPC facade (`eth_*` methods answer at the node, with a dedicated EVM-facing chain id of 149 so as not to collide with Ethereum mainnet's id 1), an optional custodial relayer, and an optional node-local EVM execution lane. The document is careful to say this is "an RPC facade, not EVM execution" and that the execution lane is "NOT yet re-validated by Animica's PoIES validators". A similar facade exists for Bitcoin Core's RPC (`docs/BITCOIN_RPC_COMPAT.md`), mapping `getblockcount`, `getrawtransaction` and friends onto Animica's account model with explicit degraded fields.
+
+## Consensus and block production
+
+Bitcoin mines with double SHA-256 on a 10-minute target, retargeting every 2,016 blocks. Ethereum abandoned mining in September 2022 and now finalises blocks through validator attestations, with a 12-second slot.
+
+Animica is proof of work. The header hash is SHA3-256 over the canonical CBOR header; a block is accepted when that hash is at or below a target derived from Θ, and Θ is retargeted every block by a bounded exponential moving average aimed at a 60-second interval. `spec/params.yaml` also lists a 60-second minimum block spacing, but intervals as short as 8 seconds are observed on mainnet, so it is not an enforced lower bound today. The consensus rule is written as PoIES, which allows verified useful-work proofs to add capped credit to the hash score; on mainnet today that credit is zero because no block carries such proofs and the verifier runs in observe-only mode. [Useful work: AI and quantum](/learn/useful-work-ai-and-quantum) explains exactly what is and is not enforced.
+
+Finality differs in kind. Ethereum's Casper FFG makes a checkpoint irreversible once two-thirds of stake attests across two epochs (about 13 minutes). Bitcoin has no such mechanism; users wait for confirmations. Animica is in Bitcoin's camp: the protocol has no finality gadget, the `finalized` flag in `tx.getStatus` is only a node-local depth label (true after 12 confirmations), and the right practice is to count confirmations. From block 75,000 the maximum reorg depth a node will accept is clamped into a code-committed range, which gives a uniform "deep enough is irreversible on every node" bound, but the documentation is explicit that this guards against deep reorgs rather than the one-block forks that caused past incidents.
+
+## Money: decimals, supply and who gets the coinbase
+
+Bitcoin uses 8 decimals and a 21 million cap reached through halvings every 210,000 blocks; the entire issuance goes to miners. Ethereum uses 18 decimals, has no cap, and since EIP-1559 burns the base fee while validators receive tips and issuance.
+
+Animica uses 9 decimals and an issuance schedule shaped like Bitcoin's: 300 ANM per block, halving every 1,350,000 blocks (about 2.6 years at target), converging to 810 M mined ANM on top of an 81 M genesis allocation, with a 0.0001 ANM per-block tail so the subsidy never reaches zero. Unlike Bitcoin, the coinbase is split by consensus rule: since block 75,000 a block pays 50% to the miner, 25% to the foundation treasury and reserves 25% for AI service providers, with any unclaimed service slice also going to the treasury. The full history of the split is in [ANM tokenomics](/learn/anm-tokenomics-and-emission).
+
+Fees on Animica are currently a fixed 1 nANM per gas, so a transfer costs 0.000021 ANM, and the fee market controllers described in the economics documents are not exercised at today's volumes. Bitcoin and Ethereum both have active fee markets.
+
+## What each choice costs
+
+A comparison is only useful if it names the trade-offs:
+
+- **Post-quantum signatures** buy resistance to a future adversary at the price of transaction size, bandwidth and the absence of the hardware-wallet and multisig ecosystem that secp256k1 has accumulated over fifteen years.
+- **Nonce-less transactions** remove the stuck-nonce failure mode but make a wallet responsible for choosing a sensible validity window.
+- **A Python VM** lowers the barrier for developers who already know Python but has none of the audit tooling, formal-verification work or deployed-contract track record the EVM has.
+- **A treasury share and a service carve** fund development and AI provisioning from issuance, which means miners receive half of what the raw schedule would otherwise pay them.
+- **A young network** (mainnet since April 2026, about 52 MH/s of hashrate and 155 funded addresses as of 2026-08-23) has far less accumulated work and far fewer independent validators than either comparison chain. Reorg risk and operator concentration are correspondingly higher, and the consensus code's own comments discuss past one-block-fork incidents at specific heights.
+
+## Key takeaways
+
+- Animica is an account-based proof-of-work chain with post-quantum ML-DSA-65 signatures, bech32m `anim1…` addresses, a Python VM and a 60-second block target.
+- Compared with Bitcoin it shares halving-style issuance and confirmation-based finality but adds contracts, a treasury split and much larger signatures.
+- Compared with Ethereum it shares the account model and a gas-metered VM but differs in signature scheme, consensus (PoW, not PoS), transaction ordering (no nonce) and decimals (9, not 18).
+- EVM and Bitcoin RPC compatibility layers exist as facades; they do not make Animica an EVM chain or a UTXO chain.
+- The useful-work parts of PoIES are designed and partially implemented but do not affect block acceptance on mainnet today.
+
+## Sources
+
+- `AGENTS.md`
+- `docs/ANIMICA_2026_STATE.md`
+- `docs/EVM_RPC_COMPAT.md`
+- `docs/BITCOIN_RPC_COMPAT.md`
+- `spec/params.yaml`
+- `docs/wallet/HD_DERIVATION.md`
+- `core/network_params.py`
+- `consensus/useful_work_verify.py`
+- Public Bitcoin and Ethereum documentation (BIP-173, BIP-340, BIP-350, EIP-55, EIP-155, EIP-1559) for the comparison columns

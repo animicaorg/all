@@ -1,10 +1,13 @@
 ---
+import { getCollection } from "astro:content";
 import DocsLayout from "../../layouts/DocsLayout.astro";
 import InlineLink from "../../components/InlineLink.astro";
 import { links } from "../../config/links";
+import groups from "../../content/docs/_groups.json";
 
 const title = "Documentation";
-const description = "Browse Animica docs: consensus (PoIES), data availability, VM (Python), SDKs, ZK, AICF, wallet, explorer, P2P, randomness, and more.";
+const description =
+  "Animica reference documentation: consensus (PoIES), transaction signing, the Python VM and its tutorials, the L2 rollup, AICF compute, wallets, mining, and the Ethereum/Bitcoin RPC compatibility layers.";
 
 type Card = {
   title: string;
@@ -13,110 +16,69 @@ type Card = {
   tags: string[];
 };
 
-const cards: Card[] = [
+// Hand-written guides that live as their own pages under /docs.
+const guides: Card[] = [
   {
-    title: "Getting Started",
-    href: "https://github.com/animicaorg/all/blob/main/docs/quickstart-devnet.md",
-    description: "Quickstart: install, connect to a devnet, send your first transaction.",
-    tags: ["quickstart", "install", "devnet", "hello world"]
+    title: "Mining & animica up",
+    href: "/docs/mining",
+    description: "The unified miner: PoW + useful-work + GPU train/serve + Studio functions. Native CPU miner included by default.",
+    tags: ["mining", "animica up", "fastpow", "cpu", "gpu", "useful work"],
   },
   {
     title: "Ethereum / EVM RPC",
     href: "/docs/evm-rpc",
     description: "Connect ethers.js, web3.js & MetaMask. eth_*/net_*/web3_* facade on chain id 149, address bridge, honest boundaries.",
-    tags: ["evm", "ethereum", "metamask", "ethers", "web3", "rpc", "chain id 149"]
+    tags: ["evm", "ethereum", "metamask", "ethers", "web3", "rpc", "chain id 149"],
   },
   {
     title: "Bitcoin Core RPC",
     href: "/docs/bitcoin-rpc",
     description: "Point bitcoin-cli, BTCPay & Bitcoin RPC tooling at a node. Bitcoin Core 30.x method names and shapes over Animica.",
-    tags: ["bitcoin", "bitcoin-cli", "btcpay", "rpc", "compatibility"]
-  },
-  {
-    title: "Mining & animica up",
-    href: "/docs/mining",
-    description: "The unified miner: PoW + useful-work + GPU train/serve + Studio functions. Native CPU miner included by default.",
-    tags: ["mining", "animica up", "fastpow", "cpu", "gpu", "useful work"]
+    tags: ["bitcoin", "bitcoin-cli", "btcpay", "rpc", "compatibility"],
   },
   {
     title: "Studio SDK",
     href: "/docs/studio",
     description: "Serverless compute SDK: @app.function, .remote()/.map(), images, secrets, volumes, GPUs — settled in ANM.",
-    tags: ["studio", "serverless", "sdk", "modal", "remote", "map", "gpu"]
+    tags: ["studio", "serverless", "sdk", "modal", "remote", "map", "gpu"],
   },
-  {
-    title: "Consensus — PoIES",
-    href: "https://github.com/animicaorg/all/blob/main/spec/poies_math.md",
-    description: "Proof-of-Integrated-External-Services (ψ mapping, Θ retarget, fairness, Γ caps).",
-    tags: ["consensus", "poies", "theta", "fairness", "policy"]
-  },
-  {
-    title: "Data Availability (DA)",
-    href: "https://github.com/animicaorg/all/blob/main/docs/DA.md",
-    description: "Blob commitments, namespaced Merkle trees (NMT), erasure coding, light verification.",
-    tags: ["da", "blobs", "nmt", "erasure", "sampling"]
-  },
-  {
-    title: "VM (Python)",
-    href: "https://github.com/animicaorg/all/tree/main/docs/vm",
-    description: "Deterministic Python VM: ABI, gas, stdlib, examples (Counter, Escrow).",
-    tags: ["vm", "python", "abi", "gas", "contracts"]
-  },
-  {
-    title: "SDKs",
-    href: "https://github.com/animicaorg/all/tree/main/sdk",
-    description: "Python, TypeScript, and Rust SDKs with codegen and E2E harness. Python ships as pip install animica.",
-    tags: ["sdk", "python", "typescript", "rust", "codegen"]
-  },
-  {
-    title: "ZK Verifiers",
-    href: "https://github.com/animicaorg/all/tree/main/zk",
-    description: "Groth16/PLONK/STARK basics, Poseidon, KZG, VK pinning & policy hooks.",
-    tags: ["zk", "groth16", "plonk", "stark", "kzg", "poseidon"]
-  },
-  {
-    title: "AI Compute Fund (AICF)",
-    href: "https://github.com/animicaorg/all/blob/main/docs/AICF.md",
-    description: "Job queue, provider registry, attestations, SLA, pricing & settlement.",
-    tags: ["aicf", "ai", "quantum", "sla", "settlement"]
-  },
-  {
-    title: "AICF Compute Dashboard",
-    href: "https://aicf.animica.org",
-    description: "Live AI-compute lane: submit jobs and track providers. Want to provide compute? See /providers.",
-    tags: ["aicf", "compute", "dashboard", "providers"]
-  },
-  {
-    title: "Randomness Beacon",
-    href: "https://github.com/animicaorg/all/tree/main/docs/randomness",
-    description: "Commit–reveal, VDF, optional QRNG mixing, light proofs.",
-    tags: ["randomness", "vdf", "qrng", "beacon"]
-  },
-  {
-    title: "P2P & Gossip",
-    href: "https://github.com/animicaorg/all/blob/main/docs/p2p.md",
-    description: "Handshake (Kyber), transports (TCP/QUIC/WS), gossip topics, sync flows.",
-    tags: ["p2p", "quic", "gossip", "sync", "kyber"]
-  },
-  {
-    title: "Wallet & Provider",
-    href: "https://github.com/animicaorg/all/tree/main/docs/wallets",
-    description: "Extension keys (ML-DSA-65), provider API, simulation. Downloads on /wallet.",
-    tags: ["wallet", "provider", "pq", "mv3", "signing"]
-  },
-  {
-    title: "Explorer & Studio",
-    href: "/explorer",
-    description: "Explorer views and APIs. The hosted Studio web IDE is being rebuilt; a Linux desktop build is on /studio.",
-    tags: ["studio", "explorer", "ide", "verify", "deploy"]
-  },
-  {
-    title: "Operations & Devnet",
-    href: "https://github.com/animicaorg/all/tree/main/docs/ops",
-    description: "Run a node, metrics, logging, configs, fixtures and testnets.",
-    tags: ["ops", "node", "devnet", "metrics", "configs"]
-  }
 ];
+
+// Reference pages generated from the repository docs (scripts/sync_curated_docs.mjs).
+const order = groups.map((g) => g.key);
+const rank = (k?: string) => {
+  const i = order.indexOf(k ?? "");
+  return i === -1 ? 999 : i;
+};
+const docs = (await getCollection("docs", ({ data }) => !data.draft)).sort(
+  (a, b) =>
+    rank(a.data.group) - rank(b.data.group) ||
+    (a.data.order ?? 999) - (b.data.order ?? 999) ||
+    a.data.title.localeCompare(b.data.title),
+);
+
+const GROUP_BLURB: Record<string, string> = {
+  "getting-started": "The current state of the network, the CLI, the transaction workflow, and what to do when something does not work.",
+  protocol: "Consensus and difficulty, canonical transaction signing, the HD wallet derivation standard, and the peer-to-peer layer.",
+  contracts: "The deterministic Python VM: architecture, gas, the sandbox, host capabilities, the ABI, the compiler, patterns, examples, and debugging.",
+  tutorials: "End-to-end walkthroughs: deploy a counter, write a token and an escrow, build an indexer, use AI, DA and randomness syscalls, run a GPU provider.",
+  l2: "The ANM-native Layer 2 payment rollup shipped in 10.0.0: architecture, lifecycle, fees, data availability, forced exits, security assumptions, and operations.",
+  aicf: "The AI Compute Fund: how jobs are funded, requested, executed, verified and paid, plus provider onboarding, SLAs, and the platform threat model.",
+  wallets: "Recovery, day-to-day security, hardware-backed keys, and the address book for the extension, mobile and desktop wallets.",
+  mining: "Running the miner from source against a local node and fixing the most common mining problems.",
+  compat: "Repository references for the Ethereum and Bitcoin RPC compatibility modes and the complete x402 agent-payments reference.",
+};
+
+const sections = groups
+  .map((g) => ({
+    key: g.key,
+    title: g.title,
+    blurb: GROUP_BLURB[g.key] ?? "",
+    items: docs.filter((d) => d.data.group === g.key),
+  }))
+  .filter((s) => s.items.length > 0);
+
+const totalWords = docs.reduce((n, d) => n + (d.body ? d.body.split(/\s+/).length : 0), 0);
 
 const jsonLd = {
   "@context": "https://schema.org",
@@ -124,13 +86,11 @@ const jsonLd = {
   name: "Animica Documentation",
   url: "https://animica.org/docs",
   description,
-  hasPart: cards.map((c) => ({
-    "@type": "WebPage",
-    name: c.title,
-    url: c.href,
-    about: c.tags
-  })),
-  inLanguage: "en"
+  inLanguage: "en",
+  hasPart: [
+    ...guides.map((c) => ({ "@type": "WebPage", name: c.title, url: `https://animica.org${c.href}`, about: c.tags })),
+    ...docs.map((d) => ({ "@type": "TechArticle", headline: d.data.title, url: `https://animica.org/docs/${d.slug}` })),
+  ],
 };
 ---
 
@@ -157,6 +117,17 @@ const jsonLd = {
       </div>
     </div>
 
+    <p class="mt-6 mb-0 leading-relaxed opacity-85">
+      Animica is an open-source proof-of-work Layer-1 (chain id 1) with ML-DSA-65 post-quantum signatures,
+      bech32m <code class="bg-white/10 rounded px-1.5 py-0.5">anim1…</code> addresses, deterministic Python-VM
+      contracts, PoIES consensus, an ANM-native Layer-2 rollup and an off-chain AI-compute layer (AICF). This
+      section collects {docs.length} reference pages ({Math.round(totalWords / 1000)}k words) mirrored from the
+      <InlineLink href="https://github.com/animicaorg/all/tree/main/docs">repository documentation</InlineLink>,
+      plus four hand-written guides. Each mirrored page links to its source file; when they disagree, the
+      repository wins. If you are new, the <InlineLink href="/learn">Learn</InlineLink> section explains the same
+      material from the ground up.
+    </p>
+
     <div class="mt-8 rounded-lg border border-white/10 bg-white/5 p-4 sm:p-5">
       <h2 class="m-0 text-lg font-semibold">Install</h2>
       <p class="m-0 mt-2 text-sm opacity-80">
@@ -175,54 +146,98 @@ const jsonLd = {
       </p>
       <p class="m-0 mt-2 text-xs opacity-60">
         Quote the extras form as <code class="bg-white/10 rounded px-1.5 py-0.5">pip install "animica[all]"</code>
-        (with quotes) so zsh/macOS does not glob the brackets.
+        (with quotes) so zsh/macOS does not glob the brackets. Public RPC:
+        <code class="bg-white/10 rounded px-1.5 py-0.5">POST https://rpc.animica.org/rpc</code> (the
+        <code class="bg-white/10 rounded px-1.5 py-0.5">/rpc</code> path is required).
       </p>
     </div>
 
-    <div class="mt-8 grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" id="docs-cards">
-      {cards.map((c) => (
-        <a
-          href={c.href}
-          target={c.href.startsWith("http") ? "_blank" : undefined}
-          rel={c.href.startsWith("http") ? "noopener noreferrer" : undefined}
-          class="group block rounded-lg border border-white/10 bg-white/5 p-4 hover:border-white/20 hover:bg-white/10 transition-colors"
-          data-title={c.title.toLowerCase()}
-          data-tags={c.tags.join(" ").toLowerCase()}
-        >
-          <h2 class="m-0 text-lg font-semibold group-hover:underline">{c.title}</h2>
-          <p class="m-0 mt-1 opacity-80 text-sm">{c.description}</p>
-          <div class="mt-3 flex flex-wrap gap-1">
-            {c.tags.slice(0, 4).map((t) => (
-              <span class="text-[11px] uppercase tracking-wide opacity-70 bg-white/10 border border-white/10 rounded px-2 py-0.5">{t}</span>
+    <nav class="mt-8 flex flex-wrap gap-2 text-sm" aria-label="Sections">
+      <a href="#guides" class="rounded-full border border-white/10 bg-white/5 px-3 py-1 hover:bg-white/10">Guides</a>
+      {sections.map((s) => (
+        <a href={`#${s.key}`} class="rounded-full border border-white/10 bg-white/5 px-3 py-1 hover:bg-white/10">{s.title}</a>
+      ))}
+      <a href="/learn" class="rounded-full border border-white/10 bg-white/5 px-3 py-1 hover:bg-white/10">Learn →</a>
+    </nav>
+
+    <div id="docs-cards">
+      <section id="guides" class="docs-group mt-10 scroll-mt-24">
+        <h2 class="m-0 text-xl font-semibold">Guides</h2>
+        <p class="m-0 mt-1 text-sm opacity-70">Hand-written pages for the most common integrations.</p>
+        <div class="mt-4 grid gap-4 sm:gap-5 grid-cols-1 sm:grid-cols-2">
+          {guides.map((c) => (
+            <a
+              href={c.href}
+              class="docs-card group block rounded-lg border border-white/10 bg-white/5 p-4 hover:border-white/20 hover:bg-white/10 transition-colors"
+              data-title={c.title.toLowerCase()}
+              data-tags={c.tags.join(" ").toLowerCase()}
+            >
+              <h3 class="m-0 text-base font-semibold group-hover:underline">{c.title}</h3>
+              <p class="m-0 mt-1 opacity-80 text-sm">{c.description}</p>
+              <div class="mt-3 flex flex-wrap gap-1">
+                {c.tags.slice(0, 4).map((t) => (
+                  <span class="text-[11px] uppercase tracking-wide opacity-70 bg-white/10 border border-white/10 rounded px-2 py-0.5">{t}</span>
+                ))}
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
+
+      {sections.map((s) => (
+        <section id={s.key} class="docs-group mt-10 scroll-mt-24">
+          <h2 class="m-0 text-xl font-semibold">{s.title}</h2>
+          {s.blurb && <p class="m-0 mt-1 text-sm opacity-70">{s.blurb}</p>}
+          <div class="mt-4 grid gap-4 sm:gap-5 grid-cols-1 sm:grid-cols-2">
+            {s.items.map((d) => (
+              <a
+                href={`/docs/${d.slug}`}
+                class="docs-card group block rounded-lg border border-white/10 bg-white/5 p-4 hover:border-white/20 hover:bg-white/10 transition-colors"
+                data-title={d.data.title.toLowerCase()}
+                data-tags={`${s.title} ${d.slug.replace(/[\/-]/g, " ")} ${d.data.description ?? ""}`.toLowerCase()}
+              >
+                <h3 class="m-0 text-base font-semibold group-hover:underline">{d.data.title}</h3>
+                {d.data.description && <p class="m-0 mt-1 opacity-80 text-sm">{d.data.description}</p>}
+              </a>
             ))}
           </div>
-        </a>
+        </section>
       ))}
     </div>
 
-    <p class="mt-8 text-sm opacity-70">
+    <p id="docs-empty" class="mt-8 text-sm opacity-70 hidden">No pages match that search.</p>
+
+    <p class="mt-10 text-sm opacity-70">
       Can’t find what you’re looking for? Browse the full{" "}
-      <InlineLink href="https://github.com/animicaorg/all/tree/main/docs">docs tree on GitHub</InlineLink>,
+      <InlineLink href="https://github.com/animicaorg/all/tree/main/docs">docs tree on GitHub</InlineLink>, read the
+      machine-readable API description at{" "}
+      <InlineLink href="https://rpc.animica.org/openrpc.json">rpc.animica.org/openrpc.json</InlineLink>,
       open an issue on <InlineLink href={links.github.issues()}>GitHub</InlineLink>, or become a compute
       provider via <InlineLink href="/providers">/providers</InlineLink>.
     </p>
   </section>
 
   <script is:inline type="module">
-    // Simple client-side filter (no heavy search lib by default)
+    // Simple client-side filter over every card (no search library)
     const input = document.getElementById("docs-search");
-    const cards = Array.from(document.querySelectorAll("#docs-cards > a"));
+    const cards = Array.from(document.querySelectorAll("#docs-cards .docs-card"));
+    const groups = Array.from(document.querySelectorAll("#docs-cards .docs-group"));
+    const empty = document.getElementById("docs-empty");
 
     function filter() {
       const q = (input.value || "").trim().toLowerCase();
-      if (!q) {
-        cards.forEach((el) => (el.style.display = ""));
-        return;
-      }
+      let shown = 0;
       for (const el of cards) {
         const hay = (el.dataset.title + " " + el.dataset.tags).toLowerCase();
-        el.style.display = hay.includes(q) ? "" : "none";
+        const ok = !q || hay.includes(q);
+        el.style.display = ok ? "" : "none";
+        if (ok) shown++;
       }
+      for (const g of groups) {
+        const any = Array.from(g.querySelectorAll(".docs-card")).some((c) => c.style.display !== "none");
+        g.style.display = any ? "" : "none";
+      }
+      empty?.classList.toggle("hidden", shown > 0);
     }
 
     input?.addEventListener("input", filter);

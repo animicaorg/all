@@ -1,0 +1,189 @@
+---
+title: "Animica wallets and HD derivation"
+description: "The four Animica wallets plus the CLI, the normative BIP-39/SLIP-0010 derivation to ML-DSA-65 keys with its test vector, what to back up, and why SPHINCS+ wallets are stranded."
+date: 2026-08-23
+updated: 2026-08-23
+category: "operate"
+tags: ["wallets", "hd-derivation", "bip39", "slip-0010", "ml-dsa", "backup", "sphincs"]
+readingLevel: "intermediate"
+sources:
+  - docs/wallet/HD_DERIVATION.md
+  - docs/wallets/KEY_MANAGEMENT.md
+  - docs/wallets/RECOVERY.md
+  - docs/wallets/SECURITY.md
+  - docs/wallets/HARDWARE.md
+  - docs/pq/WALLET_OPS.md
+  - apps/wallet-extension/README.md
+  - wallet-qt/README.md
+  - wallet/README.md
+  - docs/cli-commands.md
+  - docs/ANIMICA_2026_STATE.md
+  - docs/exposure/recon/chain-facts.md
+order: 3
+---
+
+Animica accounts are ML-DSA-65 keypairs, which changes what a "wallet" has to do compared with an elliptic-curve chain: keys are larger, public-key derivation trees do not exist, and the only signature scheme mainnet accepts is the one standardised in FIPS 204. This article walks through the wallet applications and the CLI, the hierarchical-deterministic standard that turns twelve words into an `anim1...` address (with the published test vector so you can check an implementation), what you must back up for each wallet, and the one legacy scheme whose wallets can no longer sign.
+
+## Keys and addresses in one paragraph
+
+An account is an ML-DSA-65 keypair: 1,952-byte public key, 4,032-byte secret key, 3,309-byte signatures, scheme id `0x1003` (4099). The address is bech32m with human-readable part `anim`, and the payload is the two-byte big-endian scheme id followed by the SHA3-256 of the public key, 34 bytes in total. Every ML-DSA-65 account address is 66 characters and starts with `anim1zqp`. A plain bech32 checksum is invalid; it must be bech32m. Contracts use scheme id `0x0000`. The full treatment is in [Post-quantum signatures: ML-DSA-65](/learn/post-quantum-signatures-ml-dsa-65) and [Animica addresses](/learn/animica-addresses-bech32m).
+
+## The wallets
+
+| Wallet | Where | Platform | Key storage | Notes |
+|---|---|---|---|---|
+| Browser extension | `apps/wallet-extension` | Chrome MV3 (Firefox experimental) | AES-GCM vault, PBKDF2 100,000 iterations, auto-lock | injects `window.animica` for dapps; v2 validity-window transactions; imports/exports `wallets.json` |
+| Mobile and desktop (Flutter) | `wallet/` | Android, iOS, macOS, Windows, Linux, web | platform keystore (Keychain/Keystore), optional biometric gate | mnemonic create/import onboarding; RPC and WebSocket client |
+| Qt desktop | `wallet-qt/` | desktop | local data dir, bundled Python runtime for the signing bridge and QR | mainnet only, always talks to `https://rpc.animica.org/rpc`, never runs a node |
+| Web wallet | wallet.animica.org | browser | discontinued | the web wallet was shut down on 2026-07-11 and the site shows a notice (checked 2026-08-23); it held no keys server-side, so anyone who created keys there restores them from their own export into the extension or CLI |
+| CLI | `animica wallet` | anywhere the package runs | `~/.animica/wallets.json`, plaintext unless you pass a passphrase | the store `animica up` and the miner use for payouts |
+
+Installers for the desktop and mobile apps are published at [animica.org/downloads](https://animica.org/downloads). There is no mainnet faucet; a new wallet starts empty until you mine to it, receive a payment, or buy ANM (it trades on NonKYC as ANM/USDT: https://nonkyc.io/market/ANM_USDT).
+
+### The CLI store deserves a paragraph of its own
+
+`animica wallet create --label main` generates an ML-DSA-65 keypair (the default `--alg ml_dsa_65`; the legacy `dilithium3` and `sphincs_shake_128s` stubs are refused unless `ANIMICA_ALLOW_LEGACY_STUB_KEYGEN=1` is set and should not be used) and writes it to `~/.animica/wallets.json`. Without `--password` the secret key is stored **unencrypted** and the CLI prints a warning. That is the file `animica up` creates on first run for a miner. Two commands fix it after the fact:
+
+```bash
+animica wallet encrypt --password '...'     # rewrite every plaintext secret into an encrypted envelope (idempotent)
+animica wallet export main --out backup.json  # JSON export that preserves the bech32m address
+```
+
+`animica wallet path` shows where the store is and how the location was resolved (`--wallet-file` or `ANIMICA_WALLETS_FILE` override it). The extension can import the same `wallets.json`, and a "dev mode sync" in Chrome can watch the file bidirectionally.
+
+The CLI wallet has no mnemonic. Its keys are random and exist only in that file; if you lose the file you lose the key. This is the most important backup fact on this page for miners.
+
+## The HD derivation standard
+
+`docs/wallet/HD_DERIVATION.md` is marked normative for third-party wallets as of 2026-08-22, and it exists because BIP-32 cannot be used. BIP-32 derives child *public* keys with elliptic-curve arithmetic; there is no such operation for lattice keys. What FIPS 204 does offer is deterministic key generation from a 32-byte seed `ξ`:
+
+```text
+(pk, sk) = ML-DSA-65.KeyGen_internal(ξ)
+```
+
+So an HD wallet only needs a deterministic, interoperable way to turn a mnemonic into one `ξ` per account. The standard fixes that mapping in five steps:
+
+1. **Mnemonic to seed: BIP-39.** `seed = PBKDF2-HMAC-SHA512(mnemonic_NFKD, "mnemonic" + passphrase_NFKD, 2048 rounds, 64 bytes)`. Standard wordlist, standard checksum, 12 or 24 words.
+2. **Seed to node: SLIP-0010, ed25519 family.** HMAC-SHA512 with the master key `"ed25519 seed"`, hardened-only children, child data `0x00 || k_par || ser32(i)`. This is the same derivation Solana, Sui, Aptos and NEAR use, which is why existing hardware-wallet firmware can reach the leaf without new curve code.
+3. **Path: BIP-44.** `m / 44' / 4279885' / account' / 0' / address_index'`. The coin type `4279885` is `0x414E4D`, the ASCII bytes of "ANM". Every level is hardened because SLIP-0010 ed25519 has no non-hardened children. The default account is `m/44'/4279885'/0'/0'/0'`. A SLIP-0044 registration for the coin type is pending upstream (satoshilabs/slips pull request 2053).
+4. **Node to seed.** The 32-byte private-key half of the final node *is* `ξ`. No extra hashing.
+5. **Seed to address.** `(pk, sk) = ML-DSA-65.KeyGen_internal(ξ)`, then `address = bech32m("anim", u16be(0x1003) || SHA3-256(pk))`.
+
+Wallets may store only the 32-byte `ξ` rather than the 4,032-byte secret key and regenerate the pair on load, because `KeyGen_internal` is deterministic.
+
+### Test vectors
+
+Using the BIP-39 reference mnemonic with no passphrase:
+
+```text
+abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
+```
+
+| Path | ξ (hex) | Address |
+|---|---|---|
+| `m/44'/4279885'/0'/0'/0'` | `e3bb5b745b1da91201e7b9744038def07dfd02da9a85682d30468b9355c50835` | `anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7` |
+| `m/44'/4279885'/0'/0'/1'` | `5b7ea6e7ab17f7f78900e57dae759104518bca0e55f7fa69b6d0b9986e130595` | `anim1zqpmznku3ddgyhl27d0p38jq7qyjgsnvafzd8pwh27gednh0x09s2egxyv9ej` |
+| `m/44'/4279885'/1'/0'/0'` | `cf68ab2eb4222e81656973cc01769ab28b794f8907e214c1f615a5da6a5c0260` | `anim1zqpn2j43cqempqfke6rzvwf6f4529xwrexgpcw8gfd8dg8agmcqw6qqu83f7t` |
+
+The addresses were produced with `@noble/post-quantum` 0.6.1 and cross-checked against the node's own Python implementation (`pq/py/address.py`). If your implementation reproduces the first row from those twelve words, it is compatible. The reference code is `packages/animica-crypto/src/hd.ts` with tests in `packages/animica-crypto/tests/hd.test.ts`.
+
+A compact sketch of steps 2 and 3 in Python, for readers who want to see the shape of SLIP-0010 without the full reference:
+
+```python
+import hmac, hashlib
+
+def slip10_master(seed: bytes):
+    I = hmac.new(b"ed25519 seed", seed, hashlib.sha512).digest()
+    return I[:32], I[32:]                       # (k, chain_code)
+
+def slip10_child(k: bytes, c: bytes, index: int):
+    data = b"\x00" + k + (index | 0x80000000).to_bytes(4, "big")   # hardened only
+    I = hmac.new(c, data, hashlib.sha512).digest()
+    return I[:32], I[32:]
+
+k, c = slip10_master(bip39_seed)               # 64-byte BIP-39 seed
+for i in (44, 4279885, 0, 0, 0):               # m/44'/4279885'/0'/0'/0'
+    k, c = slip10_child(k, c, i)
+xi = k                                          # 32-byte ML-DSA-65 seed
+```
+
+### Which wallets implement it today
+
+Being honest about status matters here:
+
+- The **reference implementation** is the TypeScript package `packages/animica-crypto`, written for third-party wallet integrations (the HD document names Edge, enKrypt and hardware wallets as the intended consumers).
+- The **Flutter wallet** has mnemonic onboarding, but its keyring derives keys with HKDF-SHA3-256 over paths of the form `m/pq/dilithium3/<account>`, the older design described in `docs/pq/WALLET_OPS.md` and `docs/wallets/KEY_MANAGEMENT.md` (purpose `888'`, a SHA3-based PBKDF, HKDF namespaces per algorithm). Those two documents predate the normative standard and describe a scheme that is not interoperable with it.
+- The **extension** and the **CLI** generate keys directly and do not currently expose a mnemonic flow; they import and export raw key material (`wallets.json`) instead.
+
+The practical rule: a mnemonic is only portable between wallets that implement `HD_DERIVATION.md`. Do not assume that the twelve words from one Animica wallet restore the same address in another until that wallet states which derivation it uses. If you rely on a mnemonic, write down the derivation path and the wallet version next to it.
+
+## Signing, for completeness
+
+Transactions are signed as `ML-DSA-65.Sign(sk, SHA3-512(sign_bytes), ctx="")` over a canonical CBOR preimage that includes the chain id and fork id, then broadcast with `tx.sendRawTransaction`. Wallets that build v2 transactions use a validity window (`validAfter`, `validUntil`) and a random salt instead of a nonce, which removes nonce races between devices; the extension's README describes exactly that lifecycle. See [Transactions and fees](/learn/transactions-and-fees).
+
+## Backup and recovery
+
+What you need to keep depends on the wallet:
+
+| Wallet | Minimum backup | Restore path |
+|---|---|---|
+| CLI (`wallets.json`) | the file itself, ideally encrypted with `animica wallet encrypt`, plus the passphrase | `animica wallet import --file ...` or the extension's import |
+| Extension | encrypted vault export, or `wallets.json` export "with secrets", plus the vault password | Settings, import; the password is never recoverable |
+| Flutter | the mnemonic shown at onboarding (and any passphrase) | re-install, restore mnemonic; same app version or a later one that keeps the derivation |
+| Qt desktop | the wallet data directory (`ANIMICA_WALLET_DATA_DIR` if overridden) | copy the directory back |
+| Web wallet (discontinued) | the export you took when it was running | import into the extension or CLI; nothing was stored server-side |
+
+The repository's recovery guidance is worth following regardless of wallet:
+
+- Write the mnemonic or key export on paper or steel, never in a screenshot, and verify it by doing a **test restore** on a second device before funding the wallet.
+- If you use a BIP-39 passphrase, it is part of the identity; a different passphrase yields different accounts and a forgotten passphrase makes funds unrecoverable.
+- Prefer splitting the **vault key** that encrypts a seed export rather than the raw seed, with a 2-of-3 or 3-of-5 threshold, so one leaked share does not expose anything. Label shares with index, threshold and a commitment hash, never with the secret.
+- Social recovery with guardians is described in `docs/wallets/RECOVERY.md` as a design pattern (M-of-N approvals, timelock, domain-separated approval message `ANIMICA_RECOVER_V1`). It is guidance for wallet builders, not a feature you can switch on in the shipped wallets today; after a recovery you move funds to a fresh address.
+- After any suspected compromise, move funds to a new key first and investigate second.
+
+### Security habits the wallet docs insist on
+
+- Check the **origin** character by character before approving a dapp connection; connecting is not the same as spending, and the extension prompts per transaction.
+- Never enter a mnemonic or private key into a web page. No Animica wallet asks for it after onboarding.
+- Refuse **blind signing**. Every wallet shows network, sender, recipient, amount, gas limit and max fee; if the summary cannot be rendered, do not sign.
+- **Simulate** before signing large transfers. The node's `mempool.simulateAdmission` dry-runs admission against your node, and the explorer is an independent check on balances that a malicious RPC cannot fake.
+- Pin the chain id (1) and the RPC URL; the signer includes the chain id in the signed bytes, so a transaction for another network cannot be replayed on mainnet.
+
+### Hardware wallets
+
+`docs/wallets/HARDWARE.md` is a reference design, not a product announcement. No Ledger or Trezor app signs ML-DSA-65 today. What the design supports now is WebAuthn or FIDO2 as an **unlock** factor for a software-held PQ key (the passkey proves user presence and releases the vault key; it never produces a chain-valid signature), and multisig contracts where a hardware co-signer gates spending. Native on-device PQ signing is described as a future custom app.
+
+## The SPHINCS+ warning
+
+Animica's key registry also contains SPHINCS+-SHAKE-128s under scheme id `0x1002` (4098). Those wallets are **consensus-stranded**: mainnet accepts ML-DSA-65 only, the SPHINCS+ code path is a forgeable stub that is disabled on mainnet, and a scheme-swap incident on 2026-02-08 left the `0x1002` addresses unable to produce valid transactions. Funds at such an address cannot be moved without a coordinated fork, which has not been scheduled.
+
+Concretely:
+
+- Do not create a SPHINCS+ wallet. The CLI refuses unless you set an environment variable that exists only for tests.
+- Do not send to an address that does not begin with `anim1zqp` unless you know it is a contract; the `zqp` prefix is the bech32m encoding of scheme id `0x1003`.
+- If you hold an old `0x1002` wallet, keep the key material; nothing can be done with it today, and destroying it forecloses any future recovery.
+- Older documents (`docs/wallets/KEY_MANAGEMENT.md`, `docs/pq/WALLET_OPS.md`, `docs/pq/HANDSHAKE.md`) still present SPHINCS+ as a supported alternative and "Dilithium3" as the default. Read "Dilithium3" as the lineage name of ML-DSA-65 and SPHINCS+ as legacy.
+
+## Key takeaways
+
+- There are three wallet apps (extension, Flutter, Qt) plus the CLI store; the web wallet was discontinued in July 2026. All are non-custodial and all sign with ML-DSA-65 only.
+- The normative HD standard is BIP-39, then SLIP-0010 (ed25519 family), path `m/44'/4279885'/account'/0'/index'`, leaf private key as the FIPS 204 seed; the reference mnemonic yields `anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7` at index 0.
+- Only the `packages/animica-crypto` reference implements that standard today; the Flutter wallet uses an older HKDF derivation and the CLI has no mnemonic at all, so record the derivation alongside any mnemonic.
+- The CLI store that `animica up` creates is plaintext unless you run `animica wallet encrypt`; back it up before your first payout.
+- SPHINCS+ (`0x1002`) wallets cannot sign on mainnet. Only `anim1zqp...` accounts are live.
+
+## Sources
+
+- docs/wallet/HD_DERIVATION.md
+- docs/wallets/KEY_MANAGEMENT.md
+- docs/wallets/RECOVERY.md
+- docs/wallets/SECURITY.md
+- docs/wallets/HARDWARE.md
+- docs/pq/WALLET_OPS.md
+- apps/wallet-extension/README.md and apps/wallet-extension/src/core/crypto/pq.ts
+- wallet-qt/README.md
+- wallet/README.md and wallet/lib/keyring/key_derivation.dart
+- packages/animica-crypto/src/hd.ts
+- docs/cli-commands.md and `animica wallet create|encrypt --help` (10.4.4)
+- docs/ANIMICA_2026_STATE.md
+- docs/exposure/recon/chain-facts.md

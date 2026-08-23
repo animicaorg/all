@@ -1,0 +1,100 @@
+---
+title: "How the mining pool pays for sub-block shares (PPS)"
+description: "Why every pool share used to be a whole block, how pool 9.1.0 derives a per-session share target from live Θ so a share is worth exactly 1/S of a block, and the two credit exploits 9.1.2 closed before 9.2.0 switched the feature back on."
+date: 2026-08-06
+updated: 2026-08-23
+author: "Animica Team"
+tags: ["mining", "pool", "pps", "stratum", "9.1.0"]
+---
+
+Until August 2026, a miner on pool.animica.org earned nothing unless it found a block. Pay-per-share was implemented, but every accepted share in the live database for more than a week had `is_block = 1` — the pool's share target was the block target. Pool releases 9.0.9 through 9.2.0, all shipped on 2026-08-06, fixed that, were reviewed adversarially, and were patched again the same day. This post explains the mechanism and the arithmetic, using the release commits. For how to point a miner at the pool, see [/learn/mining-guide](/learn/mining-guide).
+
+## Why a share was a block
+
+On Animica's stratum wire, the share target is expressed as a **ratio of Θ**, the PoIES acceptance threshold. An xmrig-compatible compatibility floor pinned that ratio at 1.0, and a ratio of 1.0 *is* the block target. Every share that validated was therefore a block, and PPS — which prices a share by its expected fraction of a block — paid only block finders.
+
+Lowering the floor globally was not an option. A sub-1.0 wire difficulty put the xmrig build into a connect → `set_difficulty` → disconnect loop, and on 2026-07-10 that cost about two hours of mainnet block production. Any fix had to leave xmrig, ASIC dashboards, cryptonote clients and every older miner with byte-for-byte the target they already received.
+
+A second problem compounded the first. 9.0.9 records an incident the same day in which one client parked 835 idle authorized sockets on the solo port (the site advertised "838 miners"), and the PPS credit cap sat pinned at 0 so only block finders ever earned. 9.0.9 added a per-IP connection cap, an idle reaper keyed off inbound bytes only, honest miner counting (addresses with recent shares, not merely authorized sockets — 9.0.10 tightened this to require an accepted share, since `mining.authorize` accepts any plausible address with no proof), and a 5% PPS block reserve so a block-winning share can no longer drain the entire credit headroom its own block minted.
+
+## The 9.1.0 design: opt-in, per session, derived from live Θ
+
+Sub-block targets are handed out **per session**, and only to clients that explicitly request them on `mining.subscribe` via `features.subblockShares`. Three classes are excluded unconditionally: v1 sessions (their wire difficulty must stay at or above the compat floor), solo sessions on port 3334 (solo credit is block-only, so sub-block shares would earn nothing), and any client predating the feature. 9.1.1 made every shipped Animica miner ask for it.
+
+The ratio is derived per job from live Θ so that a share is worth 1/S of a block in expectation:
+
+```
+r = 1 − MICRO · ln(S) / Θ
+```
+
+where `S` is the configured shares-per-block (`shares_per_block`, default 64) and Θ is in micro-nats. Because the PoIES score is `H(u) = −ln(u)`, lowering the threshold by `ln(S)` nats makes a qualifying hash exactly `S` times as likely as a block-qualifying one. The pool-wide share rate is therefore `S / block_time`, independent of hashrate, so `S` bounds the share flood by construction. If Θ is too small to carve `S` shares without the ratio crossing `subblock_min_ratio`, the feature switches off for that job rather than clamping into a flood.
+
+A worked example at the live Θ quoted in the release, about 25.7 nats, with S = 64:
+
+```
+ln(64) = 4.159
+r      = 1 − 4.159 / 25.7 ≈ 0.838
+```
+
+Credit per accepted share is `reward × exp(−Θ(1 − r) / MICRO)`:
+
+```
+Θ(1 − r) / MICRO = 25.7 × 0.162 ≈ 4.159
+exp(−4.159)      ≈ 1/64
+```
+
+So a share at ratio 0.838 is credited one sixty-fourth of the miner's block reward — at the time, 255 ANM per block, so about 4 ANM per share — and a miner that never finds a block earns steadily. No new wire fields were needed: the native miner already thresholds on `T256(Θ × shareTarget)` and never consults the block target, validation was already per-session, and credit already priced a share at its assigned ratio.
+
+9.1.0 also fixed the miner's `mining.set_difficulty` parser (an unexpected shape used to raise inside the read loop and tear down the connection mid-handshake — the exact signature of the 2026-07-10 outage) and replaced a credit-cap query that summed the whole blocks table on every accepted share with an exact headroom snapshot, because "one share per six minutes" had become "about two per second".
+
+## What the adversarial review found (9.1.2)
+
+The review of 9.1.0 found two ways an opted-in miner could steal PPS credit. Both had been harmless while every session sat at ratio 1.0, the maximum, and became exploitable the moment a session could sit lower.
+
+**Credit priced from a miner-supplied field.** PPS credit is `reward × exp(−Θ(1 − r) / MICRO)`, and `r` was read from the `SUBMIT` payload (`d_ratio`, else `shareTarget`); the pool only filled `shareTarget` in when the miner omitted it and never set `d_ratio` at all. Validation always used the session's real target, so a miner could mine the easy sub-block target and stamp `d_ratio = 1.0` on every share to be paid a whole block reward each time — a 64× over-credit at S = 64, silently. The pool now overwrites both fields with the target it assigned, and the reported per-session difficulty comes from the assignment too, so dashboards cannot be spoofed either.
+
+**No replay guard on non-block shares.** The pool accepted a non-block share locally and returned before ever reaching the node, so nothing deduplicated it: one valid sub-block share could be replayed for unlimited credit. Block shares were always covered because the node reports duplicates. 9.1.2 added a pool-wide `(job_id, nonce, extranonce2)` guard, evicted with its job and recorded only on accept, so a share that failed transiently (for example a node-submit timeout) stays re-submittable — "a timeout must never permanently burn a solution, least of all a block."
+
+Three further changes: sub-block sessions no longer feed the pool-wide vardiff (an opted-in session produces about S times more accepted shares and would dominate the sample window on behalf of a population it does not represent); `shares_per_block` is capped at 1,024 rather than 100,000, because `ln(S)` grows too slowly for the ratio floor to catch a huge S; and the feature shipped **default-off** until the rest of the review was verified.
+
+## 9.2.0: the review backlog, and a block that was thrown away
+
+9.2.0 cleared the remaining findings and re-enabled sub-block shares by default (`ANIMICA_POOL_SUBBLOCK_SHARES=0` remains the kill switch). Its headline item is not about shares at all. On 2026-08-06 a worker found a block, the node RPC timed out under load, and the pool discarded the block — about 255 ANM lost for a fault entirely on the pool's side of the socket, because the code treated a transport failure like a rejection. `miner.submitBlock` is now retried (default three attempts with 250 ms linear backoff). This is safe because submission is idempotent at the node: a block that did land returns `duplicate = true`, which the caller already handled. Only blocks, and only for transport faults — an `RpcError` means the node reasoned about the block and retrying cannot change the answer.
+
+Two more corrections matter for anyone reading pool statistics:
+
+- **Clamped credit is deferred, not destroyed.** Cap headroom arrives in block-sized lumps while credit is issued continuously, so a share landing at the wrong moment was paid nothing, permanently — and it fell hardest on sub-block miners, who submit most often. The shortfall is now recorded per worker and flushed from later headroom before any new credit. Deferred amounts are not payable, so the cap's guarantee (never credit more than was mined) is untouched.
+- **Per-share work was wrong for every share.** The stratum job object had no `share_target_int`, so expected work fell through to a Bitcoin-style `difficulty × 2^32` unrelated to Animica's targets — about 34× off at the block target. It now derives the real target from Θ and the assigned ratio, priced off the assigned ratio rather than a block-forced 1.0: a block-winning share represents the same expected attempts as any other share at that target; it was just luckier than it needed to be.
+
+`/api/pool/summary` now reports `subblock_sessions` — counting sessions actually mining a sub-block target, not merely opted in — and `shares_per_block`.
+
+## Where this stands on the live pool
+
+A status note added on 2026-08-23. The 9.0.9 to 9.2.0 releases above are real git tags, but they sit on a branch that was never merged into the main line that the public pool runs (`python -m animica.stratum_pool` from the repository working tree, restarted 2026-08-21). The main-line pool has a per-session vardiff with `min_difficulty = 0.00001`, but it pins the wire-difficulty floor at 1.0 for xmrig compatibility, and on 2026-08-23 `/api/miners` reported `difficulty: 1.0` for every worker while `/api/pool/summary` carried no `subblock_sessions` or `shares_per_block` fields and its hourly share count matched its hourly block count. In other words, the mechanism described here is built and tested but not what is serving miners today: a share on pool.animica.org is currently a block. The [mining guide](/learn/mining-guide) states the same.
+
+## Operator knobs
+
+| Variable | Purpose |
+|---|---|
+| `ANIMICA_POOL_SUBBLOCK_SHARES` | kill switch (on by default since 9.2.0) |
+| `ANIMICA_POOL_SHARES_PER_BLOCK` | S, default 64, capped at 1,024 |
+| `ANIMICA_POOL_SUBBLOCK_MIN_RATIO` | floor below which the feature disables for a job |
+| `ANIMICA_MINER_NO_SUBBLOCK` | miner-side opt-out |
+| `ANIMICA_POOL_PPS_BLOCK_RESERVE_BPS` | block reserve, default 5% |
+| `ANIMICA_POOL_BLOCK_SUBMIT_ATTEMPTS` / `_BACKOFF` | block submission retry |
+
+The pool is `stratum+tcp://pool.animica.org:3333` (PPS with sub-block shares) and `:3334` for solo at a 95/5 split; live statistics are at `https://pool.animica.org/api/pool/summary`. The PoIES score that all of this is measured against is explained in [/learn/poies-consensus-explained](/learn/poies-consensus-explained) and the Θ controller in [/learn/difficulty-adjustment-and-theta](/learn/difficulty-adjustment-and-theta).
+
+## Key takeaways
+
+- The share target is a ratio of Θ; a compatibility floor of 1.0 made every share a block, so PPS paid only block finders.
+- 9.1.0 hands out `r = 1 − ln(S)/Θ` per opted-in session, making a share worth exactly 1/S of a block and bounding the share rate to S per block time.
+- 9.1.2 closed a 64× over-credit (miner-supplied ratio) and a replay hole (no dedupe on non-block shares), shipping default-off.
+- 9.2.0 stopped discarding found blocks on RPC timeouts, deferred clamped credit instead of dropping it, and re-enabled the feature.
+
+## Sources
+
+- git tags `v9.0.9`, `v9.0.10`, `v9.1.0`, `v9.1.1`, `v9.1.2`, `v9.2.0` (release commit messages, 2026-08-06)
+- `python/animica/stratum_pool/tests/test_subblock_shares.py` (default `shares_per_block = 64`)
+- `docs/CHANGELOG.md` (5.3.0 and 5.3.1 share-target history)
+- `spec/poies_math.md`

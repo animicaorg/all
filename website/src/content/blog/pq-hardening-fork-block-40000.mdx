@@ -1,0 +1,85 @@
+---
+title: "The post-quantum hardening fork at block 40,000"
+description: "How Animica 6.0.x closed forgeable signature stubs and unchecked header roots with a height-gated fork at block 40,000, and why the activation height moved from 37,000 to 100,000 to 40,000 in two days."
+date: 2026-07-05
+updated: 2026-08-23
+author: "Animica Team"
+tags: ["consensus", "security", "ml-dsa-65", "fork", "6.0.0"]
+---
+
+Block 40,000 is the first consensus rule change on the April-2026 mainnet. From that height, every transaction in every imported block must carry a verified ML-DSA-65 signature, and the header's transaction and proof roots must match the block's contents. This post explains the findings that forced the change, what the two rules (`FORK_PQ_HARDENING` and `FORK_ROOT_COMMITMENT`) actually enforce, and how the activation height was chosen. It draws on the 6.0.0 changelog entry, the 6.0.1 release commits, and the gate code in `core/chain/block_import.py`.
+
+## What was wrong
+
+The 6.0.0 release (2026-07-04) was a security and consensus hardening release driven by an internal findings report. Its changelog entry, tracked as ANM-C01 through ANM-C11 and a longer tail of high/medium/low items, described three critical problems in the consensus path:
+
+**Forgeable signature stubs (ANM-C01).** The code still carried two legacy signature "schemes", `dilithium3` (id 1) and `sphincs` (id 2), that verified via a public hash with no secret involved. Anyone holding a public key could produce a signature that passed. Because accounts were keyed by `sha3_256(pubkey)` with the algorithm id stripped, a forged stub-scheme signature could spend from the victim's real account.
+
+**Block import applied balances without verifying signatures (ANM-C02).** A miner could include unsigned or forged transfers in a block and honest nodes would apply them. The mempool checked signatures on the way in; the importer did not check them again on the way through.
+
+**Header roots were never validated on import (ANM-C03).** The header carried `txsRoot`, `stateRoot` and `receiptsRoot`, but the importer never compared them with the block's actual transaction list or post-execution state. The docstring of `core/chain/state_commit.py` puts it directly: a peer "could therefore serve a PoW-valid header with a different transaction set … or apply an invalid state transition … and honest nodes would silently diverge."
+
+The same release closed a raw-`exec()` path in contract execution (ANM-C05/C06, made fail-closed), added at-rest AES-256-GCM encryption for `wallets.json` (ANM-C07), added opt-in RPC bearer auth and snapshot path validation (ANM-C08/C10/C11), made block emission exact-integer and fail-closed (ANM-H08/M04), and hardened mempool admission with a fee floor, per-sender caps and mandatory signature checks (ANM-H07/H10/M08/M09). Those are node-local and always on. The three consensus rules are the ones that needed a height.
+
+## What FORK_PQ_HARDENING enforces
+
+The rule is defined in `core/network_params.py` and applied in `block_import.py`. At or after the activation height, block import:
+
+1. Verifies the signature of every non-coinbase transaction in the block. There is no longer a path where an admitted-but-unverified transaction reaches state application.
+2. Accepts only scheme id `0x1003`, ML-DSA-65 (FIPS 204). A transaction signed under any other id is a reason to reject the block.
+3. Fails closed on block-reward computation (ANM-H08): a node that cannot compute the reward at a post-activation height raises instead of committing the block with an empty reward, because an empty reward would silently diverge that node's balances from its peers'.
+
+The node-local rejection of forgeable schemes — the `ACCEPTED_TX_SIG_ALG_IDS` allowlist in the transaction signing module — is independent of the height and always on. The fork adds the consensus-level guarantee: an upgraded node will not build on a block that contains a forged transaction, whatever its mempool did.
+
+For context on the one accepted scheme: an ML-DSA-65 public key is 1,952 bytes, a secret key 4,032 bytes, and a signature 3,309 bytes. Addresses encode the scheme id in their first two payload bytes, which is why every ML-DSA-65 account begins `anim1zqp`. The legacy SPHINCS+ addresses (`0x1002`) still exist on chain, but since block 40,000 no transaction they could sign is acceptable at consensus — they are stranded, and the project says so rather than presenting multi-scheme support. See [/learn/post-quantum-signatures-ml-dsa-65](/learn/post-quantum-signatures-ml-dsa-65) for the scheme itself.
+
+## What FORK_ROOT_COMMITMENT enforces
+
+At or after the height, the importer recomputes the block's transaction root (a Merkle root over sorted transaction hashes, the same construction the miner uses) and compares it with the header's `txsRoot`. It does the same for `proofsRoot`, so a block's useful-work proofs cannot be swapped under a valid header.
+
+Two design properties keep this from causing a split:
+
+- **Self-gating.** Only a root the header commits as non-zero is checked. A block whose miner left a root zeroed is not rejected for it. This is what let the rule activate while not every miner sealed roots.
+- **Grandfathering.** Nothing below the height is re-examined.
+
+The post-execution `stateRoot` was handled more cautiously. 6.0.0 computed it and logged it under `ANIMICA_ROOT_COMMITMENT_SHADOW=1` (observe-only) rather than enforcing it, because a determinism bug in the state-root computation would itself be a chain split. Enforcement of the state root became its own fork, `FORK_STATE_COMMITMENT` at block 44,444, shipped in 7.1.9 and covered in a separate post.
+
+## Choosing 40,000
+
+The activation height moved three times in two days, and the reasons are worth recording because they are the general problem of activating a rule on a live proof-of-work network.
+
+- **37,000 (6.0.0, 2026-07-04).** The first placeholder, about four hours out at the time. The release commit deferred it the same day: "Activating consensus rules at H=37000 while the rest of the network is still on 5.3.4 would make an early-upgraded node a lone enforcer that risks forking off the un-upgraded majority."
+- **100,000 (6.0.0, later on 2026-07-04).** Roughly 29 days of runway for the pip rollout and operator coordination.
+- **40,000 (6.0.1, 2026-07-05).** The operator-chosen coordinated height, set once adoption was confirmed. The 6.0.1 commit estimates the runway at 1.2 to 2.3 days from a head of about 36,628.
+
+Two mechanisms made the short runway safe. First, the P2P parameters hash was pinned to the canonical live value, so 6.0.1, 6.0.0 and legacy nodes kept peering through the window; the activation height is deliberately not folded into that hash. Second, the rules are shaped so that a node upgrading *early* cannot be hurt: empty and coinbase-only blocks pass the gates at any activation height (the coinbase is skipped by the signature gate, and zero roots self-gate), which was verified before release.
+
+The per-fork environment override `ANIMICA_FORK_PQ_HARDENING_HEIGHT` exists for retuning before ship and for test fixtures. On mainnet the value that matters is the one compiled into `core/network_params.py`, because — as the file's comment warns — it "MUST match on every node … or nodes that enforce diverge from nodes that don't the moment a rule-violating block appears."
+
+## The shadow valve, and its limits
+
+`block_import.py` contains `_pq_hardening_shadow()`, a switch (`ANIMICA_PQ_HARDENING_SHADOW=1`) under which a block that would be rejected is logged and accepted instead. It is a rollout tool, not a setting: a shadow node and an enforcing node disagree about the same block, so the valve is only safe in a window where no violating block exists. The later useful-work verification rule (10.2.0) copied this exact pattern and its caveat.
+
+## What this means for integrators
+
+- Any transaction you build must be signed with ML-DSA-65 under the canonical signing preimage; the node verifies only that. The envelope is `{tx, sigs:[{alg:4099, pubkey, sig}]}` as described in [/learn/transactions-and-fees](/learn/transactions-and-fees).
+- A block you receive from a peer at height ≥ 40,000 has had every signature checked by every upgraded node that relayed it. That is a stronger statement than "it was in the mempool".
+- Header `txsRoot` and `proofsRoot` are trustworthy commitments from 40,000 onward when non-zero. `stateRoot` became enforceable at 44,444 under the same self-gating rule.
+
+The security posture as a whole, including what is still open, is summarized in [/learn/security-and-threat-model](/learn/security-and-threat-model).
+
+## Key takeaways
+
+- Block 40,000 activated two rules: mandatory ML-DSA-65-only signature verification at import, and header `txsRoot`/`proofsRoot` verification.
+- The rules are forward-only, grandfathered, and self-gating on zero roots, so an early upgrader cannot fork itself off.
+- The height moved 37,000 → 100,000 → 40,000 to balance lone-enforcer risk against rollout speed, with the P2P params hash pinned so mixed-version nodes kept peering.
+- State-root enforcement was deliberately deferred to block 44,444 after a shadow window.
+
+## Sources
+
+- `docs/CHANGELOG.md` (6.0.0 entry as committed in `80b42aae7`)
+- git commits `df03683c1`, `3e9d1f57a`, `cd3672301` (6.0.0/6.0.1 activation)
+- `core/network_params.py`
+- `core/chain/block_import.py`
+- `core/chain/state_commit.py`
+- `docs/ANIMICA_2026_STATE.md`

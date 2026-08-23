@@ -1,0 +1,153 @@
+---
+title: "Animica security and threat model"
+description: "What Animica assumes, what it defends against at each layer, how to reason about reorg risk with PoIES, which incidents have actually happened on mainnet, and how to report a vulnerability."
+date: 2026-08-23
+updated: 2026-08-23
+category: "operate"
+tags: ["security", "threat-model", "reorg", "confirmations", "disclosure", "dos", "supply-chain"]
+readingLevel: "advanced"
+sources:
+  - docs/security/THREAT_MODEL.md
+  - docs/security/DOS_DEFENSES.md
+  - docs/security/SUPPLY_CHAIN.md
+  - docs/security/RESPONSIBLE_DISCLOSURE.md
+  - docs/security/AUDIT_CHECKLIST.md
+  - docs/security/FORMAL_NOTES.md
+  - docs/SECURITY_THREAT_MODEL.md
+  - docs/legal/SECURITY_POLICY.md
+  - docs/economics/SECURITY_BOUNDS.md
+  - SECURITY.md
+  - docs/ANIMICA_2026_STATE.md
+  - docs/exposure/recon/chain-facts.md
+  - core/network_params.py
+  - consensus/finality.py
+  - docs/CHANGELOG.md
+order: 6
+---
+
+A threat model is only useful if it says what the system assumes, what it does not protect against, and what has gone wrong so far. This article condenses the repository's security documents into those three parts for Animica's node, network, consensus and wallets, works through the reorg-risk arithmetic that tells a merchant how many confirmations to wait, lists the mainnet incidents that are on the record, and ends with how to report a vulnerability.
+
+## Assumptions
+
+The project threat model (`docs/security/THREAT_MODEL.md`) states its trust assumptions up front:
+
+- **Honest majority of work over time windows.** PoIES accepts a block when `S = -ln(u) + Σψ ≥ Θ`; caps on `ψ` and diversity rules limit how much one proof type can concentrate. Short windows may be adversarial.
+- **The P2P network is byzantine.** Channels are authenticated and encrypted, but Sybil peers are expected and eclipse attacks are in scope.
+- **Attestations are not trusted blindly.** For AI and quantum proofs the design trusts verification logic and pinned vendor root stores, not providers; SLAs and slashing are the backstop.
+- **Wallet secrets stay client-side.** Studio services and hosted surfaces never hold keys; there is no server-side signing.
+- **Out of scope:** content moderation of blobs or contract logic, privacy beyond what the base protocol provides, and rich side-channel resistance on commodity hardware.
+
+Adversaries are classed as opportunistic (spam, phishing, trivial reorg attempts), economically motivated cartels (colluding miners, withholding, localised eclipse, bribery), and advanced actors (route hijacking, wide-scale eclipse, TEE supply-chain compromise, CI attacks).
+
+## Attack surfaces and mitigations by layer
+
+| Layer | What an attacker tries | What the design does |
+|---|---|---|
+| Consensus (PoIES) | grind the `u`-draw or nonce domain; over-weight a proof kind; reuse proofs; game the retarget; shallow reorgs and equivocation | strict nonce and `mixSeed` domains; per-proof, per-type and global `Γ` caps plus escort rules; nullifiers with TTL (65,536 blocks on mainnet); EMA retarget with per-window clamps; deterministic tie-break and a uniform reorg bound from block 75,000 |
+| P2P | Sybil and eclipse, flooding, handshake downgrade, compression bombs | authenticated channels; per-peer and per-topic token buckets; in-flight caps; peer scoring with greylist and hard bans; per-/24 peer caps; length and ratio checks before decode |
+| Mempool | cheap flooding, replacement griefing, priority inversion | stateless checks first (chain id, 128 KiB size cap, canonical CBOR, intrinsic gas, fast signature precheck); dynamic fee floor with surge multiplier; per-sender caps; eviction under memory pressure |
+| Execution (Python VM) | nondeterminism, gas bugs, reentrancy through syscalls | AST validator (imports, builtins, recursion); deterministic stdlib and seeded PRNG; gas meter; capability syscalls with length caps and next-block result reads |
+| Wallets and SDKs | phishing, blind signing, mnemonic theft, HRP or scheme-id confusion | origin display, structured signing summaries, auto-lock, encrypted vaults, scheme id encoded in every address |
+| RPC, explorer, website | CORS bypass, SSRF through deploy/verify endpoints, XSS, artifact poisoning | strict CORS, admin-only method gating, body and batch caps, CSP/HSTS, SSRF-safe fetchers |
+| Build and release | malicious dependencies, code-signing key misuse, updater hijack | pinned lockfiles and hashes, audits in CI, SBOMs, Sigstore signing, OS notarisation (see below) |
+
+The mempool and RPC rows are where day-to-day attacks land. Admission requires `balance ≥ amount + gasLimit × gasPrice`, a transfer costs 21,000 nANM at today's 1 nANM gas price, and the rejection codes (-32010 invalid, -32012 bad signature, -32013 insufficient funds, -32017 fee too low, -32018 too large, -32020 duplicate) are returned without stack traces. Public endpoints gate administrative methods; on 2026-08-23 `net.peers` on `rpc.animica.org` returned `-32003 Method not available on the public endpoint`.
+
+## Reorg risk: how many confirmations
+
+`docs/economics/SECURITY_BOUNDS.md` gives the arithmetic. For a block candidate with useful-work credit `Ψ`, the per-attempt acceptance probability is
+
+```text
+p_acc(Ψ) = exp(-(Θ - Ψ))      for Ψ < Θ
+```
+
+so each additional nat of `Ψ` multiplies a miner's success rate by `e ≈ 2.718`, up to the global cap `Γ`. An attacker who can fill every cap has a per-candidate multiplier of at most `e^Γ`; with the document's illustrative `Γ = 2.0` that is about 7.4x over a miner with no proofs (the mainnet policy in `spec/poies_policy.yaml` sets Γ = 12 nats, so the corresponding ceiling there would be `e^12`; see [PoIES consensus explained](/learn/poies-consensus-explained)). The caps and escort rules exist precisely so that buying one kind of proof cannot convert into unbounded consensus weight.
+
+On mainnet today `Ψ = 0` for every block (no miner attaches proofs and verification runs in shadow mode), so the model collapses to plain hash-share arithmetic. If an attacker controls a fraction `β` of effective work, the conservative bound on catching up a `z`-block lead is
+
+```text
+P_catch(z) ≲ (β / (1 - β))^z
+```
+
+A few values computed from that bound (the document's own worked example quotes about 0.0028 for β = 0.36 at z = 12; the bound as written evaluates to about 0.001, and the table uses the computed figure):
+
+| β | z = 6 | z = 12 | z = 20 |
+|---|---|---|---|
+| 0.10 | 1.9e-6 | 3.5e-12 | 8.2e-20 |
+| 0.25 | 1.4e-3 | 1.9e-6 | 3e-10 |
+| 0.36 | 3.2e-2 | 1.0e-3 | 1.0e-5 |
+
+Three practical notes. First, `β` is a share of *network* hashrate, which was about 52 MH/s on 2026-08-23; the security of a small network is bounded by how cheaply that much SHA3-256 throughput can be rented, and the bounds document is explicit that real costs move with hardware and energy markets. Second, the `FORK_FINALITY_DEPTH` rule active since block 75,000 makes a block 100 deep irreversible on every node; that caps the damage of a deep private chain but is a reorg bound, not a finality vote, and does nothing for a 6-block double-spend. Third, the RPC's `tx.getStatus` reports `finalized_in_pow: true` as soon as a transaction is included in a PoW block and `finalized: true` after 12 confirmations (a node-local default); read the `confirmations` field, not the words. Exchanges and merchants should choose `z` from the table for their risk tolerance, and the explorer's [transaction view](/learn/block-explorer-guide) shows the live confirmation count.
+
+## Cryptographic posture
+
+- **Signatures.** ML-DSA-65 (FIPS 204) is the only scheme consensus accepts for new transactions, mandatory since `FORK_PQ_HARDENING` at block 40,000. SPHINCS+ (`0x1002`) is a forgeable stub in the current codebase, disabled on mainnet, and its wallets are stranded. A pure-Python PQ fallback exists for development and is gated behind `ANIMICA_ALLOW_PQ_PURE_FALLBACK=1`; the changelog records that no production node enables it and that the Docker image self-test asserts SPHINCS+ is off.
+- **Hashing.** SHA3-256 throughout (block hash, address digest, tree tags); transaction signing hashes the canonical CBOR preimage with SHA3-512 under the `animica.tx.v1` domain with chain id and fork id inside, so a signature cannot be replayed across networks or across hard forks.
+- **Timing side channels.** `SECURITY.md` is candid: consensus and crypto paths are pure Python, which cannot be constant-time. The mitigations are `hmac.compare_digest`-based helpers (`animica.security.ct`), evaluating all checks before returning, normalised error messages with detail only in debug logs, batch verification, and cheap-checks-first ordering. The stated threat is local high-precision timing; remote timing over a network, cache attacks and speculative execution are explicitly not addressed. Production signing of high-value keys should use hardware or compiled implementations.
+- **Formal artifacts.** `spec/formal/poies_equations.lean` states the acceptance predicate, cap soundness and retarget invariants, and `spec/formal/vm_smallstep.k` gives VM small-step semantics. The notes describe both as skeletons with partial proofs, useful to auditors as statements of intent rather than machine-checked guarantees.
+
+## What has actually happened on mainnet
+
+The repository records its incidents in the changelog, the state document and the chain-facts snapshot. These are the ones that shaped consensus:
+
+| Height | Event | Outcome |
+|---|---|---|
+| 28,167 / 38,728 / 44,854 | natural one-block forks on which some nodes wedged (the headers pipeline discarded the winning sibling) | pinned checkpoints; 7.2.0 sibling ingest; 8.0.3 verified self-heal with regression tests |
+| 39,584 | "ANM-2026-07" wallet-key leak | deterministic, value-preserving clawback state migration (6.0.5) |
+| 40,000 | `FORK_PQ_HARDENING` and `FORK_ROOT_COMMITMENT` | mandatory signature verification, ML-DSA-65 only; header root checks |
+| 42,000 | `FORK_ADDRESS_FREEZE` | validation-only reject rule for a frozen set containing a single attacker address; writes no state |
+| 44,444 | `FORK_STATE_COMMITMENT` ("inclusion implies execution", 7.1.9) plus a treasury-scam clawback of about 5.65 million ANM | closed the phantom-deposit class where an included transaction might not have executed |
+| 2026-02-08 | scheme-swap incident | SPHINCS+ `0x1002` addresses stranded; a fix needs a coordinated fork |
+| 5.3.2 (software) | snapshot restore could import partial state and advance the head | completeness gate aborts before `set_head`; the class behind an exchange node reporting too-low balances |
+
+Two caveats that the documents themselves raise. Block headers still carry zeroed `stateRoot` and `receiptsRoot` (the live head on 2026-08-23 showed both as all zeros); state commitment is armed but roots are unsealed, so a divergent node cannot be caught by a root mismatch, which is why the snapshot completeness gate matters and why comparing balances against an independent node is still the operator's tool. And the useful-work verification rule at 75,000 is in shadow mode on mainnet by design, because its payment-status input is still node-local; flipping the fleet to enforcing is described as a separate governance action.
+
+## What the hosted platform document is, and is not
+
+`docs/SECURITY_THREAT_MODEL.md` is a STRIDE-style threat model for the hosted "compute and LLM cloud platform" (API gateway, billing, inference, sandbox), not for the chain. It is dated 2024-01-05, marked *Draft*, and most of its mitigation lines are marked TODO (webhook signature verification, sandbox isolation with gVisor or Firecracker, secrets management, rate limiting). Readers evaluating the hosted AI services should take that document as a list of known gaps rather than a list of controls. The chain-level controls are the ones in the previous sections.
+
+## Operator hardening checklist
+
+Drawn from the DoS, P2P and wallet documents:
+
+1. Never expose TCP 8545 (RPC) or 9000 (metrics) to the internet; bind them to localhost and put an authenticated proxy in front if remote access is needed. Keep P2P 30333/tcp and 443/udp open instead.
+2. Leave the default caps in place: 2 MiB RPC bodies, 50 calls per batch, 128 KiB transactions, 64 queued per sender, four in-flight block requests per peer.
+3. Encrypt the CLI wallet store (`animica wallet encrypt`) and keep the passphrase off the host; `animica up` creates that file in plaintext by default.
+4. Verify releases. The supply-chain policy targets SLSA 3 with Sigstore keyless signing, CycloneDX SBOMs and notarised installers; verify with `cosign verify-blob` where signatures are published and compare checksums from more than one mirror. Note that the PyPI wheel is built from the maintainers' working tree, so pin versions and review the changelog before upgrading infrastructure nodes.
+5. Wait for confirmations proportional to value using the table above; do not treat `finalized_in_pow` as settlement.
+6. Compare your node's head hash and a few balances against an independent node or the explorer after any restore or upgrade.
+7. Watch the DoS telemetry: rejected-share and rejected-transaction counters, peer ban counts, reorg depth histograms.
+
+## Reporting a vulnerability
+
+The top-level `SECURITY.md` and `docs/legal/SECURITY_POLICY.md` name `security@animica.org`, with `security-backup@animica.org` as a fallback and a PGP key published through the RFC 9116 file at `https://animica.org/.well-known/security.txt` (live on 2026-08-23, listing the same contact, an encryption key URL and a policy page). `docs/security/RESPONSIBLE_DISCLOSURE.md` lists `security@animica.dev`; if one address bounces, use the other.
+
+The published process: acknowledgement within three business days, severity assessment within seven, fix windows of roughly 30 days for critical and high findings and 90 for medium and low, coordinated advisories with CVE requests where applicable, and opt-in credit. Safe harbour covers good-faith research that avoids privacy violations and service degradation, uses testnet or devnet and the researcher's own accounts, and does not run automated scanners against production. A private bounty programme is mentioned for findings affecting funds, key material, consensus safety or remote code execution; there is no published reward table.
+
+In scope: `core/`, `consensus/`, `p2p/`, `rpc/`, `mempool/`, `execution/`, `da/`, `proofs/`, `randomness/`, `aicf/`, `vm_py/`, the wallets, Studio and explorer services, the SDKs, and installers and updaters. Out of scope: volumetric DDoS alone, social engineering, self-XSS, and best-practice suggestions without a concrete vulnerability.
+
+## Key takeaways
+
+- The model assumes an honest majority of work and a byzantine network; it does not promise privacy, content moderation or hardware-grade side-channel resistance.
+- Every layer has a documented defence: caps and nullifiers in consensus, token buckets and peer scoring in P2P, stateless-first admission in the mempool, an AST-validated deterministic VM, and origin-aware wallets.
+- With no useful-work proofs on mainnet, reorg risk is plain hash-share arithmetic: `(β/(1-β))^z`; choose confirmations from that, and treat the 100-block bound as a ceiling rather than finality.
+- Mainnet has lived through a key leak, a treasury scam, a scheme-swap stranding and three one-block wedges; each produced a height-gated rule or a code fix that is now part of the protocol.
+- Report issues to `security@animica.org` (PGP via `/.well-known/security.txt`); acknowledgement within three business days.
+
+## Sources
+
+- docs/security/THREAT_MODEL.md
+- docs/security/DOS_DEFENSES.md
+- docs/security/SUPPLY_CHAIN.md
+- docs/security/RESPONSIBLE_DISCLOSURE.md
+- docs/security/AUDIT_CHECKLIST.md
+- docs/security/FORMAL_NOTES.md
+- docs/SECURITY_THREAT_MODEL.md
+- docs/legal/SECURITY_POLICY.md
+- docs/economics/SECURITY_BOUNDS.md
+- SECURITY.md
+- docs/ANIMICA_2026_STATE.md
+- docs/exposure/recon/chain-facts.md
+- core/network_params.py, consensus/finality.py
+- docs/CHANGELOG.md (5.3.2, 7.1.7, 8.0.3 entries)
+- Live: https://animica.org/.well-known/security.txt, `chain.getHead`, `tx.getStatus` and `net.peers` against https://rpc.animica.org/rpc, 2026-08-23

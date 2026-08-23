@@ -1,0 +1,22 @@
+---
+title: "Animica 9.7.0: the full block 75,000 reward split, plus five forks wired"
+description: "From block 75,000 the subsidy splits 50% miner / 25% treasury / 25% inference carve. Value-carrying calls, bounded retargeting, a uniform reorg bound and the optional quantum beacon activate at the same height."
+date: 2026-08-11
+tags: ["release", "consensus", "fork", "emission"]
+---
+
+Animica 9.7.0 lands every pending mainnet fork in one coordinated step at height **75,000**. The changes below had been defined in `core/network_params.py` but left unwired, so a live node still computed the old 85/15 split; 9.7.0 wires and tests them. All are grandfathered below 75,000 (and active from genesis on testnet/devnet), so no realized history changes.
+
+**Reward split (`FORK_TREASURY_25` + `FORK_SERVICE_CARVE`).** The treasury share rises from 15% to 25% inside `compute_block_reward`; the flag had pointed at 70,000 but was never read, and is moved to 75,000 so the whole split changes at once. A further 25% of every block is reserved for inference and **withheld from the miner whether or not anything claims it**. The unclaimed slice rolls to the foundation treasury, so a no-claim block is 50% miner / 50% treasury and a fully claimed block is 50% miner / 25% treasury / 25% inference. Emission total and the halving schedule are unchanged — only the division.
+
+**`FORK_VALUE_CALL`.** `TxCall` gains an optional `amount`, omitted from the canonical object when zero so every historical valueless call encodes and hashes byte-identically; `debit_credit_for_call` moves it from caller to callee.
+
+**`FORK_BOUNDED_RETARGET`.** A stall now eases difficulty by one bounded step and resets the EMA instead of teleporting Θ to the floor (the trapdoor that had wedged the chain); a floor escape lifts Θ off the floor when blocks are not slow.
+
+**`FORK_FINALITY_DEPTH`.** The reorg bound is clamped into `[MIN_REORG_DEPTH, FINALITY_DEPTH]` per candidate, so no operator override can accept an arbitrarily deep rewrite or self-wedge by refusing every reorg. It never rejects a block, only declines to make a tip canonical.
+
+**`FORK_QUANTUM_BEACON`.** Presence-gated binding to attested quantum randomness: a block carrying no beacon is valid at every height forever, so a QRNG outage cannot halt the chain; only a present commitment is verified.
+
+**Why this upgrade is mandatory.** Coinbase amounts are never validated against the schedule, yet state application credits balances from the node's own reward computation. An un-upgraded node does not fork or stall — it accepts identical blocks and credits different balances, silently and permanently. Every full node, pool and balance-tracking exchange or explorer must be on 9.7.0 before 75,000.
+
+Two follow-ups after activation: 10.2.2 fixed a block template that over-advertised the miner's share by 75 ANM, and 10.2.7 made settlement anchors constructible so the carve can reach providers.

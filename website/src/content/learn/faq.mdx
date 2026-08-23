@@ -1,0 +1,234 @@
+---
+title: "Animica FAQ"
+description: "Direct answers to the questions people ask about Animica: what it is, how ANM is issued and obtained, wallets and addresses, fees, mining, useful work, contracts, nodes, security and common errors."
+date: 2026-08-23
+updated: 2026-08-23
+category: "reference"
+tags: ["faq", "reference", "troubleshooting"]
+readingLevel: "beginner"
+sources:
+  - docs/FAQ.md
+  - docs/TROUBLESHOOTING.md
+  - docs/MINING_TROUBLESHOOTING.md
+  - docs/ANIMICA_2026_STATE.md
+  - AGENTS.md
+  - spec/params.yaml
+  - core/network_params.py
+  - docs/wallets/HARDWARE.md
+  - website/src/data/faq.ts
+order: 2
+---
+
+These are the questions that come up most often about Animica, answered from the specification, the code and the live network as of 2026-08-23. Each answer links to the article that covers the topic in depth. Where the honest answer is "designed but not live", it says so.
+
+## Basics
+
+### What is Animica?
+
+Animica is an open-source, proof-of-work Layer-1 blockchain whose mainnet (chain id 1) has been running since genesis on 2026-04-06. Accounts sign with ML-DSA-65, a NIST post-quantum signature standard; contracts run in a deterministic Python VM; and the consensus rule, PoIES, is designed to let verified AI and quantum work count toward block acceptance alongside hashing. The code is Apache-2.0 at https://github.com/animicaorg/all. See [what is Animica](/learn/what-is-animica).
+
+### Is this a fork of Bitcoin or Ethereum?
+
+No. Animica is an independent codebase (Python node, own wire formats, own VM). It borrows ideas from both: halving-style issuance and confirmation-based settlement resemble Bitcoin, and the account model with gas-metered contracts resembles Ethereum. It also ships compatibility facades for Bitcoin Core and Ethereum RPC so existing tools can connect, but those are translation layers, not the chain's identity. See [Animica vs Bitcoin vs Ethereum](/learn/animica-vs-bitcoin-vs-ethereum).
+
+### What does "post-quantum" actually mean here?
+
+It means the signature scheme that authorises transactions, ML-DSA-65 (FIPS 204), is not known to be breakable by a quantum computer, unlike the secp256k1 ECDSA used by Bitcoin and Ethereum. The P2P handshake likewise uses ML-KEM (Kyber-768). It does not mean the chain uses quantum computers; the "quantum" useful-work lanes are separate and are not live on mainnet. See [post-quantum signatures](/learn/post-quantum-signatures-ml-dsa-65).
+
+### Which version of the software is current?
+
+The 10.x line; `python/pyproject.toml` reads 10.4.4 at the time of writing. Install or upgrade with `pip install -U animica`. Node operators must be on a version that knows every activated fork height (the latest is 75,000) or they will compute wrong balances without noticing.
+
+### Where can I see the live network?
+
+The explorer at https://explorer.animica.org shows blocks, transactions and addresses and has a REST API (`/api/head`, `/api/blocks`, `/api/tx/…`, `/api/address/…`). The public RPC is `POST https://rpc.animica.org/rpc`. Pool statistics are at https://pool.animica.org/api/pool/summary. See [block explorer guide](/learn/block-explorer-guide).
+
+## ANM and supply
+
+### How many ANM exist and how many will there be?
+
+About 110.79 million ANM exist as of 2026-08-23 (explorer `/api/circulating-supply`, which reports the node's ledger total). The genesis premine was 81 million; blocks add 300 ANM each, halving every 1,350,000 blocks with a 0.0001 ANM tail, so mined supply converges to 810 million and total supply to just under 891 million, inside the 900 million `MAX_MONEY` ceiling in the code. See [ANM tokenomics](/learn/anm-tokenomics-and-emission).
+
+### Who gets the block reward?
+
+It depends on height. From genesis to block 42,000 the miner received all 300 ANM. From 42,001 the split was 85% miner and 15% foundation treasury. Since block 75,000 it is 150 ANM to the miner, 75 ANM to the treasury and 75 ANM reserved for AI service providers; if no provider claims the reserve in a block, it also goes to the treasury. The total minted never changed.
+
+### When is the first halving?
+
+At height 1,350,001, when the subsidy drops from 300 to 150 ANM. At the 60-second target that is about 2.57 years after genesis; at the measured 67-second average it is closer to 2.9 years, so roughly late 2028 to early 2029. Halvings are triggered by height, not date.
+
+### How do I get ANM?
+
+Mine it (`pip install animica && animica up`, or point a miner at `pool.animica.org:3333`), trade it on NonKYC (ANM/USDT: https://nonkyc.io/market/ANM_USDT), accept it as payment, or serve AI jobs as an AICF worker. There is no mainnet faucet; `faucet.request` works only on devnet and testnet. See [how to buy and accept ANM](/learn/how-to-buy-and-accept-anm).
+
+### Is there a vesting lock on the premine?
+
+`spec/params.yaml` describes a 365-day cliff and 36-month linear vesting for the 45 million ANM foundation bucket and none for the other buckets, but this is a policy statement rather than a consensus rule; there is no on-chain lock-up contract. The whole 81 million was credited at genesis to one foundation-managed address that you can watch on the explorer.
+
+## Wallets and addresses
+
+### Why does every address start with `anim1zqp`?
+
+An Animica address is bech32m with human-readable part `anim` and a 34-byte payload: a 2-byte algorithm id followed by SHA3-256 of the public key. For ML-DSA-65 accounts the algorithm id is 0x1003, and those two bytes encode to the characters `zqp`, so every account address is 66 characters starting `anim1zqp`. Contract addresses use id 0x0000 and look different. See [addresses and bech32m](/learn/animica-addresses-bech32m).
+
+### My library says the address is valid but the node rejects it. Why?
+
+Most likely the library implements bech32 (BIP-173) but not bech32m (BIP-350). The two use different checksum constants, and Animica requires bech32m. A second common cause is hashing the public key with Keccak-256 instead of NIST SHA3-256. The explorer's `/address/` page is a quick independent check.
+
+### Which wallets exist?
+
+A browser extension, a Qt desktop wallet, a Flutter mobile wallet and the CLI (`animica wallet …`); the web wallet at wallet.animica.org was discontinued in July 2026 and now shows a notice. Downloads and checksums are at https://animica.org/downloads. All of them hold keys locally; no Animica service signs on your behalf. See [wallets and HD derivation](/learn/wallets-and-hd-derivation).
+
+### Can I recover my wallet from a seed phrase in another wallet?
+
+Yes, if both follow the HD derivation standard: BIP-39 mnemonic, SLIP-0010 hardened derivation along `m/44'/4279885'/account'/0'/index'`, 32-byte ML-DSA-65 seed. The specification includes a test vector (the "abandon … about" mnemonic, index 0, yields `anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7`) so you can verify a wallet's derivation before trusting it with funds.
+
+### I have an old wallet whose address does not start with `anim1zqp`. Can I use it?
+
+If it was created with SPHINCS+ (scheme 0x1002) in an early build, no. SPHINCS+ is consensus-stranded: mainnet does not accept its signatures, so such an account cannot spend. Do not send new funds to it. Create an ML-DSA-65 account and use that.
+
+### Are there hardware wallets?
+
+Not with on-device ML-DSA-65 signing. `docs/wallets/HARDWARE.md` is a reference design whose support matrix lists native post-quantum signing on Ledger and Trezor as a future or custom app, and notes that WebAuthn keys cannot act as generic PQ signers. What it recommends today is using a FIDO2/WebAuthn key to unlock an encrypted local PQ vault or to gate spending as a co-signer, with the chain signature still made by software. `docs/wallets/RECOVERY.md` covers threshold backups and social recovery for larger holdings.
+
+## Transactions and fees
+
+### What does a transfer cost?
+
+21,000 gas at a gas price of 1 nANM per gas: 21,000 nANM, or 0.000021 ANM. The node admits a transaction only if the sender's balance covers the amount plus `gasLimit × gasPrice`. Fees are far below the block subsidy and are not a market today. See [transactions and fees](/learn/transactions-and-fees).
+
+### Why is there no nonce?
+
+Version 2 transactions replace the nonce with a `validAfter`/`validUntil` block-height window and a random salt; the transaction id must be unique, which is the replay protection. This removes the stuck-nonce problem: a transaction that never lands simply expires at `validUntil`. Legacy v1 transactions with nonces are still accepted.
+
+### How long until a payment is final?
+
+Never "final" in the protocol sense: Animica has no finality gadget. `tx.getStatus` does flip `finalized` to true after 12 confirmations (a node-local default), but that is a depth label, not settlement. Use the confirmation count, and scale it with the amount. Blocks arrive about every 67 seconds; since block 75,000 a uniform maximum reorg depth is enforced, but ordinary practice is still to wait for several confirmations.
+
+### I got error -32011 / -32013 / -32017. What do they mean?
+
+-32011 is a chain-id mismatch (you signed for the wrong network; mainnet is 1). -32013 is insufficient funds (balance must cover amount plus fee). -32017 is fee too low and -32016 gas too low (use 21,000 gas and 1 nANM for a transfer). -32012 is a bad signature, often a wrong signing domain or non-canonical CBOR; -32018 means the transaction exceeds 131,072 bytes; -32020 means the node already has it. `mempool.simulateAdmission` lets you dry-run before sending. See [JSON-RPC API guide](/learn/json-rpc-api-guide).
+
+### Why is the transaction so large?
+
+An ML-DSA-65 signature is 3,309 bytes and the public key 1,952 bytes, so a signed transfer is about 5.3 kB before the body. That is the cost of post-quantum security and the reason the maximum transaction size is 131,072 bytes.
+
+## Mining
+
+### How do I start mining?
+
+`pip install animica` then `animica up`; the CLI detects hardware and, for AI serving, selects models. To mine through the pool, point any compatible miner at `stratum+tcp://pool.animica.org:3333` (PPS) or `:3334` for solo mining with a 95/5 split. A GPU miner and a desktop GUI miner exist under `mining/` and `apps/miner-gui/`. See [mining guide](/learn/mining-guide).
+
+### What hash function does mining use?
+
+The block hash is SHA3-256 over the canonical CBOR header, and a block is accepted when that hash is at or below a target derived from Θ (`thetaMicro`). Animica does not use RandomX; the pool briefly offered Monero (XMR) dual-mining jobs, which were removed on 2026-07-16 (`python/animica/stratum_pool/api.py`) and were never part of Animica's own proof of work.
+
+### What is Θ and why does it move every block?
+
+Θ (theta) is the acceptance threshold, the chain's difficulty, measured in micro-nats. It is retargeted on every block by a bounded exponential moving average aimed at the 60-second target, with step clamps, a minimum, a maximum and, since block 75,000, a clamped emergency reduction and a floor escape so a single slow block cannot pin it at the minimum. See [difficulty adjustment and Θ](/learn/difficulty-adjustment-and-theta).
+
+### My miner found a block but my balance did not change.
+
+Check that the miner's payout address is the one you are querying, that you are looking at the same node, and that the block is still canonical (an orphaned block pays nothing). Since block 75,000 a found block pays the miner 150 ANM, not 300, because the treasury and service carve take the rest; pool miners are paid per share, not per block. Rewards are spendable immediately; there is no coinbase maturity period.
+
+### Do I need to run a node to mine?
+
+No. The pool runs the chain infrastructure; you need only a miner and a payout address. Running your own node gives you solo mining and independent validation at the cost of disk, bandwidth and keeping up with fork heights. See [run a node](/learn/run-a-node).
+
+### Does attaching AI or quantum proofs raise my chance of a block?
+
+Not on mainnet today. Blocks are accepted on hash work alone; the useful-work verifier activated at block 75,000 runs in observe-only mode, never requires a proof and never adds credit toward Θ. The reference miner attaches no proofs, and every mainnet block so far carries none.
+
+## Useful work, AI and quantum
+
+### Is Animica's useful work live?
+
+Partly. What is live: AI inference served by registered workers through AICF, proof-of-inference receipts you can verify offline, and a 25% subsidy carve that pays providers named in settlement anchors. What is not live: any useful-work credit in block acceptance, quantum compute proofs, the quantum beacon commitment (activated but dormant) and on-chain anchoring of ENA receipts. The status table in [useful work: AI and quantum](/learn/useful-work-ai-and-quantum) lists each component.
+
+### Can I use the AI for free?
+
+Yes. `https://animica.dev/v1` is an OpenAI-compatible endpoint with no API key and a limit of 30 requests per minute per IP, funded by the foundation treasury and served by the miner network. Capacity depends on which models workers are serving; check the `serving` flag in `/v1/models`. See [AICF](/learn/aicf-ai-compute-framework).
+
+### How do AI providers get paid?
+
+Through settlement anchors against the service carve: since block 75,000 each block reserves 75 ANM, and a block that contains an anchored claim pays the whole reserve to the claiming providers pro-rata. A block with no claim sends the reserve to the treasury. The chain does not itself measure who served what; that is decided by the settlement authority that signs the anchors.
+
+### Does Animica use quantum computers?
+
+No. The quantum lanes in the design are (a) hardware-attested quantum random numbers contributed to the randomness beacon, and (b) trap-circuit proofs for quantum jobs executed by external providers. The code exists and can be exercised on devnet; neither affects mainnet block acceptance, and the "quantum stub" contribution plan is a CPU stand-in.
+
+## Contracts and building
+
+### What language are contracts written in?
+
+A restricted, deterministic subset of Python, executed by `vm_py` with gas metered from `vm_py/gas_table.json`. Storage values are bytes (a missing key reads as empty bytes), the native coin has 9 decimals, and `from stdlib import hash` exposes SHA3. Contract calls have executed on mainnet since block 75,000 and may carry ANM value since the same height. See [Python-VM smart contracts](/learn/python-vm-smart-contracts) and the [Hello Counter tutorial](/learn/hello-counter-contract-tutorial).
+
+### Can I deploy Solidity?
+
+Not to consensus. The Ethereum RPC facade lets `eth_*` tools connect (with an EVM-facing chain id of 149), and an optional node-local EVM execution lane can run Solidity on a single node, but that state is not validated by the network and real ANM moves only through native transactions. Treat EVM compatibility as tooling, not as a contract platform.
+
+### Is there an SDK?
+
+Python (`omni_sdk`), TypeScript (`@animica/sdk`) and Rust clients live under `sdk/`, the `animica` PyPI package includes a CLI and client, and `pip install animica-mcp` provides an MCP server with read and compute tools for AI agents. The RPC is documented by `https://rpc.animica.org/openrpc.json`.
+
+### What is the L2?
+
+An ANM-native payment rollup added in release 10.x: the only asset is ANM, every transaction is ML-DSA-65 signed, batches are re-executed for validity and settle to L1, and a designated sequencer orders transactions. RPC methods are flat `l2_*` (`l2_status`, `l2_getBalance`). See [the Animica L2 rollup](/learn/animica-l2-rollup).
+
+## Nodes and network
+
+### How do I run a node?
+
+`pip install animica` and `animica node up` (a Docker Compose wrapper) with `animica network set mainnet`; `animica node status` and `animica node doctor` report health. Keep the software current: several forks are state-mutating, and a node behind on fork heights keeps following the chain while silently computing different balances. See [run a node](/learn/run-a-node).
+
+### Why does the RPC return 301 or fail?
+
+Use the `/rpc` path: `POST https://rpc.animica.org/rpc`. The bare domain returns a redirect that naive POST clients mishandle. There is no public WebSocket and no `chain.getHeight` method; call `chain.getHead` and read `height`.
+
+### How many peers does the network have?
+
+The explorer's head endpoint reports the public node's peer count (3 as of 2026-08-23) and its `/api/richlist/summary` reports 155 funded addresses. This is a small network; plan confirmation policies and operational assumptions accordingly. See [P2P networking and sync](/learn/p2p-networking-and-sync).
+
+## Security
+
+### What happened with the address freeze?
+
+Release 7.0.0 activated a validation-only rule at block 42,000 that rejects blocks containing transactions to or from a known-compromised address. The frozen set has one entry, the attacker address from an incident in July 2026 whose funds were clawed back. It writes no state, cannot halt the honest chain, and affects no ordinary address. See [security and threat model](/learn/security-and-threat-model).
+
+### How do I avoid phishing?
+
+Install wallets only from https://animica.org/downloads and verify checksums; never type a seed phrase into a web page (the wallets never ask after onboarding); confirm the dapp origin character by character before connecting; and reject "airdrop", "emergency upgrade" or "fee refund" messages. The wallet shows a structured summary for every signature, so do not sign anything it cannot decode.
+
+### Is there a bug bounty or security contact?
+
+Email `security@animica.org` (PGP key via https://animica.org/.well-known/security.txt), as `SECURITY.md` and `docs/legal/SECURITY_POLICY.md` instruct; acknowledgement is promised within three business days. A private bounty is mentioned for findings affecting funds, keys or consensus, with no published reward table. The repository's `AGENTS.md` also accepts a private GitHub security advisory; never open a public issue or post exploit details before a fix ships. See [security and threat model](/learn/security-and-threat-model).
+
+## Troubleshooting
+
+### "scheme_deprecated" or a rejected signature scheme
+
+Your wallet is using a scheme mainnet does not accept (the node's reason string is `scheme_deprecated:<id>`), almost always SPHINCS+ from an early build. Create a new ML-DSA-65 wallet (`animica wallet new`) and move funds there from any account that can still sign. `tx.getSupportedSignatureSchemes` lists what the node accepts.
+
+### "Transaction stuck in mempool"
+
+Wait for the next block (about a minute) and check `tx.getStatus`. If the transaction's `validUntil` has passed it will never be included and you must resubmit; if the fee or gas was below the minimum it was likely never admitted, which `mempool.simulateAdmission` would have shown. Make sure the node you query is synced (`chain.getHead` should match the explorer).
+
+### "RPC not reachable" or "data directory not writable"
+
+Run `animica node doctor`. The usual causes are the node not running, a wrong `ANIMICA_RPC_URL` (it must end in `/rpc`), a firewall on port 8545, or a data directory without write permission (`chmod 755 ~/.animica`). `docs/TROUBLESHOOTING.md` has the full checklist.
+
+### The explorer and my node disagree about a balance
+
+One of them is behind or on a different branch. Compare `chain.getHead` on both; if heights match but hashes differ, one node is on a fork and will resolve within the reorg bound. If your node is on an old version that lacks a fork height, it may be applying the wrong reward split and must be upgraded and resynced.
+
+## Sources
+
+- `docs/FAQ.md`
+- `docs/TROUBLESHOOTING.md`
+- `docs/MINING_TROUBLESHOOTING.md`
+- `docs/ANIMICA_2026_STATE.md`
+- `AGENTS.md`
+- `spec/params.yaml`
+- `core/network_params.py`, `consensus/rewards.py`, `consensus/useful_work_verify.py`
+- `docs/wallets/HARDWARE.md`, `docs/wallets/RECOVERY.md`
+- `website/src/data/faq.ts` (previous site FAQ, corrected where it was out of date)

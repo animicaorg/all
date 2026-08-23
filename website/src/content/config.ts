@@ -58,7 +58,27 @@ const docs = defineCollection({
   }),
 });
 
-export const collections = { blog, updates, docs };
+// Learn: long-form, source-grounded explainers and guides at /learn/<slug>.
+export const LEARN_CATEGORIES = ["protocol", "operate", "build", "economy", "reference"] as const;
+const learn = defineCollection({
+  type: "content",
+  schema: z.object({
+    title: z.string().min(1, "Article title is required"),
+    description: z.string().max(300),
+    date: z.coerce.date(),
+    updated: z.coerce.date().optional(),
+    category: z.enum(LEARN_CATEGORIES),
+    tags: z.array(z.string()).default([]),
+    readingLevel: z.enum(["beginner", "intermediate", "advanced"]).default("intermediate"),
+    // Repo paths (docs/, spec/) the article was written from; rendered as "Sources".
+    sources: z.array(z.string()).default([]),
+    order: z.number().int().default(999),
+    draft: z.boolean().default(false),
+  }),
+});
+
+export const collections = { blog, updates, docs, learn };
+export type LearnEntry = CollectionEntry<"learn">;
 
 // Handy exported types
 export type BlogEntry = CollectionEntry<"blog">;

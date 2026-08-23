@@ -1,0 +1,107 @@
+---
+title: "Verifiable inference: PQ-signed receipts in AICF (7.1.1)"
+description: "How the 7.1.1 Verifiable Inference Engine attaches an ML-DSA-65-signed, content-hashed receipt to every AI completion, what verify and replay can and cannot prove, and where the boundaries are."
+date: 2026-07-10
+updated: 2026-08-23
+author: "Animica Team"
+tags: ["aicf", "ai", "proof-of-inference", "ml-dsa-65", "7.1.1"]
+---
+
+Animica 7.1.1 (2026-07-10) added the Verifiable Inference Engine: every completion served by the `animica ai serve` gateway can carry a receipt that is content-hashed with SHA3-256 and signed with ML-DSA-65, and that anyone can verify offline without a node, a model, or trust in the server. This post explains what a receipt contains, how verification and replay work, and — following the release's own "honest boundaries" section — what a receipt does not prove. Sources are the 7.1.1 changelog entry and `docs/ai.md`. The broader compute framework is described in [/learn/aicf-ai-compute-framework](/learn/aicf-ai-compute-framework).
+
+## What 7.1.1 is, and is not
+
+It is a non-consensus upgrade. Nothing in it touches block validation; everything lives in the ENA coordinator and the `animica ai serve` gateway. There was no fork, no genesis change, and the node never halted. All behaviour is additive: with `ANIMICA_AI_RECEIPTS=off` the gateway is byte-identical to 7.1.0.
+
+The motivating problem is simple to state. An OpenAI-compatible endpoint returns text. Nothing in that text tells you which model produced it, whether the provider actually ran the model, or whether the same prompt would produce the same answer again. On a network where inference is served by whichever miner claims the job — the model of `https://animica.dev/v1`, described in `docs/ANIMICA_2026_STATE.md` — that gap matters more than usual.
+
+## The receipt
+
+Every response from `/v1/chat/completions` and `/v1/completions` can carry an `animica_receipt` object, also returned in an `X-Animica-Receipt` response header. The record binds:
+
+| Field | Meaning |
+|---|---|
+| model | the model identifier that served the request |
+| provider | the serving backend |
+| prompt hash | SHA3-256 of the canonical prompt |
+| output hash | SHA3-256 of the output |
+| tokens | token accounting |
+| seed | the sampling seed used |
+| nonce | per-receipt freshness |
+
+Three properties are layered on that record:
+
+**Content-hashed.** The receipt hash is SHA3-256 over the canonical receipt with volatile and signature fields excluded, so it is stable and anyone can recompute it.
+
+**Signed.** The hash is signed with ML-DSA-65 (FIPS 204) under the domain `animica.ai.proof-of-inference.v1`. The signer is a dedicated inference key that controls no funds, and the signer address is bound to the signing key, so a receipt cannot be relabelled to impersonate another node. The gateway signs on a thread pool so the millisecond-scale post-quantum signature never blocks the event loop; `GET /v1/signer` exposes the public signer identity and `/health` reports the receipt mode.
+
+**Quantum-seeded (optional).** A request can ask for `{"animica": {"quantum_seed": true}}`, or the operator can set `ANIMICA_AI_QUANTUM_SEED=1`. The sampling seed is then derived from the node's randomness beacon — attested hardware QRNG when one is attached, otherwise the node CSPRNG, otherwise a local seed — and the provenance is recorded in the receipt. The receipt says which source it used; it does not claim quantum randomness it did not have.
+
+The mode is operator-controlled: `ANIMICA_AI_RECEIPTS=off|hash|signed`. The default is `signed`, degrading to `hash` when no signing key or PQ backend is available.
+
+## Verify and replay
+
+Two commands, and the distinction between them is the core of the design.
+
+```bash
+animica ai receipt verify receipt.json        # recompute hash + check the PQ signature
+animica ai verify receipt.json                # same, machine-readable
+animica ai replay receipt.json --prompt "the original prompt"
+```
+
+`verify` is fully offline. It recomputes the content hash and checks the ML-DSA-65 signature. It needs no network, no server and no model, and it answers exactly one question: *did the holder of this signing key attest to this (model, prompt hash, output hash, seed) tuple?* The gateway also exposes `POST /v1/verify` for the same check.
+
+`replay` answers a stronger question — *would the same prompt and seed produce the same output?* — and can only do so where the backend is reproducible. It re-runs generation with the recorded seed against a seed-honouring local backend and compares `sha3(output)` with the receipt. The result is reported in three grades, and the documentation is careful that they are not interchangeable:
+
+| Result | Meaning |
+|---|---|
+| `verified` | a bit-for-bit reproducible local backend: the output was actually re-derived and matched |
+| `best_effort` | a seed-honouring but non-deterministic backend (remote provider, GPU kernels): signature-valid, not re-run |
+| `unsupported` | the backend cannot be replayed |
+
+So a receipt from a GPU-served model is verifiable — the attestation is cryptographically sound — but not, in general, replayable to the bit. The release calls this out rather than glossing it: "Replay is honest: `verified` only for reproducible local backends, `best_effort` for remote ones."
+
+## Plumbing that made it possible
+
+`ModelAdapter.generate(...)` gained a keyword-only `seed=` argument, honoured by the deterministic, OpenAI-compatible and Ollama backends and forwarded by the provider mesh. The default `None` keeps every existing output unchanged. That single parameter is what turns "a seed was recorded" into "a seed was used".
+
+7.1.1 also introduced the provider mesh and router: first-class adapters for remote providers behind `providers.register_adapter`, a policy router with ordered fallback chains, EWMA latency telemetry and a SQLite-backed circuit breaker (`GET /v1/router/status`). With no routing policy configured, routing is a pure pass-through. The mesh is operator-facing; the receipt is what the user sees, and a receipt records which provider served the request.
+
+## Boundaries, as the release states them
+
+The 7.1.1 changelog has a section titled "Notes / boundaries (honest)". Paraphrased:
+
+- The receipt **signature** is post-quantum (ML-DSA-65). The beacon **attestation** is classical — an Ed25519 software self-signer unless a hardware QRNG is attached. The two are kept distinct in the receipt schema so nobody mistakes one for the other.
+- **On-chain anchoring** degraded to a local envelope (`pending_node_rpc`) at release time, because the node RPC `aicf.anchorReceipt` did not yet exist. A 7.1.1 receipt is a signed off-chain document; it is not, by itself, a chain record.
+- Heavy dependencies (FastAPI, uvicorn, torch) remain lazy; the stdlib-only paths are the default.
+
+To those three, add one the architecture implies: a receipt proves *who attested to what*. It does not prove that the model was the best choice, that the output is correct, or — for a non-deterministic backend — that the provider did not substitute a different model and sign honestly about the one it claims. What it does give an integrator is a non-repudiable, post-quantum-signed statement from an identified key, and a reproducibility check wherever the backend allows one. That is the right claim, and it is the claim the network makes.
+
+## How this relates to mining
+
+`docs/ANIMICA_2026_STATE.md` describes the receipt as the user-facing half of a two-sided idea: miners can serve inference and earn for it, and every response can be verified. The earning side is separate machinery — AICF jobs, the inference carve at block 75,000, settlement anchors — and it has its own honesty notes about what the chain can and cannot observe. The two meet at the receipt: it is the artefact a client keeps, and the artefact a future on-chain anchor would reference. See [/learn/useful-work-ai-and-quantum](/learn/useful-work-ai-and-quantum) for the state of that path, and [/learn/post-quantum-signatures-ml-dsa-65](/learn/post-quantum-signatures-ml-dsa-65) for the signature scheme the receipts share with every transaction on the chain.
+
+## Trying it
+
+```bash
+animica ai serve --port 8080          # receipts default to "signed"
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"<id from /v1/models>","messages":[{"role":"user","content":"hello"}]}' \
+  -D - | grep -i x-animica-receipt
+```
+
+Save the receipt, then `animica ai verify receipt.json` on any machine with the `animica` package installed. No node required.
+
+## Key takeaways
+
+- 7.1.1 attaches a SHA3-256-hashed, ML-DSA-65-signed receipt (domain `animica.ai.proof-of-inference.v1`) to each completion, signed by a key that controls no funds.
+- `verify` is offline and checks the attestation; `replay` checks reproducibility and reports `verified`, `best_effort` or `unsupported` honestly.
+- Quantum seeding is opt-in and records its actual source; the beacon attestation is classical.
+- It is non-consensus and additive; on-chain anchoring of receipts was not live at release.
+
+## Sources
+
+- `docs/CHANGELOG.md` (7.1.1 entry)
+- `docs/ai.md` ("Verifiable Inference Engine (7.1.1)")
+- `docs/ANIMICA_2026_STATE.md`

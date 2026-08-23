@@ -1,0 +1,171 @@
+---
+title: "How to buy, receive and accept ANM"
+description: "Ways to obtain ANM (mining, the NonKYC ANM/USDT market, payments), how to withdraw safely to an anim1 address, how to accept ANM with Animica Pay or a plain wallet, and the cautions that apply."
+date: 2026-08-23
+updated: 2026-08-23
+category: "economy"
+tags: ["anm", "exchange", "nonkyc", "payments", "animica-pay", "wallets", "bech32m"]
+readingLevel: "beginner"
+sources:
+  - AGENTS.md
+  - docs/ANIMICA_2026_STATE.md
+  - docs/monetization.md
+  - docs/x402.md
+  - docs/wallets/SECURITY.md
+  - docs/wallets/ADDRESS_BOOK.md
+  - docs/wallets/RECOVERY.md
+  - docs/wallet/HD_DERIVATION.md
+  - docs/pq_keys_and_addresses.md
+order: 4
+---
+
+This guide covers the practical side of ANM: the ways you can obtain it today, a neutral step list for the one exchange market where it trades, how to verify that a withdrawal address is a valid Animica address before you send, and the two ways to accept ANM as a merchant (the hosted Animica Pay service and a plain wallet-to-wallet transfer). It ends with the cautions that apply to a young proof-of-work network with irreversible transactions. Nothing here is investment advice.
+
+## Before you start: three facts to internalise
+
+1. **Addresses are bech32m and begin `anim1`.** An ML-DSA-65 account address is exactly 66 characters and starts `anim1zqp`. Plain bech32 checksums are invalid, so a tool that validates "bech32" without the `m` will accept addresses the network rejects. See [addresses and bech32m](/learn/animica-addresses-bech32m).
+2. **Amounts are integers of nANM.** 1 ANM = 1,000,000,000 nANM. Every API, including the merchant API, expects base units as integers or decimal strings, never floats.
+3. **There is no mainnet faucet** (`faucet.request` exists only on devnet and testnet), and there is no finality gadget: treat a payment as settled only after enough confirmations for the amount involved.
+
+## Ways to obtain ANM
+
+| Route | What it involves | Where |
+|---|---|---|
+| Mining | `pip install animica && animica up`, or point a miner at the pool (`stratum+tcp://pool.animica.org:3333`, PPS; `:3334` solo) | [mining guide](/learn/mining-guide) |
+| Trading | ANM/USDT market on NonKYC | https://nonkyc.io/market/ANM_USDT |
+| Accepting payments | sell goods or services priced in ANM | Animica Pay (https://pay.animica.dev) or your own wallet |
+| Serving AI | run an AICF worker and claim inference jobs; paid through settlement against the service carve | [AICF](/learn/aicf-ai-compute-framework) |
+
+ANM trades on NonKYC (ANM/USDT): https://nonkyc.io/market/ANM_USDT. That is the only venue referenced in the project's documentation; this article does not comment on price or liquidity, and you should check both yourself before trading.
+
+## Buying on NonKYC: a neutral step list
+
+The steps below describe the generic flow of a centralised exchange. The exchange's own interface and rules govern; if anything here differs from what the site shows, follow the site.
+
+1. **Create an account** at nonkyc.io and enable whatever account security the exchange offers (two-factor authentication at minimum).
+2. **Deposit USDT.** Open the USDT deposit page, choose a network the exchange supports for USDT, and send from your existing wallet or exchange. Double-check that the network you send on matches the network selected on the deposit page; sending on the wrong network is the most common way to lose funds at this step.
+3. **Place an order** on the ANM/USDT market: https://nonkyc.io/market/ANM_USDT. A limit order lets you set the price; a market order fills immediately at whatever the order book offers. Read the fee schedule and the minimum order size on the exchange before submitting.
+4. **Withdraw to your own wallet.** Create or open an Animica wallet (desktop, browser-extension and mobile wallets are at https://animica.org/downloads; the CLI has `animica wallet new`; the former web wallet at wallet.animica.org was discontinued in July 2026). Copy your receiving address, paste it into the exchange's ANM withdrawal form, and verify it as described in the next section before confirming. Expect the exchange to require a number of confirmations before crediting deposits and to apply its own withdrawal fee.
+
+Leaving coins on an exchange means the exchange holds the keys. The documentation's wallet guidance (`docs/wallets/SECURITY.md`) is to move funds to a wallet whose seed you control and to back that seed up offline.
+
+## Verifying a withdrawal address
+
+Before you send anything to an address, whether your own or a counterparty's, check it. The rules come from `docs/wallet/HD_DERIVATION.md` and `docs/pq_keys_and_addresses.md`:
+
+- Human-readable part `anim`, separator `1`, then data characters from the bech32 alphabet.
+- Checksum computed with the **bech32m** constant (0x2bc830a3), not the bech32 constant.
+- Decoded payload of 34 bytes: two bytes of algorithm id (0x1003 for ML-DSA-65 accounts, 0x0000 for contracts) followed by 32 bytes of SHA3-256 of the public key.
+- For an account address this makes the string 66 characters long, starting `anim1zqp`.
+
+The following self-contained Python function performs the check. It was run against the HD test vector from the derivation spec (`anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7`) and returns a 34-byte payload beginning `1003`; flipping the final character makes it return `None`.
+
+```python
+CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+GEN = [0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3]
+BECH32M_CONST = 0x2BC830A3
+
+def polymod(values):
+    chk = 1
+    for v in values:
+        top = chk >> 25
+        chk = ((chk & 0x1FFFFFF) << 5) ^ v
+        for i in range(5):
+            chk ^= GEN[i] if ((top >> i) & 1) else 0
+    return chk
+
+def hrp_expand(hrp):
+    return [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+
+def decode_anim(addr):
+    """Return the 34-byte payload of a valid Animica address, else None."""
+    if addr != addr.lower() and addr != addr.upper():
+        return None
+    addr = addr.lower()
+    pos = addr.rfind("1")
+    if pos < 1 or pos + 7 > len(addr):
+        return None
+    hrp, data = addr[:pos], addr[pos + 1:]
+    if hrp != "anim" or any(c not in CHARSET for c in data):
+        return None
+    values = [CHARSET.index(c) for c in data]
+    if polymod(hrp_expand(hrp) + values) != BECH32M_CONST:
+        return None
+    acc, bits, out = 0, 0, bytearray()
+    for v in values[:-6]:
+        acc = (acc << 5) | v
+        bits += 5
+        while bits >= 8:
+            bits -= 8
+            out.append((acc >> bits) & 0xFF)
+    if bits >= 5 or (acc & ((1 << bits) - 1)):
+        return None
+    return bytes(out) if len(out) == 34 else None
+
+payload = decode_anim("anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7")
+assert payload is not None and payload[:2] == bytes.fromhex("1003")
+```
+
+If you would rather not run code, paste the address into the explorer: `https://explorer.animica.org/address/anim1…` resolves a valid address (a fresh one simply shows a zero balance) and errors on an invalid one. The RPC `state.getBalance ["anim1…"]` behaves the same way. None of these checks proves the address belongs to the person you think; they only prove it is well-formed. For that, confirm the address over a second channel and, for a first payment to a new counterparty, send a small test amount first.
+
+## Accepting ANM with Animica Pay
+
+Animica Pay (https://pay.animica.dev) is a hosted merchant service that turns "send ANM to this address" into payment intents, hosted checkout pages, invoices, a point-of-sale screen and webhooks. The facts below come from the project's repository documentation and code.
+
+- **Fee: 2.00%** (200 basis points) of the gross amount, taken by the protocol treasury. The arithmetic is `protocol_fee = floor(gross × 200 / 10,000)` and `merchant_amount = gross − protocol_fee`, so `merchant + fee == gross` exactly and rounding only ever favours the merchant; a dust payment of a few nANM yields a zero fee.
+- **Amounts are BigInt nANM.** The service refuses floats; pass integers, decimal strings or BigInt values. Fiat quotes are integer cents, and a USD price is converted at a server-side rate that throws rather than inventing one when no rate is available.
+- **API shape.** The merchant REST API lives at `/api/v1/payment-intents`, authenticated with a Bearer secret key and requiring an `Idempotency-Key` header on writes so that a retried request cannot create a second intent. Secret keys are hashed at rest and shown once.
+- **Payment identity is reference + recipient, never amount.** Each intent carries a unique reference that the paying wallet commits inside the signed transaction; the indexer matches on that reference and the recipient, and then waits for a receipt that proves *that* transaction executed. "Inclusion ≠ execution on this chain" is written into the service's rules, so nothing is marked paid before the matching receipt.
+- **Webhooks** are signed with HMAC-SHA256 and delivered with retries and a replay window.
+- **Refunds** are new merchant-signed transfers capped at the captured gross; the 2% fee is not refundable.
+- **Test mode** never moves real ANM, and a live-mode caller cannot act on a test-mode row.
+- **Chain limitation worth knowing.** Until block 75,000 a contract CALL could not carry value, so the merchant/fee split is settled by accounting rather than atomically on-chain. `FORK_VALUE_CALL` activated at 75,000 and makes value-carrying calls possible; the accounting-exact model remains the documented behaviour of the service.
+
+A minimal integration is therefore: create a merchant account, create a secret key, POST a payment intent with `amount` in nANM (or a fiat amount in cents), send the customer to the returned checkout page, and act on the signed webhook when the intent reaches the paid state. The service's own documentation is the authority on exact field names.
+
+Animica also runs an x402 paywall and facilitator at https://x402.animica.dev with an ANM-native lane identified by the CAIP-2 chain id `animica:1`; that is aimed at machine-to-machine payments (agents paying per request) rather than retail checkout, and is described in [x402 agent payments](/learn/x402-agent-payments).
+
+## Accepting ANM directly, wallet to wallet
+
+You do not need any service to accept ANM. The minimum viable setup:
+
+1. **Generate a receiving address** in a wallet whose seed you control. With HD derivation (`m/44'/4279885'/account'/0'/index'`) you can hand each customer or invoice its own index so that incoming payments are attributable without a memo; the CLI and wallets expose this.
+2. **Share the address** and the amount in ANM. State the amount in nANM as well if the payer is using software, to avoid decimal mistakes.
+3. **Watch for the payment.** Poll `state.getBalance ["anim1…"]` on `https://rpc.animica.org/rpc` (the result is hex nANM), or use the explorer's `https://explorer.animica.org/api/address/anim1…` endpoint, which lists transactions. The transaction's `tx.getStatus` gives its confirmation count; its `finalized` flag is a node-local label that turns true at 12 confirmations, not a finality guarantee, because the chain has no finality gadget.
+4. **Decide a confirmation policy.** The explorer's measured block time is about 67 seconds, so each confirmation costs roughly a minute. Small amounts can reasonably be accepted after a few confirmations; larger ones deserve more. The consensus code sets a uniform reorg-depth bound from block 75,000, but the practical rule remains "more value, more confirmations".
+5. **Keep the receiving key cold if you can.** A watch-only address book entry (`docs/wallets/ADDRESS_BOOK.md`) lets a point-of-sale machine display addresses and detect payments without holding any private key; the spending key stays elsewhere.
+
+A direct transfer costs the payer 21,000 nANM (0.000021 ANM) at the current 1 nANM gas price, and the network admits it only if the payer's balance covers amount plus fee.
+
+## Cautions
+
+- **No investment advice.** This site documents how the network works. It does not recommend buying, holding or selling ANM, and nothing here predicts price. ANM is a new asset on a network that launched in April 2026; check liquidity and fees on the exchange yourself before trading.
+- **Transactions are irreversible.** There is no chargeback and no administrator who can reverse a transfer. The address-freeze rule active since block 42,000 affects exactly one known-compromised address and cannot recover a payment you sent to the wrong place.
+- **Verify the address, then verify the recipient.** Checksum validation catches typos; it does not catch a substituted address. Look-alike addresses and clipboard malware are the usual attack. Compare the first and last several characters against a copy obtained through a second channel, and use a wallet's address book for recurring recipients.
+- **bech32 is not bech32m.** An address that passes a bech32 check but fails bech32m is invalid on Animica. Use the function above or the explorer.
+- **Confirmations, not "finalized".** `tx.getStatus` reports `finalized: true` after 12 confirmations by node-local default; that is a depth label, not settlement. Count confirmations and scale them with the amount.
+- **Exchange custody is the exchange's risk.** Coins left on any exchange are subject to that exchange's solvency, security and policies. Withdraw to a wallet you control for anything you intend to keep.
+- **Legacy wallets cannot spend.** SPHINCS+ (scheme 0x1002) wallets from early builds are consensus-stranded and cannot sign on mainnet. Only ML-DSA-65 (0x1003) accounts, the `anim1zqp…` ones, are usable. Do not send funds to an address from a legacy wallet.
+- **Guard the seed.** Never enter a mnemonic or private key into a web page; the wallets never ask for it after onboarding. Back it up offline, and consider the threshold-backup and social-recovery patterns in `docs/wallets/RECOVERY.md` for larger holdings.
+- **Phishing.** Install wallets only from https://animica.org/downloads and verify published checksums. Treat unsolicited "upgrade", "airdrop" or "fee refund" messages as hostile.
+- **Test first.** For a new counterparty, exchange or integration, send a small amount and confirm it arrived before sending the real one.
+
+## Key takeaways
+
+- Obtain ANM by mining, trading ANM/USDT on NonKYC, accepting payments, or serving AI jobs; there is no faucet.
+- Withdraw only to a 66-character `anim1zqp…` address that passes a bech32m check; the explorer or the snippet above will confirm it is well-formed.
+- Animica Pay charges 2.00% with floor rounding, works in integer nANM, uses idempotent payment intents and signed webhooks, and marks nothing paid before a matching receipt.
+- Direct acceptance needs only an address, a polling loop against the RPC or explorer API, and a confirmation policy.
+- Transactions are irreversible and the chain has no finality gadget, so verify addresses out of band and count confirmations.
+
+## Sources
+
+- `AGENTS.md` (live endpoints, Animica Pay and NonKYC references)
+- `docs/ANIMICA_2026_STATE.md`
+- `docs/monetization.md`
+- `docs/x402.md`
+- `docs/wallets/SECURITY.md`, `docs/wallets/ADDRESS_BOOK.md`, `docs/wallets/RECOVERY.md`
+- `docs/wallet/HD_DERIVATION.md`
+- `docs/pq_keys_and_addresses.md`
+- `core/network_params.py` (address freeze, value-carrying CALL, finality depth)
+- Animica Pay repository documentation (`docs/HTTP-CONTRACT.md`, `src/money/fee.js`)

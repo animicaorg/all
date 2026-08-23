@@ -1,0 +1,241 @@
+---
+title: "Tutorial: compile, deploy, and call a Counter contract"
+description: "Write the Counter contract, compile it to VM IR, simulate it locally, deploy it with the animica CLI, call inc() and get(), and read the result back from the RPC."
+date: 2026-08-23
+updated: 2026-08-23
+category: "build"
+tags: ["tutorial", "python-vm", "cli", "counter", "contracts"]
+readingLevel: "beginner"
+sources:
+  - vm_py/examples/counter/contract.py
+  - vm_py/examples/counter/manifest.json
+  - docs/cli-commands.md
+  - docs/dev/CONTRACTS_CLI.md
+  - docs/tutorials/HELLO_COUNTER.md
+  - docs/tutorials/TOKEN.md
+  - docs/vm/EXAMPLES.md
+  - docs/vm/DEBUGGING.md
+  - docs/python_vm_deploy_call_manual_validation.md
+  - contracts/standards/animica_token/contract.py
+order: 2
+---
+
+This tutorial takes the Counter contract that ships in the Animica repository from source file to a deployed, callable contract, using the `animica contract` command group. You will compile it, run it locally without a node, deploy it, send an `inc()` transaction, read `get()`, and inspect the receipt. Along the way it points out the three mistakes almost everyone makes on the first attempt.
+
+## Before you start
+
+- Install the node and CLI: `pip install animica` (the current line is 10.x; `python/pyproject.toml` reads 10.4.4 at the time of writing).
+- Pick a network. Mainnet is chain id 1 and the public RPC is `https://rpc.animica.org/rpc`. There is no mainnet faucet, so to deploy on mainnet you need a wallet holding ANM; a deploy transaction pays gas at the node's price floor of 1 nANM per gas unit. For a no-cost run, a local devnet works: `ops/run.sh node` starts one, and `animica miner mine-blocks --count 5 <label>` produces blocks that include your pending transactions (`docs/cli-commands.md`).
+- Set `ANIMICA_RPC_URL` to the RPC you chose, or pass `--rpc` to each command.
+
+If you have never read contract code for this VM, skim [the Python-VM overview](/learn/python-vm-smart-contracts) first. The short version: contracts are plain Python restricted to a deterministic subset, storage holds bytes only, and there is no `print`.
+
+## Step 1: the contract
+
+The file is `vm_py/examples/counter/contract.py`. Here it is without the docstrings:
+
+```python
+from typing import Final
+from stdlib import abi, events, storage
+
+K_COUNTER: Final[bytes] = b"counter:value"
+MIN_VALUE: Final[int] = 0
+MAX_VALUE: Final[int] = 2**255 - 1
+
+def _load() -> int:
+    raw = storage.get(K_COUNTER)
+    if not raw:
+        return 0
+    return int.from_bytes(raw, byteorder="big", signed=True)
+
+def _store(value: int) -> None:
+    abi.require(isinstance(value, int), b"counter: value must be int")
+    abi.require(MIN_VALUE <= value <= MAX_VALUE, b"counter: value out of range")
+    storage.set(K_COUNTER, int(value).to_bytes(32, byteorder="big", signed=True))
+
+def get() -> int:
+    return _load()
+
+def inc() -> None:
+    cur = _load()
+    new = cur + 1
+    _store(new)
+    events.emit(b"Counter.Incremented", {b"new": new})
+
+def set(n: int) -> None:
+    abi.require(isinstance(n, int), b"counter: n must be int")
+    abi.require(n >= 0, b"counter: negative")
+    _store(n)
+    events.emit(b"Counter.Set", {b"value": n})
+```
+
+What to notice:
+
+1. **`storage.get` returns `b""` for a key that has never been written.** `_load` handles that with `if not raw`. If you write `int.from_bytes(storage.get(k), "big")` without the guard you get `0` by accident (an empty bytes decodes to zero), but `int(b"")` raises, and any code that tests `is None` never fires. The canonical token contract in `contracts/standards/animica_token/contract.py` uses the same `if raw == b""` idiom.
+2. **Values are encoded explicitly.** `_store` writes a fixed 32-byte big-endian integer. Passing an `int` to `storage.set` raises `TypeError` in the stdlib (`vm_py/stdlib/storage.py`). Note that the older `docs/tutorials/TOKEN.md` walkthrough writes integers straight into storage; treat the shipped example and the standard token as the reference, not that tutorial's snippets.
+3. **Guards are `abi.require`, reasons are short bytes.** The reason string is what a caller sees in the receipt when the call reverts.
+
+Public functions are anything not prefixed with an underscore; `_load` and `_store` are internal helpers.
+
+## Step 2: the manifest
+
+`vm_py/examples/counter/manifest.json` binds the source to an ABI. The relevant part:
+
+```json
+{
+  "name": "Counter",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "abi": {
+    "functions": [
+      {"name": "inc", "inputs": [], "outputs": []},
+      {"name": "get", "inputs": [], "outputs": [{"type": "int"}]},
+      {"name": "set", "inputs": [{"name": "n", "type": "int"}], "outputs": []}
+    ],
+    "events": [
+      {"name": "Counter.Incremented", "inputs": [{"name": "new", "type": "int"}]},
+      {"name": "Counter.Set", "inputs": [{"name": "value", "type": "int"}]}
+    ]
+  },
+  "resources": {"maxCodeBytes": 16384}
+}
+```
+
+The ABI types here are the VM's own (`int`, `bytes`, `bool`, `address`), encoded with the varint codec in `docs/vm/ABI.md`. Function selectors are derived from the name plus input and output types, so the manifest must agree with the source.
+
+## Step 3: compile
+
+From the repository root (or any directory containing a copy of the two files):
+
+```bash
+animica contract compile vm_py/examples/counter/contract.py \
+  --out ./build/counter.avm \
+  --abi-out ./build/counter.abi.json \
+  --manifest-out ./build/counter.manifest.json \
+  --overwrite
+```
+
+The compiler validates the source against the deterministic subset, lowers it to IR, type-checks it, computes a static gas upper bound, and writes the CBOR-encoded artifact. The lower-level entry point does the same without the artifact index: `python -m vm_py.cli.compile contract.py --out out.ir`, and `python -m vm_py.cli.inspect_ir --ir out.ir` prints the instruction listing together with the static gas estimate and the code hash.
+
+If compilation fails with a validation error, the message names the forbidden construct and its source span. The usual causes are an import outside `stdlib`, a float literal, a `set`, or recursion.
+
+## Step 4: run it locally, no node required
+
+```bash
+python -m vm_py.cli.run --manifest vm_py/examples/counter/manifest.json --call inc
+python -m vm_py.cli.run --manifest vm_py/examples/counter/manifest.json --call get
+python -m vm_py.cli.run --manifest vm_py/examples/counter/manifest.json --call set --args '[7]'
+```
+
+The local runner executes the contract against an in-memory storage backend and prints the return value (JSON by default; `--format text` for plain output). Because storage is in memory, every invocation starts from an empty state, so `inc` then `get` in two separate processes returns `0` from the second; that is expected. The point of this step is to catch logic errors and see the event payloads before paying for a deployment.
+
+## Step 5: a wallet
+
+You need an ML-DSA-65 key to sign the deploy and `send` transactions (it is the only scheme mainnet accepts; see [Post-quantum signatures](/learn/post-quantum-signatures-ml-dsa-65)).
+
+```bash
+animica wallet create --label main
+animica wallet list
+animica wallet show main        # prints the address and its state.getBalance result
+```
+
+The wallet file defaults to `~/.animica/wallets.json` (`docs/cli-commands.md`). It is a plaintext JSON store; back it up and keep it off shared machines. On mainnet, fund the address before continuing; the admission rule is that the balance must cover the transfer amount plus gas limit times gas price.
+
+## Step 6: deploy
+
+```bash
+animica contract deploy ./build/counter.avm \
+  --from main \
+  --abi ./build/counter.abi.json \
+  --save --name counter \
+  --wait
+```
+
+`--wait` blocks until the deploy transaction has a receipt. `--save --name counter` records the deployment under `~/.animica/contracts/deployments/<network-key>/` with the address, chain id, tx hash, block height, deployer, code hash and the paths to the ABI and artifact (`docs/dev/CONTRACTS_CLI.md`). From then on the alias `counter` resolves to the address:
+
+```bash
+animica contract address counter
+animica contract inspect counter
+```
+
+The deployed address is a bech32m `anim1…` string whose payload starts with the contract algorithm id `0x0000`, which distinguishes it from an account address. Add `--json` to any of these commands for a stable machine-readable payload.
+
+## Step 7: call and send
+
+Read-only methods go through `call` and cost nothing; state-changing methods go through `send` and are real transactions:
+
+```bash
+animica contract call counter get
+animica contract send counter inc --from main --wait
+animica contract call counter get
+animica contract send counter set --from main --args '[5]' --wait
+animica contract call counter set --args '{"n": 6}'     # dry-run: arguments as a named object also work
+```
+
+The first `get` prints `0`, the second prints `1`. Arguments are accepted as a JSON array or a JSON object keyed by parameter name. Before sending an expensive method you can ask the node for a gas figure and override the limit if you disagree with it:
+
+```bash
+animica contract estimate-gas counter inc
+animica contract send counter inc --from main --gas-limit 50000 --wait
+```
+
+If a `send` returns without `--wait`, check it later with the transaction hash:
+
+```bash
+animica rpc call tx.getStatus '["0x<tx hash>"]'
+```
+
+## Step 8: read the receipt and the event
+
+Every `send` produces a receipt you can fetch directly from the RPC:
+
+```bash
+curl -s https://rpc.animica.org/rpc -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"tx.getTransactionReceipt","params":["0x<tx hash>"]}'
+```
+
+A successful contract call reports `status` `SUCCESS` with `gasUsed` and a `logs` array; the `Counter.Incremented` log carries `new` as its argument. A failed call reports `REVERT` with the `abi.require` reason, or `OOG` if the gas limit was too low; in both cases no storage write from that call is committed (`docs/vm/DEBUGGING.md`). Compare the receipt's `gasUsed` with the static estimate from `inspect_ir` to calibrate the margin you leave on future sends. The same receipt is visible on the explorer at `https://explorer.animica.org/tx/<hash>`; see [the explorer guide](/learn/block-explorer-guide).
+
+## Troubleshooting
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| `ValidationError` at compile | Forbidden import, float, set, recursion, `assert` | Read the span in the message; replace with a `stdlib` equivalent |
+| RPC error `-32013` (insufficient funds) on deploy | Balance below amount + gas limit × gas price | Fund the wallet; on devnet mine a few blocks to a label with `animica miner mine-blocks` |
+| RPC error `-32016` or `-32017` | Gas limit or fee below the node floor | Raise `--gas-limit`; gas price floor is 1 nANM |
+| Receipt status `OOG` | Static estimate too optimistic for this input | Re-send with a higher limit |
+| Receipt status `REVERT` with `counter: negative` | You called `set` with a negative number | The guard is doing its job |
+| Alias not found | Deployment not saved | `animica contract list-artifacts`; redeploy with `--save --name` |
+| `TypeError: value must be bytes` in local run | You stored an `int` | Encode with `to_bytes` |
+
+## Where the older tutorials fit
+
+`docs/tutorials/HELLO_COUNTER.md` and `docs/tutorials/TOKEN.md` describe the same flow through the `omni_sdk` Python and TypeScript SDKs against a local devnet, with explicit nonces and a `Dilithium3Signer` (the lineage name for ML-DSA-65). `docs/python_vm_deploy_call_manual_validation.md` shows the `omni_sdk.cli.deploy package` and `omni_sdk.cli.call` forms. Those paths still exist in the repository, but the `animica contract` CLI is the current, shorter route and is what this page uses.
+
+## Next: a token
+
+Once the counter works, the natural second contract is a fungible token. Use `contracts/standards/animica_token/contract.py` as the starting point rather than the A20 example in `docs/tutorials/TOKEN.md`: the standard contract encodes balances as bytes, takes its metadata and owner as explicit `init(...)` arguments guarded by a one-time flag, exposes `balance_of`/`transfer`/`approve`/`transfer_from`/`mint`/`burn` plus camelCase aliases that wallets and the explorer look for, and uses `abi.caller()` for the sender. Keep `decimals` at 9 if you want the token to behave like ANM; the 18 that appears in the older tutorial is an Ethereum habit.
+
+## Key takeaways
+
+- Compile, simulate locally, then deploy: `animica contract compile`, `python -m vm_py.cli.run`, `animica contract deploy --save --name`.
+- `call` is free and read-only; `send` is a signed transaction that needs a funded ML-DSA-65 wallet.
+- Storage is bytes; a missing key reads as `b""`; encode integers yourself.
+- Receipts carry `SUCCESS`/`REVERT`/`OOG`, `gasUsed` and the event logs; use them to debug and to calibrate gas limits.
+- There is no mainnet faucet; use a local devnet for free experiments.
+
+## Sources
+
+- vm_py/examples/counter/contract.py
+- vm_py/examples/counter/manifest.json
+- docs/cli-commands.md
+- docs/dev/CONTRACTS_CLI.md
+- docs/tutorials/HELLO_COUNTER.md
+- docs/tutorials/TOKEN.md
+- docs/vm/EXAMPLES.md
+- docs/vm/DEBUGGING.md
+- docs/python_vm_deploy_call_manual_validation.md
+- vm_py/stdlib/storage.py
+- contracts/standards/animica_token/contract.py

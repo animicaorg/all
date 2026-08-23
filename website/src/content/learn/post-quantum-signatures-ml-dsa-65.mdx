@@ -1,0 +1,139 @@
+---
+title: "Post-quantum signatures on Animica: why ML-DSA-65"
+description: "How Animica authorises transactions with ML-DSA-65 (FIPS 204), scheme id 0x1003: key and signature sizes, the signing preimage, why the legacy stub schemes are hard-rejected, and SPHINCS+ status."
+date: 2026-08-23
+updated: 2026-08-23
+category: "protocol"
+tags: ["ml-dsa", "fips-204", "post-quantum", "signatures", "wallets"]
+readingLevel: "intermediate"
+sources:
+  - docs/pq/KEYS.md
+  - docs/pq/POLICY.md
+  - docs/pq_keys_and_addresses.md
+  - docs/pq_pure_python.md
+  - docs/PQ_POLICY.md
+  - spec/pq_policy.yaml
+  - docs/pq/pq_identity.md
+  - pq/alg_ids.yaml
+  - python/animica/tx/signing.py
+  - docs/wallet/HD_DERIVATION.md
+order: 2
+---
+
+Every Animica transaction is authorised by an ML-DSA-65 signature, the FIPS 204 lattice scheme that grew out of CRYSTALS-Dilithium3. This article explains what that choice costs in bytes, exactly what gets signed, why two older scheme ids in the registry are rejected outright, and what "legacy" means for SPHINCS+. It also flags where the repository's older PQ documents disagree with the live rules.
+
+## Why not ECDSA or Ed25519
+
+Elliptic-curve signatures are compact (64 bytes) and fast, but their security rests on the discrete-logarithm problem, which Shor's algorithm solves efficiently on a large fault-tolerant quantum computer. A chain whose unspent balances are guarded by ECDSA would have to migrate every account if that day arrived. Hash functions and lattice problems are not known to be broken by quantum algorithms in the same way, so NIST standardised ML-DSA (FIPS 204), ML-KEM (FIPS 203) and SLH-DSA (FIPS 205) in 2024.
+
+Animica's position, stated in `docs/pq/pq_identity.md` and repeated in `docs/ANIMICA_2026_STATE.md`, is PQ-only from genesis: there is no classical fallback scheme, and validators ignore any classical co-signature a wallet might attach for bridging purposes.
+
+## ML-DSA-65 in numbers
+
+| Parameter | Value | Source |
+|---|---|---|
+| Standard | FIPS 204, parameter set ML-DSA-65 | `pq/alg_ids.yaml` |
+| NIST security category | 3 | `pq/alg_ids.yaml` |
+| Animica scheme id | `0x1003` (decimal 4099) | `pq/alg_ids.yaml`, `python/animica/tx/signing.py` |
+| Registry "coretx" scheme id | 11 (`ml_dsa_65` in `tx.getSupportedSignatureSchemes`) | `pq/alg_ids.yaml` |
+| Public key | 1,952 bytes | `pq/alg_ids.yaml` |
+| Secret key (expanded) | 4,032 bytes | `pq/alg_ids.yaml` |
+| Signature | 3,309 bytes (FIPS 204 maximum) | `pq/alg_ids.yaml` |
+| Keygen seed ξ | 32 bytes, deterministic `KeyGen_internal(ξ)` | `docs/wallet/HD_DERIVATION.md` |
+
+Compared with a 33-byte secp256k1 public key and a 64-byte signature, an ML-DSA-65 transaction carries about 5.3 KB of authorisation data. That is why the mainnet transaction size limit is 131,072 bytes and the block envelope limit is 2,000,000 bytes (`spec/params.yaml`): a block can hold a few hundred signed transfers, not tens of thousands.
+
+Key generation is a pure function of a 32-byte seed. That property is what makes hierarchical-deterministic wallets possible without BIP-32's elliptic-curve arithmetic: a wallet only needs a deterministic way to produce one seed per account, and the normative scheme for that is described in [Wallets and HD derivation](/learn/wallets-and-hd-derivation).
+
+## Three scheme ids, one real scheme
+
+The canonical algorithm registry `pq/alg_ids.yaml` defines three signature entries in the `0x1xxx` range:
+
+| Id | Name | Status | What it actually is |
+|---|---|---|---|
+| `0x1001` | `dilithium3` | deprecated | A commitment-style stub. `verify` only checks `sig[:32] == SHAKE-256(pk[:32] ‖ msg, 32)`, which anyone holding the public key can produce |
+| `0x1002` | `sphincs_shake_128s` | deprecated | A stub with the same weakness (`sig = SHAKE-256('sig' ‖ pk ‖ msg)`) |
+| `0x1003` | `ml_dsa_65` | active | Real ML-DSA-65 per FIPS 204, vendored from `dilithium-py` (MIT) |
+
+The first two were early placeholders that stayed in the registry so that historical blocks keep verifying. They are forgeable, and the reason they are dangerous is subtle: the state database keys accounts by `SHA3-256(pubkey)` with the algorithm id stripped. A forged `0x1001` transaction for some public key therefore debits the same balance as the victim's real `0x1003` account.
+
+The fix, labelled ANM-C01/C02 in `python/animica/tx/signing.py`, is an allowlist:
+
+```python
+ACCEPTED_TX_SIG_ALG_IDS: frozenset = frozenset({0x1003})
+```
+
+It is applied before any signature backend is dispatched, at every transaction admission, relay and mining call, and is always on. Block-import rejection of such transactions is additionally gated at the PQ-hardening fork height (mainnet block 40,000) so that existing history is grandfathered. A transaction signed under `0x1001` or `0x1002` is refused with reason `scheme_deprecated`.
+
+One practical consequence: the live RPC `tx.getSupportedSignatureSchemes` enumerates the whole registry, including legacy entries with their `enabledByCode`/`enabledByPolicy` flags. That listing describes what the node's backends can evaluate; it is not the admission rule. The allowlist above is.
+
+## What "SPHINCS+ is legacy" means
+
+Older documents (`docs/pq/POLICY.md`, `spec/pq_policy.yaml`, `docs/pq/pq_identity.md`) describe a policy in which `dilithium3` is preferred and `sphincs_shake_128s` is an allowed stateless backup, with a 12-month deprecation window before any sunset. Those documents predate the ML-DSA-65 cut-over and the discovery that the SPHINCS+ entry was a stub rather than a real implementation. `docs/ANIMICA_2026_STATE.md`, which is the authority where documents disagree, states that SPHINCS+ wallets are consensus-stranded: addresses whose algorithm id is `0x1002` cannot sign anything mainnet will accept, and there is no pure-Python SPHINCS+ reference shipped. The registry note says a real implementation "may return in a future package version"; nothing in the current code does that.
+
+The rotation machinery those documents describe (Active → Deprecating → Sunset, a Merkle root of the policy pinned in headers as `algPolicyRoot`) still exists in the codebase and is how a future scheme would be introduced. It is just not how the current single-scheme state came about.
+
+## What exactly is signed
+
+Signing happens in two layers, both deterministic.
+
+**Layer 1: the transaction preimage.** `tx_signing_preimage` in `python/animica/tx/signing.py` builds a canonical CBOR map with integer keys:
+
+```
+{
+  1: "animica.tx.v1",       # domain / version
+  2: chain_id,              # 1 on mainnet
+  3: genesis_hash,          # 32 bytes, 0xa0892158…
+  4: network_name,          # text
+  5: "tx",                  # message type
+  6: tx_version,            # 1 or 2
+  7: tx_body                # canonical body map, signatures excluded
+}
+```
+
+Canonical CBOR means RFC 8949 §4.2.1 deterministic encoding: sorted keys, minimal integer encoding, definite lengths, no floats. The diagnostic `sign_hash` reported by `tx.debugVerify` is `SHA3-512` of these bytes.
+
+**Layer 2: the signature wrapper.** The preimage is not handed to ML-DSA directly. It is wrapped by the `animica:sign/v1` construction documented in `packages/animica-crypto/src/signing.ts` and mirrored by the Python `sign_detached`: a sequence of length-prefixed fields, `TAG = "animica:sign/v1"`, the domain string, the chain id (uvarint), the fork id (uvarint, `3511060514` on mainnet), the algorithm id, an optional context, and the message. The concatenation is hashed with SHA3-512 and the 64-byte digest is what `ML-DSA-65.Sign` receives, with an empty FIPS 204 context string.
+
+Why two layers? The inner map binds the signature to one chain, one genesis and one transaction version, so a signature can never be replayed on a test network or after a chain reset. The outer wrapper binds it to one algorithm and one purpose (`tx` versus, say, a P2P identity proof or a proof-of-inference receipt), so the same key can sign in several domains without any cross-domain confusion. Prehashing with SHA3-512 gives the lattice scheme a fixed-length input regardless of transaction size.
+
+The signed envelope is `{tx: <body>, sigs: [{alg: 4099, pubkey: <1952 B>, sig: <3309 B>}]}`. More than one signature may be attached; the node's `Tx` type supports a minimum-signature check, which is how a simple multi-signer account could be expressed without a contract. Verification recomputes the preimage from the received body, checks the allowlist, checks the public key and signature lengths against the registry (1,952 and 3,309 bytes), verifies the lattice signature, and finally confirms that `SHA3-256(pubkey)` matches the sender address. Transaction structure is covered in [Transactions and fees](/learn/transactions-and-fees).
+
+## Where the keys come from
+
+The normative derivation (`docs/wallet/HD_DERIVATION.md`, dated 2026-08-22) is BIP-39 mnemonic → 64-byte seed → SLIP-0010 ed25519-style hardened derivation along `m/44'/4279885'/account'/0'/index'` → the 32-byte private half of the final node is the ML-DSA-65 seed ξ. Coin type 4279885 is `0x414E4D`, ASCII "ANM". A wallet may store just ξ and regenerate the 4,032-byte secret key on load.
+
+Older files (`docs/pq/KEYS.md`, `docs/pq/pq_identity.md`) describe a different, earlier scheme: PBKDF2-HMAC-SHA3-256 over the mnemonic with salt `animica:mnemonic:v1`, then HKDF-SHA3-256 per algorithm. That scheme is superseded for third-party wallets; if you are implementing a wallet, follow `HD_DERIVATION.md` and check your output against its published test vector, which maps the BIP-39 reference mnemonic (index 0) to `anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7`.
+
+## Implementation policy: pure Python, no liboqs
+
+`docs/PQ_POLICY.md` is unusually strict: liboqs, oqs bindings and pqclean wrappers are prohibited everywhere in the repository, with no exceptions, and CI greps for them. The reasons given are determinism across platforms, browser portability (the wallet extension and studio run in JavaScript and WebAssembly), auditability, and supply-chain surface. The node therefore verifies ML-DSA-65 with a vendored pure-Python implementation (`python/animica/_vendor/`), and the TypeScript HD reference uses `@noble/post-quantum`; the two were cross-checked on the HD test vectors.
+
+`docs/pq_pure_python.md` is candid about the trade-offs: the pure-Python code is 10–100× slower than native implementations, is not NIST CAVP-validated, and is not constant-time. For a blockchain signer that signs rarely and verifies in batch that is acceptable, and the policy document notes that there are no interactive protocols where timing leakage would matter. The older ML-KEM-768 (Kyber768) implementation in the same package is used only for the P2P handshake, never for accounts.
+
+## Other places ML-DSA-65 signs
+
+- **Proof-of-inference receipts** (7.1.1 onward): each AI response served through AICF is content-hashed and signed with ML-DSA-65 under the domain `animica.ai.proof-of-inference.v1`, so an inference result can be verified offline. See [AICF: the AI compute framework](/learn/aicf-ai-compute-framework).
+- **Useful-work proof envelopes**: the verification rule armed at block 75,000 checks each proof's ML-DSA-65 signature with the scheme id pinned by the verifier rather than read from the proof. See [PoIES consensus explained](/learn/poies-consensus-explained).
+- **Block headers** carry a `pqAlgPolicyRoot` field committing to the algorithm policy.
+
+## Key takeaways
+
+- Animica accepts exactly one transaction signature scheme: ML-DSA-65, id `0x1003`, with 1,952-byte public keys and 3,309-byte signatures.
+- Scheme ids `0x1001` and `0x1002` are forgeable stubs kept only so old blocks verify; they are rejected at admission by an allowlist and at block import from height 40,000.
+- SPHINCS+ addresses are consensus-stranded; older "Dilithium3 preferred, SPHINCS+ backup" policy documents are superseded by `docs/ANIMICA_2026_STATE.md`.
+- A signature covers a canonical-CBOR preimage bound to chain id 1, the genesis hash and the transaction version, wrapped by `animica:sign/v1` and prehashed with SHA3-512.
+- Keys derive from a 32-byte seed along `m/44'/4279885'/…`; implementations are pure Python or TypeScript by policy, with no liboqs.
+
+## Sources
+
+- `pq/alg_ids.yaml`
+- `python/animica/tx/signing.py` (allowlist, preimage, verification)
+- `packages/animica-crypto/src/signing.ts` (`animica:sign/v1` wrapper)
+- `docs/wallet/HD_DERIVATION.md`
+- `docs/pq/KEYS.md`, `docs/pq/POLICY.md`, `docs/pq/pq_identity.md` (earlier policy, superseded in places)
+- `docs/pq_keys_and_addresses.md`
+- `docs/pq_pure_python.md`, `docs/PQ_POLICY.md`
+- `spec/pq_policy.yaml`
+- `docs/ANIMICA_2026_STATE.md`
+- Live read of `tx.getSupportedSignatureSchemes` on 2026-08-23

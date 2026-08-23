@@ -1,0 +1,267 @@
+---
+title: "Running an Animica full node"
+description: "Install the animica package, start a mainnet node with animica node up or animica up --with-node, open the right ports, watch it sync, query your own JSON-RPC, and keep it healthy."
+date: 2026-08-23
+updated: 2026-08-23
+category: "operate"
+tags: ["node", "docker", "json-rpc", "sync", "ports", "operations"]
+readingLevel: "intermediate"
+sources:
+  - docs/BOOTSTRAP.md
+  - docs/rpc-quickstart.md
+  - docs/cli-commands.md
+  - docs/network-docker-compose.md
+  - docs/MULTI_NODE_DOCKER_SETUP.md
+  - docs/VERIFIER_NODE_RESTART.md
+  - docs/p2p_sync.md
+  - docs/P2P_NETWORKING_GUIDE.md
+  - python/README.md
+  - python/pyproject.toml
+  - QUICKSTART.md
+  - AGENTS.md
+  - docs/ANIMICA_2026_STATE.md
+  - docs/CHANGELOG.md
+  - core/network_params.py
+order: 2
+---
+
+A full node downloads every block from genesis, re-executes every transaction, and serves you a JSON-RPC endpoint that answers from state you verified yourself. This article covers installing the `animica` package, starting a mainnet node through the Docker Compose wrapper, the ports it uses, how sync progresses, how to talk to your own RPC, and the health checks that tell you the node is actually on the canonical chain.
+
+## Why run one
+
+The public endpoint at `https://rpc.animica.org/rpc` is one node among many. It is convenient, but it hides the administrative methods (on 2026-08-23 a call to `net.peers` there returned error `-32003`, "Method not available on the public endpoint"), it sees every address you query, and it is a single operator's view of the chain. Your own node gives you private queries, the full method set, a local Stratum source if you mine, and one more independent validator on the network. The P2P design is explicit that consensus never depends on the public RPC: sync, validation and mining all run over peer connections, and the RPC is only a client-facing surface.
+
+## Requirements
+
+From the repository's quickstart and Docker documentation:
+
+- Python 3.10 or newer (3.11 recommended) for the CLI.
+- Docker with the Compose plugin for `animica node up`, which is a Compose wrapper. A from-source run without Docker is possible (`python -m rpc.server`) but the CLI lifecycle commands assume Compose.
+- Outbound and, ideally, inbound connectivity on the P2P ports listed below.
+- Disk for the chain database under `~/.animica/chain-1/`. The repository does not publish a size; budget for growth and check `du -sh ~/.animica/chain-1` after the first sync.
+
+The current software line is 10.x; `python/pyproject.toml` reads `10.4.4` at the time of writing. Consensus forks are forward-only and height-gated, so running an old release past an activation height means your node quietly leaves the canonical chain. Keep it upgraded.
+
+## Install
+
+```bash
+pip install --upgrade animica
+animica --help
+```
+
+The base package includes the node, the CLI, the wallet, the miner and the Python-VM tooling. `pip install "animica[all]"` adds every optional extra (Qt wallet QR support, the distributed Studio client, pinned operator dependencies); quote the brackets on zsh.
+
+To work from source instead:
+
+```bash
+git clone https://github.com/animicaorg/all.git && cd all
+./setup.sh
+source .venv/bin/activate
+```
+
+There is no `pyproject.toml` at the repository root; the package lives in `python/`, and `setup.sh` installs it together with the `omni-sdk` dependency and the pure-Python PQ fallback.
+
+## Start the node
+
+Mainnet is the default network, so the minimum is:
+
+```bash
+animica node up
+animica node status
+```
+
+`animica node up` selects the Compose file for the active network (`ops/docker/docker-compose.mainnet.yml`), builds the image unless you pass `--no-build`, starts the container detached, waits for the local RPC to come up (`--rpc-ready-timeout`, default 60 s), and then, by default, waits until the node has synced to the bootstrap head (`--wait-sync`, `--sync-timeout` default 600 s, `--sync-interval` 5 s). It compares against the public bootstrap RPC for discovery and progress only; consensus validation is local.
+
+Other lifecycle commands:
+
+```bash
+animica node up --with-miner       # add the miner service (Compose 'miner' profile)
+animica node up --no-detach        # foreground, for watching logs
+animica node logs                  # container logs, or the local logfile fallback
+animica node down                  # stop, keep data
+animica node down --volumes        # stop and delete the chain data (destructive)
+animica node reset --yes           # wipe network data and start over
+animica node doctor                # diagnose config and data-directory problems
+```
+
+If you mainly want to mine and would like a node alongside, `animica up --with-node` starts both (see the [mining guide](/learn/mining-guide)).
+
+### Network selection and data isolation
+
+The active network is chosen in this priority order: `animica --network <name>` on the command line, then `ANIMICA_NETWORK`, then the persisted `animica network set <name>`, then the default `mainnet`. Each network has its own data directory and Docker volumes so you can run several at once:
+
+| Network | Chain id | RPC (host) | P2P TCP | Metrics | Data directory |
+|---|---|---|---|---|---|
+| mainnet | 1 | 8545 | 30333 | 9000 | `~/.animica/chain-1/` |
+| testnet | 2 | 18546 | 31334 | 19000 | `~/.animica/chain-2/` |
+| devnet | 1337 | 28545 | 31335 | 29000 | `~/.animica/chain-1337/` |
+
+Host ports can be overridden with `HOST_RPC_PORT`, `HOST_P2P_PORT` and `HOST_METRICS_PORT`. CLI-created volumes are genesis-aware and named `animica_<network>_chain_<id>_<genesis8>_data`, which is what makes a `GENESIS_MISMATCH` recoverable by simply removing the stale volume.
+
+## Ports
+
+| Port | Protocol | Purpose | Exposure |
+|---|---|---|---|
+| 30333 | TCP | P2P transport (default) | public, forward it if you can |
+| 443 | UDP | QUIC transport | public; the docs call it the preferred transport |
+| 30335 | TCP | WebSocket transport for browser peers | optional |
+| 8545 | TCP | JSON-RPC at `/rpc` | localhost or trusted clients only |
+| 9000 | TCP | Prometheus `/metrics` | localhost only |
+
+The P2P documentation is blunt about 8545: do not expose it to the public internet. Inbound P2P is optional (the node still syncs over outbound connections), but an open 30333 lets other operators connect to you and improves the network's connectivity.
+
+For ufw: `sudo ufw allow 30333/tcp` and `sudo ufw allow 443/udp`. Behind NAT, set `ANIMICA_P2P_ADVERTISED_ADDRS="/ip4/<public-ip>/tcp/30333"` or `ANIMICA_P2P_EXTERNAL_IP` so peers learn how to reach you; the node advertises nothing if it does not know its external address, but still accepts inbound connections that arrive.
+
+## How sync works
+
+The node bootstraps from network-specific seeds (`mainnet.animica.org` on TCP 30333 and QUIC 443, with an IP fallback), persists every peer it learns in `~/.animica/p2p/mainnet/`, and syncs headers-first: it downloads and validates headers, fetches the corresponding blocks, executes them to rebuild state, then joins mempool gossip. The sync worker moves through explicit phases:
+
+```text
+IDLE -> HEADERS -> BLOCKS -> VERIFYING -> SYNCED
+                 ^             |
+                 +-- STALLED <-+
+```
+
+`animica sync status` (or the `sync.getStatus` RPC) prints the phase, `best_header_height`, `best_block_height`, the peer currently serving blocks and a `synchronized` flag. A stall is declared only when blocks were requested, a specific next block is known to be needed, and nothing valid has arrived within the stall timeout; duplicate headers and "at tip" replies count as progress. When a sync round cannot start, the RPC returns `success=false` with an explicit `blockingReason`, and the logs emit reason-coded events such as `HEADER_BATCH_DISCARDED`, `PEER_NOT_ACTIVATED` and `BLOCK_FETCH_NOT_SCHEDULED`.
+
+An on-disk sync cache under `~/.animica/chain-1/sync` keeps recent headers and block payloads across restarts (`ANIMICA_SYNC_CACHE_MAX_MB`, default 1,024). Snapshots for fast bootstrap live under `~/.animica/snapshots/chain-1-height-<h>/` as a manifest plus compressed chunks; since the fix in the unreleased changelog entry, chunks are cut at 7 MiB so they fit the 8 MiB wire limit, and a completeness gate introduced in 5.3.2 aborts a restore that would import partial state. Optional checkpoints (`ANIMICA_CHECKPOINTS_MODE=off|rpc|file`) are safety rails against syncing onto a minority fork; they never replace validation and are off by default. More on all of this in [P2P networking and sync](/learn/p2p-networking-and-sync).
+
+### Verify you are on the right chain
+
+Two checks settle it. First, the chain identity:
+
+```bash
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainIdentity","params":[]}'
+```
+
+On mainnet this must return `chainId: 1`, `genesisHash: 0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de` and `forkId: 3511060514`; the public endpoint returned exactly those values on 2026-08-23. Second, compare your head with an independent view:
+
+```bash
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq '.result.height,.result.hash'
+curl -s https://explorer.animica.org/api/head | jq '.head.height,.head.hash'
+```
+
+Heights within a block or two of each other and matching hashes at the same height mean you are synced and canonical. Note that older documents in the repository mention earlier genesis hashes from pre-launch resets (for example in `docs/VERIFIER_NODE_RESTART.md`); the values above are the live mainnet's and are what the node pins.
+
+## Using your RPC
+
+Every call is an HTTP POST of a JSON-RPC 2.0 body to `http://127.0.0.1:8545/rpc`; the `/rpc` path is required and GET requests are rejected with a hint. The live public endpoint advertised 540 methods through `rpc.discover` on 2026-08-23 (the `spec/openrpc.json` file in the repository is a much older snapshot with 33). A few that every operator uses:
+
+```bash
+# balance of an address, returned as hex nANM
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"state.getBalance","params":["anim1..."]}'
+
+# a block with full transactions
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getBlockByHeight","params":[81213,true]}'
+
+# peers and sync
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"net.peerCount","params":[]}'
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"sync.getStatus","params":[]}'
+
+# everything the node exposes
+curl -s -X POST http://127.0.0.1:8545/rpc -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"rpc.discover","params":[]}' | jq '.result.methods | length'
+```
+
+The CLI wraps the common ones: `animica node head`, `animica node block --height N`, `animica node tx --hash 0x...`, `animica node p2p peers`, and `animica rpc call <method> '<json>'` for anything else. All amounts are integer base units (1 ANM = 1,000,000,000 nANM); balances come back as hex strings. The full method catalogue, error codes and namespaces are covered in the [JSON-RPC API guide](/learn/json-rpc-api-guide).
+
+Mainnet's Compose configuration ships with a strict CORS policy (localhost only) and the faucet disabled; `faucet.request` exists only for testnet and devnet.
+
+## Docker options
+
+`animica node up` is the supported wrapper, but the underlying Compose files can be used directly:
+
+```bash
+docker compose -f ops/docker/docker-compose.mainnet.yml up -d
+docker logs -f animica-mainnet-node
+```
+
+The node image reads its configuration from environment variables. The ones that matter for a public node, taken from the multi-node and P2P guides:
+
+```yaml
+services:
+  animica-node:
+    image: animica/node:latest
+    restart: unless-stopped
+    environment:
+      - ANIMICA_NETWORK=mainnet
+      - ANIMICA_P2P_ENABLE=true
+      - ANIMICA_P2P_LISTEN_TCP=0.0.0.0:30333
+      - ANIMICA_P2P_LISTEN_QUIC=0.0.0.0:443
+      - ANIMICA_P2P_ADVERTISED_ADDRS=/ip4/203.0.113.5/tcp/30333
+      - ANIMICA_P2P_MAX_PEERS=64
+    ports:
+      - "127.0.0.1:8545:8545"
+      - "30333:30333"
+      - "443:443/udp"
+    volumes:
+      - ./data:/root/.animica
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8545/healthz"]
+```
+
+Binding the RPC port to `127.0.0.1` on the host is the simplest way to honour the "never expose 8545" rule. `ANIMICA_P2P_SEEDS` overrides the built-in seed list, `ANIMICA_P2P_MAX_OUTBOUND` caps dials, and `ANIMICA_P2P_PRIVATE_NETWORK=true` with `ANIMICA_P2P_NETWORK_KEY` builds an isolated network.
+
+Back up a volume with a throwaway container:
+
+```bash
+docker run --rm -v mainnet_node_data:/data -v $(pwd):/backup \
+  alpine tar czf /backup/mainnet-backup.tar.gz /data
+```
+
+Stop the node first; a backup of a live SQLite database is not guaranteed consistent.
+
+## Health checks
+
+A short routine that catches the common failure modes:
+
+1. **Process and RPC.** `animica node status` prints RPC URL, chain id, head, sync state and an estimated network hashrate sampled over `--hashrate-window` blocks (default 120). It retries with bounded attempts and fails fast if the RPC is down; `--use-cached` shows the last persisted state when it is.
+2. **Peers.** `animica node p2p status` shows inbound and outbound counts and the configured listen addresses and seeds; `net.peerCount` gives the authoritative deduplicated count (the public node reported 3 on 2026-08-23). Zero peers means a firewall or seed problem, not a consensus problem.
+3. **Head freshness.** With 60-second target blocks, a head timestamp more than a few minutes old while peers are connected usually means a stalled sync; check `sync.getStatus` for the phase and `blockingReason`.
+4. **Canonicality.** Compare height and hash against the explorer as shown above. A matching height with a different hash means you are on a fork; the sync self-heals natural one-block forks on any release from 7.2.0 onward by re-requesting the fork height by hash.
+5. **Metrics.** Scrape `http://127.0.0.1:9000/metrics` into Prometheus; the multi-node guide includes a ready-made scrape config and Grafana notes.
+6. **Container health.** The Compose healthcheck hits `/healthz` on the RPC port.
+
+## Upgrades and forks
+
+Animica's consensus changes activate at fixed heights: 40,000 (PQ hardening, root commitment), 42,000 (address freeze), 42,001 (85/15 foundation split), 44,444 (inclusion implies execution), 50,000 (IOU settlement), and 75,000 (treasury 25%, service carve, VM execution of contract calls, bounded retarget, uniform reorg bound, and more). Some of these are reject rules, others are state-mutating emission changes; a node that lags a state-mutating fork keeps following the same chain but computes wrong balances. The upgrade procedure is therefore routine and unglamorous:
+
+```bash
+pip install --upgrade animica
+animica node down
+animica node up
+```
+
+If a new release ships a new genesis (this happened during pre-launch resets), the node refuses to start with `GENESIS_MISMATCH expected=0x... got=0x...`. Either wipe with `animica node down --volumes && animica node up` or opt in to `animica node up --auto-reset-genesis-mismatch` (equivalently `ANIMICA_AUTO_RESET_GENESIS_MISMATCH=1`), which is destructive and re-syncs from height 0.
+
+## Key takeaways
+
+- `pip install animica` then `animica node up` starts a mainnet full node through Docker Compose; data lives in `~/.animica/chain-1/` and per-network volumes.
+- Open TCP 30333 and UDP 443 for peers; keep TCP 8545 (RPC) and 9000 (metrics) on localhost.
+- Sync is headers-first and P2P-only; `animica sync status` exposes the phase machine and stall reasons.
+- Verify the chain with `chain.getChainIdentity` (chain id 1, genesis `0xa0892158...`, forkId 3511060514) and compare your head with the explorer.
+- Forks are height-gated and forward-only; upgrade before activation heights or your balances drift from the network's.
+
+## Sources
+
+- docs/BOOTSTRAP.md
+- docs/rpc-quickstart.md
+- docs/cli-commands.md
+- docs/network-docker-compose.md
+- docs/MULTI_NODE_DOCKER_SETUP.md
+- docs/VERIFIER_NODE_RESTART.md
+- docs/p2p_sync.md
+- docs/P2P_NETWORKING_GUIDE.md
+- python/README.md, python/pyproject.toml
+- QUICKSTART.md, AGENTS.md
+- docs/ANIMICA_2026_STATE.md
+- docs/CHANGELOG.md (5.3.2, 8.0.3, Unreleased entries)
+- core/network_params.py
+- CLI `--help` output of `animica node`, `animica node up`, `animica node status` (version 10.4.4)
+- Live: `chain.getChainIdentity`, `net.peerCount`, `net.peers` and `rpc.discover` against https://rpc.animica.org/rpc, 2026-08-23

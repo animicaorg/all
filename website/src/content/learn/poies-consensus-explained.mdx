@@ -1,0 +1,147 @@
+---
+title: "PoIES consensus explained: S = H(u) + Σψ ≥ Θ"
+description: "How Animica scores a block: the hash-work term H(u) from a SHA3-256 header hash, the capped evidence term Σψ, the threshold Θ, fork choice, and an honest account of what mainnet enforces today."
+date: 2026-08-23
+updated: 2026-08-23
+category: "protocol"
+tags: ["consensus", "poies", "proof-of-work", "theta", "useful-work"]
+readingLevel: "advanced"
+sources:
+  - spec/poies_math.md
+  - docs/consensus/poies_overview.md
+  - spec/poies_policy.yaml
+  - docs/consensus/script_commitments.md
+  - docs/UNBOUNDED_THETA.md
+  - core/network_params.py
+  - core/chain/block_import.py
+  - core/utils/pow.py
+  - mining/nonce_domain.py
+order: 5
+---
+
+PoIES, Proof of Integrated External Services, is the name of Animica's block-acceptance rule. It generalises proof-of-work so that verified external evidence can contribute to a block's score alongside hash luck. This article derives the rule from first principles, works through a real mainnet block, walks the evidence scorer with the mainnet policy numbers, and then states exactly which parts of the rule are exercised on mainnet today.
+
+## The acceptance predicate
+
+A candidate block is valid when
+
+```
+S  =  H(u)  +  Σ ψ(p)   ≥   Θ
+          p ∈ proofs
+```
+
+- `u ∈ (0, 1)` is a uniform random draw derived from the block's hash.
+- `H(u) = −ln(u)` converts that draw into an exponentially distributed amount of "work" measured in nats.
+- `ψ(p) ≥ 0` is the score awarded to one verified proof after policy weighting and caps.
+- `Θ` is the network threshold, retargeted every block and carried in each header as `thetaMicro`. One nat is 1,000,000 micro-nats; all consensus arithmetic is integer µ-nats.
+
+Everything is additive in the log domain, which is the design's central trick: hash work and evidence are expressed in the same unit, so they can be summed, capped and compared to a single threshold.
+
+## The hash term, derived
+
+Let `h` be the block's consensus hash, `SHA3-256` of the canonical-CBOR header (`core/types/header.py`), read as a 256-bit integer. If the hash function behaves as a random oracle, `u = h / 2^256` is uniform on (0, 1). For uniform `u`, `−ln(u)` follows the Exponential(1) distribution, so
+
+```
+P[H(u) ≥ Θ]  =  P[u ≤ e^(−Θ)]  =  e^(−Θ)
+```
+
+A miner needs on average `e^Θ` hash attempts to find a header whose score clears Θ. This is exactly Bitcoin's "hash below target" rule with the target written as a logarithm: `H(u) ≥ Θ` is equivalent to `h ≤ 2^256 · e^(−Θ)`. The node does that conversion in `core/utils/pow.py` (`micro_threshold_to_target256`) with fixed-precision decimal arithmetic so every platform computes the same target, and `core/chain/block_import.py::_pow_sanity` checks `int(header_hash) ≤ target`.
+
+Miners cannot precompute `u`: the nonce preimage (`mining/nonce_domain.py`) is domain-tagged and includes the header's signing bytes and the 32-byte `mixSeed`, both of which commit to the parent, the roots and the policy root. Changing the nonce changes the whole draw.
+
+### Worked example: mainnet block 81,213
+
+```
+thetaMicro   = 26,392,958        → Θ = 26.392958 nats
+header hash  = 0x000000000285fce2e883bc00cba4e00fc38d390e7a3b8133cfc522bcf09ba3f9
+```
+
+The hash has 38 leading zero bits. Computing the draw exactly:
+
+```
+u     = (h + 1) / (2^256 + 1)
+H(u)  = −ln(u)  = 26.800 nats
+S     = 26.800 + 0  ≥  26.393   → accept
+```
+
+Equivalently, the target for this Θ is `0x3cac95e5fb69f5bf64…` (a 218-bit number) and the 218-bit hash lies below it. The expected number of attempts at this threshold is `e^26.393 ≈ 2.9 × 10^11` hashes per block, or about 2^38.08. That is what "difficulty" means on Animica; the next article, [Difficulty adjustment and Θ](/learn/difficulty-adjustment-and-theta), explains how Θ is moved to hold the 60-second target.
+
+## The evidence term
+
+The second half of the predicate is what distinguishes PoIES from plain proof-of-work. A block may carry a list of proof envelopes. Each is verified deterministically (schema, canonical CBOR, signature, attestation, freshness, nullifier) and then mapped to a score by a policy function, one per proof type. The mainnet policy in `spec/poies_policy.yaml` defines five types:
+
+| Type | Score model (µ-nats) | Per-block cap | Per-entity share of Γ |
+|---|---|---|---|
+| hashshare | `850,000 · ln(1 + d_ratio)`, clamped to [100,000, 3,500,000] | 7,000,000 | 35% |
+| ai | `12,000` per normalised compute unit, plus redundancy, trap and QoS modifiers; TEE attestation required | 3,000,000 | 20% |
+| quantum | `32,000` per quantum unit (`depth × width × ln(1+shots)`), trap-verified, provider-certified | 2,000,000 | 20% |
+| storage | heartbeat proof-of-spacetime, `14,000` base per window with decay per miss; retrieval bonus `35,000` | 1,000,000 | 25% |
+| vdf | `15,000` per verified second, up to 10 s | 500,000 | 50% |
+
+Three clamps apply in order: per proof, per type, then the global cap `Γ = 12,000,000 µ-nats` (12 nats) across all types. The per-type caps sum to more than Γ on purpose; the global cap is what binds when several lanes are used at once. `spec/poies_math.md` proves the invariants that matter: `ψ ≥ 0`, caps never increase a value, adding a valid proof never lowers `S`, and `Σψ ≤ Γ` for any block.
+
+### Worked example: how the scorer would combine evidence
+
+Suppose a block at Θ = 26.393 nats carried one hash-share proof with `d_ratio = 4` and one AI proof worth 100 units at target QoS with no bonuses:
+
+```
+ψ_hashshare = 850,000 · ln(5)     = 1,368,022 µ-nats   (within [100,000, 3,500,000])
+ψ_ai        = 100 · 12,000        = 1,200,000 µ-nats   (under the 3,000,000 type cap)
+Σψ          = 2,568,022 µ-nats    = 2.568 nats        (under Γ = 12 nats)
+```
+
+A header draw of `H(u) = 24.0` nats, which would fail alone, now gives `S = 26.568 ≥ 26.393` and the block is valid. In expectation the evidence saves `e^2.568 ≈ 13×` the hash attempts, and because Γ caps the total at 12 nats, evidence can never reduce the hash requirement by more than `e^12 ≈ 1.6 × 10^5` times. That bound is the "useful work is additive, never a bypass" property the design documents emphasise: a miner with no evidence at all can still mine, just with more hashing.
+
+### Caps, diversity and replay
+
+- **Per-entity caps** stop one provider from filling a lane: no single entity may supply more than the listed fraction of Γ.
+- **Escort/diversity rules** (`diversity` section of the policy) lower the effective threshold slightly when a block includes an under-represented type and the recent mix skews away from the soft targets (50% hashshare, 25% AI, 15% quantum, 8% storage, 2% VDF), with a cooldown to prevent oscillation. A slow "fairness α" tuner drifts per-type multipliers toward those targets over 432,000-block epochs, bounded in [0.5, 1.5].
+- **Nullifiers**: every proof has a domain-separated nullifier; a proof can be counted once within a 65,536-block window (`nullifier_ttl_blocks`).
+- **Policy root**: the policy file is Merkle-hashed (SHA3-512 leaves, canonical JSON pointers) and the root is committed in each header, so two nodes on different policies cannot silently agree on a score.
+- **Script commitments** (`docs/consensus/script_commitments.md`): deterministic proof scripts are identified by a SHA3-256 `artifact_hash`, and blocks may commit `inputs_commit` / `outputs_commit` so a verifier can replay the script and reject a block whose declared outputs do not match.
+
+## Fork choice
+
+Block weight is its accepted score `S`, and the canonical chain is the one with the greatest cumulative weight, with a deterministic tie-break on header hash then height (`consensus/fork_choice.py`). Two consequences are worth knowing:
+
+- There is **no finality gadget**. A depth bound exists (`DEFAULT_MAX_REORG_DEPTH = 96`): fork choice declines to make a tip canonical if doing so would reorganise more than that many blocks. The finality-depth fork at block 75,000 clamps every node's bound into a uniform range so that one operator cannot set it to zero (and strand themselves on the next one-block fork) or to an arbitrarily large value.
+- Natural one-block forks happen and are expected; the sync pipeline re-requests the fork height by hash and self-heals (`docs/CHANGELOG.md`, 7.2.0). `tx.getStatus` exposes `confirmations`; its `finalized` flag is a node-local label that turns true at 12 confirmations, not a consensus guarantee. See [Transactions and fees](/learn/transactions-and-fees).
+
+## What mainnet enforces today
+
+This section is the one to read if you are deciding how much to trust the evidence lane. The following is taken from the rationale comments in `core/network_params.py` and from live chain data, not from the design documents.
+
+1. **Acceptance is hash-only.** The live rule is `header_hash ≤ target(Θ)`, i.e. `S = H(u)` with `Σψ = 0`. The scorer's `Σψ` is computed and logged for telemetry at and after block 75,000 but is never used to accept a block that the hash check rejected.
+2. **No mainnet block carries proofs.** Every block stored carries `proofs: []` and a zero `proofsRoot`; block 81,213 on 2026-08-23 shows a non-zero `txsRoot` and zeros for `stateRoot`, `receiptsRoot`, `proofsRoot` and `daRoot`. The reference miner does not attach evidence.
+3. **The verification fork is presence-gated and shadowed.** `FORK_USEFUL_WORK_VERIFY` activated at 75,000 verifies any proof a block *does* carry (canonical CBOR, ML-DSA-65 signature with the scheme pinned by the verifier, miner = worker, requester ≠ worker, receipt freshness, single-use nullifier, payment reference) and rejects the block if one is invalid. On mainnet it runs in observe-only mode unless an operator sets `ANIMICA_USEFUL_WORK_ENFORCE=1`, because the payment-status input is still node-local (headers commit `receiptsRoot = 0`) and enforcing would split snapshot-synced nodes from executing ones.
+4. **It is not "serve or don't mine".** The code comments are explicit: the rule never requires a proof, never grants credit, and cannot force real inference, because the worker must equal the coinbase, so a receipt is always self-signed and a null worker satisfies every check. A regression test (`consensus/tests/test_useful_work_adversarial.py`) asserts that a forged zero-inference proof is accepted, precisely so the rule cannot be misdescribed.
+
+So PoIES on mainnet is, today, a SHA3-256 proof-of-work chain with its difficulty expressed in nats and a fully specified, policy-committed, but unused evidence lane. The quantum beacon commitment fork at the same height is likewise "activated but dormant" until a miner chooses to commit one. Where the useful-work components stand as software, and what would have to change to enforce them, is covered in [Useful work: AI and quantum](/learn/useful-work-ai-and-quantum).
+
+## Why design it this way
+
+The design documents give three reasons for separating the two terms and capping the second:
+
+- **Liveness.** If every external service disappears, the chain keeps producing blocks on `H(u)` alone; evidence can only make a block easier, never necessary. That is also why activating the evidence rules could be done without forking honest miners.
+- **Bounded advantage.** With Γ = 12 nats the most any evidence can do is replace 12 nats of hashing; at Θ ≈ 26 nats that is a meaningful but bounded discount, and per-type and per-entity caps keep it from concentrating.
+- **Determinism.** All scoring is pure fixed-point integer math in µ-nats with saturating clamps (`consensus/math.py`), policies are hashed into headers, and proof parsing is canonical, so every honest node reaches the same accept/reject decision for the same block.
+
+## Key takeaways
+
+- A block is valid when `H(u) + Σψ ≥ Θ`, with `H(u) = −ln(hash / 2^256)` in nats; this is proof-of-work written in the log domain.
+- Block 81,213 cleared Θ = 26.39 nats with H(u) = 26.80; expected work at that threshold is `e^Θ ≈ 2.9 × 10^11` hashes.
+- Evidence scores are policy-weighted, triple-capped, and bounded by Γ = 12 nats; nullifiers and a policy root in every header prevent replay and policy drift.
+- Fork choice is cumulative accepted score with a 96-block reorg bound and no finality gadget.
+- On mainnet today acceptance is hash-only, no block carries proofs, and the useful-work verification rule is presence-gated and shadowed; it never grants credit.
+
+## Sources
+
+- `spec/poies_math.md`
+- `docs/consensus/poies_overview.md`
+- `spec/poies_policy.yaml`, `spec/params.yaml`
+- `docs/consensus/script_commitments.md`
+- `docs/UNBOUNDED_THETA.md`
+- `core/network_params.py` (fork rationale comments), `core/chain/block_import.py` (`_pow_sanity`), `core/utils/pow.py`, `core/types/header.py`
+- `mining/nonce_domain.py`, `consensus/scorer.py`
+- `docs/CHANGELOG.md` (7.2.0 fork self-heal)
+- Live reads of `chain.getHead` and `chain.getBlockByHeight [81213, true]` on 2026-08-23

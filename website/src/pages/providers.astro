@@ -2,15 +2,54 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Header from "../components/Header.astro";
 import Footer from "../components/Footer.astro";
-import { providerHardware, providerSteps } from "../data/aicf";
+import CodeBlock from "../components/CodeBlock.astro";
 
-const title = "Providers";
+const title = "AI compute providers";
 const description =
-  "Contribute GPU and CPU compute to AICF, run benchmarked workers, and earn ANM from live inference, embedding, and agent workloads.";
-const aicfApiBaseUrl =
-  (import.meta.env.ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
-  (import.meta.env.PUBLIC_ANIMICA_AICF_API_BASE_URL as string | undefined)?.trim() ||
-  "https://aicf.animica.org/api";
+  "What an AICF provider does, how to register a worker and serve inference for ANM, how settlement and SLA scoring work according to the docs, and an honest statement of the network's current scale.";
+
+const quick = `pip install --upgrade animica
+
+# Serve inference as a registered AICF worker, paid to your address.
+# Tiers: standard, small, flagship (flagship wants a GPU).
+animica miner aicf-worker start --address anim1zqp... --tiers standard,small,flagship
+
+# Or let the CLI pick everything it can run on this machine (PoW + ENA + serving)
+animica up --plan     # show the plan first
+animica up`;
+
+const registry = `# Registry and staking flow from docs/tutorials/PROVIDER_GPU.md
+python -m aicf.cli.provider_register --rpc $RPC_URL --chain-id 1 \\
+  --id "$PROVIDER_ID" --name "$PROVIDER_NAME" --caps AI \\
+  --endpoint "$PROVIDER_ENDPOINT" --region "$PROVIDER_REGION"
+
+python -m aicf.cli.provider_stake --rpc $RPC_URL --chain-id 1 --id "$PROVIDER_ID" --amount <nANM>
+python -m aicf.cli.provider_heartbeat --rpc $RPC_URL --chain-id 1 --id "$PROVIDER_ID" --print
+
+# Read the registry back
+curl -s -X POST https://rpc.animica.org/rpc -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"aicf.listProviders","params":[]}'`;
+
+const hardware = [
+  ["aicf-chat-1 (chat)", "16 GB+ GPU memory", "8 CPU cores", "32 GB RAM", "vllm, llama.cpp, first-party-chat"],
+  ["aicf-embed-1 (embeddings)", "8 GB+ GPU memory", "4 CPU cores", "16 GB RAM", "sentence-transformers, first-party-embed"],
+];
+
+const sla = [
+  ["Latency", "p95 of (complete − assign) ≤ 10 s for AI jobs (30 s quantum); absolute job TTL 60 s"],
+  ["Availability", "completed / assigned ≥ 0.98 over a 24 h half-life window"],
+  ["Quality (AI)", "QoS score ≥ 0.95; known trap prompts answered acceptably ≥ 98.5% of the time"],
+  ["Redundancy", "k-of-n agreement when the policy requests it (for example 2 of 3)"],
+  ["Validity", "Any invalid proof is a critical fault"],
+];
+
+const lifecycle = [
+  ["REGISTERED", "Identity exists; not yet eligible"],
+  ["ACTIVE", "Attestation ok, stake at or above minimum, healthy heartbeats: eligible for assignment"],
+  ["JAILED", "Temporarily ineligible after faults; recovers after cooldown"],
+  ["UNSTAKING", "Stake unlocking after the lock period; not eligible"],
+  ["DEREGISTERED", "Offboarded; records kept for audit"],
+];
 ---
 
 <BaseLayout title={title} description={description}>
@@ -18,178 +57,161 @@ const aicfApiBaseUrl =
 
   <section class="aicf-section">
     <div class="aicf-container">
-      <span class="aicf-kicker">Provider Network</span>
-      <h1 class="aicf-heading">Contribute Compute. Earn ANM from Useful AI Work.</h1>
+      <span class="aicf-kicker">Providers</span>
+      <h1 class="aicf-heading">Serve AI compute, earn ANM</h1>
       <p class="aicf-subheading">
-        AICF providers supply real GPU and CPU capacity for inference, embeddings, and agent workloads. Routing preference is driven by benchmark score,
-        uptime, completion quality, and reputation.
+        An AICF provider runs a worker that claims inference jobs from the network, serves them, and is
+        paid in ANM. This page explains what the role involves, how to join with the current tooling,
+        and how payment and quality scoring are defined in the protocol documentation. It also states,
+        without rounding up, how large the provider network is today.
       </p>
       <div class="aicf-btn-row">
-        <a class="aicf-btn" href="/downloads">Download Worker</a>
-        <a class="aicf-ghost-btn" href="/docs">Provider Docs</a>
-        <a class="aicf-ghost-btn" href="https://aicf.animica.org">Open Provider Dashboard</a>
+        <a class="aicf-btn" href="/learn/aicf-ai-compute-framework">How AICF works</a>
+        <a class="aicf-ghost-btn" href="https://aicf.animica.org" target="_blank" rel="noopener noreferrer">AICF dashboard</a>
+        <a class="aicf-ghost-btn" href="/compute-pricing">Pricing and splits</a>
       </div>
     </div>
   </section>
 
   <section class="aicf-section">
-    <div class="aicf-container">
-      <span class="aicf-kicker">Hardware Support</span>
-      <div class="aicf-card" style="margin-top:0.85rem; padding:0; overflow:auto;">
+    <div class="aicf-container page-prose">
+      <h2>What a provider does</h2>
+      <p>
+        Inference on Animica is not served by a central API box. When a request arrives at the
+        OpenAI-compatible endpoint (<code>animica.dev/v1</code>, or a paid key from the console), it
+        becomes an AICF job, and whichever registered worker claims it runs the model and returns the
+        response. The worker signs a proof-of-inference receipt with its ML-DSA-65 key (domain
+        <code>animica.ai.proof-of-inference.v1</code>) binding the model, a hash of the prompt, a hash of
+        the output and the sampling seed, so the response can be verified and replayed offline with
+        <code>animica ai verify</code>. Providers are therefore accountable for what they serve, and a
+        client never has to trust the gateway.
+      </p>
+      <p>
+        A provider's obligations are the ones in the SLA: accept assigned jobs, return results within the
+        latency target, stay available, and pass quality checks including trap prompts with known
+        answers. Heartbeats carry the worker's capability snapshot and load; the registry keeps an
+        exponentially decaying health score and routes only to healthy, active providers.
+      </p>
+
+      <h2>How to join</h2>
+      <p>
+        The shortest path is the <code>animica</code> CLI. It registers the worker, binds your payout
+        address, and claims jobs for the tiers you enable. <code>animica up</code> goes further and plans
+        every earning activity the machine can support (proof-of-work, ENA useful-work, model serving,
+        and Bittensor serving on a GPU with 16 GB or more of VRAM), paying all of it to one ANM address.
+      </p>
+      <CodeBlock lang="bash" title="Start serving" code={quick} />
+      <p>
+        The lower-level registry flow in <code>docs/tutorials/PROVIDER_GPU.md</code> shows the pieces the
+        CLI automates: a provider identity derived from your registry key (<code>provider:&lt;sha3_256(pubkey
+        || alg_id)[:12]&gt;</code>), capability flags (<code>ai</code>, <code>quantum</code>), an endpoint
+        and region, a stake, and periodic heartbeats. Attestation bundles (TEE evidence for AI, facility
+        certificates for quantum) are part of the registry specification; the reference worker runs
+        without a TEE today.
+      </p>
+      <CodeBlock lang="bash" title="Registry, stake and heartbeat" code={registry} />
+
+      <h2>Hardware</h2>
+      <p>
+        Requirements come from the live model registry (<code>GET https://aicf.animica.org/api/models</code>,
+        checked 2026-08-23), which lists a runtime floor per model. A GPU is optional for the small and
+        standard tiers and expected for flagship; CPU-only workers can still serve embeddings and small
+        models, more slowly.
+      </p>
+      <div style="overflow-x:auto;">
         <table class="aicf-table">
-          <thead>
-            <tr>
-              <th>Class</th>
-              <th>GPU Targets</th>
-              <th>VRAM</th>
-              <th>Expected Workloads</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Model</th><th>GPU</th><th>CPU</th><th>RAM</th><th>Runtimes</th></tr></thead>
           <tbody>
-            {providerHardware.map((row) => (
-              <tr>
-                <td><strong>{row.class}</strong></td>
-                <td>{row.gpu}</td>
-                <td>{row.vram}</td>
-                <td>{row.expected}</td>
-              </tr>
+            {hardware.map(([m, g, c, r, rt]) => (
+              <tr><td><strong>{m}</strong></td><td>{g}</td><td>{c}</td><td>{r}</td><td class="aicf-muted">{rt}</td></tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <h2>How you get paid</h2>
+      <p>
+        Two flows are documented. The first is per-job: each model has a price in nANM per input token,
+        per output token and per request, and the registry records how that price is split. For
+        <code>aicf-chat-1</code> the split is 85% to the provider and 15% to the treasury; for
+        <code>aicf-embed-1</code> it is 82/18. Rates and splits are shown on the
+        <a href="/compute-pricing">pricing page</a> and come from the same registry endpoint. Verified
+        receipts release the provider share and update reputation.
+      </p>
+      <p>
+        The second flow is the block subsidy. Since block 75,000 the coinbase is split 50% to the miner,
+        25% to the treasury and 25% to inference providers; the inference share is paid pro-rata to
+        workers with claims in that block's window, and any unclaimed portion rolls to the treasury. The
+        AICF epoch model in <code>docs/AICF.md</code> describes credits per block, epoch finalisation two
+        blocks after the epoch ends, and idempotent pro-rata claims limited to 100 epochs per transaction.
+        Provider balances and payouts are visible through <code>aicf.getBalance</code> and
+        <code>aicf.claimPayout</code>.
+      </p>
+
+      <h2>SLA and penalties</h2>
+      <p>
+        The defaults in <code>docs/aicf/SLA.md</code> (network policy can override them):
+      </p>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Metric</th><th>Default target</th></tr></thead>
+          <tbody>
+            {sla.map(([m, t]) => (<tr><td><strong>{m}</strong></td><td class="aicf-muted">{t}</td></tr>))}
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Measurements are aggregated per epoch with exponentially weighted windows; new providers get
+        grace epochs with reduced penalties. Missed heartbeats lower health, and prolonged faults move a
+        provider to <code>JAILED</code>. Stake unlocks linearly after the lock period on unstake, with a
+        cooldown after slashing.
+      </p>
+      <div style="overflow-x:auto;">
+        <table class="aicf-table">
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            {lifecycle.map(([s, m]) => (<tr><td><code>{s}</code></td><td class="aicf-muted">{m}</td></tr>))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Current scale, stated plainly</h2>
+      <p>
+        As of 2026-08-23 the AICF status endpoint reports <strong>one registered provider</strong> and zero
+        in-flight jobs or settlements, while the ENA useful-work layer (the CPU-side of the same earning
+        story) reports about 146,000 verified jobs from 71 contributors. The free inference endpoint is
+        served by the miner network and the foundation subsidises it. In other words: the accounting,
+        registry and receipt machinery are live, the provider market is early, and a new provider today is
+        joining a small registry rather than competing in a crowded one. The live counts are on the
+        <a href="/network">Network</a> and <a href="/status">Status</a> pages and are never rounded up.
+      </p>
+
+      <h2>Before you commit hardware</h2>
+      <ul>
+        <li>Rewards are paid in ANM; check the ANM/USDT market on NonKYC yourself before estimating revenue. This site gives no price forecasts.</li>
+        <li>Mining and serving compete for the same machine; <code>animica up --plan</code> shows what it would run.</li>
+        <li>Keep the worker's key separate from your main wallet and back up the payout address's mnemonic.</li>
+        <li>Expose metrics locally only; the worker's Prometheus exporter is not meant to be public.</li>
+      </ul>
+
+      <h2>Sources</h2>
+      <p class="aicf-muted">
+        docs/ANIMICA_2026_STATE.md · docs/tutorials/PROVIDER_GPU.md · docs/aicf/PROVIDER_REGISTRY.md · docs/aicf/SLA.md ·
+        docs/AICF.md · python/README.md · core/network_params.py (FORK_TREASURY_25) · live aicf.animica.org/api/status and /api/models,
+        pool.animica.org/api/ena/stats on 2026-08-23
+      </p>
     </div>
   </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-3">
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Earnings Model</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          Jobs reserve ANM budget in escrow. Upon accepted receipts, ANM is distributed to providers with transparent provider and treasury share breakdown.
-        </p>
-        <ul style="margin-top:0.7rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Higher sustained throughput increases routing volume</li>
-          <li>Lower failure rates increase effective utilization</li>
-          <li>Premium queues reward high-end benchmark classes</li>
-        </ul>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Trust and Reputation</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          Providers are ranked by uptime, completion quality, benchmark consistency, and dispute history. Stake and reputation influence assignment confidence.
-        </p>
-        <ul style="margin-top:0.7rem; padding-left:1rem; display:grid; gap:0.4rem;">
-          <li>Heartbeat compliance and job response windows</li>
-          <li>Challenge/dispute outcomes and slashing events</li>
-          <li>Node benchmark verification and hardware integrity</li>
-        </ul>
-      </article>
-
-      <article class="aicf-card">
-        <h2 style="font-size:1.2rem;">Benchmark First</h2>
-        <p class="aicf-muted" style="margin-top:0.6rem;">
-          Run benchmark mode before joining queues. AICF captures detected GPUs, memory, and throughput metrics used by scheduler policy.
-        </p>
-        <div class="aicf-code" style="margin-top:0.7rem;">
-<pre style="margin:0;"><code>aicf-provider-worker benchmark --config provider.config.json
-aicf-provider-worker start --config provider.config.json</code></pre>
-        </div>
-      </article>
-    </div>
-  </section>
-
-  <section class="aicf-section">
-    <div class="aicf-container aicf-grid-2">
-      <article class="aicf-card">
-        <span class="aicf-kicker">Quickstart Flow</span>
-        <ol style="margin-top:0.75rem; padding-left:1.1rem; display:grid; gap:0.5rem;">
-          {providerSteps.map((step) => (
-            <li class="aicf-muted">{step}</li>
-          ))}
-        </ol>
-      </article>
-
-      <article class="aicf-card" data-aicf-provider-root data-aicf-api-base={aicfApiBaseUrl}>
-        <span class="aicf-kicker">Live Network Snapshot</span>
-        <div class="aicf-grid-2" style="margin-top:0.7rem;">
-          <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
-            <p class="aicf-muted" style="font-size:0.8rem;">Active Providers</p>
-            <p class="aicf-value" style="font-size:1.45rem;" data-aicf-provider-metric="providers">--</p>
-          </div>
-          <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
-            <p class="aicf-muted" style="font-size:0.8rem;">Provider Nodes</p>
-            <p class="aicf-value" style="font-size:1.45rem;" data-aicf-provider-metric="nodes">--</p>
-          </div>
-          <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
-            <p class="aicf-muted" style="font-size:0.8rem;">Queue Units</p>
-            <p class="aicf-value" style="font-size:1.45rem;" data-aicf-provider-metric="queueUnits">--</p>
-          </div>
-          <div class="aicf-card" style="padding:0.7rem; background:rgba(7,16,30,0.6);">
-            <p class="aicf-muted" style="font-size:0.8rem;">Settlements</p>
-            <p class="aicf-value" style="font-size:1.45rem;" data-aicf-provider-metric="settlements">--</p>
-          </div>
-        </div>
-        <p class="aicf-muted" style="margin-top:0.75rem;" data-aicf-provider-message>Loading live AICF metrics...</p>
-        <div class="aicf-btn-row">
-          <a class="aicf-btn" href="/downloads">Download and Start</a>
-          <a class="aicf-ghost-btn" href="/support">Need Help?</a>
-        </div>
-      </article>
-    </div>
-  </section>
-
-  <script>
-    import {
-      deriveAicfCounts,
-      fetchAicfStatus,
-      formatCount,
-      formatUtc,
-    } from "../features/aicf/liveMetricsClient";
-
-    const rootEl = document.querySelector<HTMLElement>("[data-aicf-provider-root]");
-    const aicfApiBaseUrl = rootEl?.dataset.aicfApiBase || "https://aicf.animica.org/api";
-    const messageEl = document.querySelector("[data-aicf-provider-message]");
-    const metricEls = Array.from(document.querySelectorAll("[data-aicf-provider-metric]"));
-
-    const setMetric = (key: string, value: string) => {
-      for (const el of metricEls) {
-        if (el.getAttribute("data-aicf-provider-metric") === key) {
-          el.textContent = value;
-        }
-      }
-    };
-
-    const setUnavailable = () => {
-      for (const el of metricEls) {
-        el.textContent = "Unavailable";
-      }
-      if (messageEl) {
-        messageEl.textContent = "Live AICF telemetry is temporarily unavailable. Try again shortly.";
-      }
-    };
-
-    const loadMetrics = async () => {
-      try {
-        const { payload } = await fetchAicfStatus(aicfApiBaseUrl);
-        const counts = deriveAicfCounts(payload);
-
-        setMetric("providers", formatCount(counts.providers));
-        setMetric("nodes", formatCount(counts.nodes));
-        setMetric("queueUnits", formatCount(counts.queueUnits));
-        setMetric("settlements", formatCount(counts.settlements));
-
-        if (messageEl) {
-          messageEl.textContent = `Live AICF metrics refreshed at ${formatUtc(payload.timestamp)}.`;
-        }
-      } catch (error) {
-        console.error("[aicf-providers] unable to fetch live status", error);
-        setUnavailable();
-      }
-    };
-
-    loadMetrics().catch(() => setUnavailable());
-  </script>
 
   <Footer slot="footer" />
 </BaseLayout>
+
+<style>
+  .page-prose h2 { font-size: 1.45rem; margin-top: 2.2rem; }
+  .page-prose p, .page-prose ul { margin-top: 0.75rem; line-height: 1.65; }
+  .page-prose ul { padding-left: 1.25rem; list-style: disc; }
+  .page-prose li { margin-top: 0.4rem; }
+  .page-prose table { margin-top: 0.9rem; }
+  .page-prose code { font-size: 0.92em; }
+  .page-prose :global(.not-prose) { margin-top: 0.9rem; }
+</style>

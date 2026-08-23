@@ -1,0 +1,269 @@
+---
+title: "The Animica JSON-RPC API: namespaces, methods, and live examples"
+description: "How to talk to rpc.animica.org: transport rules, the method catalog by namespace, ten request/response pairs captured live, error codes, and the eth_ and Bitcoin-style facades."
+date: 2026-08-23
+updated: 2026-08-23
+category: "build"
+tags: ["json-rpc", "api", "rpc", "openrpc", "developers"]
+readingLevel: "intermediate"
+sources:
+  - spec/openrpc.json
+  - docs/rpc-quickstart.md
+  - docs/rpc/JSONRPC.md
+  - docs/rpc/EXAMPLES.md
+  - docs/rpc/WEBSOCKETS.md
+  - docs/EVM_RPC_COMPAT.md
+  - docs/BITCOIN_RPC_COMPAT.md
+order: 3
+---
+
+Every wallet, explorer, pool and agent that touches Animica does so through one JSON-RPC 2.0 endpoint. This guide explains the transport rules that catch newcomers, lays out the method catalog by namespace with counts taken from the node's own discovery document, and shows ten request/response pairs captured against the public node on 2026-08-23 so you can see the real shapes rather than idealised ones.
+
+## Transport rules
+
+- **Endpoint:** `POST https://rpc.animica.org/rpc`. The `/rpc` path is required; the bare host answers with a redirect that naive POST clients mishandle. Send `Content-Type: application/json`.
+- **Envelope:** standard JSON-RPC 2.0. `params` may be positional (`[…]`) or named (`{…}`) for most methods. Batches (an array of requests) are supported and answered as an array.
+- **CORS:** `Access-Control-Allow-Origin: *`, so browser code can call it directly.
+- **Units:** every amount is an integer in base units, 1 ANM = 1,000,000,000 nANM. Balances come back as hex quantity strings (`"0x0"`); do not parse them into floats.
+- **Identifiers:** hashes are `0x` plus 64 hex characters (SHA3-256). Addresses are bech32m `anim1…` strings; most methods also accept the 32-byte account digest as `0x` hex, and block and transaction views return senders and recipients in that digest form.
+- **What does not exist:** there is no `chain.getHeight` (use `chain.getHead`), no `ai.*` namespace (AI lives under `aicf.*`), and no public WebSocket. `docs/rpc/WEBSOCKETS.md` describes a `/ws` subscription protocol for `newHeads` and `pendingTxs`, but it is not exposed on the public host; poll `chain.getHead` instead.
+
+A local node started with `ops/run.sh node` serves the same API on `http://127.0.0.1:8545/rpc` (`docs/rpc-quickstart.md`). See [Run a node](/learn/run-a-node).
+
+## Three catalogs, three sizes
+
+There are three machine-readable descriptions of the API, and they disagree on size because they serve different purposes.
+
+1. `spec/openrpc.json` in the repository is the original minimal specification: OpenRPC 1.2.6, version 1.0.0, **33 methods** (`da` 9, `chain` 6, `tx` 6, `aicf` 4, `miner` 3, `block` 2, `node` 2, `state` 1). It documents the core shapes and the CBOR-as-hex convention, and it is the file the RPC test suite was written against.
+2. `https://rpc.animica.org/openrpc.json` is the published catalog generated from the node's method registry (animica 10.1.0 at the time of capture): **141 methods** across `aicf.*` 57, `l2_*` 23, `tx.*` 20, `mempool.*` 12, `state.*` 11, `chain.*` 10, `tx2.*` 4, `net.*` 3 and one devnet-only `faucet.request`. Its description states the conventions above, including the `/rpc` path rule.
+3. `rpc.discover`, called live, returns everything the dispatcher knows: **540 method names**. That includes the 141 above plus `da.*`/`da_*` (46), `p2p.*` (24), `debug.*` (30), `ena.*`/`ena_*` (31), `quantum.*` (16), `rand.*` (11), `miner.*` (17), `snapshot.*`, `sync.*`, underscore aliases such as `chain_getHead`, 34 `eth_*` methods, and 60-odd bare Bitcoin Core names (`getblockcount`, `getrawtransaction`, `getblocktemplate` and so on).
+
+The counts come from this script, which you can run against any of the three documents:
+
+```python
+import json, collections, sys
+doc = json.load(open(sys.argv[1]))
+methods = doc.get("result", doc)["methods"]
+ns = collections.Counter(
+    (m["name"].split(".")[0] + ".*") if "." in m["name"]
+    else (m["name"].split("_")[0] + "_*") if "_" in m["name"]
+    else m["name"]
+    for m in methods)
+print(len(methods)); print(ns.most_common())
+```
+
+For application code, treat the published `openrpc.json` as the contract: those are the namespaces that are meant to be stable. The extra names in `rpc.discover` are operator, debugging and compatibility surfaces.
+
+## The namespaces you will use
+
+| Namespace | What it covers | Methods to know |
+|---|---|---|
+| `chain.*` | Head, blocks, identity, parameters | `getHead`, `getChainIdentity`, `getChainId`, `getBlockByHeight [h, txs?, receipts?]`, `getBlockByHash`, `getParams`, `getNetworkHashrate`, `getForks`, `getCheckpoints` |
+| `state.*` | Account state | `getBalance`, `getAddressBalance`, `getAccount`, `getNonce`, `getNextNonce`, `getRichList`, `getTotalSupply`, `call` (read-only contract simulation), `getAicfSummary` |
+| `tx.*` | Submit and inspect transactions | `sendRawTransaction`, `getTransactionByHash`, `getTransactionReceipt`, `getStatus`, `decodeRawTransaction`, `debugVerifyRawTransaction`, `explainReject`, `explainNotIncluded`, `getSupportedSignatureSchemes` |
+| `mempool.*` | The pending pool | `simulateAdmission` (dry-run), `getPending`, `getStats`, `getStatus`, `explain`, `getRawTx` |
+| `net.*` | Peers | `peerCount`, `peers`, `getBootstrapSeeds` |
+| `aicf.*` | AI compute: credits, providers, jobs, workers | `status`, `getParams`, `getClaimable`, `listProviders`, `submitInferenceJob`, `jobStatus`, `workerRegister`, … (see [AICF](/learn/aicf-ai-compute-framework)) |
+| `l2_*` | The ANM-native rollup | `l2_status`, `l2_chainId`, `l2_getBalance`, `l2_sendRawTransaction`, `l2_getBatch`, `l2_verifyBatch` (see [the L2 article](/learn/animica-l2-rollup)) |
+
+## Ten live examples
+
+All responses below were captured with `curl` against `https://rpc.animica.org/rpc` on 2026-08-23. Long hex values are shortened with an ellipsis; field names and structure are verbatim.
+
+### 1. `chain.getHead`
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}
+```
+```json
+{"jsonrpc":"2.0","id":1,"result":{"height":81211,"number":81211,
+ "hash":"0x00000000038da2dc…370133e","chainId":1,"thetaMicro":26361622,
+ "mixSeed":"0xce53af01…","nonce":19131463485,
+ "roots":{"stateRoot":"0x0000…","txsRoot":"0x0000…","receiptsRoot":"0x0000…",
+          "proofsRoot":"0x0000…","daRoot":"0x0000…"},
+ "canonicalHeight":81210,"autoMine":false}}
+```
+
+`thetaMicro` is the PoIES acceptance threshold in micro-units (see [PoIES consensus](/learn/poies-consensus-explained)); `canonicalHeight` can lag `height` by one while the newest block settles.
+
+### 2. `chain.getChainIdentity`
+
+```json
+{"jsonrpc":"2.0","id":2,"result":{"chainId":1,
+ "genesisHash":"0xa0892158cf997c56e91d0aa12e60c36037dae34800a2b54111a8fa17ec88b7de",
+ "forkId":3511060514,
+ "consensusId":"consensus/68e4e2ad4c547dce744181cedeabe028920cae052eb8095a6f18d351bf68dc74",
+ "protocolVersion":"1.0"}}
+```
+
+Pin `chainId`, `genesisHash` and `forkId` in any client that signs transactions; the signing wrapper includes the chain id and fork id, so a mismatch is rejected with `-32011`.
+
+### 3. `chain.getBlockByHeight` with transaction objects
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"chain.getBlockByHeight","params":[81202, true]}
+```
+```json
+{"jsonrpc":"2.0","id":3,"result":{"number":81202,
+ "hash":"0x000000000526368a…b905a","parentHash":"0x0000000004036be6…","timestamp":1787488742,
+ "chainId":1,"thetaMicro":25979561,"nonce":9998474743763027495,
+ "roots":{"txsRoot":"0xb273737a…","stateRoot":"0x0000…", …},
+ "transactions":[
+   {"hash":"0x080422be5b9915bc…549dfc","from":"0x6087c77b…","to":"0x1d3e46a6…",
+    "gas":23100,"tip":1715393,"value":1027513,"kind":0,"data":"0x"}, …],
+ "txs":[…],"header":{…}}}
+```
+
+Six transactions were in that block. `kind` 0 is a transfer; `value` and `tip` are nANM; `tip` is the per-gas price the sender set. The second boolean parameter asks for receipts as well.
+
+### 4. `tx.getTransactionByHash`
+
+```json
+{"jsonrpc":"2.0","id":4,"result":{"hash":"0x080422be5b9915bc…549dfc",
+ "from":"0x6087c77b…","to":"0x1d3e46a6…","gas":23100,"gasLimit":23100,
+ "tip":1715393,"gasPrice":1715393,"maxFee":1715393,"value":1027513,"chainId":1,
+ "data":"0x","blockHash":"0x000000000526368a…","blockNumber":81202,"transactionIndex":0}}
+```
+
+The fee a transaction pays is `gasLimit × gasPrice` at admission (here the sender chose a price far above the 1 nANM floor; the node does not lower it for them). See [Transactions and fees](/learn/transactions-and-fees).
+
+### 5. `tx.getStatus`
+
+```json
+{"jsonrpc":"2.0","id":5,"result":{"hash":"0x080422be5b9915bc…549dfc",
+ "status":"finalized","state":"finalized","seen_in_mempool":false,
+ "included_in_block_hash":"0x000000000526368a…","included_height":81202,
+ "confirmations":12,"finalized":true,"reorged_out":false,
+ "instant_confirmed":false,"finalized_in_pow":true,"reason":"included_in_pow",
+ "rejection_details":null}}
+```
+
+Read `confirmations` and `reorged_out`. Animica is proof-of-work with no finality gadget, so the `finalized` flag is the node's own depth-based label (`finalized_in_pow`), not an irreversibility guarantee; decide your own confirmation depth per use case.
+
+### 6. `state.getBalance` and `state.getAddressBalance`
+
+Using the HD-derivation test-vector address:
+
+```json
+{"jsonrpc":"2.0","id":6,"method":"state.getBalance",
+ "params":["anim1zqpn54yt2fz07wg5zz33qplkh7tewv30tm5s9cdwvag6kf6myvd2d5sj9pzp7"]}
+```
+```json
+{"jsonrpc":"2.0","id":6,"result":"0x0"}
+```
+
+The richer form returns units and head context:
+
+```json
+{"jsonrpc":"2.0","id":7,"result":{"address":"anim1zqpn54y…sj9pzp7","exists":true,
+ "confirmed_balance":"0","pending_incoming":null,"pending_outgoing":null,
+ "spendable_balance":"0","unit":"nANM","display_decimals":9,
+ "as_of_head_height":81213,"as_of_head_hash":"0x000000000285fce2…"}}
+```
+
+Note that `state.getBalance` answered `0x0` even when given an address with a corrupted final character; validate addresses client-side (bech32m checksum) before trusting a zero.
+
+### 7. `eth_gasPrice`
+
+```json
+{"jsonrpc":"2.0","id":8,"result":"0x1"}
+```
+
+One nANM per gas unit is the floor, so a 21,000-gas transfer costs 21,000 nANM (0.000021 ANM).
+
+### 8. `aicf.status`
+
+```json
+{"jsonrpc":"2.0","id":9,"result":{"enabled":true,"ok":true,"reason":null,"message":null,
+ "details":{"pool_address":null,"total_credits":"0x68a1bf1a1","block_reward_slice_bp":null,
+  "fee_bp":null,"last_updated":81211,"pool_balance":"0x68a1bf1a1","current_epoch":812,
+  "current_height":81211,"last_finalized_epoch":810}}}
+```
+
+`0x68a1bf1a1` is 28,086,890,913 nANM, about 28.09 ANM in the AICF pool at that height; epochs are 100 blocks, and the last finalised epoch trails the current one by two.
+
+### 9. `l2_status`
+
+```json
+{"jsonrpc":"2.0","id":10,"result":{"enabled":false,"mode":"all","l2ChainId":1001,
+ "settlementMode":"VALIDITY","headBatch":2,"stateRoot":"0x7012d7a0…","pending":0,
+ "sigBackend":"pure","bridgeAddress":null,"depositsEnabled":false,
+ "bridge":{"lockedOnL1":1000350000000,"creditedTotal":1000350000000,"burnedTotal":0,
+  "claimedOnL1Total":0,"deposits":3,"claimableDeposits":0,"withdrawals":0,"forcedPending":0}}}
+```
+
+The public node reports the L2 sequencer disabled but carries state: two batches, three deposits, 1,000.35 ANM locked. `l2_chainId` returns `1001`.
+
+### 10. A batch, and two errors
+
+```json
+[{"jsonrpc":"2.0","id":1,"method":"chain.getChainId","params":[]},
+ {"jsonrpc":"2.0","id":2,"method":"net.peerCount","params":[]}]
+```
+```json
+[{"jsonrpc":"2.0","id":1,"result":1},{"jsonrpc":"2.0","id":2,"result":3}]
+```
+
+An unknown method returns `-32601` with suggestions:
+
+```json
+{"jsonrpc":"2.0","id":10,"error":{"code":-32601,"message":"Method not found",
+ "data":{"method":"chain.getHeight","did_you_mean":["chain.getBlockByHeight","chain.getHead",
+  "chain_getHead","chain.getChainId","chain.getCheckpoints"]}}}
+```
+
+And an invalid raw transaction handed to `mempool.simulateAdmission` returns `-32010` with a structured explanation of which decoders were tried:
+
+```json
+{"jsonrpc":"2.0","id":13,"error":{"code":-32010,
+ "message":"Transaction decode failed after trying all available decoders",
+ "data":{"kind":"decode_all_failed","cause":"All 4 decoder(s) failed",
+  "where":"_decode_tx_defensive","hint":"…core.encoding.cbor (primary): Decoded to int, expected dict…"}}}
+```
+
+`rpc.discover` itself returns the full OpenRPC document (`openrpc`, `info`, `servers`, `methods`, `components.schemas`), which is how the counts above were produced; its `components.schemas.Address` pattern is `^anim1[ac-hj-np-z02-9]{10,}$`.
+
+## Error codes
+
+| Code | Meaning |
+|---|---|
+| -32600 / -32601 / -32602 / -32603 | Invalid request / method not found / invalid params / internal error |
+| -32001 | Rate limited (retry hints in `error.data`) |
+| -32010 | Invalid transaction (decode or stateless validation failed) |
+| -32011 | Chain id mismatch |
+| -32012 | Bad signature |
+| -32013 | Insufficient funds |
+| -32016 | Gas too low |
+| -32017 | Fee too low |
+| -32018 | Transaction too large (max 131,072 bytes) |
+| -32020 | Duplicate |
+
+Before submitting, run the signed bytes through `mempool.simulateAdmission ["0x<cbor>"]`; it performs the full admission check without inserting, so you get the same code you would get from `tx.sendRawTransaction`, with no side effects. `tx.explainReject` and `tx.explainNotIncluded` give prose reasons for a rejected or stuck transaction.
+
+## The compatibility facades
+
+The same dispatcher answers Ethereum-style and Bitcoin-Core-style methods, which is why they appear in `rpc.discover`. Both are facades over the native data model, not changes to it (`docs/EVM_RPC_COMPAT.md`, `docs/BITCOIN_RPC_COMPAT.md`).
+
+- `eth_*`: `eth_chainId` returned `0x95` (149) live; the facade deliberately advertises its own chain id because Animica's native id 1 collides with Ethereum mainnet in wallet chain lists. `eth_blockNumber` returned `0x13d3f` (81,215) and `web3_clientVersion` returned `Animica/v0.1.0-dev/evm-facade`. Balances are exposed in nANM as the smallest unit. Accounts are post-quantum, so a secp256k1-signed transaction cannot be admitted directly; `eth_sendRawTransaction` is bounded unless the operator enables a custodial relayer, and an optional node-local EVM execution lane exists behind `ANIMICA_EVM_EXECUTION=1` whose state is not validated by consensus. Read the document before building on it.
+- Bitcoin Core names: `getblockcount` returned `81215` live. Tier 1 read-only methods map onto `chain.*`/`tx.*`; wallet and mining tiers are adapters with documented caveats (account model, not UTXO; synthetic difficulty derived from `thetaMicro`).
+
+If you only need reads and prefer REST, the explorer exposes `https://explorer.animica.org/api/head`, `/blocks`, `/tx/:hash`, `/address/:addr`, `/richlist`, `/circulating-supply` and `/mining/info`.
+
+## Key takeaways
+
+- POST JSON-RPC 2.0 to `https://rpc.animica.org/rpc`; the path matters; CORS is open; no WebSocket.
+- Amounts are integer nANM, balances are hex strings, hashes are SHA3-256 hex, addresses are bech32m.
+- The published `openrpc.json` (141 methods) is the stable contract; `rpc.discover` lists 540 names including facades and operator surfaces.
+- Use `confirmations` from `tx.getStatus`, not the `finalized` label, to decide when a transaction is safe.
+- `mempool.simulateAdmission` gives you the real rejection code before you broadcast.
+
+## Sources
+
+- spec/openrpc.json
+- docs/rpc-quickstart.md
+- docs/rpc/JSONRPC.md
+- docs/rpc/EXAMPLES.md
+- docs/rpc/WEBSOCKETS.md
+- docs/EVM_RPC_COMPAT.md
+- docs/BITCOIN_RPC_COMPAT.md
+- Live captures from https://rpc.animica.org/rpc and https://rpc.animica.org/openrpc.json, 2026-08-23
