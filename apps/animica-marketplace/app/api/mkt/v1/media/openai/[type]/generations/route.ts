@@ -75,10 +75,18 @@ export async function POST(req: NextRequest, { params }: { params: { type: strin
   }
 
   const isPrivate = kind === 'video_i2v';
+  // OpenAI-style `size: "1024x768"` and `quality: "hd"` are honored alongside our own keys.
+  const sizeM = typeof body.size === 'string' ? body.size.match(/^(\d{2,4})\s*[x×]\s*(\d{2,4})$/i) : null;
   const params2: Record<string, unknown> = {
-    tier: body.tier, width: body.width, height: body.height, fps: body.fps,
+    tier: body.tier,
+    width: body.width ?? (sizeM ? Number(sizeM[1]) : undefined),
+    height: body.height ?? (sizeM ? Number(sizeM[2]) : undefined),
+    fps: body.fps,
     seconds: body.seconds, seconds_per_scene: body.seconds_per_scene, transition: body.transition,
     seed: body.seed, negative_prompt: body.negative_prompt, scenes: body.scenes,
+    precision: body.precision ?? (body.quality === 'hd' || body.quality === 'high' ? 'high' : body.quality === 'fast' || body.quality === 'low' ? 'fast' : undefined),
+    candidates: body.candidates, steps: body.steps, guidance: body.guidance,
+    engine: body.engine, web: body.web === false ? false : undefined,
   };
 
   const job = await submitJob({ kind, prompt, params: params2, inputB64: hasImages ? JSON.stringify(images) : null, isPrivate, requesterIp: ip });

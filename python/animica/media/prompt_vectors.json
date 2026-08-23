@@ -1,0 +1,124 @@
+{
+  "_doc": "Shared conformance vectors for the image prompt compiler. The TS gateway (apps/animica-marketplace/lib/imagePrompt.ts) and the Python miner (animica/media/prompt_spec.py) MUST both pass every case. Fields not listed in a case's `expect` are unconstrained.",
+  "cases": [
+    {
+      "name": "instruction wrapper stripped",
+      "input": "Make an image of a crib style trailer holding logs with nine logs 3x3 and the top center log highlighted red",
+      "expect": {
+        "prompt_starts": "a crib style trailer holding logs with nine logs 3x3 and the top center log highlighted red",
+        "negative": "",
+        "counts": [{"n": 9, "noun": "logs"}],
+        "grid": [3, 3],
+        "colors": ["red"],
+        "layout": ["top", "center"]
+      }
+    },
+    {
+      "name": "show me what X looks like",
+      "input": "Show me what the earth looks like according to biblical explanation only include a firmament",
+      "expect": {
+        "prompt_starts": "the earth according to biblical explanation only include a firmament",
+        "negative": ""
+      }
+    },
+    {
+      "name": "without colour -> monochrome, colour negated",
+      "input": "Nature without colour",
+      "expect": {
+        "prompt_starts": "Nature, black and white, monochrome",
+        "negative_contains": ["color"],
+        "negated": ["colour"]
+      }
+    },
+    {
+      "name": "no X mid-sentence",
+      "input": "a quiet beach at sunrise with no people, and no boats",
+      "expect": {
+        "prompt_starts": "a quiet beach at sunrise, empty, deserted",
+        "negative_contains": ["people", "boats"],
+        "negated": ["people", "boats"]
+      }
+    },
+    {
+      "name": "quoted text kept verbatim",
+      "input": "a neon sign that says \"OPEN 24h\" above a diner door",
+      "expect": {
+        "prompt_contains": ["\"OPEN 24h\""],
+        "text": ["OPEN 24h"],
+        "negative_not_contains": ["text"]
+      }
+    },
+    {
+      "name": "no text -> negative only",
+      "input": "minimal flat vector logo of a fox, no text",
+      "expect": {
+        "prompt_starts": "minimal flat vector logo of a fox",
+        "negative_contains": ["text", "words", "letters"],
+        "negated": ["text"]
+      }
+    },
+    {
+      "name": "idempotent",
+      "input": "a crib style trailer holding logs with nine logs 3x3 and the top center log highlighted red",
+      "expect": {
+        "idempotent": true
+      }
+    },
+    {
+      "name": "short prompt untouched",
+      "input": "Chef",
+      "expect": {
+        "prompt_starts": "Chef",
+        "negative": ""
+      }
+    },
+    {
+      "name": "'no one' is not a negation",
+      "input": "a hero standing alone, no one else around",
+      "expect": {
+        "negated": []
+      }
+    },
+    {
+      "name": "is not wearing",
+      "input": "a portrait of a man who is not wearing glasses, studio light",
+      "expect": {
+        "prompt_starts": "a portrait of a man, studio light",
+        "negative_contains": ["glasses"],
+        "negated": ["glasses"]
+      }
+    },
+    {
+      "name": "transparent / no background",
+      "input": "a red apple, no background",
+      "expect": {
+        "prompt_contains": ["plain white background", "isolated"],
+        "negative_contains": ["cluttered background"]
+      }
+    },
+    {
+      "name": "token budget flagged on very long prompt",
+      "input": "an ultra detailed isometric cutaway illustration of a six storey brutalist apartment block at golden hour, each floor showing a different family room: a kitchen with copper pans, a library with green lamps, a nursery with a yellow crib, a workshop with a lathe, a greenhouse with tomato vines, and a rooftop garden with a white pergola, tiny people everywhere, volumetric light, photorealistic, 8k, shot on a tilt-shift lens",
+      "expect": {
+        "truncation_risk": true
+      }
+    },
+    {
+      "name": "user negative merged",
+      "input": "a castle on a hill without clouds",
+      "negative": "blurry",
+      "expect": {
+        "negative_contains": ["blurry", "clouds"],
+        "prompt_starts": "a castle on a hill"
+      }
+    },
+    {
+      "name": "two colors and a count",
+      "input": "two blue cats sitting on a yellow sofa",
+      "expect": {
+        "counts": [{"n": 2, "noun": "cats"}],
+        "colors": ["blue", "yellow"]
+      }
+    }
+  ]
+}

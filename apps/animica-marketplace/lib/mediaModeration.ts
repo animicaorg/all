@@ -5,7 +5,9 @@
 //   1. csam ............ any sexualization of minors — ALWAYS hard-blocked.
 //   2. nonconsensual ... "nudify" / undress / deepfake-nude of a real or identifiable person,
 //                        especially with an uploaded photo (image->video) — hard-blocked.
-//   3. sexual .......... nudity & pornographic content — blocked by policy (public brand svc).
+//   3. sexual .......... adult nudity / pornography between adults — ALLOWED (operator
+//                        decision 2026-08-23; set MEDIA_BLOCK_ADULT=1 to block again). The
+//                        verdict still carries `adult: true` so callers can label results.
 //
 // It is fully DETERMINISTIC (this host runs no AI model — see "no AI on the gateway box"),
 // obfuscation-aware (leetspeak + spaced/punctuated letters like "n u d e" / "nud3"), and
@@ -20,6 +22,7 @@ export interface ModerationResult {
   code?: string;       // machine code for the API error body
   message?: string;    // user-facing reason
   matched?: string;    // the term that tripped it (for server logs only — do not echo raw)
+  adult?: boolean;     // allowed, but adult content: mark the job so results can be labeled
 }
 
 export class MediaBlockedError extends Error {
@@ -177,10 +180,14 @@ export function moderateMediaPrompt(
       message: 'Blocked: sexualizing an uploaded photo of a person is prohibited.' };
   }
 
-  // 3) Explicit sexual / nudity — blocked by policy on the public generator.
+  // 3) Explicit sexual / nudity between adults — allowed (flagged), unless the operator
+  //    re-enables the block. Illegal categories above are never affected by this switch.
   if (nudity || sexual) {
-    return { allowed: false, category: 'sexual', code: 'blocked_sexual', matched: nudity || sexual!,
-      message: 'Blocked: this generator does not produce sexual or pornographic content.' };
+    if (process.env.MEDIA_BLOCK_ADULT === '1') {
+      return { allowed: false, category: 'sexual', code: 'blocked_sexual', matched: nudity || sexual!,
+        message: 'Blocked: this generator does not produce sexual or pornographic content.' };
+    }
+    return { allowed: true, adult: true, matched: nudity || sexual! };
   }
 
   return { allowed: true };

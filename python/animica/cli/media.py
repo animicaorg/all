@@ -95,15 +95,67 @@ def gen(
     width: int = typer.Option(512),
     height: int = typer.Option(512),
     seed: int = typer.Option(None),
+    precision: str = typer.Option("balanced", help="fast | balanced | high (candidates judged by CLIP)"),
+    negative: str = typer.Option(None, "--negative", help="things that must NOT appear"),
+    candidates: int = typer.Option(None, help="seeds to render before the fidelity judge picks one (1-8)"),
 ):
-    """Generate one image locally (fail-closed)."""
+    """Generate one image locally with the 11.1 fidelity pipeline (fail-closed)."""
     from animica.media.image_gen import generate_image
+    from animica.media.learning import get_learner
 
     typer.echo(f"generating '{prompt[:60]}'…")
-    res = generate_image(prompt, tier=tier, width=width, height=height, seed=seed)
+    res = generate_image(prompt, tier=tier, width=width, height=height, seed=seed, precision=precision,
+                         negative_prompt=negative, candidates=candidates, learner=get_learner())
     with open(out, "wb") as f:
         f.write(res["bytes"])
     typer.echo(f"wrote {out} ({len(res['bytes'])} bytes, {res['model']}, sha3={res['sha3'][:16]}…)")
+    typer.echo(f"prompt  : {res.get('prompt')}")
+    if res.get("negative_prompt"):
+        typer.echo(f"avoid   : {res['negative_prompt']}")
+    typer.echo(f"seed {res.get('seed')} · steps {res.get('steps')} · {res.get('scheduler')} · "
+               f"{res.get('candidates')} candidate(s) · judge {res.get('rerank')}"
+               + (f" · fidelity {res.get('fidelity')}" if res.get("fidelity") is not None else ""))
+
+
+@app.command()
+def video(
+    prompt: str = typer.Argument(..., help="text brief (sentences / 'then' / '|' become shots)"),
+    out: str = typer.Option("out.mp4", help="output MP4 path"),
+    seconds: float = typer.Option(6.0),
+    fps: int = typer.Option(24),
+    width: int = typer.Option(768),
+    height: int = typer.Option(432),
+    seed: int = typer.Option(None),
+    precision: str = typer.Option("balanced"),
+    engine: str = typer.Option(None, help="t2v | keyframe | parallax (default: best this box can run)"),
+):
+    """Render a multi-shot video locally with the director (fail-closed)."""
+    from animica.media.video_director import render_video
+    from animica.media.learning import get_learner
+
+    def _p(pct, note):
+        typer.echo(f"  {pct:5.1f}%  {note}")
+
+    res = render_video(prompt, seconds=seconds, fps=fps, width=width, height=height, seed=seed,
+                       precision=precision, engine=engine, progress=_p, learner=get_learner())
+    with open(out, "wb") as f:
+        f.write(res["bytes"])
+    m = res["meta"]
+    typer.echo(f"wrote {out} ({len(res['bytes'])} bytes) · engine {m['engine']} · {len(m['shots'])} shots · "
+               f"{m['duration_s']}s @ {m['fps']}fps · {m['subject_motion']}")
+
+
+@app.command()
+def stats():
+    """What this miner has learned (fidelity by engine/camera) from its own renders."""
+    from animica.media.learning import get_learner
+    import json as _json
+
+    L = get_learner()
+    if L is None:
+        typer.echo("learning ledger disabled (ANIMICA_MEDIA_LEARN=0)")
+        raise typer.Exit(0)
+    typer.echo(_json.dumps(L.stats(), indent=2))
 
 
 @app.command()

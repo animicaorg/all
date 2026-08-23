@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html as _html
 import ipaddress
+import os
 import re
 import socket
 from typing import Optional
@@ -114,10 +115,44 @@ async def web_search(query: str, *, k: int = 5) -> list[dict]:
     q = (query or "").strip()
     if not q:
         return []
+    results = await _searxng_search(q, k=k)
+    if results:
+        return results
     results = await _ddg_search(q, k=k)
     if results:
         return results
     return await _wikipedia_search(q, k=k)
+
+
+_SEARXNG_URL = os.environ.get("BRIDGE_SEARXNG_URL", "http://127.0.0.1:8890").rstrip("/")
+
+
+async def _searxng_search(q: str, *, k: int) -> list[dict]:
+    """The operator's own metasearch (SearXNG; the same instance behind the x402 web-search
+    products). Keyless, aggregates many engines, answers reliably from a server IP."""
+    if not _SEARXNG_URL or _SEARXNG_URL in ("0", "off"):
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(f"{_SEARXNG_URL}/search",
+                                 params={"q": q, "format": "json", "categories": "general"},
+                                 headers={"accept": "application/json"})
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        out = []
+        for item in data.get("results") or []:
+            url = _safe_url(str(item.get("url") or ""))
+            if not url:
+                continue
+            out.append({"title": (item.get("title") or url)[:160],
+                        "url": url,
+                        "snippet": (item.get("content") or "")[:400]})
+            if len(out) >= k:
+                break
+        return out
+    except Exception:    # noqa: BLE001 — search must never raise into the chat path
+        return []
 
 
 async def _ddg_search(q: str, *, k: int) -> list[dict]:

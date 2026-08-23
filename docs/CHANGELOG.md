@@ -8,6 +8,32 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [11.1.0] - 2026-08-23
+### Image generation — prompt-fidelity pipeline (miner side, `animica/media/image_gen.py`)
+Accuracy against *specific* prompts. Every `image` job now runs:
+- **Prompt compiler** (`media/prompt_spec.py`, shared vectors with the gateway): instruction wrappers stripped ("make an image of…"), negations moved OUT of the positive prompt ("a street with no cars" no longer draws cars; "without colour" → monochrome), quoted text / counts / grids / colors / layout extracted as a spec.
+- **Right regime per model family**: sd-turbo / sdxl-turbo / schnell at 4 steps (was 2); CFG models get 28 steps of DPM++ 2M Karras with real negatives.
+- **No silent truncation**: prompts beyond CLIP's 77 tokens are encoded in 75-token chunks (SD1/2 and SDXL).
+- **Best-of-N with a CLIP judge** (`media/image_fidelity.py`): several seeds are rendered; the candidate that matches the prompt AND each constraint clause best — and did not draw a negated concept — wins. Reference photos of the subject (gateway web lookup) add a "looks like the real thing" term.
+- **Native resolution buckets + refine**: rendered in the model's trained regime, delivered at the EXACT requested size (img2img refine when upscaling).
+- **Reproducible**: seed / steps / guidance / scheduler / prompt in the PNG `parameters` chunk and the job meta. New params: `precision` (fast|balanced|high), `candidates`, `steps`, `guidance`, `negative_prompt`, `seed`, `references`.
+
+### Video — director pipeline (`media/video_director.py`): scenes, flow, movement
+- A brief becomes a **shot plan** (sentences / "then" beats / explicit scenes, or wide→main→detail coverage), each shot with a camera move and transition.
+- **Engines**, best the box can run, honest in meta: `t2v` (Wan2.1-1.3B by default — replaces the 2023 ModelScope 256² model; native fps/frame rules per model, no more 96-frame requests to a 16-frame model), `keyframe` (CLIP-judged still + Stable Video Diffusion), `parallax` (runs on CPU: judged keyframe + Depth-Anything depth → layered 2.5D camera moves with inpainted background — real foreground/background motion, not a sliding photo).
+- Shots are conformed to the exact fps/size/duration (motion-interpolated retime) and joined with transitions. `video_t2v` is now served by every image-capable miner (CPU included; `ANIMICA_MEDIA_T2V_CPU=0` opts out); image→video uses parallax instead of Ken Burns.
+- **Distributed rendering**: the gateway plans shots and queues one `video_shot` job per shot so DIFFERENT miners render in parallel; a `video_assemble` job (any miner with ffmpeg) joins them. Miners advertise `video_shot` / `video_assemble`.
+
+### Self-teaching + web access
+- Miners keep a **learning ledger** (`media/learning.py`, SQLite): fidelity per engine/camera, best seed per prompt, cached reference URLs; the director prefers camera moves that scored best for similar shots; `animica media stats` shows it.
+- Gateway media jobs look up **reference images on the web by default** (`params.web=false` opts out).
+- Chat bridge: web access is the **default** for every substantive turn (`BRIDGE_WEB_DEFAULT=always|auto|off`), with a self-growing FTS5 **knowledge store** (pages fetched + cited answers are recalled first) and a verified-facts block (live ANM price / chain head) — uncited answers are never learned.
+
+### Also
+- Carries 11.0.0's wallet-RPC path-confinement + fail-closed local-IP fix and the additive `worker_claim_next_job` top-level prompt fields; restores the 10.2–10.4.4 CLI/pool/AICF work that 11.0.0 (cut from `main`) did not include.
+- CLI: `animica media gen --precision/--negative/--candidates`, `animica media video`, `animica media stats`.
+- Media content policy (gateway): adult content between adults is allowed (flagged); sexualized minors and non-consensual imagery remain hard-blocked.
+
 ## [8.5.0] - 2026-07-16
 ### Animica Animal — your own 24/7 AI livestreamer (new, non-consensus)
 A complete pipeline that runs an animated character **live on YouTube around the clock**,

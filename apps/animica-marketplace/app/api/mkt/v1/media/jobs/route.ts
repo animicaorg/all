@@ -194,12 +194,19 @@ export async function POST(req: NextRequest) {
     width: clampInt(p.width, 64, 1280, kind.startsWith('video') ? 768 : 512),
     height: clampInt(p.height, 64, 1280, kind.startsWith('video') ? 432 : 512),
     fps: clampInt(p.fps, 6, 30, 24),
-    seconds: Math.max(1, Math.min(Number(p.seconds) || (kind === 'audio' ? 8 : 4), 20)),
+    seconds: Math.max(1, Math.min(Number(p.seconds) || (kind === 'audio' ? 8 : 4), kind === 'audio' ? 20 : 30)),
     seconds_per_scene: Math.max(0.6, Math.min(Number(p.seconds_per_scene) || 2.5, 8)),
     transition: typeof p.transition === 'string' ? p.transition.slice(0, 16) : 'fade',
     seed: Number.isFinite(Number(p.seed)) ? Math.round(Number(p.seed)) : undefined,
     negative_prompt: typeof p.negative_prompt === 'string' ? p.negative_prompt.slice(0, 500) : undefined,
     scenes: Array.isArray(p.scenes) ? p.scenes.filter((s: any) => typeof s === 'string').slice(0, 8) : undefined,
+    // Image fidelity hints (validated + defaulted in submitJob's compile pass).
+    precision: typeof p.precision === 'string' ? p.precision.slice(0, 12) : undefined,
+    engine: typeof p.engine === 'string' ? p.engine.slice(0, 12) : undefined,
+    web: p.web === false || p.web === 'off' ? false : undefined,
+    candidates: p.candidates != null ? p.candidates : undefined,
+    steps: p.steps != null ? p.steps : undefined,
+    guidance: p.guidance != null ? p.guidance : undefined,
   };
 
   const isPrivate = kind === 'video_i2v'; // uploads path — private by construction
@@ -219,6 +226,7 @@ export async function POST(req: NextRequest) {
     position: job.position,
     miners_online: job.minersOnline,
     private: isPrivate,
+    compiled: (job as any).compiled,
     poll_url: `/api/mkt/v1/media/jobs/${job.id}`,
     message: job.minersOnline > 0
       ? 'Queued — a GPU miner is online and will render this shortly.'

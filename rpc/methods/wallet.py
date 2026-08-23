@@ -111,9 +111,34 @@ def _clean_label(value: Any | None) -> str:
 
 
 def _wallet_path(wallet_file: Any | None = None) -> Path:
-    if wallet_file:
-        return wallet_cli._wallet_file_path(Path(str(wallet_file)))
-    return wallet_cli._wallet_file_path(None)
+    # Confine any client-supplied wallet_file to the node's wallet directory.
+    # Over RPC this value is attacker-controlled: without confinement a caller
+    # could point the custodial signer at ANY wallets.json on the host
+    # (e.g. "/home/victim/.animica/wallets.json") and spend another user's keys.
+    # We take only the basename and resolve it inside the default wallet dir,
+    # rejecting anything that escapes it. The local CLI still uses
+    # wallet_cli._wallet_file_path directly for arbitrary paths.
+    #
+    # THIS MUST STAY IN GIT. It shipped in the 9.0.0-9.0.4 tarballs while
+    # existing only as an uncommitted edit in the build host's working tree
+    # (hatch_build.py vendors ../rpc/ from local disk), so it silently vanished
+    # from 9.0.5 onward while `git diff v9.0.4..v9.0.5` stayed empty.
+    # Reported as animicaorg/all#1867. tests/test_wallet_rpc_confinement.py
+    # asserts both protections; scripts/release_gate.sh re-asserts them against
+    # the built artifact.
+    default = wallet_cli._wallet_file_path(None).resolve()
+    if not wallet_file:
+        return default
+    wdir = default.parent
+    name = Path(str(wallet_file)).name
+    if not name or name in (".", ".."):
+        raise rpc_errors.InvalidParams("invalid wallet_file")
+    candidate = (wdir / name).resolve()
+    if candidate.parent != wdir:
+        raise rpc_errors.InvalidParams(
+            "wallet_file must be a name within the node wallet directory"
+        )
+    return candidate
 
 
 def _locked_store(path: Path) -> _LockedWalletStore:
@@ -140,8 +165,17 @@ def _ctx_client_ip(ctx: Any | None) -> str | None:
 
 
 def _is_local_ip(value: str | None) -> bool:
+    # Fail CLOSED: an undeterminable peer IP is NOT local. Previously this
+    # returned True, so any request whose transport peer could not be resolved
+    # (ctx.client is None) passed the wallet-RPC "is-local" gate and could
+    # build+sign+submit a send from any key in the node's custodial store. A
+    # fund-moving auth check must never treat "unknown" as "trusted". Genuine
+    # loopback still resolves to 127.0.0.1 and is allowed below; internal in-
+    # process callers must present a loopback ctx or the admin token.
+    #
+    # THIS MUST STAY IN GIT — see the note in _wallet_path above (#1867).
     if not value:
-        return True
+        return False
     try:
         ip_obj = ipaddress.ip_address(value)
         if ip_obj.is_loopback or ip_obj.is_unspecified:
