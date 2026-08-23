@@ -42,6 +42,8 @@ const POOL: SiteConfig = {
     "Run mining and AI with a single command (animica up): SHA3 proof-of-work, ENA useful-work, train-together pools, serve-while-train, an OpenAI-compatible API, and Bittensor on qualified GPUs — all paid in ANM.",
   nav: [
     ["/mine", "Mine"],
+    ["/serve", "Serve & Earn"],
+    ["/compute/", "GPU Compute"],
     ["/training-pools", "Training Pools"],
     ["/about-ena", "ENA"],
     ["/ai", "AI"],
@@ -51,15 +53,14 @@ const POOL: SiteConfig = {
     ["/miner", "Lookup"],
     ["/credits", "Credits"],
     ["/stats", "Stats"],
-    ["/download", "Download"],
     ["/docs", "Docs"],
   ],
   tagline:
     "Mine + AI in one command — train-together pools, serve-while-train, one global model. All paid in ANM.",
   cols: [
-    { title: "Mine", links: [["/mine", "Get started"], ["/workers", "Workers"], ["/download", "Download"], ["/stats", "Stats"]] },
+    { title: "Mine", links: [["/mine", "Get started"], ["/compute/", "GPU Compute"], ["/workers", "Workers"], ["/stats", "Stats"]] },
     { title: "AI", links: [["/ai", "Inference"], ["/training-pools", "Training Pools"], ["/about-ena", "ENA"], ["/bittensor", "Bittensor"]] },
-    { title: "Developers", links: [["/api-keys", "API keys"], ["/usage", "Usage"], ["/webhooks", "Webhooks"], ["/billing", "Billing & limits"], ["/docs", "Docs & SDKs"]] },
+    { title: "Developers", links: [["/api-keys", "API keys"], ["/usage", "Usage"], ["/webhooks", "Webhooks"], ["/billing", "Billing & limits"], ["/docs", "Docs & SDKs"], ["https://academy.animica.org", "Academy"]] },
   ],
   cta: { primary: ["/login", "Sign in"], secondary: ["/dashboard", "Dashboard"] },
 };
@@ -133,22 +134,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           {!isConsole && (
             <a
-              href="https://animica.org/upgrade.html"
+              href="/mine"
               style={{
                 display: "block",
                 textDecoration: "none",
                 textAlign: "center",
-                background: "linear-gradient(90deg,#3a2a05,#4a1d05)",
-                borderBottom: "1px solid #7a5a12",
-                color: "#ffd98a",
+                background: "linear-gradient(90deg,#052a1e,#05314a)",
+                borderBottom: "1px solid #14C79B",
+                color: "#c9f5e8",
                 fontSize: "14px",
                 lineHeight: 1.5,
                 padding: "9px 16px",
               }}
             >
-              <span aria-hidden>⚠️</span>{" "}
-              <strong style={{ color: "#ffb020" }}>Network upgrade required</strong> — node
-              operators &amp; miners must run{" "}
+              <span aria-hidden>⛏️</span>{" "}
+              <strong style={{ color: "#14C79B" }}>Start mining in one command</strong> —{" "}
               <code
                 style={{
                   background: "rgba(255,255,255,.12)",
@@ -158,11 +158,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   whiteSpace: "nowrap",
                 }}
               >
-                pip install -U animica==6.0.1
+                pip install animica &amp;&amp; animica up
               </code>{" "}
-              before block <strong>40,000</strong>{" "}
+              — mine + rent your GPU + serve AI, all paid in ANM{" "}
               <span style={{ textDecoration: "underline", whiteSpace: "nowrap" }}>
-                details →
+                get started →
               </span>
             </a>
           )}
@@ -176,9 +176,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </Link>
               <div className="hidden flex-1 items-center gap-5 lg:flex">
                 {c.nav.map(([href, label]) => (
-                  <Link key={href} href={href} className="text-white/65 transition-colors hover:text-white">
-                    {label}
-                  </Link>
+                  href.endsWith("/") ? (
+                    <a key={href} href={href} className="text-white/65 transition-colors hover:text-white">
+                      {label}
+                    </a>
+                  ) : (
+                    <Link key={href} href={href} className="text-white/65 transition-colors hover:text-white">
+                      {label}
+                    </Link>
+                  )
                 ))}
               </div>
               <span className="flex-1 lg:hidden" />
@@ -197,9 +203,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="border-t border-white/5 lg:hidden">
               <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 text-xs">
                 {c.nav.map(([href, label]) => (
-                  <Link key={href} href={href} className="text-white/60 transition-colors hover:text-white">
-                    {label}
-                  </Link>
+                  href.endsWith("/") ? (
+                    <a key={href} href={href} className="text-white/60 transition-colors hover:text-white">
+                      {label}
+                    </a>
+                  ) : (
+                    <Link key={href} href={href} className="text-white/60 transition-colors hover:text-white">
+                      {label}
+                    </Link>
+                  )
                 ))}
               </nav>
             </div>
