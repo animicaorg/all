@@ -49,6 +49,23 @@ export default function ServePage() {
         </ol>
       </Section>
 
+      <Section
+        title="Prefer a terminal? The Termux lane"
+        description="Same queue, same ledger, no browser: a dependency-free package that drives llama.cpp natively. Survives in a tmux session with the screen off (termux-wake-lock), and works on any Linux box the same way."
+        className="text-sm text-white/70"
+      >
+        <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/40 p-4 font-mono text-sm text-white/90">
+          <code>{`pkg install python llama-cpp     # Termux (Android)
+pip install animica-serve
+animica-serve --address anim1yourwallet`}</code>
+        </pre>
+        <ul className="mt-3 list-disc space-y-1.5 pl-5">
+          <li><code className="rounded bg-white/10 px-1">--model qwen2.5-0.5b</code> for older / low-RAM phones · <code className="rounded bg-white/10 px-1">--charge-only</code> pauses while unplugged (needs the Termux:API app).</li>
+          <li>Already running Ollama or a llama-server? <code className="rounded bg-white/10 px-1">--openai-url http://127.0.0.1:11434/v1 --openai-model qwen2.5:1.5b</code> reuses it — no download.</li>
+          <li><code className="rounded bg-white/10 px-1">animica-serve earnings --address anim1…</code> prints your ledger any time.</li>
+        </ul>
+      </Section>
+
       <Section title="Requirements &amp; battery" className="text-sm text-white/70">
         <ul className="list-disc space-y-2 pl-5">
           <li>
