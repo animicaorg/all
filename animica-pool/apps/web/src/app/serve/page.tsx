@@ -15,7 +15,7 @@ export default function ServePage() {
       <Section
         eyebrow="Serve &amp; Earn — zero install"
         title="Your phone is an AI miner now"
-        description="This page turns any modern browser — including an iPhone or Android phone plugged in on a shelf — into an Animica inference worker. A small open model downloads once and runs entirely on your device; the page claims real chat jobs from the network, answers them locally, and credits your wallet in ANM per job won. Nothing to install, no keys on this page — just an address to pay."
+        description="This page turns any modern browser into an Animica inference worker — a phone on a shelf, a laptop on a desk, a gaming PC overnight. A small open model downloads once and runs entirely on your device (GPU via WebGPU on Chrome/Edge; CPU via WebAssembly everywhere else, iPhone included); the page claims real chat jobs from the network, answers them locally, and credits your wallet in ANM per job won. Nothing to install, no keys on this page — just an address to pay."
       >
         <ServeWorker />
       </Section>
@@ -39,6 +39,12 @@ export default function ServePage() {
             several workers; the first good answer wins and is the one credited. A fast desktop GPU
             will usually beat your phone when both are online — and your phone still wins whenever
             it&apos;s the fastest (or only) worker awake.
+          </li>
+          <li>
+            <strong className="text-white">Teams pool token budgets.</strong> Long-form requests fan
+            out across every machine online — one worker drafts the outline, others each write a
+            section in parallel, and the network stitches one long answer. More devices serving
+            means more sections, more depth, and more winners paid per question.
           </li>
           <li>
             <strong className="text-white">Earnings are per-job IOUs.</strong> Each job won credits

@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -662,6 +663,172 @@ def _cycle_attempt_s() -> float:
 
 def _total_budget_s() -> float:
     return BRIDGE_SLOW_TOTAL_BUDGET_S if _external_workers_online() > 0 else BRIDGE_TOTAL_BUDGET_S
+
+
+# ── rank 18: TEAM SYNTHESIS — phones pool their token budgets (2026-08-24) ──
+# One phone tops out at its per-job output cap. For long-form requests, the
+# bridge instead runs a TEAM: one worker drafts a numbered outline, then each
+# section becomes its OWN AICF job written in parallel — different phones win
+# different sections, their token budgets (and their payouts) pool, and the
+# bridge stitches the sections into one long answer. More phones online →
+# more sections → more elaborate responses. Fully additive: any failure falls
+# back to the normal single-worker serve.
+BRIDGE_TEAM = _env_flag("BRIDGE_TEAM", "1")
+BRIDGE_TEAM_MIN_WORKERS = int(os.environ.get("BRIDGE_TEAM_MIN_WORKERS", "2"))
+BRIDGE_TEAM_MAX_SECTIONS = int(os.environ.get("BRIDGE_TEAM_MAX_SECTIONS", "4"))
+BRIDGE_TEAM_SECTION_TOKENS = int(os.environ.get("BRIDGE_TEAM_SECTION_TOKENS", "700"))
+BRIDGE_TEAM_PLAN_TOKENS = int(os.environ.get("BRIDGE_TEAM_PLAN_TOKENS", "240"))
+# Section payments come from ONE bridge wallet: stagger submits so each
+# fetches the next nonce after the previous landed in the mempool.
+BRIDGE_TEAM_STAGGER_S = float(os.environ.get("BRIDGE_TEAM_STAGGER_S", "1.2"))
+
+_TEAM_INTENT_RE = re.compile(
+    r"\b(in detail|detailed|thorough(ly)?|comprehensive|step[- ]by[- ]step|deep[- ]dive|"
+    r"essay|article|guide|tutorial|whitepaper|blog post|long[- ]form|elaborate|extensively|"
+    r"write (me )?a (full|complete|long)|everything about)\b", re.I)
+
+_team_providers: list = []
+_team_plock = threading.Lock()
+
+
+def _team_provider(i: int):
+    """Provider pool for concurrent section serves (an instance is the unit of
+    concurrency — same pattern as the ping provider)."""
+    with _team_plock:
+        while len(_team_providers) <= i:
+            cfg = load_config()
+            network = os.environ.get("ANIMICA_NETWORK", "mainnet")
+            rpc_url = (os.environ.get("ANIMICA_RPC_URL")
+                       or cfg.integration["aicf"]["endpoint"].get(network)
+                       or cfg.integration["aicf"]["endpoint"]["mainnet"])
+            cfg.integration["aicf"]["job_submit"]["timeout_sec"] = float(
+                os.environ.get("BRIDGE_AICF_TIMEOUT_S", "600"))
+            _team_providers.append(DistributedAICFProvider(
+                cfg=cfg,
+                rpc_url=rpc_url,
+                wallet_path=os.environ.get("ANIMICA_BRIDGE_WALLET_PATH") or None,
+                wallet_label=os.environ.get("ANIMICA_BRIDGE_WALLET_LABEL", "aicf"),
+            ))
+        return _team_providers[i]
+
+
+def _team_sections_for(user_query: str, req_max_tokens: Optional[int]) -> int:
+    if not BRIDGE_TEAM:
+        return 0
+    if not (_TEAM_INTENT_RE.search(user_query or "")
+            or (req_max_tokens or 0) >= 1200):
+        return 0
+    online = _external_workers_online()
+    if online < BRIDGE_TEAM_MIN_WORKERS:
+        return 0
+    return max(2, min(online, BRIDGE_TEAM_MAX_SECTIONS))
+
+
+def _team_text(provider, prompt: str, tier: str, max_tokens: int,
+               temperature: float, top_p: float) -> str:
+    turn = TurnRequest(
+        prompt=prompt, tier_preferred=tier, history=[],
+        max_output_tokens=max_tokens, temperature=temperature, top_p=top_p,
+        yolo=True,
+    )
+    res = provider.serve(turn)
+    t = (res.text or "").strip()
+    return "" if _is_stub_text(t) else t
+
+
+_POSTSCRIPT_RE = re.compile(
+    r"(?:^|\n)\s*(?:-{3,}\s*)?(please review|let me know if|feel free to|i hope this helps|"
+    r"if you (?:have|need) any (?:further|other)|would you like me to)[^\n]*\s*$",
+    re.I)
+
+
+def _strip_postscript(text: str) -> str:
+    """Drop trailing assistant-isms ("please review… let me know…") a section
+    writer sometimes appends — noise inside a stitched team answer."""
+    t = (text or "").rstrip()
+    for _ in range(3):
+        m = _POSTSCRIPT_RE.search(t)
+        if not m:
+            break
+        t = t[:m.start()].rstrip()
+    return t.rstrip("-— \n")
+
+
+_PLAN_LINE_RE = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s*(.+?)\s*$")
+
+
+def _parse_outline(text: str, n: int) -> list:
+    titles: list = []
+    for ln in (text or "").splitlines():
+        m = _PLAN_LINE_RE.match(ln)
+        if not m:
+            continue
+        t = m.group(1).strip().strip('"').rstrip(".:").strip()
+        t = re.sub(r"^#+\s*", "", t)
+        if 2 < len(t) <= 90 and t.lower() not in [x.lower() for x in titles]:
+            titles.append(t)
+    return titles[:n]
+
+
+def _team_serve(base_prompt: str, n: int, tier: str,
+                temperature: float, top_p: float) -> Optional[tuple]:
+    """Plan → parallel sections → stitched long answer. None → caller falls
+    back to the normal single-worker serve."""
+    t0 = time.monotonic()
+    plan_prompt = (
+        base_prompt
+        + f"\n\n=== TEAM PLANNING TASK ===\nSeveral workers will write one "
+          f"thorough answer together. Reply with ONLY a numbered outline of "
+          f"exactly {n} short section titles (one per line, at most 8 words "
+          f"each) that together answer the question above. No prose, no preamble."
+    )
+    try:
+        plan = _team_text(_team_provider(0), plan_prompt, tier,
+                          BRIDGE_TEAM_PLAN_TOKENS, 0.2, 0.9)
+    except Exception as e:  # noqa: BLE001
+        log.info("team plan failed (%s) — single-worker fallback", str(e)[:80])
+        return None
+    titles = _parse_outline(plan, n)
+    if len(titles) < 2:
+        log.info("team plan unusable (%d titles) — single-worker fallback", len(titles))
+        return None
+    outline = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(titles))
+
+    def write_section(i: int) -> str:
+        sp = (
+            base_prompt
+            + "\n\n=== TEAM WRITING TASK ===\nA team of workers is answering "
+              "together. Agreed outline:\n" + outline
+            + f"\n\nWrite ONLY section {i + 1}: \"{titles[i]}\". Cover just "
+              f"this section — do not repeat the other sections, no overall "
+              f"intro or conclusion, and no closing remarks or offers of "
+              f"further help. Start with the markdown heading '## {titles[i]}'."
+        )
+        try:
+            return _team_text(_team_provider(i), sp, tier,
+                              BRIDGE_TEAM_SECTION_TOKENS, temperature, top_p)
+        except Exception as e:  # noqa: BLE001
+            log.info("team section %d failed: %s", i + 1, str(e)[:80])
+            return ""
+
+    with ThreadPoolExecutor(max_workers=len(titles)) as ex:
+        futs = []
+        for i in range(len(titles)):
+            futs.append(ex.submit(write_section, i))
+            time.sleep(BRIDGE_TEAM_STAGGER_S)
+        results = [f.result() for f in futs]
+    results = [_strip_postscript(r) for r in results]
+    parts = [r.strip() for r in results if r and r.strip()]
+    if len(parts) < 2:
+        log.info("team produced %d/%d sections — single-worker fallback",
+                 len(parts), len(titles))
+        return None
+    body = "\n\n".join(parts)
+    meta = {"sections": len(parts), "of": len(titles), "outline": titles,
+            "elapsed_s": round(time.monotonic() - t0, 1)}
+    log.info("team answer: %d/%d sections, %d chars, %.1fs",
+             len(parts), len(titles), len(body), meta["elapsed_s"])
+    return body, meta
 
 # Clean, honest message served when every attempt returns a stub, instead of
 # leaking a worker's raw model-load error (the giant transformers model list).
@@ -2065,6 +2232,50 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
         if (not req.stream and _cache_eligible(req, effective_temp, web_injected))
         else None
     )
+
+    # ── rank 18: TEAM SYNTHESIS — long-form requests fan out across ALL online
+    # inference machines (desktop GPUs, phones, Termux boxes alike): outline job,
+    # then one job per section written in parallel, stitched here. Each section is
+    # an ordinary raced AICF job, so the fastest capable worker wins it and every
+    # winner is paid. Any failure falls back to the normal single-worker serve.
+    team_n = 0 if req.tools else _team_sections_for(user_query, req.max_tokens)
+    if team_n:
+        try:
+            team = await asyncio.get_running_loop().run_in_executor(
+                None, _team_serve, prompt, team_n, tier, effective_temp, effective_top_p)
+        except Exception:  # noqa: BLE001
+            team = None
+        if team is not None:
+            team_text, team_meta = team
+            usage = {
+                "prompt_tokens": max(1, len(prompt) // 4),
+                "completion_tokens": max(1, len(team_text) // 4),
+                "total_tokens": max(2, (len(prompt) + len(team_text)) // 4),
+            }
+            if (web_injected and team_text.strip()
+                    and knowledge.answer_is_grounded(team_text, web_sources)):
+                try:
+                    knowledge.remember_answer(user_query, team_text, web_sources, model_label)
+                except Exception:  # noqa: BLE001
+                    pass
+            if not req.stream:
+                payload = _full_payload(
+                    f"chatcmpl-{uuid.uuid4().hex[:24]}", model_label, team_text, usage)
+                return JSONResponse(payload, headers={
+                    "X-Cache": "miss",
+                    "X-Team-Sections": str(team_meta.get("sections", 0)),
+                })
+
+            async def _team_streamer() -> AsyncGenerator[bytes, None]:
+                chunk_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
+                for i in range(0, len(team_text), 700):
+                    yield f"data: {json.dumps(_chunk_payload(chunk_id, model_label, team_text[i:i + 700]))}\n\n".encode("utf-8")
+                    await asyncio.sleep(0.02)
+                yield f"data: {json.dumps(_chunk_payload(chunk_id, model_label, '', finish='stop'))}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+
+            return StreamingResponse(_team_streamer(), media_type="text/event-stream",
+                                     headers={"X-Team-Sections": str(team_meta.get("sections", 0))})
 
     if not req.stream:
         # Synchronous path — provider.serve() runs the full submit →
