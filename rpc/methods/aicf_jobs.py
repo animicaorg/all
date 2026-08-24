@@ -2492,7 +2492,8 @@ async def worker_submit_result(
     # the whole answer; reject only when nothing real remains.
     text = _trim_degenerate_tail(text)
     _t = text.strip()
-    _hopeless = len(_t) < 2 or (len(_t) >= 30 and (
+    _non_ws = len(_t) - sum(_t.count(c) for c in " \n\t\r")
+    _hopeless = _non_ws < 8 or (len(_t) >= 30 and (
         max(_t.count(ch) for ch in set(_t)) / len(_t) > 0.6
         or len(set(_t) - set(" \n\t\r")) < 3))
     if _hopeless:
