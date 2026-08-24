@@ -98,7 +98,9 @@ function clampPrompt(p, maxChars) {
 // single wasm thread chews through for MINUTES. Clamp much harder for the wasm
 // engine (instructions head + the recent tail with the actual question survive).
 function promptBudget(cfg) {
-  if (cfg.engineKind !== "wllama") return 13000;
+  // The GPU prebuilds carry a 4k-token context: leave ~2k tokens of OUTPUT room
+  // (13000 chars of prompt used to eat ~3.3k tokens and starve the answer).
+  if (cfg.engineKind !== "wllama") return 7500;
   // Keep CPU jobs under ~a minute end-to-end: prefill dominates, so keep the
   // prompt small even with threads (the head instructions + the tail question
   // are what matter; the middle history is the safest cut).
@@ -123,7 +125,7 @@ async function ensureEngine(cfg) {
     const w = new mod.Wllama(cfg.wllamaWasm);
     post({ type: "status", text: "Downloading the model (cached after the first time)…" });
     await w.loadModelFromUrl(cfg.ggufUrl, {
-      n_ctx: 4096,
+      n_ctx: 6144,
       useCache: true,
       progressCallback: (pr) => {
         if (stopped || !pr || !pr.total) return;
@@ -237,10 +239,13 @@ export async function run(cfg) {
       // Output budget: enough for complete code/answers. The CPU engine scales
       // with its thread mode — multithreaded wasm sustains ~450 tokens inside
       // the claim window; single-thread gets less so answers still finish.
+      // Near-unlimited within physics: the ceiling is the model context minus the
+      // clamped prompt, and the wall-clock is covered by the 600s claim lease +
+      // matching bridge/node windows. Multithreaded CPU sustains ~1.5k tokens.
       const engineCap = cfg.engineKind === "wllama"
-        ? ((typeof crossOriginIsolated !== "undefined" && crossOriginIsolated) ? 448 : 224)
+        ? ((typeof crossOriginIsolated !== "undefined" && crossOriginIsolated) ? 1536 : 768)
         : cfg.maxOutputCap;
-      const maxTok = Math.max(16, Math.min(Number(job.max_output_tokens) || 512, engineCap));
+      const maxTok = Math.max(16, Math.min(Number(job.max_output_tokens) || 2048, engineCap));
       const deadline = Number(job.claim_expires_at) > 0 ? Number(job.claim_expires_at) * 1000 : Date.now() + 120000;
       post({ type: "status", text: "Answering job " + job.job_id.slice(0, 10) + "… (" + prompt.length + " chars in, ≤" + maxTok + " tokens out)" });
       post({ type: "log", text: "claimed " + job.job_id.slice(0, 10) + "… tier=" + job.tier });
@@ -629,7 +634,7 @@ export default function ServeWorker() {
     wllamaWasm: WLLAMA_WASM,
     ggufUrl: MODELS.find((x) => x.id === modelId)?.gguf || MODELS[1].gguf,
     // CPU generation is slow: cap output harder so answers land inside the claim window.
-    maxOutputCap: 768,   // per-engine caps are decided in the core at claim time
+    maxOutputCap: 2048,   // GPU engine ceiling; per-engine CPU caps decided in the core
     hardware: {
       engine: engineKind,
       model: modelId,

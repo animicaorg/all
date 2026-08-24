@@ -495,7 +495,7 @@ BRIDGE_HISTORY_CHAR_BUDGET = int(os.environ.get("BRIDGE_HISTORY_CHAR_BUDGET", "6
 BRIDGE_TEMP_DEFAULT = float(os.environ.get("BRIDGE_TEMP_DEFAULT", "0.3"))
 BRIDGE_TEMP_MAX = float(os.environ.get("BRIDGE_TEMP_MAX", "0.8"))
 BRIDGE_TOP_P_DEFAULT = float(os.environ.get("BRIDGE_TOP_P_DEFAULT", "0.9"))
-BRIDGE_DEFAULT_MAX_TOKENS = int(os.environ.get("BRIDGE_DEFAULT_MAX_TOKENS", "1536"))
+BRIDGE_DEFAULT_MAX_TOKENS = int(os.environ.get("BRIDGE_DEFAULT_MAX_TOKENS", "2560"))
 
 # --- rank 15/16: auto web retrieval + untrusted-content framing ---
 BRIDGE_AUTO_WEB = _env_flag("BRIDGE_AUTO_WEB", "1")
@@ -622,9 +622,9 @@ BRIDGE_STREAM_FIRST_TOKEN_S = float(os.environ.get("BRIDGE_STREAM_FIRST_TOKEN_S"
 # node reports REAL workers online, wait like the patient homepage client
 # already does (it holds for 660s with keepalives); with no workers online the
 # short deadlines keep no-provider failures snappy.
-BRIDGE_SLOW_FIRST_TOKEN_S = float(os.environ.get("BRIDGE_SLOW_FIRST_TOKEN_S", "170"))
-BRIDGE_SLOW_CYCLE_ATTEMPT_S = float(os.environ.get("BRIDGE_SLOW_CYCLE_ATTEMPT_S", "90"))
-BRIDGE_SLOW_TOTAL_BUDGET_S = float(os.environ.get("BRIDGE_SLOW_TOTAL_BUDGET_S", "300"))
+BRIDGE_SLOW_FIRST_TOKEN_S = float(os.environ.get("BRIDGE_SLOW_FIRST_TOKEN_S", "420"))
+BRIDGE_SLOW_CYCLE_ATTEMPT_S = float(os.environ.get("BRIDGE_SLOW_CYCLE_ATTEMPT_S", "150"))
+BRIDGE_SLOW_TOTAL_BUDGET_S = float(os.environ.get("BRIDGE_SLOW_TOTAL_BUDGET_S", "480"))
 _AICF_RPC_URL = (os.environ.get("ANIMICA_AICF_ENDPOINT")
                  or os.environ.get("AICF_URL")
                  or "https://rpc.animica.org/rpc")

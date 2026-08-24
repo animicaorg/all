@@ -47,17 +47,17 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 DEFAULT_RPC = "https://rpc.animica.org/rpc"
 TIERS = ["free", "standard"]
-MAX_OUTPUT_CAP = 768
+MAX_OUTPUT_CAP = 2048
 PROMPT_CLAMP_CHARS = 13000        # real flattened prompts measure ~10 KB; ctx is 4k tokens
 CLAIM_MIN_S, CLAIM_MAX_S = 2.5, 15.0
 REGISTER_EVERY_S = 300.0
 EARNINGS_EVERY_S = 45.0
 BATTERY_EVERY_S = 30.0
-CTX_TOKENS = 4096
+CTX_TOKENS = 6144
 
 MODELS: Dict[str, Dict[str, Any]] = {
     "qwen2.5-1.5b": {

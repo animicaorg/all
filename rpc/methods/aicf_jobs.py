@@ -161,7 +161,7 @@ _WORKER_CLAIM_GRACE_S = float(
 # worker's completion still returns immediately; only a genuinely wedged worker
 # runs out the clock. Override with ANIMICA_AICF_WORKER_COMPLETE_GRACE_S.
 _WORKER_COMPLETE_GRACE_S = float(
-    os.environ.get("ANIMICA_AICF_WORKER_COMPLETE_GRACE_S", "210.0")
+    os.environ.get("ANIMICA_AICF_WORKER_COMPLETE_GRACE_S", "480.0")
 )
 # How long a worker lease is valid; if a worker claims and goes silent,
 # the job becomes reclaimable after this many seconds. The default is
