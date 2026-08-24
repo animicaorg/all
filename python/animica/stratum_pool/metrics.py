@@ -3242,6 +3242,140 @@ class PoolMetrics:
             )
             self._commit_db_now(now_ts=now)
 
+    def pool_block_share(self, window_seconds: float = 86400.0) -> Dict[str, object]:
+        """What fraction of the chain's blocks THIS POOL found in the window.
+
+        This is the number that decides whether the pool's share-work hashrate
+        may be called a NETWORK hashrate. Share-work only sees shares submitted
+        here, so it is a pool figure — unless the pool finds essentially every
+        block, in which case pool and network are the same population and the
+        figure is chain-wide after all.
+
+        Measured 2026-08-21: 913 of the 912 heights spanned in 24h, all
+        found_by_pool=1, from four named rigs. So ~100%: the share-work figure
+        IS the network hashrate here, and the Θ-derived
+        chain.getNetworkHashrate reads ~95x higher, which makes Θ the number
+        that is wrong, not share-work.
+
+        Reported rather than assumed, because the day real solo miners appear
+        this ratio drops and the label must drop with it.
+        """
+        cutoff = time.time() - float(window_seconds)
+        if self._db is None:
+            return {"pool_blocks": None, "chain_blocks": None, "share_pct": None,
+                    "window_seconds": int(window_seconds)}
+        with self._db_lock:
+            row = self._db.execute(
+                "SELECT COUNT(DISTINCT height), MIN(height), MAX(height) "
+                "FROM blocks WHERE ts >= ? AND found_by_pool = 1",
+                (cutoff,),
+            ).fetchone()
+        found = int(row[0] or 0) if row else 0
+        lo, hi = (row[1], row[2]) if row else (None, None)
+        spanned = (int(hi) - int(lo) + 1) if (lo is not None and hi is not None) else 0
+        share = (100.0 * found / spanned) if spanned > 0 else None
+        # What could be hiding. A miner that submits shares to NO pool AND
+        # finds no blocks is invisible to BOTH measurements here — share-work
+        # never sees it, and block share never sees it. That gap is bounded
+        # rather than waved away: if such a miner held fraction p of network
+        # hash, the chance it found none of `found` blocks is (1-p)**found, so
+        # at 95% confidence p < 1 - 0.05**(1/found).
+        #
+        # (Miners that DO submit shares are always counted whether or not they
+        # ever find a block — active_machines keys on accepted shares.)
+        hidden = None
+        if found > 0:
+            hidden = round(100.0 * (1.0 - math.exp(math.log(0.05) / found)), 3)
+        return {
+            "pool_blocks": found,
+            "chain_blocks": spanned,
+            "unseen_hashrate_bound_pct": hidden,
+            # Capped at 100: a pool can record a block twice across a reorg,
+            # and "101% of the network" is never a true statement.
+            "share_pct": min(100.0, round(share, 1)) if share is not None else None,
+            "window_seconds": int(window_seconds),
+        }
+
+    def _accepted_share_count(self, window_seconds: float) -> int:
+        """Accepted shares inside the window — the sample size behind a rate."""
+        cutoff = time.time() - float(window_seconds)
+        if self._db is not None:
+            with self._db_lock:
+                row = self._db.execute(
+                    "SELECT COUNT(*) FROM shares WHERE status = 'accepted' AND ts >= ?",
+                    (cutoff,),
+                ).fetchone()
+            return int(row[0] or 0) if row else 0
+        return sum(1 for ev in self._share_events
+                   if float(getattr(ev, "ts", 0) or 0) >= cutoff)
+
+    def active_machines(self, fresh_seconds: float = 900.0) -> Dict[str, int]:
+        """Individual MACHINES that actually mined recently — proof, not presence.
+
+        None of the three counts this class already exposes is a machine count,
+        and each fails differently:
+
+          * ``num_miners``/``num_workers`` is the stratum CLIENT-SOCKET count.
+            One host can hold many sockets and an idle/leaking client holds them
+            open, which is how "838 miners" was once really one IP with 835 idle
+            sockets. Presence, not work.
+          * ``reporting_miners`` counts only rigs that self-report a hashrate
+            through the xmrig API. Opt-in, so it reads 0 while rigs are mining.
+          * ``/api/miners`` totals PAYOUT ADDRESSES ever seen — lifetime, and
+            several rigs commonly share one address.
+
+        The honest primitive is a distinct ``worker`` that submitted an ACCEPTED
+        share inside the window: a rig cannot fake that without doing the work.
+
+        CAVEAT, deliberately surfaced rather than hidden: ``_normalize_worker``
+        falls back to the SESSION id when a miner sends no rig name, so an
+        unnamed miner is counted once per reconnect. ``named`` reports how many
+        of the counted workers carry a real rig name, so a caller can see how
+        much of the number is trustworthy.
+        """
+        cutoff = time.time() - float(fresh_seconds)
+        workers: set = set()
+        addresses: set = set()
+        worker_addr: Dict[str, str] = {}
+        if self._db is not None:
+            with self._db_lock:
+                rows = self._db.execute(
+                    "SELECT DISTINCT worker, address FROM shares "
+                    "WHERE status = 'accepted' AND ts >= ?",
+                    (cutoff,),
+                ).fetchall()
+            for w, a in rows:
+                if w:
+                    workers.add(str(w))
+                if a:
+                    addresses.add(str(a))
+                if w and a:
+                    worker_addr[str(w)] = str(a)
+        else:
+            for ev in self._share_events:
+                if float(getattr(ev, "ts", 0) or 0) >= cutoff:
+                    w = getattr(ev, "worker", None)
+                    a = getattr(ev, "address", None)
+                    if w:
+                        workers.add(str(w))
+                    if a:
+                        addresses.add(str(a))
+                    if w and a:
+                        worker_addr[str(w)] = str(a)
+        # A session-id fallback looks like an opaque id, not a chosen rig name.
+        named = sum(1 for w in workers if not w.startswith("sess") and len(w) < 32)
+        return {
+            "machines": len(workers),
+            "addresses": len(addresses),
+            "named": named,
+            "window_seconds": int(fresh_seconds),
+            # Identities, so a caller can INTERSECT mining with other roles
+            # (e.g. which operators also serve inference) rather than compare
+            # two counts that may be measured over different windows.
+            "address_set": sorted(addresses),
+            "worker_addresses": worker_addr,
+        }
+
     def pool_summary(self) -> Dict[str, object]:
         self._run_housekeeping()
         cached = self._read_cache_get("pool_summary")
@@ -3282,6 +3416,12 @@ class PoolMetrics:
             "hashrate_source": "reported" if reported_hps else "share_work",
             "reported_hashrate_hps": reported_hps,
             "reporting_miners": reporting_miners,
+            # Share COUNTS per window, so a caller can tell "0 H/s" (a real
+            # zero) from "no shares landed in this window" (no sample). At the
+            # current rate a 1-minute window is usually empty.
+            "shares_1m": self._accepted_share_count(60),
+            "shares_15m": self._accepted_share_count(900),
+            "shares_1h": self._accepted_share_count(3600),
             "hashrate_raw_1m": raw_1m,
             "hashrate_raw_15m": raw_15m,
             "hashrate_raw_1h": raw_1h,

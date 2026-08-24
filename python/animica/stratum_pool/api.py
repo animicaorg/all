@@ -36,6 +36,76 @@ _NET_HR_CACHE: Dict[str, Any] = {"at": 0.0, "key": None, "payload": None}
 _HASHSHARE_TRIALS = 2 ** 32
 
 
+# Wallets that may serve inference, same list the x402 capacity gate uses.
+# Comma-separated; empty disables the stat rather than reporting a false 0.
+_INFERENCE_WALLETS = [
+    w.strip() for w in str(os.getenv("ANIMICA_INFERENCE_WORKER_WALLETS", "")).split(",") if w.strip()
+]
+_SERVING_FRESH_S = 300.0
+
+
+async def _count_serving_inference_workers(rpc_url: str) -> Dict[str, Any]:
+    """How many wallets are ACTUALLY serving inference right now.
+
+    Ground truth is per-wallet ``aicf.workerStatus``. Every other candidate
+    over-counts and was verified to do so on this chain:
+
+      * ``aicf.work.listWorkers`` is a stale, different registry — its newest
+        heartbeat on mainnet is 89 days old;
+      * ``aicf.estimateJobCost.providers`` counts unpruned registration history
+        with no freshness filter (210 "providers" while the true count was 0);
+      * there is no ``aicf.listServingWorkers``.
+
+    A wallet counts only when registered is true, its heartbeat is within
+    300 s (values > 1e12 are milliseconds), and it advertises at least one real
+    tier. This mirrors src/capacity.js in the x402 gateway ON PURPOSE: the
+    stats page and the capacity gate must not disagree about who is serving.
+
+    Returns ``serving=None`` when no wallet list is configured — an unknown is
+    reported as unknown, never as zero.
+    """
+    if not _INFERENCE_WALLETS:
+        return {"serving": None, "configured": 0, "reason": "no_wallets_configured"}
+    from mining.share_submitter import AsyncJsonRpcClient
+
+    serving = 0
+    serving_wallets: list = []
+    now = time.time()
+    client = AsyncJsonRpcClient(rpc_url)
+    try:
+        for wallet in _INFERENCE_WALLETS:
+            try:
+                res = await client.call(
+                    "aicf.workerStatus", {"address": wallet}, timeout_s=5.0
+                ) or {}
+            except Exception:
+                continue  # unreachable counts as NOT serving, never as serving
+            if not res.get("registered"):
+                continue
+            last = res.get("last_seen") or res.get("last_seen_at") or 0
+            try:
+                last = float(last)
+            except (TypeError, ValueError):
+                continue
+            if last > 1e12:
+                last = last / 1000.0
+            if not last or (now - last) > _SERVING_FRESH_S:
+                continue
+            tiers = [t for t in (res.get("tiers") or []) if t and t != "pipeline"]
+            if not tiers:
+                continue
+            serving += 1
+            serving_wallets.append(wallet)
+    finally:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+    return {"serving": serving, "configured": len(_INFERENCE_WALLETS),
+            "fresh_window_seconds": int(_SERVING_FRESH_S),
+            "serving_wallets": serving_wallets}
+
+
 async def _fetch_network_hashrate(metrics: PoolMetrics, window_blocks: int = 120) -> Dict[str, Any]:
     """Authoritative chain-wide Animica hashrate via the node RPC.
 
@@ -82,48 +152,6 @@ async def _fetch_network_hashrate(metrics: PoolMetrics, window_blocks: int = 120
     return dict(payload)
 
 
-# --- Projected Monero (RandomX) hashrate estimate (Option B) ----------------
-# Animica's PoW is SHA3-256 (fast); Monero is RandomX (slow, memory-hard), so
-# the two H/s figures differ by ~4-5 orders of magnitude per CPU thread. We
-# can't equate them, but we CAN estimate the RandomX hashrate the same fleet
-# would produce, without Monero mining actually running, by:
-#   (a) dividing the Animica hashrate by a representative SHA3-per-thread rate
-#       to recover an approximate CPU-thread count, then
-#   (b) multiplying by a representative RandomX-per-thread rate.
-# Both constants are env-calibratable — measure one representative CPU once
-# (e.g. `xmrig --bench=1M` for RandomX; the animica miner's per-thread H/s for
-# SHA3) and set them so the projection matches reality:
-#   ANIMICA_SHA3_HPS_PER_THREAD  default 6e6  (6 MH/s SHA3-256 per thread)
-#   ANIMICA_RX_HPS_PER_THREAD    default 800  (0.8 kH/s RandomX per thread)
-# Caveat: only meaningful for CPU miners. SHA3 ASIC/GPU contributors inflate
-# the Animica hashrate but cannot mine RandomX at all, so this is an UPPER
-# bound that assumes an all-CPU fleet.
-_DEFAULT_SHA3_HPS_PER_THREAD = 6_000_000.0
-_DEFAULT_RX_HPS_PER_THREAD = 800.0
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        v = float(os.getenv(name) or default)
-        return v if v > 0 else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _project_monero_hashrate(animica_hps: Optional[float]) -> Dict[str, Any]:
-    sha3_pt = _env_float("ANIMICA_SHA3_HPS_PER_THREAD", _DEFAULT_SHA3_HPS_PER_THREAD)
-    rx_pt = _env_float("ANIMICA_RX_HPS_PER_THREAD", _DEFAULT_RX_HPS_PER_THREAD)
-    hps = max(0.0, float(animica_hps or 0.0))
-    est_threads = hps / sha3_pt if sha3_pt > 0 else 0.0
-    return {
-        "projected_monero_hps": est_threads * rx_pt,
-        "animica_hashrate": hps,
-        "est_cpu_threads": est_threads,
-        "sha3_hps_per_thread": sha3_pt,
-        "rx_hps_per_thread": rx_pt,
-        "estimate": True,
-        "estimate_basis": "per-thread SHA3->RandomX conversion (assumes all-CPU fleet)",
-    }
 
 
 def _rental_secret() -> str:
@@ -177,10 +205,107 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.on_event("startup")
+    async def _warm_advisor():
+        # Warm the advisor in the background so user requests are fast: (1) load
+        # the RAG encoder/index (~12s cold), (2) keep an AI worker warm so the
+        # cold-start (30–120s) happens off the user path, not on it.
+        import threading
+        try:
+            from . import advisor
+            threading.Thread(target=advisor.warm_rag,
+                             name="advisor-rag-warm", daemon=True).start()
+            advisor.start_warm()
+        except Exception:    # noqa: BLE001 — never block startup
+            pass
+
     @app.get("/summary")
     @app.get("/api/pool/summary")
     async def pool_summary():
         return metrics.pool_summary()
+
+    @app.get("/api/pools")
+    @app.get("/api/pool/mps")
+    @app.get("/api/mps")
+    async def mps_stats():
+        """MiningPoolStats-compatible pool stats.
+
+        A stable, flat + nested (cryptonote-nodejs-pool style) JSON that
+        MiningPoolStats and similar trackers can poll directly. All values are
+        derived live from the same source as /api/pool/summary. Hashrates are
+        raw H/s (SHA3-256); difficulty is the work-based expectation
+        network_hashrate * target_block_interval_s.
+        """
+        import os
+        from datetime import datetime as _dt
+        try:
+            ps = metrics.pool_summary()
+        except Exception:    # noqa: BLE001
+            ps = {}
+        try:
+            rb = metrics.recent_blocks()
+        except Exception:    # noqa: BLE001
+            rb = {}
+        items = rb.get("items") if isinstance(rb, dict) else None
+        last = (items[0] if isinstance(items, list) and items else {}) or {}
+        last_ts = None
+        iso = last.get("timestamp")
+        if iso:
+            try:
+                last_ts = int(_dt.fromisoformat(str(iso)).timestamp())
+            except Exception:    # noqa: BLE001
+                last_ts = None
+        try:
+            reward_anm = int(last.get("reward") or 0) / 1_000_000_000
+        except Exception:    # noqa: BLE001
+            reward_anm = 0.0
+        if reward_anm <= 0:
+            reward_anm = 300.0    # current per-block subsidy (fallback)
+        net_hps = float(ps.get("network_hashrate_hps") or 0.0)
+        pool_hps = float(ps.get("hashrate_raw_1h") or ps.get("network_hashrate_hps") or 0.0)
+        height = ps.get("height") or last.get("height") or 0
+        miners = int(ps.get("reporting_miners") or 0)
+        blocks_found = int(ps.get("blocks_found_total")
+                           or (rb.get("blocks_found_total") if isinstance(rb, dict) else 0) or 0)
+        interval_s = 60
+        difficulty = net_hps * interval_s
+        fee = 5.0
+        try:
+            _mp = os.environ.get("ANIMICA_POOL_MIN_PAYOUT_ANM")
+            min_payout = float(_mp) if _mp else None
+        except Exception:    # noqa: BLE001
+            min_payout = None
+        ports = [
+            {"port": 3333, "desc": "PPS + sub-block shares", "fee": fee, "tls": False},
+            {"port": 3334, "desc": "Solo (95% to finder)", "fee": fee, "tls": False},
+        ]
+        return {
+            # flat top-level (maximum tracker compatibility)
+            "coin": "Animica", "symbol": "ANM", "algo": "sha3-256",
+            "hashrate": pool_hps, "networkHashrate": net_hps,
+            "networkDifficulty": difficulty, "height": height,
+            "miners": miners, "workers": miners,
+            "lastBlock": last_ts, "totalBlocks": blocks_found,
+            "fee": fee, "blockReward": reward_anm, "blockTime": interval_s,
+            # nested cryptonote-nodejs-pool style
+            "pool": {
+                "hashrate": pool_hps, "miners": miners, "workers": miners,
+                "totalBlocks": blocks_found, "lastBlockFound": last_ts,
+                "lastBlockFoundHeight": last.get("height"),
+                "fee": fee, "feeType": "PPS + sub-block shares",
+                "minPayout": min_payout, "symbol": "ANM",
+            },
+            "network": {
+                "hashrate": net_hps, "difficulty": difficulty,
+                "height": height, "reward": reward_anm, "blockTime": interval_s,
+            },
+            "config": {
+                "coin": "Animica", "symbol": "ANM", "algo": "sha3-256",
+                "coinUnits": 1_000_000_000, "coinDifficultyTarget": interval_s,
+                "poolHost": "pool.animica.org", "poolFee": fee,
+                "paymentScheme": "PPS", "ports": ports,
+            },
+        }
 
     @app.get("/api/compute/clore-token")
     async def clore_token(worker: str = "", address: str = "", gpu: str = ""):
@@ -200,6 +325,40 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
     async def clore_status():
         from .clore_tokens import stats
         return stats()
+
+    @app.post("/api/advisor/chat")
+    async def advisor_chat(request: Request):
+        """Site-wide 'setup advisor' chat: recommends the exact `animica up`
+        command for the visitor's hardware, backed by exhaustive RAG over the
+        Animica docs and Animica's own AI network, with a deterministic command
+        engine as ground truth so it never gives a wrong command. Stateless —
+        the widget sends the running history each turn (so it 'remembers')."""
+        from starlette.concurrency import run_in_threadpool
+        try:
+            payload = await request.json()
+        except Exception:    # noqa: BLE001 — bad body
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        raw = payload.get("messages") or []
+        clean = []
+        if isinstance(raw, list):
+            for m in raw[-24:]:    # cap history
+                if (isinstance(m, dict) and m.get("role") in ("user", "assistant")
+                        and m.get("content")):
+                    clean.append({"role": str(m["role"]),
+                                  "content": str(m["content"])[:4000]})
+        hw = payload.get("hardware")
+        hw = hw if isinstance(hw, dict) else None
+        try:
+            from . import advisor
+            return await run_in_threadpool(advisor.chat, clean, hw)
+        except Exception as exc:    # noqa: BLE001 — never 500 the widget
+            return {"reply": "Sorry — I hit an error. You can always run "
+                    "`pip install -U animica && animica up --plan` to see what "
+                    "your machine would do.",
+                    "command": "animica up --plan", "tiers": [],
+                    "used_ai": False, "error": str(exc)[:200]}
 
     @app.get("/miners")
     @app.get("/api/miners")
@@ -233,16 +392,35 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
 
     @app.get("/api/pool/network")
     async def pool_network(window_blocks: int = Query(120, ge=2, le=2016)):
-        """Accurate Animica network hashrate (raw H/s) + projected Monero rate.
+        """Animica hashrate (raw H/s), with its scope and sample size stated.
 
         The primary ``network_hashrate_hps`` is computed by the pool from the
         actual share stream: Σ(per-share expected SHA3 hashes = 2**256 /
         share_target_int) / window. This matches what miners' xmrig reports.
 
-        The node's ``chain.getNetworkHashrate`` is included only as
-        ``node_theta_hashrate_hps`` for reference — it derives from on-chain Θ
-        (the PoIES acceptance threshold), which understates raw hash power by
-        orders of magnitude, so it is NOT the headline figure.
+        SCOPE, measured 2026-08-21 by counting blocks rather than arguing:
+        share-work sees only shares submitted here, so it is a POOL figure —
+        but this pool found 913 of the 912 heights spanned in 24h, all
+        found_by_pool=1, from four named rigs. At ~100% there is no meaningful
+        solo or direct mining, pool and network are the same population, and
+        ``network_hashrate_hps`` IS the network hashrate. ``hashrate_scope``
+        therefore reports ``network_equivalent`` while
+        ``pool_block_share_pct`` >= 95, and falls back to ``pool_shares_only``
+        the moment that ratio drops.
+
+        That also settles which of the two estimates is wrong: Θ-derived
+        ``node_theta_hashrate_hps`` reads ~95x HIGHER (4.3 GH/s vs ~46 MH/s)
+        and cannot be reconciled with a pool that finds every block at this
+        share rate, so Θ overstates. The original docstring claim that Θ
+        "understates raw hash power by orders of magnitude" is backwards, and
+        so was an intermediate note here that treated Θ as the chain-wide
+        truth. Corroborated independently: the advisor earnings engine is
+        calibrated on ~50 MH/s.
+
+        SAMPLE SIZE: ``hashrate_window_samples`` reports accepted-share counts
+        per window. At the current rate a 1-minute window is usually empty, and
+        an empty window is not 0 H/s — it is no sample. Use
+        ``hashrate_confident_window``.
         """
         try:
             ps = metrics.pool_summary()
@@ -250,6 +428,29 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
             ps = {}
         net_hps = float(ps.get("network_hashrate_hps") or 0.0)
         node = await _fetch_network_hashrate(metrics, window_blocks=window_blocks)
+        try:
+            machines = metrics.active_machines()
+        except Exception:
+            machines = {}
+        try:
+            block_share = metrics.pool_block_share()
+        except Exception:
+            block_share = {}
+        rpc_url = str(getattr(metrics.config, "rpc_url", "") or "http://127.0.0.1:8545/rpc")
+        try:
+            inference = await _count_serving_inference_workers(rpc_url)
+        except Exception:
+            inference = {}
+        mining_addrs = set(machines.get("address_set") or [])
+        serving_addrs = set(inference.get("serving_wallets") or [])
+        both = mining_addrs & serving_addrs
+        dual = {
+            "addresses": len(both),
+            "machines": sum(1 for _w, a in (machines.get("worker_addresses") or {}).items()
+                            if a in both),
+            "mining_only": len(mining_addrs - serving_addrs),
+            "inference_only": len(serving_addrs - mining_addrs),
+        }
         node_hsps = node.get("hashrate_hsps")
         node_raw = (float(node_hsps) * _HASHSHARE_TRIALS) if node_hsps is not None else None
         return {
@@ -262,10 +463,68 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
             "hashrate_15m": ps.get("hashrate_raw_15m"),
             "hashrate_1h": ps.get("hashrate_raw_1h"),
             "pool_share_ratio_hps": ps.get("pool_hashrate"),  # legacy ratio/sec
-            # Reference only — theta-based, understates raw hash power.
             "node_theta_hashrate_hps": node_raw,
             "node_theta_window_blocks": node.get("window_blocks"),
-            "projected_monero": _project_monero_hashrate(net_hps),
+            # --- honesty fields (added after measuring these against the raw
+            # share stream and the chain; see the scope note below) ----------
+            #
+            # SCOPE. `network_hashrate_hps` is Sigma(work)/window over shares
+            # submitted TO THIS POOL. It cannot see solo or direct miners, so
+            # on a network where most hash power mines direct it is a POOL
+            # figure wearing a network label. Callers that need chain-wide
+            # should read `node_theta_hashrate_hps`.
+            # Scope is DERIVED, not asserted. Share-work sees only this pool's
+            # shares, so it is a pool figure — unless the pool finds
+            # essentially every block, in which case pool and network are the
+            # same population. Measured, not assumed, so the label follows
+            # reality the day a real solo miner appears.
+            "hashrate_scope": (
+                "network_equivalent"
+                if (block_share.get("share_pct") or 0) >= 95.0
+                else "pool_shares_only"
+            ),
+            "pool_block_share_pct": block_share.get("share_pct"),
+            "pool_blocks_in_window": block_share.get("pool_blocks"),
+            "chain_blocks_in_window": block_share.get("chain_blocks"),
+            "block_share_window_seconds": block_share.get("window_seconds"),
+            # Upper bound (95% conf) on hash power that submits shares to no
+            # pool and found no block in the window — the only miner this page
+            # cannot see. Miners that DO submit shares are counted whether or
+            # not they ever find a block.
+            "unseen_hashrate_bound_pct": block_share.get("unseen_hashrate_bound_pct"),
+            # SPARSITY. At the current share rate a 1-minute window is usually
+            # EMPTY, and an empty window is not 0 H/s — it is no sample. The
+            # raw fields still report 0.0 for compatibility; these say whether
+            # that 0 means anything.
+            "hashrate_window_samples": {
+                "m1": ps.get("shares_1m"),
+                "m15": ps.get("shares_15m"),
+                "h1": ps.get("shares_1h"),
+            },
+            "hashrate_confident_window": "1h",
+            # MACHINES. Individual rigs that submitted an accepted share in the
+            # window — proof of work, not socket presence. See
+            # PoolMetrics.active_machines for why num_miners/reporting_miners/
+            # /api/miners each answer a different question.
+            "active_machines": machines.get("machines"),
+            "active_machine_addresses": machines.get("addresses"),
+            "active_machines_named": machines.get("named"),
+            "active_machines_window_seconds": machines.get("window_seconds"),
+            # INFERENCE. Wallets actually serving inference right now, from the
+            # same primitive the x402 capacity gate uses. None = not configured
+            # here, which is reported as unknown rather than as zero.
+            "inference_workers_serving": inference.get("serving"),
+            "inference_wallets_configured": inference.get("configured"),
+            # DUAL ROLE. Operators doing BOTH — mining accepted shares and
+            # serving inference. Intersected on the wallet address, because
+            # that is the only identity the two sides share: a rig name is
+            # local to the pool, a serving worker is identified by its wallet.
+            # `machines` counts the rigs belonging to those wallets, so it can
+            # exceed `addresses` when one operator runs several rigs.
+            "dual_role_addresses": dual["addresses"],
+            "dual_role_machines": dual["machines"],
+            "mining_only_addresses": dual["mining_only"],
+            "inference_only_addresses": dual["inference_only"],
         }
 
     @app.post("/api/pool/hashrate/report")
@@ -298,190 +557,10 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
         total, n = metrics.reported_network_hashrate()
         return {"ok": True, "reported_network_hashrate_hps": total, "reporting_miners": n}
 
-    # --- Monero (XMR) dual-mining stats -----------------------------------
-    # These endpoints expose the parallel RandomX pool the dual-miner uses.
-    # When XMR mining is disabled (ANIMICA_POOL_XMR_ENABLED!=1) they return
-    # zeros / empty so the portal UI can show "0 active miners".
-
-    @app.get("/api/pool/xmr/summary")
-    async def xmr_summary():
-        # Accurate network hashrate + projected Monero, included regardless of
-        # whether live XMR mining is enabled (so "projected if all miners
-        # dual-mined" shows even before Monero is turned on). Uses the pool's
-        # share-work hashrate (real H/s), not the theta-based node figure.
-        try:
-            _net_hps = float(metrics.pool_summary().get("network_hashrate_hps") or 0.0)
-        except Exception:
-            _net_hps = 0.0
-        _projected = _project_monero_hashrate(_net_hps)
-        ref = getattr(metrics, "xmr_handles", lambda: None)()
-        if not ref:
-            return {
-                "enabled": False,
-                "monerod_height": 0,
-                "monerod_target": 0,
-                "monerod_synced": False,
-                "active_miners": 0,
-                "blocks_found": 0,
-                "current_seed_hash": None,
-                "current_height": 0,
-                "pool_fee_address": None,
-                "pool_fee_bps": 500,
-                "network_hashrate_hps": _net_hps,
-                "projected_monero": _projected,
-            }
-        ledger = ref.get("ledger")
-        jm = ref.get("job_manager")
-        cn = ref.get("cryptonote_server")
-        monerod_info: Dict[str, Any] = {}
-        client = ref.get("client")
-        if client is not None:
-            try:
-                monerod_info = await client.get_info()
-            except Exception:
-                monerod_info = {}
-        stats_l = await ledger.stats() if ledger else {}
-        cn_stats = cn.stats() if cn else {"sessions": 0, "miners": []}
-        cur_job = jm.current_job if jm else None
-        return {
-            "enabled": True,
-            "monerod_height": int(monerod_info.get("height") or 0),
-            "monerod_target": int(monerod_info.get("target_height") or 0),
-            "monerod_synced": bool(monerod_info.get("synchronized") or False),
-            "active_miners": int(cn_stats.get("sessions", 0)),
-            "miner_addresses": cn_stats.get("miners", []),
-            "blocks_found": int(stats_l.get("blocks_found", 0)),
-            "current_seed_hash": (cur_job.seed_hash.hex() if cur_job else None),
-            "current_height": int(cur_job.height) if cur_job else 0,
-            "pool_fee_address": ref.get("pool_fee_address"),
-            "pool_fee_bps": 500,
-            "ledger": stats_l,
-            "network_hashrate_hps": _net_hps,
-            "projected_monero": _projected,
-        }
-
-    @app.get("/api/pool/xmr/blocks")
-    async def xmr_blocks(limit: int = Query(50, ge=1, le=500)):
-        """List recent XMR blocks the pool found (most recent first)."""
-        try:
-            from animica.stratum_pool.xmr_payouts import DEFAULT_LEDGER_PATH
-            from pathlib import Path
-            entries: list = []
-            path = Path(DEFAULT_LEDGER_PATH)
-            if path.exists():
-                with path.open("r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            import json as _json
-                            entries.append(_json.loads(line))
-                        except Exception:
-                            continue
-            entries.sort(
-                key=lambda e: e.get("monero_block_height", 0), reverse=True
-            )
-            return {"blocks": entries[:limit], "total": len(entries)}
-        except Exception as exc:
-            return {"blocks": [], "total": 0, "error": str(exc)}
-
-    @app.post("/api/pool/xmr/register")
-    async def xmr_register(payload: Dict[str, Any]):
-        """Register a miner's payout preference.
-
-        Body:
-          {
-            "animica_address": "anim1...",
-            "payout_currency": "xmr" | "anm",
-            "xmr_address": "4... or 8..."   # required when currency=xmr
-          }
-
-        No on-chain signature required for now — the registration is
-        only USED at payout time, and the worst case is that a malicious
-        actor redirects another miner's earnings to themselves. We'll
-        add bech32 signature verification once `animica wallet sign-msg`
-        is wired up.
-        """
-        from animica.stratum_pool.xmr_payouts import (
-            load_registry, save_registry,
-        )
-        import re as _re
-
-        anim1 = str(payload.get("animica_address") or "").strip()
-        ccy = str(payload.get("payout_currency") or "xmr").strip().lower()
-        xmr = str(payload.get("xmr_address") or "").strip()
-
-        if not _re.match(r"^anim1[0-9a-z]{30,}$", anim1):
-            raise HTTPException(status_code=400,
-                                detail="animica_address must be bech32 anim1…")
-        if ccy not in ("xmr", "anm"):
-            raise HTTPException(status_code=400,
-                                detail="payout_currency must be 'xmr' or 'anm'")
-        if ccy == "xmr":
-            # Monero addresses are 95 chars (standard) or 106 (integrated)
-            if not (_re.match(r"^[48][0-9A-HJ-NP-Za-km-z]{94,105}$", xmr)):
-                raise HTTPException(
-                    status_code=400,
-                    detail="xmr_address must be a Monero primary/integrated address",
-                )
-
-        reg = load_registry()
-        reg[anim1] = {
-            "xmr_address": xmr if ccy == "xmr" else "",
-            "payout_currency": ccy,
-        }
-        save_registry(reg)
-        return {
-            "ok": True,
-            "animica_address": anim1,
-            "payout_currency": ccy,
-            "registered_count": len(reg),
-        }
-
-    @app.get("/api/pool/xmr/miner/{anim1_address}")
-    async def xmr_miner(anim1_address: str):
-        """Aggregated XMR earnings for a single miner address."""
-        from animica.stratum_pool.xmr_payouts import (
-            DEFAULT_LEDGER_PATH, _load_jsonl, load_registry,
-        )
-        entries = _load_jsonl(DEFAULT_LEDGER_PATH)
-        registry = load_registry()
-        owed_atomic = 0
-        paid_atomic = 0
-        block_count = 0
-        for e in entries:
-            credits = e.get("miner_credits_atomic", {})
-            if anim1_address in credits:
-                amt = int(credits[anim1_address])
-                if anim1_address in e.get("paid_anim1", []):
-                    paid_atomic += amt
-                else:
-                    owed_atomic += amt
-                block_count += 1
-        return {
-            "anim1_address": anim1_address,
-            "owed_atomic": owed_atomic,
-            "paid_atomic": paid_atomic,
-            "owed_xmr": owed_atomic / 1e12,
-            "paid_xmr": paid_atomic / 1e12,
-            "block_count_contributed_to": block_count,
-            "registered_xmr_address": registry.get(anim1_address),
-        }
-
-    # --- Rig-rental redirect engine (marketplace ↔ pool, HMAC-guarded) -----
-    # These power pool.animica.org/app. All are server-to-server only and
-    # require the shared-secret HMAC signature. Read endpoints expose an
-    # opaque rig_id (sha256(worker|address)); the owner payout address is
-    # never returned to the public.
-
-    def _claim_worker(address: str, bucket: int) -> str:
-        token = hmac.new(
-            _rental_secret().encode("utf-8"),
-            f"{address}:{bucket}".encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()[:16]
-        return f"rent-claim-{token}"
+    # Monero (XMR) dual-mining routes REMOVED. XMR dual-mining was disabled
+    # and monerod removed from this host on 2026-07-16; the endpoints kept
+    # answering with zeros and a "projected if all miners dual-mined"
+    # figure, which reads as a live feature that does not exist.
 
     @app.post("/api/rental/assignments")
     async def rental_create(request: Request):

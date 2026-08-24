@@ -136,6 +136,85 @@ RPC_READ_ALLOWLIST: frozenset[str] = frozenset({
 })
 
 
+def x402_credits() -> str:
+    """The prepaid credit token this server may spend, if one is configured."""
+    return os.environ.get("ANIMICA_X402_CREDITS", "").strip()
+
+
+def x402_paid_call(path: str, body: Optional[dict] = None, *,
+                   credits: str = "", method: str = "POST",
+                   timeout: Optional[float] = None) -> Any:
+    """Call one paid x402 route, spending a PREPAID CREDIT token.
+
+    A credit token is a BEARER instrument: whoever holds it can spend it. This
+    server signs nothing and holds no chain keys — it forwards a token the
+    caller supplied (or one the operator configured) as a header, exactly as
+    the caller could themselves.
+
+    Returns the product's JSON on success. On 402 it returns a structured
+    'payment_required' object rather than raising, because "you need credit"
+    is an ANSWER an agent can act on, not a failure: it carries the price and
+    where to get a token.
+    """
+    tok = (credits or x402_credits()).strip()
+    base = x402_url().rstrip("/").removesuffix("/.well-known/x402")
+    if not base.startswith("http"):
+        base = "https://animica.dev"
+    url = base.rstrip("/") + path
+    hdrs = {"content-type": "application/json"}
+    if tok:
+        hdrs["X-Animica-Credits"] = tok
+    try:
+        if method == "GET":
+            r = httpx.get(url, headers=hdrs, timeout=timeout or DEFAULT_TIMEOUT)
+        else:
+            r = httpx.post(url, json=body or {}, headers=hdrs,
+                           timeout=timeout or DEFAULT_TIMEOUT)
+    except Exception as e:  # noqa: BLE001
+        raise SeamError(f"{url}: {e}") from e
+
+    if r.status_code == 402:
+        try:
+            offer = r.json()
+        except Exception:  # noqa: BLE001
+            offer = {}
+        lanes = []
+        for a in (offer.get("accepts") or []):
+            lanes.append({
+                "network": a.get("network"),
+                "amount": a.get("maxAmountRequired"),
+                "asset": a.get("asset"),
+                "pay_to": a.get("payTo"),
+            })
+        return {
+            "payment_required": True,
+            "endpoint": url,
+            "reason": r.headers.get("x-animica-credit-status") or "no credit supplied",
+            "credit_balance": r.headers.get("x-animica-credit-balance"),
+            "price_atomic": r.headers.get("x-animica-credit-required"),
+            "accepts": lanes,
+            "how_to_pay": (
+                "Supply a prepaid credit token as the `credits` argument (or set "
+                "ANIMICA_X402_CREDITS on this server) — then no wallet, gas or "
+                "x402 client is needed. Tokens: https://animica.dev/x402/credits/buy "
+                "or ask the operator (ai@3vdc.com) for one. Alternatively pay the "
+                "402 directly with any x402 client; the ANM lane is ~25% cheaper."
+            ),
+        }
+    if r.status_code >= 400:
+        raise SeamError(f"{url}: HTTP {r.status_code}: {r.text[:200]}")
+    try:
+        out = r.json()
+    except Exception:  # noqa: BLE001
+        return {"raw": r.text[:4000]}
+    if isinstance(out, dict):
+        out.setdefault("_credit", {
+            "spent_atomic": r.headers.get("x-animica-credit-spent"),
+            "balance_atomic": r.headers.get("x-animica-credit-balance"),
+        })
+    return out
+
+
 def rpc_call(method: str, params: Any = None, *, timeout: Optional[float] = None) -> Any:
     """Call a node JSON-RPC method. Refuses any method not on the READ allow-list."""
     if method not in RPC_READ_ALLOWLIST:
