@@ -1991,6 +1991,28 @@ async def settle_job(
 # ---------------------------------------------------------------------------
 
 
+def _unpaid_weight(w: "_WorkerInfo") -> float:
+    """Weight the NEXT settlement anchor will pay this worker for. The anchor
+    worker maintains anchor_ledger.weights_consumed_animica in the same DB;
+    read it defensively (in-memory store / missing table → pending - paid)."""
+    pending = float(w.earnings_pending_animica or 0.0)
+    consumed = None
+    conn_fn = getattr(_STORE, "_conn", None)
+    if callable(conn_fn):
+        try:
+            row = conn_fn().execute(
+                "SELECT weights_consumed_animica FROM anchor_ledger WHERE address=?",
+                (w.address,),
+            ).fetchone()
+            if row is not None:
+                consumed = float(row[0] or 0.0)
+        except Exception:  # noqa: BLE001 — table may not exist yet
+            consumed = None
+    if consumed is None:
+        consumed = float(w.earnings_paid_animica or 0.0)
+    return max(0.0, pending - consumed)
+
+
 @method("aicf.workerRegister", desc="Register a worker to claim AICF jobs", aliases=("aicf_workerRegister",))
 async def worker_register(
     ctx: Any = None,
@@ -2132,11 +2154,11 @@ async def worker_earnings(
         "earnings_pending_animica": w.earnings_pending_animica,
         "earnings_paid_animica": w.earnings_paid_animica,
         # pending is the credit-only lifetime WEIGHT ledger; paid mirrors the
-        # on-chain settlement anchors (which scale weights up to the full block
-        # carve). unpaid is what the NEXT anchor will use as this worker's weight.
-        "earnings_unpaid_animica": max(
-            0.0, float(w.earnings_pending_animica) - float(w.earnings_paid_animica)
-        ),
+        # actual on-chain ANM received from settlement anchors. unpaid is the
+        # WEIGHT the next anchor will pay for: pending minus the weights already
+        # consumed by past anchors (anchor_ledger, maintained by the settlement
+        # worker; falls back to pending - paid when absent).
+        "earnings_unpaid_animica": _unpaid_weight(w),
         "note": "paid via ANMSETL1 settlement anchors (block carve, pro-rata)",
     }
 

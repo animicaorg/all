@@ -234,7 +234,13 @@ export async function run(cfg) {
       delay = 2500;
       const prompt = clampPrompt(String(job.prompt || ""), promptBudget(cfg));
       if (!prompt.trim()) { post({ type: "log", text: "claimed " + job.job_id.slice(0, 10) + "… but it carried no prompt — skipped" }); continue; }
-      const maxTok = Math.max(16, Math.min(Number(job.max_output_tokens) || 512, cfg.maxOutputCap));
+      // Output budget: enough for complete code/answers. The CPU engine scales
+      // with its thread mode — multithreaded wasm sustains ~450 tokens inside
+      // the claim window; single-thread gets less so answers still finish.
+      const engineCap = cfg.engineKind === "wllama"
+        ? ((typeof crossOriginIsolated !== "undefined" && crossOriginIsolated) ? 448 : 224)
+        : cfg.maxOutputCap;
+      const maxTok = Math.max(16, Math.min(Number(job.max_output_tokens) || 512, engineCap));
       const deadline = Number(job.claim_expires_at) > 0 ? Number(job.claim_expires_at) * 1000 : Date.now() + 120000;
       post({ type: "status", text: "Answering job " + job.job_id.slice(0, 10) + "… (" + prompt.length + " chars in, ≤" + maxTok + " tokens out)" });
       post({ type: "log", text: "claimed " + job.job_id.slice(0, 10) + "… tier=" + job.tier });
@@ -623,7 +629,7 @@ export default function ServeWorker() {
     wllamaWasm: WLLAMA_WASM,
     ggufUrl: MODELS.find((x) => x.id === modelId)?.gguf || MODELS[1].gguf,
     // CPU generation is slow: cap output harder so answers land inside the claim window.
-    maxOutputCap: engineKind === "wllama" ? 160 : 768,
+    maxOutputCap: 768,   // per-engine caps are decided in the core at claim time
     hardware: {
       engine: engineKind,
       model: modelId,

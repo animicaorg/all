@@ -145,23 +145,68 @@ def write_status(state: Dict, *, posted: bool = False, txid: str = "",
         print(f"status feed write failed (non-fatal): {e}")
 
 
-def mirror_paid_to_ledger(anchored: Dict[str, int]) -> None:
-    """Mirror cumulative on-chain payouts into the node's workers table
-    (earnings_paid_animica) so aicf.workerEarnings/workerStatus report REAL
-    paid figures and the Serve & Earn page can show pending vs paid.
-    Column-level UPDATE only — earnings_pending stays the node's own credit-only
-    ledger. Best-effort: a locked DB just means the next run mirrors it."""
+def mirror_paid_to_ledger(state: Dict) -> None:
+    """Mirror both ledgers into the node's DB so aicf.workerEarnings reports
+    the truth: workers.earnings_paid_animica := cumulative ON-CHAIN ANM
+    received, and anchor_ledger.weights_consumed := the weights already paid
+    for (the RPC derives earnings_unpaid = pending - weights_consumed from
+    it). Column-level / own-table writes only; best-effort — a locked DB just
+    means the next run mirrors it."""
+    received = state.get("received_nanm") or {}
+    consumed = state.get("anchored_nanm") or {}
     try:
         con = sqlite3.connect(JOBS_DB, timeout=5)
-        for addr, received in anchored.items():
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS anchor_ledger ("
+            "  address TEXT PRIMARY KEY,"
+            "  weights_consumed_animica REAL NOT NULL DEFAULT 0,"
+            "  received_animica REAL NOT NULL DEFAULT 0,"
+            "  updated REAL NOT NULL DEFAULT 0)"
+        )
+        for addr in set(received) | set(consumed):
+            r = int(received.get(addr, 0)) / NANM
+            w = int(consumed.get(addr, 0)) / NANM
             con.execute(
                 "UPDATE workers SET earnings_paid_animica=? WHERE address=?",
-                (received / NANM, addr),
+                (r, addr),
+            )
+            con.execute(
+                "INSERT INTO anchor_ledger (address, weights_consumed_animica, received_animica, updated) "
+                "VALUES (?,?,?,?) ON CONFLICT(address) DO UPDATE SET "
+                "  weights_consumed_animica=excluded.weights_consumed_animica,"
+                "  received_animica=excluded.received_animica,"
+                "  updated=excluded.updated",
+                (addr, w, r, time.time()),
             )
         con.commit()
         con.close()
     except Exception as e:  # noqa: BLE001
         print(f"paid-mirror failed (non-fatal, retries next run): {e}")
+
+
+def migrate_ledger_v2(state: Dict, earned: Dict[str, int]) -> None:
+    """One-time switch to WEIGHT-consuming payouts (operator decision 2026-08-24:
+    "make the payouts smoother — credit weights instead").
+
+    v1 credited what a provider RECEIVED (its share of the whole 75 ANM carve),
+    so a small provider paid one windfall was then overdrawn until it re-earned
+    ~75 ANM of weights — one big payout, then a long dry spell. v2 keeps two
+    ledgers: `anchored_nanm` now holds consumed WEIGHTS (drives outstanding, so
+    new inference is payable again the very next block) and `received_nanm`
+    holds cumulative ON-CHAIN ANM (drives the paid figure users see).
+
+    Migration: received := old anchored (those were received amounts); anchored
+    := min(old anchored, earned weights) — windfall recipients stop being
+    overdrawn, while never-paid backlogs keep their full queued weight."""
+    if state.get("ledger_v2"):
+        return
+    old_anchored = {k: int(v) for k, v in (state.get("anchored_nanm") or {}).items()}
+    state["received_nanm"] = dict(old_anchored)
+    state["anchored_nanm"] = {
+        addr: min(int(v), int(earned.get(addr, 0))) for addr, v in old_anchored.items()
+    }
+    state["ledger_v2"] = True
+    print(f"ledger migrated to v2 (weights-consuming) — {len(old_anchored)} addresses")
 
 
 def compute_outstanding(earned: Dict[str, int], state: Dict) -> List[Tuple[str, int]]:
@@ -195,12 +240,14 @@ def main() -> int:
 
     state = load_state()
     earned = read_earnings()
+    migrate_ledger_v2(state, earned)
     outstanding = compute_outstanding(earned, state)
 
     if not outstanding:
         print("no new inference since the last anchor — nothing to post "
               "(carve rolls to treasury, which is correct)")
-        mirror_paid_to_ledger(state.get("anchored_nanm", {}))
+        mirror_paid_to_ledger(state)
+        save_state(state)
         write_status(state)
         return 0
 
@@ -250,18 +297,20 @@ def main() -> int:
         state["last_anchor_txid"] = m_tx.group(0)
         print(f"anchor tx        : {m_tx.group(0)}")
 
-    # Credit what each provider will actually RECEIVE, not what it claimed.
-    # split_carve scales entries up to consume the whole carve, so a provider
-    # gets carve*amt/total — roughly 2.9x its claim at current volumes. Crediting
-    # the claim instead would leave most of the debt standing after it had in fact
-    # been paid, and the next run would pay it all over again.
+    # v2 (2026-08-24): consume the WEIGHTS, track the RECEIVED ANM separately.
+    # Consuming weights keeps payouts smooth — a provider is payable again the
+    # next block it earns anything. received_nanm is what actually landed
+    # on-chain (each provider's pro-rata share of the whole 75 ANM carve) and
+    # is what dashboards show as "paid out".
     anchored = state.setdefault("anchored_nanm", {})
+    received_ledger = state.setdefault("received_nanm", {})
     for addr, amt in outstanding:
         received = (CARVE_NANM * amt) // total
-        anchored[addr] = int(anchored.get(addr, 0)) + received
+        anchored[addr] = int(anchored.get(addr, 0)) + int(amt)
+        received_ledger[addr] = int(received_ledger.get(addr, 0)) + received
     state["last_anchor_ts"] = time.time()
     state["anchors"] = int(state.get("anchors", 0)) + 1
-    mirror_paid_to_ledger(anchored)
+    mirror_paid_to_ledger(state)
     write_status(state, posted=True, txid=str(state.get("last_anchor_txid") or ""),
                  claimants=len(outstanding), moved_nanm=CARVE_NANM)
     save_state(state)

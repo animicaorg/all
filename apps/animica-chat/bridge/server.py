@@ -622,8 +622,8 @@ BRIDGE_STREAM_FIRST_TOKEN_S = float(os.environ.get("BRIDGE_STREAM_FIRST_TOKEN_S"
 # node reports REAL workers online, wait like the patient homepage client
 # already does (it holds for 660s with keepalives); with no workers online the
 # short deadlines keep no-provider failures snappy.
-BRIDGE_SLOW_FIRST_TOKEN_S = float(os.environ.get("BRIDGE_SLOW_FIRST_TOKEN_S", "110"))
-BRIDGE_SLOW_CYCLE_ATTEMPT_S = float(os.environ.get("BRIDGE_SLOW_CYCLE_ATTEMPT_S", "60"))
+BRIDGE_SLOW_FIRST_TOKEN_S = float(os.environ.get("BRIDGE_SLOW_FIRST_TOKEN_S", "170"))
+BRIDGE_SLOW_CYCLE_ATTEMPT_S = float(os.environ.get("BRIDGE_SLOW_CYCLE_ATTEMPT_S", "90"))
 BRIDGE_SLOW_TOTAL_BUDGET_S = float(os.environ.get("BRIDGE_SLOW_TOTAL_BUDGET_S", "300"))
 _AICF_RPC_URL = (os.environ.get("ANIMICA_AICF_ENDPOINT")
                  or os.environ.get("AICF_URL")
