@@ -28,6 +28,26 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["appLabel"] = "Animica Wallet"
+    }
+
+    // Two published editions of the same codebase. `serve` is the
+    // "Animica Serve" wallet (distinct applicationId, so users can install
+    // it ALONGSIDE the standard wallet) — build it with:
+    //   flutter build apk --release --flavor serve \
+    //     --dart-define=ANIMICA_SERVE_WALLET=true
+    // The standard wallet now needs `--flavor standard` (flavors make the
+    // bare `flutter build apk` ambiguous).
+    flavorDimensions += "edition"
+    productFlavors {
+        create("standard") {
+            dimension = "edition"
+        }
+        create("serve") {
+            dimension = "edition"
+            applicationIdSuffix = ".serve"
+            manifestPlaceholders["appLabel"] = "Animica Serve"
+        }
     }
 
     buildTypes {

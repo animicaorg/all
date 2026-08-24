@@ -141,6 +141,21 @@ class AnimicaConfig {
     'pool.animica.org',
   ];
 
+  /// True in "Animica Serve" edition builds (gradle flavor `serve` +
+  /// `--dart-define=ANIMICA_SERVE_WALLET=true`): the app presents as the
+  /// Serve wallet — Serve & Earn is featured on Home and the app title
+  /// changes. The standard wallet ships with this false and is unchanged.
+  static const bool serveWallet =
+      bool.fromEnvironment('ANIMICA_SERVE_WALLET', defaultValue: false);
+
+  /// The browser Serve & Earn worker the Serve screen embeds. The page
+  /// reads its payout address from localStorage["anmServeAddress"], which
+  /// the Serve screen sets to the wallet's active account at document-start.
+  static const String serveUrl = String.fromEnvironment(
+    'ANIMICA_SERVE_URL',
+    defaultValue: 'https://pool.animica.org/serve',
+  );
+
   /// 1 ANM in nano-units.
   static final BigInt nanosPerAnm = BigInt.from(1000000000);
 

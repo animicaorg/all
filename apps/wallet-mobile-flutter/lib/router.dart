@@ -18,6 +18,7 @@ import 'screens/l2.dart';
 import 'screens/nfts.dart';
 import 'screens/receive.dart';
 import 'screens/send.dart';
+import 'screens/serve.dart';
 import 'screens/settings.dart';
 import 'screens/store/store_app_detail.dart';
 import 'screens/store/store_home.dart';
@@ -64,6 +65,9 @@ final router = GoRouter(
       builder: (c, s) =>
           BrowserScreen(initialUrl: s.uri.queryParameters['url']),
     ),
+    // Serve & Earn is pushed on top of the shell (like /games/play): it is
+    // a leave-it-running full-screen session, not a tab you flick past.
+    GoRoute(path: '/serve', builder: (c, s) => const ServeScreen()),
     GoRoute(path: '/send', builder: (c, s) => const SendScreen()),
     GoRoute(path: '/l2', builder: (c, s) => const L2Screen()),
     GoRoute(path: '/receive', builder: (c, s) => const ReceiveScreen()),

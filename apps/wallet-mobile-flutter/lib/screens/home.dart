@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../constants.dart';
 import '../services/price.dart';
 import '../services/rpc.dart';
 import '../state/wallet_state.dart';
@@ -19,7 +20,10 @@ class HomeScreen extends ConsumerWidget {
     final balance = ref.watch(balanceProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Animica Wallet')),
+      appBar: AppBar(
+          title: Text(AnimicaConfig.serveWallet
+              ? 'Animica Serve'
+              : 'Animica Wallet')),
       body: accountsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Vault error: $e')),
@@ -43,6 +47,24 @@ class HomeScreen extends ConsumerWidget {
                 _AddressCard(address: active.address, label: active.label),
                 const SizedBox(height: 16),
                 _ActionRow(),
+                const SizedBox(height: 12),
+                Card(
+                  // The Serve edition leads with serving; the standard
+                  // wallet gets the same card, unhighlighted.
+                  color: AnimicaConfig.serveWallet
+                      ? Theme.of(context).colorScheme.primaryContainer
+                      : null,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  child: ListTile(
+                    leading: const Icon(Icons.memory),
+                    title: const Text('Serve & Earn'),
+                    subtitle: const Text(
+                        'Turn this phone into an AI worker — earn ANM'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push('/serve'),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Card(
                   shape: RoundedRectangleBorder(
@@ -255,14 +277,10 @@ class _ActionRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        Expanded(
-          child: _ActionButton(
-            icon: Icons.add_card,
-            label: 'Buy',
-            onTap: () => context.push('/buy'),
-          ),
-        ),
-        const SizedBox(width: 12),
+        // "Buy" is intentionally omitted: the on-ramp/PayPal desk isn't live
+        // yet (buy.animica.org gateway 503s), so surfacing it only leads to a
+        // dead flow. Re-add once ONRAMP_ENABLED is armed. The /buy route +
+        // BuyScreen are kept in place for that.
         // Pair with animica.xyz (or any Animica site) by scanning the QR code
         // it shows — the mobile counterpart of the browser extension.
         Expanded(
