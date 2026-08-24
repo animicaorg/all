@@ -38,11 +38,13 @@ const WLLAMA_WASM = {
   "multi-thread/wllama.wasm": "https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.5/esm/multi-thread/wllama.wasm",
 };
 const TIERS = ["free", "standard"];
-const MODELS: { id: string; label: string; note: string; approxGB: number; gguf: string }[] = [
+const MODELS: { id: string; label: string; note: string; approxGB: number; gguf: string; ggufFallback?: string }[] = [
   { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 1.5B (default)", note: "~1.0 GB · best answers, needs ~3 GB free RAM", approxGB: 1.0,
-    gguf: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf" },
+    gguf: "/downloads/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    ggufFallback: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf" },
   { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 · 0.5B (light)", note: "~0.5 GB · for older / low-RAM phones", approxGB: 0.5,
-    gguf: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf" },
+    gguf: "/downloads/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    ggufFallback: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf" },
   { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", label: "Llama 3.2 · 1B", note: "~0.8 GB · alternative to Qwen", approxGB: 0.8,
     gguf: "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf" },
 ];
@@ -143,7 +145,10 @@ async function ensureEngine(cfg) {
     if (stopped) return;
     const w = new mod.Wllama(cfg.wllamaWasm);
     post({ type: "status", text: "Downloading the model (cached after the first time)…" });
-    await w.loadModelFromUrl(cfg.ggufUrl, {
+    const ggufUrl = String(cfg.ggufUrl || "").startsWith("/")
+      ? new URL(cfg.ggufUrl, cfg.pageHref || "https://pool.animica.org/serve").href
+      : cfg.ggufUrl;
+    const loadGguf = (url) => w.loadModelFromUrl(url, {
       n_ctx: 8192,
       useCache: true,
       progressCallback: (pr) => {
@@ -152,6 +157,13 @@ async function ensureEngine(cfg) {
                text: "Fetching " + (pr.loaded / 1e6).toFixed(0) + " / " + (pr.total / 1e6).toFixed(0) + " MB" });
       },
     });
+    try {
+      await loadGguf(ggufUrl);
+    } catch (e) {
+      if (!cfg.ggufFallbackUrl) throw e;
+      post({ type: "log", text: "mirror download failed — falling back to the upstream model host" });
+      await loadGguf(cfg.ggufFallbackUrl);
+    }
     engine = { kind: "wllama", w: w };
     const threaded = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
     post({ type: "log", text: "CPU engine ready · " + (threaded ? "multi-threaded (" + ((navigator.hardwareConcurrency || 4)) + " cores)" : "single-threaded (no cross-origin isolation)") });
@@ -708,6 +720,7 @@ export default function ServeWorker() {
     wllamaUrl: WLLAMA_URL,
     wllamaWasm: WLLAMA_WASM,
     ggufUrl: MODELS.find((x) => x.id === modelId)?.gguf || MODELS[1].gguf,
+    ggufFallbackUrl: MODELS.find((x) => x.id === modelId)?.ggufFallback || MODELS[1].ggufFallback || "",
     // CPU generation is slow: cap output harder so answers land inside the claim window.
     maxOutputCap: 2048,   // GPU engine ceiling; per-engine CPU caps decided in the core
     pageHref: window.location.href,

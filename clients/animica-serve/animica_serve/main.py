@@ -49,7 +49,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 DEFAULT_RPC = "https://rpc.animica.org/rpc"
 TIERS = ["free", "standard"]
@@ -64,12 +64,14 @@ CTX_TOKENS = 8192
 MODELS: Dict[str, Dict[str, Any]] = {
     "qwen2.5-1.5b": {
         "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "mirror": "https://pool.animica.org/downloads/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
         "file": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
         "approx_gb": 1.1,
         "note": "default — best answers, needs ~2 GB free RAM",
     },
     "qwen2.5-0.5b": {
         "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "mirror": "https://pool.animica.org/downloads/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         "file": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
         "approx_gb": 0.5,
         "note": "light — for older / low-RAM phones",
@@ -168,20 +170,39 @@ def resolve_model(spec: str) -> Path:
         return p
     if spec.startswith(("http://", "https://")):
         dest = model_dir() / spec.rsplit("/", 1)[-1]
-        url = spec
+        urls = [spec]
     else:
         m = MODELS.get(spec)
         if not m:
             raise SystemExit(f"unknown model {spec!r} — one of {', '.join(MODELS)} or a .gguf path/URL")
         dest = model_dir() / m["file"]
-        url = m["url"]
+        urls = [m["url"]] + ([m["mirror"]] if m.get("mirror") else [])
     if dest.exists():
         return dest
     log(f"downloading model → {dest}  (resumable; ctrl-C and rerun to continue)")
-    while not download(url, dest):
-        log("  …resuming")
-    log("model ready")
-    return dest
+    # Try each source in turn; a DNS failure on one host (some carriers /
+    # networks can't resolve huggingface.co — gaierror 'Name or service not
+    # known') fails over to the Animica-hosted mirror, resuming the same file.
+    last_err = None
+    for url in urls:
+        host = urllib.parse.urlparse(url).hostname or "?"
+        for attempt in range(4):
+            try:
+                while not download(url, dest):
+                    log("  …resuming")
+                log("model ready")
+                return dest
+            except (socket.gaierror, urllib.error.URLError, OSError, ConnectionError) as e:
+                last_err = e
+                reason = getattr(e, "reason", e)
+                if isinstance(reason, socket.gaierror) or isinstance(e, socket.gaierror):
+                    log(f"  DNS lookup failed for {host} — your network can't resolve it"
+                        + ("; trying the Animica mirror next" if url != urls[-1] else ""))
+                    break     # DNS won't heal in seconds — go to next source now
+                log(f"  download from {host} failed ({str(e)[:70]}) — retry {attempt + 1}/4")
+                time.sleep(4 + attempt * 5)
+    raise SystemExit(f"model download failed from every source ({last_err}) — "
+                     f"check your connection or pass --model /path/to/model.gguf")
 
 
 # ── Inference backends ───────────────────────────────────────────────────────
