@@ -18,6 +18,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:animica_wallet/services/emb1.dart';
 import 'package:animica_wallet/services/serve_worker_core.dart';
 
 String? _arg(List<String> args, String name) {
@@ -32,6 +33,9 @@ Future<void> main(List<String> args) async {
   final rpcUrl = _arg(args, 'rpc-url') ?? 'https://rpc.animica.org/rpc';
   final maxJobs = int.tryParse(_arg(args, 'max-jobs') ?? '3') ?? 3;
   final tier = _arg(args, 'tier') ?? 'free';
+  // Optional: an OpenAI-compatible /v1/embeddings endpoint (e.g. llama-server
+  // started with --embeddings on bge-small) — enables kind:"embed" jobs.
+  final embedUrl = _arg(args, 'embed-url');
 
   if (address == null || openaiUrl == null) {
     stderr.writeln(
@@ -80,6 +84,25 @@ Future<void> main(List<String> args) async {
     return '${msg is Map ? (msg['content'] ?? '') : ''}';
   }
 
+  Future<String> embed(List<String> inputs,
+      {required String model, required int dims}) async {
+    final req = await http.postUrl(Uri.parse(embedUrl!));
+    req.headers.contentType = ContentType.json;
+    req.write(jsonEncode({'model': 'embed', 'input': inputs}));
+    final res = await req.close().timeout(const Duration(minutes: 2));
+    final body = await res.transform(utf8.decoder).join();
+    if (res.statusCode != 200) {
+      throw Exception('embed endpoint HTTP ${res.statusCode}');
+    }
+    final data = (jsonDecode(body)['data'] as List)
+      ..sort((a, b) => (a['index'] as int).compareTo(b['index'] as int));
+    final vecs = [
+      for (final d in data)
+        l2norm([for (final x in (d['embedding'] as List)) (x as num).toDouble()])
+    ];
+    return encodeEmb1(model, vecs);
+  }
+
   core = ServeWorkerCore(
     rpcUrl: rpcUrl,
     address: address,
@@ -91,8 +114,11 @@ Future<void> main(List<String> args) async {
       'platform': Platform.operatingSystem,
       'cores': Platform.numberOfProcessors,
       'device_memory_gb': 0,
+      'kinds': embedUrl == null ? ['chat'] : ['chat', 'embed'],
+      'concurrency': 1,
     },
     generate: generate,
+    embed: embedUrl == null ? null : embed,
     onEvent: (e) {
       print('[${DateTime.now().toIso8601String().substring(11, 19)}] $e');
       if (e.type == 'job') {

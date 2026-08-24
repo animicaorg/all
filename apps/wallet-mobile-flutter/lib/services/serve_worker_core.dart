@@ -92,6 +92,7 @@ class ServeWorkerCore {
     this.promptBudgetChars = 7500, // the page's non-wllama (GPU) budget
     this.engineCap = 2048, // the page's GPU-engine output ceiling
     this.interrupt,
+    this.embed,
   }) : hardware = hardware ?? const {};
 
   final String rpcUrl;
@@ -109,6 +110,14 @@ class ServeWorkerCore {
   /// claim deadline, and on stop().
   final void Function()? interrupt;
 
+  /// Optional embeddings capability. Given the job's input strings, returns
+  /// the finished EMB1 result line (see services/emb1.dart) — the host owns
+  /// the engine and the encoding so this core stays package-free. When null,
+  /// `kind: "embed"` jobs are never claimed as ours (advertise it in
+  /// `hardware.kinds` only when this is set).
+  final Future<String> Function(List<String> inputs,
+      {required String model, required int dims})? embed;
+
   bool _stopped = false;
   bool _paused = false;
   bool get running => _started && !_stopped;
@@ -125,6 +134,15 @@ class ServeWorkerCore {
     if (_started) return Future.value();
     _started = true;
     return _run();
+  }
+
+  /// Hand a claim back when nothing will be submitted, so the job re-offers
+  /// immediately and this worker's dispatch slot frees instead of both
+  /// waiting out the lease. Best-effort; older nodes answer method-not-found.
+  Future<void> _releaseClaim(String jobId) async {
+    try {
+      await _rpc('aicf.workerReleaseClaim', {'address': address, 'job_id': jobId});
+    } catch (_) {}
   }
 
   void pause() => _paused = true;
@@ -326,6 +344,48 @@ class ServeWorkerCore {
         }
         delay = 2500;
         final jobId = '${job['job_id']}';
+        final spec = job['spec'];
+        if (embed != null &&
+            spec is Map &&
+            spec['kind'] == 'embed' &&
+            spec['inputs'] is List &&
+            (spec['inputs'] as List).isNotEmpty) {
+          // Deterministic work: no race, no retry pass, no 32k cap (a
+          // 64×384 float16 payload is ~65 KB of base64).
+          final inputs = (spec['inputs'] as List).map((e) => '$e').toList();
+          onEvent(ServeEvent('status',
+              text: 'Embedding ${inputs.length} text(s) for job ${_short(jobId)}…'));
+          final t0 = DateTime.now();
+          String line;
+          try {
+            line = await embed!(inputs,
+                model: '${spec['model'] ?? 'bge-small-en-v1.5'}',
+                dims: _num(spec['dims'] ?? 384).toInt());
+          } catch (e) {
+            onEvent(ServeEvent('log', text: 'embedding failed: ${_msg(e, 80)}'));
+            await _releaseClaim(jobId);
+            continue;
+          }
+          if (line.isEmpty) {
+            await _releaseClaim(jobId);
+            continue;
+          }
+          try {
+            final r = await _rpc('aicf.workerSubmitResult',
+                {'address': address, 'job_id': jobId, 'text': line});
+            final rm = r is Map ? r : const {};
+            final won = rm['accepted'] != false;
+            final secs =
+                (DateTime.now().difference(t0).inMilliseconds / 1000).toStringAsFixed(1);
+            onEvent(ServeEvent('log',
+                text:
+                    '${won ? 'embedded' : 'embed rejected for'} ${_short(jobId)}… (${inputs.length} vectors, ${secs}s)${rm['reason'] != null ? ' ${rm['reason']}' : ''}'));
+            onEvent(ServeEvent('job', won: won, tokens: inputs.length));
+          } catch (e) {
+            onEvent(ServeEvent('log', text: 'embed submit failed: ${_msg(e, 80)}'));
+          }
+          continue;
+        }
         final rawPrompt = '${job['prompt'] ?? ''}';
         var prompt = clampPrompt(rawPrompt, promptBudgetChars);
         final findings = await _webLookup(rawPrompt);
@@ -388,6 +448,7 @@ class ServeWorkerCore {
             onEvent(ServeEvent('log',
                 text:
                     'no text produced for ${_short(jobId)}… — nothing submitted'));
+            await _releaseClaim(jobId);
             break;
           }
           dynamic r;

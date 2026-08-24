@@ -44,6 +44,16 @@ class ServeModel {
     '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e',
   );
   static const all = [qwen05, qwen15];
+
+  /// Embedding model (bge-small-en-v1.5, 384-dim). Tiny; runs beside the
+  /// chat model in its own llama-server with --embeddings.
+  static const bge = ServeModel(
+    'bge-small-en-v1.5',
+    'bge-small (embeddings, 37 MB)',
+    'bge-small-en-v1.5-q8_0.gguf',
+    36806944,
+    'ec38e8da142596baa913124ae50550de284b6916bf59577ef2f0cb9660c2f514',
+  );
 }
 
 class EngineStatus {
@@ -63,7 +73,93 @@ class NativeEngine {
   String _detail = '';
   final List<String> _log = [];
 
+  Process? _embedProc;
+  int? _embedPort;
+
   String? get baseUrl => _port == null ? null : 'http://127.0.0.1:$_port';
+  String? get embedBaseUrl =>
+      _embedPort == null ? null : 'http://127.0.0.1:$_embedPort';
+
+  /// Start the embeddings server (bge) if it isn't running. GPU offload is
+  /// attempted first like the chat server; a 33M-param BERT is fast enough
+  /// on CPU that the fallback is barely noticeable.
+  Future<String> startEmbed() async {
+    if (_embedPort != null && _embedProc != null) return embedBaseUrl!;
+    final bin = await binary();
+    if (bin == null) throw StateError('no native engine in this build');
+    final mf = await modelFileIfReady(ServeModel.bge);
+    if (mf == null) throw StateError('embedding model not downloaded');
+    for (final ngl in const [999, 0]) {
+      final sock = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = sock.port;
+      await sock.close();
+      final proc = await Process.start(bin.path, [
+        '-m', mf.path,
+        '--host', '127.0.0.1',
+        '--port', '$port',
+        '-ngl', '$ngl',
+        '--embeddings',
+        '--pooling', 'mean',
+        '-c', '512',
+        '-b', '512',
+        '--threads', '2',
+        '--no-webui',
+      ], environment: {'HOME': mf.parent.path, 'TMPDIR': mf.parent.path});
+      proc.stdout.drain<void>();
+      proc.stderr.drain<void>();
+      var exited = false;
+      unawaited(proc.exitCode.then((_) => exited = true));
+      final deadline = DateTime.now().add(const Duration(seconds: 60));
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 2);
+      try {
+        while (DateTime.now().isBefore(deadline) && !exited) {
+          try {
+            final req = await client
+                .getUrl(Uri.parse('http://127.0.0.1:$port/health'));
+            final res = await req.close();
+            await res.drain<void>();
+            if (res.statusCode == 200) {
+              _embedProc = proc;
+              _embedPort = port;
+              return embedBaseUrl!;
+            }
+          } catch (_) {/* not up yet */}
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+        }
+      } finally {
+        client.close(force: true);
+      }
+      proc.kill(ProcessSignal.sigkill);
+    }
+    throw StateError('embedding engine failed to start');
+  }
+
+  /// Vectors for [inputs] from the embed server (unit-normalised by the
+  /// server: --embd-normalize defaults to euclidean).
+  Future<List<List<double>>> embed(List<String> inputs) async {
+    final base = await startEmbed();
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final req = await client.postUrl(Uri.parse('$base/v1/embeddings'));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode({'input': inputs, 'model': 'bge'})));
+      final res = await req.close();
+      final body = await res.transform(utf8.decoder).join();
+      if (res.statusCode != 200) {
+        throw HttpException('embed engine HTTP ${res.statusCode}');
+      }
+      final data = (jsonDecode(body)['data'] as List)
+        ..sort((a, b) => (a['index'] as int).compareTo(b['index'] as int));
+      return [
+        for (final d in data)
+          [for (final x in (d['embedding'] as List)) (x as num).toDouble()]
+      ];
+    } finally {
+      client.close(force: true);
+    }
+  }
   List<String> get recentLog =>
       _log.length <= 40 ? List.of(_log) : _log.sublist(_log.length - 40);
 
@@ -238,6 +334,16 @@ class NativeEngine {
   }
 
   Future<void> stop() async {
+    final ep = _embedProc;
+    _embedProc = null;
+    _embedPort = null;
+    if (ep != null) {
+      ep.kill();
+      await ep.exitCode.timeout(const Duration(seconds: 3), onTimeout: () {
+        ep.kill(ProcessSignal.sigkill);
+        return -1;
+      });
+    }
     final p = _proc;
     _proc = null;
     _port = null;

@@ -31,6 +31,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../constants.dart';
+import '../services/emb1.dart';
 import '../services/native_engine.dart';
 import '../services/serve_worker_core.dart';
 import '../state/wallet_state.dart';
@@ -167,6 +168,22 @@ class _ServeScreenState extends ConsumerState<ServeScreen> {
     } catch (_) {}
   }
 
+  /// Embed jobs: the 37 MB bge model downloads on first use (kept beside
+  /// the chat model), its own llama-server starts lazily, and the result
+  /// is handed back to the core already encoded as an EMB1 line.
+  Future<String> _embed(List<String> inputs,
+      {required String model, required int dims}) async {
+    if (await _engine.modelFileIfReady(ServeModel.bge) == null) {
+      if (mounted) setState(() => _pushEvent('Fetching the embedding model (37 MB)…'));
+      await _engine.ensureModel(ServeModel.bge, (_) {});
+    }
+    final vecs = await _engine.embed(inputs);
+    if (vecs.length != inputs.length) {
+      throw StateError('engine returned ${vecs.length} vectors for ${inputs.length} inputs');
+    }
+    return encodeEmb1(ServeModel.bge.id, [for (final v in vecs) l2norm(v)]);
+  }
+
   void _onCoreEvent(ServeEvent e) {
     if (!mounted) return;
     setState(() {
@@ -234,8 +251,11 @@ class _ServeScreenState extends ConsumerState<ServeScreen> {
           'model': _model.file,
           'platform': 'android',
           'cores': Platform.numberOfProcessors,
+          'kinds': ['chat', 'embed'],
+          'concurrency': 1,
         },
         interrupt: _abortInflight,
+        embed: _embed,
       );
       _core = core;
       unawaited(core.start().whenComplete(() {

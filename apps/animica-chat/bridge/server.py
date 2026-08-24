@@ -991,6 +991,11 @@ def _stub_head(text: Optional[str]) -> bool:
 
 app = FastAPI(title="Animica Chat AICF Bridge", version="0.1.0")
 
+# /v1/embeddings — swarm-served bge-small with a local-MiniLM fallback; lives
+# in its own module because it owns a separate provider/wallet object.
+from embeddings_route import install_embeddings_route  # noqa: E402
+install_embeddings_route(app)
+
 
 # ---------------------------------------------------------------------------
 # Lazy global provider

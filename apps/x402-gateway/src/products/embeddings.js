@@ -150,7 +150,10 @@ function createEmbeddingsProduct({ cfg, fetchImpl = fetch, now = Date.now }) {
         status: 200,
         bodyObj: {
           product: 'embed_batch',
-          model: MODEL_ID,
+          // The service names the model that really produced the vectors:
+          // bge-small-en-v1.5 from the worker swarm, or the local MiniLM
+          // fallback. The two are different vector spaces — never mix them.
+          model: (out && typeof out.model === 'string' && out.model) || MODEL_ID,
           dimensions: Array.isArray(vectors[0]) ? vectors[0].length : DIMS,
           count: vectors.length,
           vectors,
@@ -161,7 +164,7 @@ function createEmbeddingsProduct({ cfg, fetchImpl = fetch, now = Date.now }) {
             similarity: 'vectors are unit-normalised, so cosine similarity is a plain dot product',
             order: 'vectors[i] corresponds to texts[i]; the count is checked before delivery so they cannot misalign',
             model:
-              'all-MiniLM-L6-v2 running locally on the gateway host. Small and fast, not a frontier model — stated so you can judge fitness rather than assume it.',
+              'bge-small-en-v1.5 (384-d) computed by Animica network workers when one is serving embeddings, otherwise all-MiniLM-L6-v2 locally on the gateway host — the `model` field says which. Small, fast models, not frontier — stated so you can judge fitness rather than assume it.',
           },
         },
       };

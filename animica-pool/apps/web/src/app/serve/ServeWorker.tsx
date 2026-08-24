@@ -73,6 +73,86 @@ const post = (m) => __POST__(m);
 let stopped = false;
 let paused = false;
 let engine = null;
+// ── embeddings (kind: "embed" jobs) ──────────────────────────────────────
+// A second, tiny wllama instance with bge-small (37 MB) — loaded on the first
+// embed job, whichever chat engine is in use. Deterministic work, so the
+// result is one EMB1 line the bridge verifies by sha256 (no race, no retry).
+let embedder = null;
+async function ensureEmbedder() {
+  if (embedder) return embedder;
+  if (typeof document === "undefined") {
+    globalThis.document = { baseURI: cfg.pageHref || "https://pool.animica.org/serve", currentScript: null };
+  }
+  post({ type: "log", text: "loading the embedding model (37 MB, cached after the first time)…" });
+  const mod = await import(cfg.wllamaUrl);
+  const w = new mod.Wllama(cfg.wllamaWasm);
+  const u = String(cfg.embedGgufUrl || "");
+  const url = u.startsWith("/") ? new URL(u, cfg.pageHref || "https://pool.animica.org/serve").href : u;
+  await w.loadModelFromUrl(url, { n_ctx: 512, n_batch: 512, embeddings: true, pooling_type: "mean", useCache: true });
+  embedder = w;
+  post({ type: "log", text: "embedding engine ready" });
+  return w;
+}
+function l2norm(v) {
+  let s = 0;
+  for (let i = 0; i < v.length; i++) s += v[i] * v[i];
+  s = Math.sqrt(s) || 1;
+  const o = new Array(v.length);
+  for (let i = 0; i < v.length; i++) o[i] = v[i] / s;
+  return o;
+}
+async function embedOne(w, text) {
+  // wllama's createEmbedding has had two shapes across versions: OpenAI-style
+  // ({input}) → {data:[{embedding}]}, and (text) → number[]. Accept both.
+  let r = null;
+  try { r = await w.createEmbedding({ input: text }); } catch (e) { r = null; }
+  if (r && r.data && r.data[0] && Array.isArray(r.data[0].embedding)) return r.data[0].embedding;
+  if (Array.isArray(r) && typeof r[0] === "number") return r;
+  r = await w.createEmbedding(text);
+  if (Array.isArray(r) && typeof r[0] === "number") return r;
+  if (r && r.data && r.data[0] && Array.isArray(r.data[0].embedding)) return r.data[0].embedding;
+  throw new Error("embedding engine returned no vector");
+}
+async function embedTexts(texts) {
+  const w = await ensureEmbedder();
+  const out = [];
+  for (let i = 0; i < texts.length; i++) {
+    if (stopped) throw new Error("stopped");
+    out.push(l2norm(await embedOne(w, String(texts[i]).slice(0, 2000))));
+  }
+  return out;
+}
+function f32tof16(val) {
+  const f32 = new Float32Array(1);
+  const u32 = new Uint32Array(f32.buffer);
+  f32[0] = val;
+  const x = u32[0];
+  const sign = (x >>> 16) & 0x8000;
+  let exp = (x >>> 23) & 0xff;
+  let mant = x & 0x7fffff;
+  if (exp === 0xff) return sign | 0x7c00 | (mant ? 0x200 : 0);
+  exp = exp - 127 + 15;
+  if (exp >= 0x1f) return sign | 0x7c00;
+  if (exp <= 0) {
+    if (exp < -10) return sign;
+    mant = (mant | 0x800000) >>> (1 - exp);
+    return sign | ((mant + 0x1000) >>> 13);
+  }
+  return sign | (exp << 10) | ((mant + 0x1000) >>> 13);
+}
+async function encodeEmb1(model, vecs) {
+  const dims = vecs.length ? vecs[0].length : 0;
+  const bytes = new Uint8Array(vecs.length * dims * 2);
+  const dv = new DataView(bytes.buffer);
+  let o = 0;
+  for (let i = 0; i < vecs.length; i++) for (let j = 0; j < dims; j++) { dv.setUint16(o, f32tof16(vecs[i][j]), true); o += 2; }
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  const dig = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  let hex = "";
+  for (let i = 0; i < dig.length; i++) hex += (dig[i] < 16 ? "0" : "") + dig[i].toString(16);
+  return "EMB1 " + model + " " + dims + " f16 " + btoa(bin) + " " + hex;
+}
 export function __control(msg) {
   if (msg === "stop") { stopped = true; try { engine && engine.e && engine.e.interruptGenerate && engine.e.interruptGenerate(); } catch (e) {} }
   if (msg === "pause") { paused = true; }
@@ -299,6 +379,32 @@ export async function run(cfg) {
         continue;
       }
       delay = 2500;
+      const spec = (job.spec && typeof job.spec === "object") ? job.spec : {};
+      if (spec.kind === "embed" && Array.isArray(spec.inputs) && spec.inputs.length) {
+        const inputs = spec.inputs.map(String);
+        post({ type: "status", text: "Embedding " + inputs.length + " text" + (inputs.length === 1 ? "" : "s") + " for job " + job.job_id.slice(0, 10) + "…" });
+        const te0 = Date.now();
+        let line = "";
+        try {
+          line = await encodeEmb1(String(spec.model || cfg.embedModel || "bge-small-en-v1.5"), await embedTexts(inputs));
+        } catch (e) {
+          post({ type: "log", text: "embedding failed: " + String(e && e.message || e).slice(0, 80) });
+        }
+        if (!line || stopped) {
+          rpc(cfg.rpcUrl, "aicf.workerReleaseClaim", { address: cfg.address, job_id: job.job_id }).catch(() => {});
+          continue;
+        }
+        try {
+          // No 32k slice here: 64 vectors of float16 base64 is ~65 KB by design.
+          const r = await rpc(cfg.rpcUrl, "aicf.workerSubmitResult", { address: cfg.address, job_id: job.job_id, text: line });
+          const won = !(r && r.accepted === false);
+          post({ type: "log", text: (won ? "embedded " : "embed rejected for ") + job.job_id.slice(0, 10) + "… (" + inputs.length + " vectors, " + ((Date.now() - te0) / 1000).toFixed(1) + "s)" + (r && r.reason ? " " + r.reason : "") });
+          post({ type: "job", won: won, tokens: inputs.length, tokS: null });
+        } catch (e) {
+          post({ type: "log", text: "embed submit failed: " + String(e && e.message || e).slice(0, 80) });
+        }
+        continue;
+      }
       let prompt = clampPrompt(String(job.prompt || ""), promptBudget(cfg));
       const findings = await webLookup(cfg, String(job.prompt || ""));
       if (findings) prompt = clampPrompt(findings + prompt, promptBudget(cfg) + 600);
@@ -338,7 +444,13 @@ export async function run(cfg) {
           clearTimeout(watchdog);
         }
         if (stopped) break;
-        if (!text.trim()) { post({ type: "log", text: "no text produced for " + job.job_id.slice(0, 10) + "… — nothing submitted" }); break; }
+        if (!text.trim()) {
+          post({ type: "log", text: "no text produced for " + job.job_id.slice(0, 10) + "… — nothing submitted" });
+          // Hand the claim back so the job re-offers now and this worker's
+          // dispatch slot frees (otherwise both wait out the lease).
+          rpc(cfg.rpcUrl, "aicf.workerReleaseClaim", { address: cfg.address, job_id: job.job_id }).catch(() => {});
+          break;
+        }
         let r = null;
         try {
           r = await rpc(cfg.rpcUrl, "aicf.workerSubmitResult", { address: cfg.address, job_id: job.job_id, text: text.slice(0, 32000) });
@@ -737,6 +849,9 @@ export default function ServeWorker() {
     maxOutputCap: 2048,   // GPU engine ceiling; per-engine CPU caps decided in the core
     pageHref: window.location.href,
     searchUrl: "https://animica.dev/v1/web-search",
+    // kind:"embed" jobs — bge-small-en-v1.5 from the pool's own mirror.
+    embedGgufUrl: "/downloads/models/bge-small-en-v1.5-q8_0.gguf",
+    embedModel: "bge-small-en-v1.5",
     hardware: {
       engine: engineKind,
       model: modelId,
@@ -744,6 +859,10 @@ export default function ServeWorker() {
       platform: (navigator as any).userAgentData?.platform || navigator.platform || "",
       cores: navigator.hardwareConcurrency || 0,
       device_memory_gb: (navigator as any).deviceMemory || 0,
+      // Dispatch-mode routing hints: which job kinds this worker handles and
+      // how many it will hold at once.
+      kinds: ["chat", "embed"],
+      concurrency: 1,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [address, modelId, engineKind]);

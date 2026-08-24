@@ -561,13 +561,35 @@ def _warm_loop() -> None:
     the cold-start wait lives — off the user path); records the first live one
     and holds the breaker closed. Re-pings before a worker idles out."""
     import time
+    # Default: LOOK, don't poke. The old 1-token "ping" every 70 s created
+    # ~1,100 real AICF jobs a day (93% of the network's job volume), each one
+    # raced across every online worker and paid from the block carve — a
+    # heartbeat masquerading as demand. aicf.workerCount answers the same
+    # question ("is anyone serving?") for free. ANIMICA_ADVISOR_WARM_PING=1
+    # restores the ping for a node that has no workerCount.
+    use_ping = os.environ.get("ANIMICA_ADVISOR_WARM_PING", "0").strip() in ("1", "true", "on")
+    rpc_url = os.environ.get("ANIMICA_ADVISOR_RPC_URL", "https://rpc.animica.org/rpc")
     while True:
         live = None
-        for model in _AI_MODELS:
-            if _try_model(model, [{"role": "user", "content": "ping"}],
-                          timeout=_WARM_TIMEOUT, max_tokens=1):
-                live = model
-                break
+        if use_ping:
+            for model in _AI_MODELS:
+                if _try_model(model, [{"role": "user", "content": "ping"}],
+                              timeout=_WARM_TIMEOUT, max_tokens=1):
+                    live = model
+                    break
+        else:
+            try:
+                req = urllib.request.Request(
+                    rpc_url, method="POST",
+                    data=json.dumps({"jsonrpc": "2.0", "id": 1,
+                                     "method": "aicf.workerCount", "params": {}}).encode(),
+                    headers={"content-type": "application/json"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    res = json.loads(r.read().decode()).get("result") or {}
+                if int(res.get("online") or 0) >= 1 and _AI_MODELS:
+                    live = _AI_MODELS[0]
+            except Exception:  # noqa: BLE001 — treat as "nobody serving"
+                live = None
         if live:
             _LIVE["model"] = live
             _BREAKER["open_until"] = 0.0

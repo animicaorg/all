@@ -35,6 +35,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -153,6 +154,16 @@ _TIER_LATENCY_MS: Dict[str, int] = {
 _WORKER_CLAIM_GRACE_S = float(
     os.environ.get("ANIMICA_AICF_WORKER_CLAIM_GRACE_S", "30.0")
 )
+# After a worker CLAIMS, how long it may take to actually deliver the result
+# before the stub ships. Phones and other CPU workers (the pool.animica.org/serve
+# browser lane, animica-serve on Termux) legitimately take 1-3 minutes for a chat
+# completion — the old behavior stubbed a CLAIMED job after one extra 30s window,
+# which threw away nearly every phone answer. The wait is poll-checked, so a fast
+# worker's completion still returns immediately; only a genuinely wedged worker
+# runs out the clock. Override with ANIMICA_AICF_WORKER_COMPLETE_GRACE_S.
+_WORKER_COMPLETE_GRACE_S = float(
+    os.environ.get("ANIMICA_AICF_WORKER_COMPLETE_GRACE_S", "480.0")
+)
 # How long a worker lease is valid; if a worker claims and goes silent,
 # the job becomes reclaimable after this many seconds. The default is
 # generous so a miner downloading multi-GB model weights on its first
@@ -169,6 +180,70 @@ _WORKER_LEASE_S = float(
 _REPLICAS_DEFAULT = max(1, int(
     os.environ.get("ANIMICA_AICF_REPLICAS", "3") or "3"
 ))
+# Best-of-N settlement (2026-08-24): jobs are no longer first-submit-wins.
+# Every job fans out to as many online providers as possible (_dyn_replicas),
+# submits collect as scored CANDIDATES, and the highest-quality answer wins at
+# settle. Low-scoring miners are told (`retry_suggested`) and may regenerate +
+# resubmit — a better attempt replaces their candidate. Tiny probe jobs
+# (max_output_tokens <= _BESTOF_MIN_TOKENS) keep the first-wins latency path.
+_BESTOF_SETTLE_S = float(os.environ.get("ANIMICA_AICF_BESTOF_SETTLE_S", "20.0"))
+# A strong answer (score >= GOOD) may settle at SETTLE_S; otherwise keep
+# waiting for slower (phone) candidates until every active claimant answered
+# or SETTLE_MAX_S passes. "Shouldn't be about winner-first."
+_BESTOF_SETTLE_MAX_S = float(os.environ.get("ANIMICA_AICF_BESTOF_SETTLE_MAX_S", "90.0"))
+_BESTOF_GOOD_SCORE = float(os.environ.get("ANIMICA_AICF_BESTOF_GOOD_SCORE", "30.0"))
+_BESTOF_MIN_TOKENS = int(os.environ.get("ANIMICA_AICF_BESTOF_MIN_TOKENS", "48"))
+_REPLICAS_MAX = max(_REPLICAS_DEFAULT, int(
+    os.environ.get("ANIMICA_AICF_REPLICAS_MAX", "10") or "10"
+))
+_ONLINE_WINDOW_S = 180.0
+
+# Dispatch mode (2026-08-24, opt-in via ANIMICA_AICF_DISPATCH=1). Under the
+# default race mode every job fans out to every online worker and all but one
+# answer is discarded, so adding workers dilutes instead of adding throughput.
+# Dispatch picks K per job CLASS (spec.kind): deterministic work (embed /
+# classify / batch, and the 1-token keep-warm probes) goes to exactly one
+# worker; open chat keeps a small quality race (CHAT_K). Claims prefer idle,
+# historically-fast workers (a slow worker DEFERS a fresh K=1 job for DEFER_S
+# when a ≥3x-faster idle one exists — a delay, never a denial), one job per
+# worker unless it advertises hardware.concurrency, and a K=1 answer that
+# scores under the quality floor widens the job to K=2 instead of settling
+# unopposed. With the flag off every branch below is skipped and the store
+# behaves byte-for-byte as before; revert = restart without the env.
+_DISPATCH = (
+    os.environ.get("ANIMICA_AICF_DISPATCH", "0").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+_DISPATCH_CHAT_K = max(1, min(16, int(
+    os.environ.get("ANIMICA_AICF_DISPATCH_CHAT_K", "2") or "2"
+)))
+_DISPATCH_DEFER_S = float(os.environ.get("ANIMICA_AICF_DISPATCH_DEFER_S", "6"))
+_DISPATCH_MAX_SHARE = float(os.environ.get("ANIMICA_AICF_DISPATCH_MAX_SHARE", "0.6"))
+_DISPATCH_K1_LEASE_FLOOR_S = max(1.0, float(
+    os.environ.get("ANIMICA_AICF_DISPATCH_K1_LEASE_S", "60")
+))
+# K per job kind when the submitter doesn't pass spec.replicas. Unknown kinds
+# race like chat.
+_DISPATCH_KIND_K: Dict[str, int] = {"embed": 1, "classify": 1, "batch": 1}
+_DISPATCH_DEFAULT_KIND = "chat"
+# "Idle" for routing decisions = polled within this window.
+_DISPATCH_IDLE_WINDOW_S = 60.0
+# A worker whose seconds-per-job EMA is under this is never deferred in
+# favour of a "3x faster" peer — at that speed the difference is noise and
+# the deferral would only add latency.
+_DISPATCH_DEFER_MIN_EMA_S = 5.0
+_KIND_RE = re.compile(r"^[a-z0-9_\-]{1,32}$")
+
+
+def _job_kind(spec: Mapping[str, Any]) -> str:
+    """spec.kind (or spec.task) normalized; anything unrecognizable → chat."""
+    raw = spec.get("kind")
+    if raw is None:
+        raw = spec.get("task")
+    if raw is None:
+        return _DISPATCH_DEFAULT_KIND
+    k = str(raw).strip().lower()
+    return k if _KIND_RE.match(k) else _DISPATCH_DEFAULT_KIND
 
 # Pipeline (model-parallel) defaults. When at least this many workers
 # advertise the "pipeline" tier, new jobs default to pipeline mode and
@@ -231,6 +306,13 @@ class _JobRecord:
     replicas_wanted: int = 1
     claims: List[Dict[str, Any]] = field(default_factory=list)
     winner_address: Optional[str] = None
+    # Dispatch mode. `kind` is the job class (chat|embed|classify|batch|…);
+    # `k_wanted` is the dispatch-chosen K (0 = legacy job, use
+    # replicas_wanted); `offers` lists every address ever offered the job so
+    # a re-offer after a dead K=1 claimant can skip it.
+    kind: str = "chat"
+    k_wanted: int = 0
+    offers: List[str] = field(default_factory=list)
     # Pipeline (model-parallel) mode. When mode == "pipeline", `stages`
     # holds an ordered list of stage records that chain together to
     # produce the final result. Each stage dict is:
@@ -281,6 +363,16 @@ class _WorkerInfo:
     # trip through the node). Empty string means "node-proxy only" —
     # see aicf.pipelineGetUpstreamActivation for that path.
     direct_endpoint: str = ""
+    # Dispatch-mode routing signals. EMAs (0 = no data yet) are updated on
+    # every accepted submit; `inflight` is the live-claim count as last
+    # maintained by the store (telemetry — the claim cap is computed from
+    # the jobs table so it self-heals); `concurrency`/`kinds` come from
+    # workerRegister's hardware object.
+    ema_secs: float = 0.0
+    ema_score: float = 0.0
+    inflight: int = 0
+    concurrency: int = 1
+    kinds: List[str] = field(default_factory=lambda: ["chat"])
 
 
 class _AicfJobStore:
@@ -310,6 +402,14 @@ class _AicfJobStore:
             return None
         now = time.time()
         with self._lock:
+            # Dispatch: non-chat kinds only go to workers advertising them.
+            # (The in-memory store carries K-at-submit + kind filtering only;
+            # speed routing / leases / fairness are SQLite-store features.)
+            worker_kinds: List[str] = ["chat"]
+            if _DISPATCH:
+                _w = self._workers.get(worker_addr)
+                if _w is not None and _w.kinds:
+                    worker_kinds = list(_w.kinds)
             for job in self._jobs.values():
                 if job.state in {"completed", "failed"}:
                     continue
@@ -318,6 +418,9 @@ class _AicfJobStore:
                 # Pipeline jobs are claimed stage-by-stage via
                 # pipelineClaimStage, not as a single race winner.
                 if job.mode == "pipeline":
+                    continue
+                if _DISPATCH and (job.kind or "chat") != "chat" \
+                        and job.kind not in worker_kinds:
                     continue
                 # Drop expired claims so a slow worker doesn't lock out
                 # the slot indefinitely. Note this mutates the live job.
@@ -655,6 +758,47 @@ class _AicfJobStore:
             if w is not None:
                 w.last_seen = time.time()
 
+    def sign_off_worker(self, address: str) -> bool:
+        """Tab-closed / ctrl-C sign-off: drop the worker from every ONLINE view
+        without touching its earnings ledger (the settlement anchors pay from
+        that — deleting the row would wipe unpaid IOUs). last_seen=0 removes it
+        from workerCount online windows; tiers=["offline"] removes it from
+        estimateJobCost provider counts (whose `not tiers` means ALL tiers)."""
+        with self._lock:
+            w = self._workers.get(address)
+            if w is None:
+                return False
+            w.last_seen = 0.0
+            w.tiers = ["offline"]
+            w.inflight = 0
+            return True
+
+    def release_claim(self, job_id: str, address: str) -> tuple[bool, Optional[str]]:
+        """Worker gives a claim back (generation failed, nothing to submit).
+        See _SqliteAicfJobStore.release_claim for the contract."""
+        now = time.time()
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False, "unknown_job"
+            if job.state in {"completed", "failed"}:
+                return False, "already_terminal"
+            mine = next((c for c in job.claims
+                         if c.get("address") == address and not c.get("done")), None)
+            if mine is None:
+                return False, "no_claim"
+            if float(mine.get("expires_at") or 0.0) <= now:
+                return False, "expired"
+            job.claims = [c for c in job.claims if c is not mine]
+            if address not in job.offers:
+                job.offers.append(address)
+            if not any(float(c.get("expires_at") or 0.0) > now for c in job.claims):
+                job.state = "pending"
+            w = self._workers.get(address)
+            if w is not None:
+                w.inflight = max(0, int(w.inflight or 0) - 1)
+            return True, None
+
     def all_workers(self) -> List[_WorkerInfo]:
         with self._lock:
             return list(self._workers.values())
@@ -702,7 +846,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     mode TEXT NOT NULL DEFAULT 'race',
     stages_json TEXT NOT NULL DEFAULT '[]',
     decode_inbox_json TEXT NOT NULL DEFAULT '[]',
-    decode_step_cursor INTEGER NOT NULL DEFAULT 0
+    decode_step_cursor INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'chat',
+    k_wanted INTEGER NOT NULL DEFAULT 0,
+    offers_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_state_tier ON jobs(state, tier);
 CREATE INDEX IF NOT EXISTS idx_jobs_claim_owner ON jobs(claim_owner);
@@ -721,7 +868,12 @@ CREATE TABLE IF NOT EXISTS workers (
     jobs_completed INTEGER NOT NULL DEFAULT 0,
     earnings_pending_animica REAL NOT NULL DEFAULT 0,
     earnings_paid_animica REAL NOT NULL DEFAULT 0,
-    direct_endpoint TEXT NOT NULL DEFAULT ''
+    direct_endpoint TEXT NOT NULL DEFAULT '',
+    ema_secs REAL NOT NULL DEFAULT 0,
+    ema_score REAL NOT NULL DEFAULT 0,
+    inflight INTEGER NOT NULL DEFAULT 0,
+    concurrency INTEGER NOT NULL DEFAULT 1,
+    kinds_json TEXT NOT NULL DEFAULT '["chat"]'
 );
 """
 
@@ -784,6 +936,13 @@ class _SqliteAicfJobStore:
              "ALTER TABLE jobs ADD COLUMN decode_inbox_json TEXT NOT NULL DEFAULT '[]'"),
             ("decode_step_cursor",
              "ALTER TABLE jobs ADD COLUMN decode_step_cursor INTEGER NOT NULL DEFAULT 0"),
+            # Dispatch mode (additive; defaults keep pre-dispatch rows legacy).
+            ("kind",
+             "ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'"),
+            ("k_wanted",
+             "ALTER TABLE jobs ADD COLUMN k_wanted INTEGER NOT NULL DEFAULT 0"),
+            ("offers_json",
+             "ALTER TABLE jobs ADD COLUMN offers_json TEXT NOT NULL DEFAULT '[]'"),
         ):
             try:
                 conn.execute(ddl)
@@ -792,11 +951,24 @@ class _SqliteAicfJobStore:
         # Workers table migrations.
         for ddl in (
             "ALTER TABLE workers ADD COLUMN direct_endpoint TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE workers ADD COLUMN ema_secs REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE workers ADD COLUMN ema_score REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE workers ADD COLUMN inflight INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE workers ADD COLUMN concurrency INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE workers ADD COLUMN kinds_json TEXT NOT NULL DEFAULT '[\"chat\"]'",
         ):
             try:
                 conn.execute(ddl)
             except _sqlite3.OperationalError:
                 pass
+        # After the column exists on old DBs too.
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_state_kind "
+                "ON jobs(state, kind, created_at)"
+            )
+        except _sqlite3.OperationalError:
+            pass
 
     def _conn(self) -> _sqlite3.Connection:
         conn = getattr(self._tls, "conn", None)
@@ -846,6 +1018,15 @@ class _SqliteAicfJobStore:
         except (ValueError, TypeError):
             inbox = []
         decode_cursor = int(row["decode_step_cursor"]) if "decode_step_cursor" in keys else 0
+        kind = (row["kind"] if "kind" in keys else None) or "chat"
+        k_wanted = int(row["k_wanted"] or 0) if "k_wanted" in keys else 0
+        try:
+            offers_raw = row["offers_json"] if "offers_json" in keys else "[]"
+            offers = _json.loads(offers_raw) if offers_raw else []
+            if not isinstance(offers, list):
+                offers = []
+        except (ValueError, TypeError):
+            offers = []
         return _JobRecord(
             job_id=row["job_id"],
             spec=_json.loads(row["spec_json"]),
@@ -872,12 +1053,22 @@ class _SqliteAicfJobStore:
             stages=stages,
             decode_inbox=[int(t) for t in inbox],
             decode_step_cursor=int(decode_cursor),
+            kind=kind,
+            k_wanted=k_wanted,
+            offers=[str(a) for a in offers],
         )
 
     @staticmethod
     def _worker_from_row(row: _sqlite3.Row) -> _WorkerInfo:
         keys = row.keys()
         endpoint = row["direct_endpoint"] if "direct_endpoint" in keys else ""
+        try:
+            kinds_raw = row["kinds_json"] if "kinds_json" in keys else None
+            kinds = _json.loads(kinds_raw) if kinds_raw else ["chat"]
+            if not isinstance(kinds, list) or not kinds:
+                kinds = ["chat"]
+        except (ValueError, TypeError):
+            kinds = ["chat"]
         return _WorkerInfo(
             address=row["address"],
             tiers=_json.loads(row["tiers_json"]),
@@ -888,6 +1079,11 @@ class _SqliteAicfJobStore:
             earnings_pending_animica=float(row["earnings_pending_animica"]),
             earnings_paid_animica=float(row["earnings_paid_animica"]),
             direct_endpoint=endpoint or "",
+            ema_secs=float(row["ema_secs"] or 0.0) if "ema_secs" in keys else 0.0,
+            ema_score=float(row["ema_score"] or 0.0) if "ema_score" in keys else 0.0,
+            inflight=int(row["inflight"] or 0) if "inflight" in keys else 0,
+            concurrency=max(1, int(row["concurrency"] or 1)) if "concurrency" in keys else 1,
+            kinds=[str(k) for k in kinds],
         )
 
     # ---------- jobs ----------
@@ -901,8 +1097,8 @@ class _SqliteAicfJobStore:
             "  claim_expires_at,error,payment_tx_hash,payment_accepted,"
             "  payment_status,settled_chain_id,replicas_wanted,claims_json,"
             "  winner_address,mode,stages_json,decode_inbox_json,"
-            "  decode_step_cursor"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  decode_step_cursor,kind,k_wanted,offers_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 job.job_id,
                 _json.dumps(job.spec),
@@ -929,6 +1125,9 @@ class _SqliteAicfJobStore:
                 _json.dumps(job.stages or []),
                 _json.dumps(job.decode_inbox or []),
                 int(job.decode_step_cursor or 0),
+                job.kind or "chat",
+                int(job.k_wanted or 0),
+                _json.dumps(job.offers or []),
             ),
         )
 
@@ -943,6 +1142,8 @@ class _SqliteAicfJobStore:
         # nothing. See _AicfJobStore.claim_next above for the rationale.
         if not tiers:
             return None
+        if _DISPATCH:
+            return self._claim_next_dispatch(worker_addr, tiers)
         now = time.time()
         conn = self._conn()
         # Single transaction so concurrent claimers can't pick the
@@ -1012,6 +1213,297 @@ class _SqliteAicfJobStore:
             conn.execute("COMMIT")
             updated = self.get(chosen_row["job_id"])
             return updated
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    # ---------- dispatch mode ----------
+
+    @staticmethod
+    def _parse_claims(raw: Any) -> List[Dict[str, Any]]:
+        try:
+            claims = _json.loads(raw) if raw else []
+            return claims if isinstance(claims, list) else []
+        except (ValueError, TypeError):
+            return []
+
+    def _live_inflight(self, conn: _sqlite3.Connection, address: str, now: float) -> int:
+        """Claims this worker currently holds on non-terminal race jobs,
+        computed from the jobs table (not the counter) so a crashed worker
+        whose job was stubbed/completed by someone else can't be wedged."""
+        n = 0
+        for row in conn.execute(
+            "SELECT claims_json FROM jobs WHERE state='claimed' AND mode='race'"
+            " AND claims_json LIKE ?",
+            ("%" + address + "%",),
+        ):
+            for c in self._parse_claims(row["claims_json"]):
+                if c.get("address") == address and not c.get("done") \
+                        and float(c.get("expires_at") or 0.0) > now:
+                    n += 1
+        return n
+
+    def _claim_next_dispatch(self, worker_addr: str, tiers: List[str]) -> Optional[_JobRecord]:
+        now = time.time()
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            wrow = conn.execute(
+                "SELECT ema_secs, ema_score, inflight, concurrency, kinds_json"
+                " FROM workers WHERE address=?", (worker_addr,),
+            ).fetchone()
+            my_ema = float(wrow["ema_secs"] or 0.0) if wrow else 0.0
+            my_conc = max(1, int(wrow["concurrency"] or 1)) if wrow else 1
+            my_kinds: List[str] = ["chat"]
+            if wrow:
+                try:
+                    kj = _json.loads(wrow["kinds_json"] or "[]")
+                    if isinstance(kj, list) and kj:
+                        my_kinds = [str(k) for k in kj]
+                except (ValueError, TypeError):
+                    pass
+            # Fairness guard #1: one job at a time unless the worker
+            # advertised concurrency.
+            if self._live_inflight(conn, worker_addr, now) >= my_conc:
+                conn.execute("COMMIT")
+                return None
+            placeholders = ",".join(["?"] * len(tiers))
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE state IN ('pending','claimed')"
+                " AND mode='race' AND tier IN (" + placeholders + ")"
+                " ORDER BY created_at ASC LIMIT 64",
+                tuple(tiers),
+            ).fetchall()
+            # Routing context, computed lazily (only if a fresh K=1 job is
+            # actually in play) and once per call.
+            _ctx: Dict[str, Any] = {}
+
+            def routing_ctx() -> Dict[str, Any]:
+                if _ctx:
+                    return _ctx
+                others = conn.execute(
+                    "SELECT address, ema_secs, inflight, concurrency FROM workers"
+                    " WHERE last_seen > ? AND address != ?"
+                    " AND tiers_json != '[\"offline\"]'",
+                    (now - _DISPATCH_IDLE_WINDOW_S, worker_addr),
+                ).fetchall()
+                idle = [o for o in others
+                        if int(o["inflight"] or 0) < max(1, int(o["concurrency"] or 1))]
+                fast_idle = any(
+                    float(o["ema_secs"] or 0.0) > 0
+                    and float(o["ema_secs"]) < my_ema / 3.0
+                    for o in idle
+                ) if my_ema >= _DISPATCH_DEFER_MIN_EMA_S else False
+                share = 0.0
+                if idle:
+                    recent = conn.execute(
+                        "SELECT winner_address FROM jobs WHERE state='completed'"
+                        " AND k_wanted=1 ORDER BY completed_at DESC LIMIT 50",
+                    ).fetchall()
+                    if len(recent) >= 10:
+                        mine = sum(1 for r in recent if r["winner_address"] == worker_addr)
+                        share = mine / len(recent)
+                _ctx.update({
+                    "fast_idle": fast_idle,
+                    "others_idle": bool(idle),
+                    "over_share": share > _DISPATCH_MAX_SHARE,
+                })
+                return _ctx
+
+            chosen_row = None
+            chosen_claims: List[Dict[str, Any]] = []
+            chosen_k = 1
+            for row in rows:
+                kind = (row["kind"] if "kind" in row.keys() else None) or "chat"
+                if kind != "chat" and kind not in my_kinds:
+                    continue
+                claims = self._parse_claims(row["claims_json"])
+                live: List[Dict[str, Any]] = []
+                swept = False
+                for c in claims:
+                    if float(c.get("expires_at") or 0.0) > now:
+                        live.append(c)
+                    elif not c.get("swept") and not c.get("done"):
+                        # Lease-expiry sweep: release the dead claimant's
+                        # inflight slot exactly once.
+                        c["swept"] = True
+                        swept = True
+                        conn.execute(
+                            "UPDATE workers SET inflight=MAX(0, inflight-1)"
+                            " WHERE address=?", (c.get("address"),),
+                        )
+                if swept:
+                    conn.execute(
+                        "UPDATE jobs SET claims_json=? WHERE job_id=?",
+                        (_json.dumps(claims), row["job_id"]),
+                    )
+                if any(c.get("address") == worker_addr for c in live):
+                    continue
+                k = int(row["k_wanted"] or 0) if "k_wanted" in row.keys() else 0
+                if k <= 0:
+                    k = int(row["replicas_wanted"] or 1)
+                k = max(1, k)
+                if len(live) >= k:
+                    continue
+                if k == 1 and not live:
+                    age = now - float(row["created_at"] or now)
+                    if age < _DISPATCH_DEFER_S:
+                        rc = routing_ctx()
+                        # Fairness guard #2: a demonstrably faster idle worker
+                        # gets the first DEFER_S seconds of a fresh K=1 job.
+                        if rc["fast_idle"]:
+                            continue
+                        # Fairness guard #3: a worker hogging K=1 wins yields
+                        # the first DEFER_S seconds while anyone else is idle.
+                        if rc["over_share"] and rc["others_idle"]:
+                            continue
+                chosen_row = row
+                # Keep live claims and answered-but-expired ones (they're in
+                # the candidate pool, so _maybe_finalize's all_in still
+                # holds); drop swept dead claimants exactly like legacy does.
+                chosen_claims = [c for c in claims if c in live or c.get("done")]
+                chosen_k = k
+                break
+            if chosen_row is None:
+                conn.execute("COMMIT")
+                return None
+            if chosen_k == 1:
+                lease = 4.0 * my_ema if my_ema > 0 else 150.0
+                lease = max(_DISPATCH_K1_LEASE_FLOOR_S, min(_WORKER_LEASE_S, lease))
+            else:
+                lease = _WORKER_LEASE_S
+            chosen_claims.append({
+                "address": worker_addr,
+                "claimed_at": now,
+                "expires_at": now + lease,
+            })
+            offers = []
+            try:
+                offers = _json.loads(chosen_row["offers_json"] or "[]") \
+                    if "offers_json" in chosen_row.keys() else []
+                if not isinstance(offers, list):
+                    offers = []
+            except (ValueError, TypeError):
+                offers = []
+            if worker_addr not in offers:
+                offers.append(worker_addr)
+            conn.execute(
+                "UPDATE jobs SET state='claimed',claim_owner=?,claimed_at=?,"
+                "claim_expires_at=?,claims_json=?,offers_json=? WHERE job_id=?",
+                (worker_addr, now, now + lease, _json.dumps(chosen_claims),
+                 _json.dumps(offers), chosen_row["job_id"]),
+            )
+            conn.execute(
+                "UPDATE workers SET inflight=inflight+1 WHERE address=?",
+                (worker_addr,),
+            )
+            conn.execute("COMMIT")
+            return self.get(chosen_row["job_id"])
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def note_worker_submit(self, job_id: str, address: str, score: float) -> None:
+        """Dispatch bookkeeping on an accepted submit: mark this worker's
+        claim done (so inflight is released exactly once, even if it
+        resubmits a better attempt) and fold seconds-per-job + score into
+        the worker's EMAs (0.7 old / 0.3 new)."""
+        now = time.time()
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT claims_json FROM jobs WHERE job_id=?", (job_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return
+            claims = self._parse_claims(row["claims_json"])
+            mine = next((c for c in claims
+                         if c.get("address") == address and not c.get("done")), None)
+            if mine is None:
+                conn.execute("COMMIT")
+                return
+            mine["done"] = True
+            secs = max(0.0, now - float(mine.get("claimed_at") or now))
+            conn.execute(
+                "UPDATE jobs SET claims_json=? WHERE job_id=?",
+                (_json.dumps(claims), job_id),
+            )
+            conn.execute(
+                "UPDATE workers SET"
+                " ema_secs = CASE WHEN ema_secs <= 0 THEN ? ELSE 0.7*ema_secs + 0.3*? END,"
+                " ema_score = CASE WHEN ema_score <= 0 THEN ? ELSE 0.7*ema_score + 0.3*? END,"
+                " inflight = MAX(0, inflight-1)"
+                " WHERE address=?",
+                (secs, secs, float(score), float(score), address),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+    def widen_job(self, job_id: str, k: int) -> bool:
+        """Raise a live job's K (K=1 quality fallback → K=2)."""
+        cur = self._conn().execute(
+            "UPDATE jobs SET k_wanted=?, replicas_wanted=?"
+            " WHERE job_id=? AND state IN ('pending','claimed')",
+            (int(k), int(k), job_id),
+        )
+        return bool(cur.rowcount)
+
+    def release_claim(self, job_id: str, address: str) -> tuple[bool, Optional[str]]:
+        """Worker gives a LIVE, un-answered claim back — generation failed
+        and it has nothing to submit. Drops the claim from claims_json
+        exactly like the lease-expiry sweep does for a dead claimant (the
+        job is claimable again immediately; offers_json keeps the address
+        so a re-offer skips it), releases the worker's inflight slot, and
+        reverts the job to 'pending' when nobody else holds it. Never
+        raises: (False, reason) when there is nothing to release."""
+        now = time.time()
+        conn = self._conn()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT state, claims_json, offers_json FROM jobs WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute("COMMIT")
+                return False, "unknown_job"
+            if row["state"] in ("completed", "failed"):
+                conn.execute("COMMIT")
+                return False, "already_terminal"
+            claims = self._parse_claims(row["claims_json"])
+            mine = next((c for c in claims
+                         if c.get("address") == address and not c.get("done")), None)
+            if mine is None:
+                conn.execute("COMMIT")
+                return False, "no_claim"
+            if float(mine.get("expires_at") or 0.0) <= now:
+                conn.execute("COMMIT")
+                return False, "expired"
+            claims = [c for c in claims if c is not mine]
+            still_live = any(float(c.get("expires_at") or 0.0) > now for c in claims)
+            try:
+                offers = _json.loads(row["offers_json"] or "[]")
+                if not isinstance(offers, list):
+                    offers = []
+            except (ValueError, TypeError):
+                offers = []
+            if address not in offers:
+                offers.append(address)
+            conn.execute(
+                "UPDATE jobs SET claims_json=?, offers_json=?, state=? WHERE job_id=?",
+                (_json.dumps(claims), _json.dumps(offers),
+                 "claimed" if still_live else "pending", job_id),
+            )
+            conn.execute(
+                "UPDATE workers SET inflight=MAX(0, inflight-1) WHERE address=?",
+                (address,),
+            )
+            conn.execute("COMMIT")
+            return True, None
         except Exception:
             conn.execute("ROLLBACK")
             raise
@@ -1418,16 +1910,23 @@ class _SqliteAicfJobStore:
     # ---------- workers ----------
 
     def register_worker(self, info: _WorkerInfo) -> None:
+        # (Re)registration is a fresh worker loop: reset the inflight
+        # telemetry counter (the claim cap is computed live anyway) but keep
+        # the EMAs — a worker's speed history survives a tab reload.
         self._conn().execute(
             "INSERT INTO workers (address,tiers_json,hardware_json,"
             "registered_at,last_seen,jobs_completed,"
-            "earnings_pending_animica,earnings_paid_animica,direct_endpoint) "
-            "VALUES (?,?,?,?,?,?,?,?,?) "
+            "earnings_pending_animica,earnings_paid_animica,direct_endpoint,"
+            "concurrency,kinds_json,inflight) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,0) "
             "ON CONFLICT(address) DO UPDATE SET "
             "  tiers_json=excluded.tiers_json,"
             "  hardware_json=excluded.hardware_json,"
             "  last_seen=excluded.last_seen,"
-            "  direct_endpoint=excluded.direct_endpoint",
+            "  direct_endpoint=excluded.direct_endpoint,"
+            "  concurrency=excluded.concurrency,"
+            "  kinds_json=excluded.kinds_json,"
+            "  inflight=0",
             (
                 info.address,
                 _json.dumps(info.tiers),
@@ -1438,6 +1937,8 @@ class _SqliteAicfJobStore:
                 info.earnings_pending_animica,
                 info.earnings_paid_animica,
                 info.direct_endpoint or "",
+                max(1, int(info.concurrency or 1)),
+                _json.dumps(list(info.kinds or ["chat"])),
             ),
         )
 
@@ -1460,6 +1961,15 @@ class _SqliteAicfJobStore:
             )
         except Exception:  # noqa: BLE001 — a liveness touch must never fail a claim
             pass
+
+    def sign_off_worker(self, address: str) -> bool:
+        """See the in-memory twin: offline everywhere, ledger untouched."""
+        cur = self._conn().execute(
+            "UPDATE workers SET last_seen=0, tiers_json='[\"offline\"]', inflight=0"
+            " WHERE address=?",
+            (address,),
+        )
+        return bool(cur.rowcount)
 
     def all_workers(self) -> List[_WorkerInfo]:
         rows = self._conn().execute("SELECT * FROM workers").fetchall()
@@ -1506,6 +2016,206 @@ def _make_store() -> Any:
 
 
 _STORE = _make_store()
+if _DISPATCH:
+    if isinstance(_STORE, _SqliteAicfJobStore):
+        log.info(
+            "aicf_jobs: DISPATCH mode on (chat_k=%d defer=%.0fs max_share=%.2f k1_lease>=%.0fs)",
+            _DISPATCH_CHAT_K, _DISPATCH_DEFER_S, _DISPATCH_MAX_SHARE,
+            _DISPATCH_K1_LEASE_FLOOR_S,
+        )
+    else:
+        log.warning(
+            "aicf_jobs: DISPATCH mode on with the in-memory store — K-per-kind and"
+            " kind filtering apply, speed routing/leases/fairness are SQLite-only"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Best-of-N candidate pool + answer quality scoring
+# ---------------------------------------------------------------------------
+
+_CANDS_LOCK = threading.Lock()
+_CANDS: Dict[str, Dict[str, Any]] = {}
+# Dispatch: jobs widened K=1→2 after a low-quality sole answer, job_id →
+# widen timestamp. Such a job must not settle on that answer just because
+# "every claimant answered"; it waits for a second candidate or the max
+# settle window (a real low answer still beats a stub at force-finalize).
+_WIDENED: Dict[str, float] = {}
+
+_CODE_TAIL_CHARS = ")]}>`\"'"
+
+
+def _trim_degenerate_tail(text: str) -> str:
+    """Strip trailing garbage (rows of 's', '===', blank runs) off an
+    otherwise-real answer instead of rejecting the whole submit."""
+    lines = text.rstrip().split("\n")
+    kept = len(lines)
+    while kept > 1:
+        ls = lines[kept - 1].strip()
+        junky = False
+        if not ls:
+            junky = True
+        elif ls.startswith("```"):
+            junky = False         # never eat a code-fence closer
+        elif len(ls) >= 2 and len(set(ls)) <= 2:
+            junky = True          # 'ssss', '===', '??', '---'
+        elif len(ls) == 1 and ls not in _CODE_TAIL_CHARS:
+            junky = True
+        else:
+            j = kept - 2
+            while j >= 0 and not lines[j].strip():
+                j -= 1
+            if len(ls) <= 3 and j >= 0 and lines[j].strip() == ls:
+                junky = True      # repeated short-line run
+        if not junky:
+            break
+        kept -= 1
+    trimmed = "\n".join(lines[:kept]).rstrip()
+    m = re.search(r"(.)\1{7,}\s*$", trimmed)
+    if m and m.group(1) != "`":
+        trimmed = trimmed[: m.start()].rstrip()
+    return trimmed
+
+
+def _answer_score(text: str) -> float:
+    """Heuristic answer quality, no model required. Length helps (sqrt-capped),
+    degeneracy/repetition/non-language soup hurt hard, structure helps a bit."""
+    t = text.strip()
+    if not t:
+        return 0.0
+    non_ws = re.sub(r"\s+", "", t)
+    if len(non_ws) < 8:
+        return 0.1
+    score = min(len(t), 6000) ** 0.5
+    if len(set(non_ws)) < 12:
+        score *= 0.05
+    top = max(non_ws.count(c) for c in set(non_ws)) / len(non_ws)
+    if top > 0.4:
+        score *= 0.15
+    lines = [l.strip() for l in t.split("\n") if l.strip()]
+    if len(lines) > 3:
+        dup = 1.0 - len(set(lines)) / len(lines)
+        if dup > 0.25:
+            score *= max(0.1, 1.0 - dup)
+    words = re.findall(
+        r"[A-Za-z\u00c0-\u024f0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]{2,}", t)
+    wr = sum(len(w) for w in words) / max(1, len(non_ws))
+    if wr < 0.5:
+        score *= max(0.2, wr + 0.3)
+    if "\n\n" in t:
+        score *= 1.08
+    if "```" in t or re.search(r"^#{1,3} ", t, re.M):
+        score *= 1.1
+    if re.search(r"[.!?)\"'`\]]\s*$", t):
+        score *= 1.05
+    return round(score, 3)
+
+
+def _quality_floor(max_out: int) -> float:
+    """Score under which we suggest the miner try another generation pass."""
+    expect_chars = min(max(int(max_out or 256) * 3, 240), 6000)
+    return min(12.0, 0.3 * (expect_chars ** 0.5))
+
+
+def _credit_winner(address: str, amount: float) -> None:
+    if hasattr(_STORE, "credit_worker_completion"):
+        try:
+            _STORE.credit_worker_completion(address, amount)
+        except Exception as exc:
+            log.warning("aicf_jobs: credit_worker_completion failed: %s", exc)
+    else:
+        w = _STORE.get_worker(address)
+        if w is not None:
+            w.jobs_completed += 1
+            try:
+                w.earnings_pending_animica += amount
+            except (TypeError, ValueError):
+                pass
+
+
+def _dyn_replicas() -> int:
+    """Fan each job out to every provider currently online (bounded)."""
+    try:
+        now = time.time()
+        online = sum(
+            1 for w in _STORE.all_workers()
+            if (now - float(w.last_seen or 0.0)) < _ONLINE_WINDOW_S
+            and list(w.tiers or []) != ["offline"]
+        )
+    except Exception:
+        online = 0
+    return max(_REPLICAS_DEFAULT, min(_REPLICAS_MAX, online))
+
+
+def _register_candidate(job_id: str, address: str, text: str, score: float):
+    now = time.time()
+    with _CANDS_LOCK:
+        pool = _CANDS.setdefault(job_id, {"first_ts": now, "by_addr": {}})
+        prev = pool["by_addr"].get(address)
+        if prev is None or score > prev["score"]:
+            pool["by_addr"][address] = {"text": text, "score": score, "ts": now}
+        if len(_CANDS) > 800:
+            for k in sorted(_CANDS, key=lambda k: _CANDS[k]["first_ts"])[:200]:
+                _CANDS.pop(k, None)
+        return len(pool["by_addr"]), pool["first_ts"]
+
+
+def _maybe_finalize(job_id: str, force: bool = False) -> Optional[str]:
+    """Settle a best-of-N job once due. Returns the winning address when THIS
+    call completed the job, else None. Safe from any thread; called from
+    submit, every result-poll path, and (force=True) the stub fallback so a
+    real candidate always beats the stub."""
+    with _CANDS_LOCK:
+        pool = _CANDS.get(job_id)
+        if not pool or not pool["by_addr"]:
+            return None
+    job = _STORE.get(job_id)
+    if job is None or job.state in {"completed", "failed"}:
+        with _CANDS_LOCK:
+            _CANDS.pop(job_id, None)
+        return None
+    wanted = max(1, int(job.replicas_wanted or 1))
+    now = time.time()
+    with _CANDS_LOCK:
+        pool = _CANDS.get(job_id)
+        if not pool or not pool["by_addr"]:
+            return None
+        age = now - pool["first_ts"]
+        best_now = max(c["score"] for c in pool["by_addr"].values())
+        claimants = {c.get("address") for c in (job.claims or []) if c.get("address")}
+        all_in = bool(claimants) and claimants <= set(pool["by_addr"])
+        widened_at = _WIDENED.get(job_id)
+        if widened_at is not None and len(pool["by_addr"]) < 2 \
+                and (now - widened_at) < _BESTOF_SETTLE_MAX_S:
+            # Dispatch K=1→2 fallback: the lone low answer doesn't settle
+            # via all_in; give a second worker the window.
+            all_in = False
+        due = (
+            force
+            or len(pool["by_addr"]) >= wanted
+            or all_in
+            or age >= _BESTOF_SETTLE_MAX_S
+            or (age >= _BESTOF_SETTLE_S and best_now >= _BESTOF_GOOD_SCORE)
+        )
+        if not due:
+            return None
+        ranked = sorted(
+            pool["by_addr"].items(),
+            key=lambda kv: (-kv[1]["score"], kv[1]["ts"]),
+        )
+        _CANDS.pop(job_id, None)
+        _WIDENED.pop(job_id, None)
+    best_addr, best = ranked[0]
+    completed = _STORE.complete(job_id, text=best["text"], provider_id=best_addr)
+    if completed is None:
+        return None
+    _credit_winner(best_addr, float(completed.estimated_cost or 0.0))
+    log.info(
+        "aicf_jobs: BEST-OF settled job %s: %d candidate(s), winner=%s score=%.1f%s",
+        job_id, len(ranked), best_addr[:28], best["score"],
+        (" runner_up=%.1f" % ranked[1][1]["score"]) if len(ranked) > 1 else "",
+    )
+    return best_addr
 
 
 # ---------------------------------------------------------------------------
@@ -1618,13 +2328,16 @@ async def _local_fallback_after_grace(job_id: str) -> None:
     if job is None or job.state in {"completed", "failed"}:
         return
     if job.state == "claimed":
-        # Give the worker one more grace window to actually return a result
-        # before giving up — small chat completions normally finish well
-        # inside this; a worker that hasn't is wedged.
-        await asyncio.sleep(_WORKER_CLAIM_GRACE_S)
-        job = _STORE.get(job_id)
-        if job is None or job.state in {"completed", "failed"}:
-            return
+        # A worker HAS the job: give it a real completion window (CPU/phone
+        # workers take minutes), polling so a finished job returns instantly.
+        deadline = time.time() + _WORKER_COMPLETE_GRACE_S
+        while time.time() < deadline:
+            await asyncio.sleep(5.0)
+            job = _STORE.get(job_id)
+            if job is None or job.state in {"completed", "failed"}:
+                return
+    if _maybe_finalize(job_id, force=True):
+        return
     prompt = str(job.spec.get("prompt", ""))
     text = _stub_response(prompt, job.tier)
     prior_state = job.state
@@ -1663,10 +2376,17 @@ def _schedule_fallback(job_id: str) -> None:
         if job is None or job.state in {"completed", "failed"}:
             return
         if job.state == "claimed":
-            time.sleep(_WORKER_CLAIM_GRACE_S)
+            deadline = time.time() + _WORKER_COMPLETE_GRACE_S
+            while time.time() < deadline:
+                time.sleep(5.0)
+                job = _STORE.get(job_id)
+                if job is None or job.state in {"completed", "failed"}:
+                    return
             job = _STORE.get(job_id)
             if job is None or job.state in {"completed", "failed"}:
                 return
+        if _maybe_finalize(job_id, force=True):
+            return
         prompt = str(job.spec.get("prompt", ""))
         text = _stub_response(prompt, job.tier)
         prior_state = job.state
@@ -1731,11 +2451,30 @@ async def submit_inference_job(
     # tier might want 1, debugging might want a single replica). Bound
     # to [1, 16] so a misconfig can't fan out forever.
     requested_replicas = spec.get("replicas") if isinstance(spec, Mapping) else None
-    try:
-        replicas = int(requested_replicas) if requested_replicas is not None else _REPLICAS_DEFAULT
-    except (TypeError, ValueError):
-        replicas = _REPLICAS_DEFAULT
-    replicas = max(1, min(16, replicas))
+    kind = _job_kind(spec)
+    k_wanted = 0
+    if _DISPATCH:
+        # K by job class. Probe/keep-warm pings (<= _BESTOF_MIN_TOKENS) are
+        # K=1 unconditionally — a 3-way race for a 1-token "ping" was ~90%
+        # of all claims. Otherwise an explicit spec.replicas wins, then the
+        # per-kind table, then the chat default.
+        if max_out and max_out <= _BESTOF_MIN_TOKENS:
+            replicas = 1
+        elif requested_replicas is not None:
+            try:
+                replicas = int(requested_replicas)
+            except (TypeError, ValueError):
+                replicas = _DISPATCH_KIND_K.get(kind, _DISPATCH_CHAT_K)
+        else:
+            replicas = _DISPATCH_KIND_K.get(kind, _DISPATCH_CHAT_K)
+        replicas = max(1, min(16, replicas))
+        k_wanted = replicas
+    else:
+        try:
+            replicas = int(requested_replicas) if requested_replicas is not None else _dyn_replicas()
+        except (TypeError, ValueError):
+            replicas = _dyn_replicas()
+        replicas = max(1, min(16, replicas))
     # Pipeline mode selection. With "auto" (the default) we promote to
     # pipeline only when there are enough pipeline-tier workers to fill
     # every stage; otherwise we fall back to race so chat never hangs
@@ -1759,6 +2498,8 @@ async def submit_inference_job(
         replicas_wanted=replicas,
         mode=mode,
         stages=(_build_initial_stages(resolved_stages) if mode == "pipeline" else []),
+        kind=kind,
+        k_wanted=k_wanted,
     )
 
     # Real on-chain settlement: decode the SignedPayment envelope and
@@ -1861,6 +2602,7 @@ async def stream_job(
     cursor = _coerce_int(p.get("cursor"), 0)
     if not job_id:
         raise InvalidParams("streamJob: 'job_id' is required")
+    _maybe_finalize(job_id)
     job = _STORE.get(job_id)
     if job is None:
         raise InvalidParams(f"streamJob: unknown job_id {job_id}")
@@ -1868,6 +2610,7 @@ async def stream_job(
     # Long-ish poll: wait up to ~1.5s for new text or completion.
     deadline = time.time() + 1.5
     while time.time() < deadline:
+        _maybe_finalize(job_id)
         if job.state in {"completed", "failed"}:
             break
         if len(job.text) > cursor:
@@ -1895,6 +2638,7 @@ async def job_status(
     job_id = _coerce_str(p.get("job_id"))
     if not job_id:
         raise InvalidParams("jobStatus: 'job_id' is required")
+    _maybe_finalize(job_id)
     job = _STORE.get(job_id)
     if job is None:
         raise InvalidParams(f"jobStatus: unknown job_id {job_id}")
@@ -1922,6 +2666,7 @@ async def settle_job(
     job_id = _coerce_str(p.get("job_id"))
     if not job_id:
         raise InvalidParams("settleJob: 'job_id' is required")
+    _maybe_finalize(job_id)
     job = _STORE.get(job_id)
     if job is None:
         raise InvalidParams(f"settleJob: unknown job_id {job_id}")
@@ -1951,6 +2696,28 @@ async def settle_job(
 # ---------------------------------------------------------------------------
 # Worker-facing methods
 # ---------------------------------------------------------------------------
+
+
+def _unpaid_weight(w: "_WorkerInfo") -> float:
+    """Weight the NEXT settlement anchor will pay this worker for. The anchor
+    worker maintains anchor_ledger.weights_consumed_animica in the same DB;
+    read it defensively (in-memory store / missing table → pending - paid)."""
+    pending = float(w.earnings_pending_animica or 0.0)
+    consumed = None
+    conn_fn = getattr(_STORE, "_conn", None)
+    if callable(conn_fn):
+        try:
+            row = conn_fn().execute(
+                "SELECT weights_consumed_animica FROM anchor_ledger WHERE address=?",
+                (w.address,),
+            ).fetchone()
+            if row is not None:
+                consumed = float(row[0] or 0.0)
+        except Exception:  # noqa: BLE001 — table may not exist yet
+            consumed = None
+    if consumed is None:
+        consumed = float(w.earnings_paid_animica or 0.0)
+    return max(0.0, pending - consumed)
 
 
 @method("aicf.workerRegister", desc="Register a worker to claim AICF jobs", aliases=("aicf_workerRegister",))
@@ -1991,9 +2758,27 @@ async def worker_register(
         raise InvalidParams(
             "workerRegister: 'direct_endpoint' must be an http(s) URL"
         )
+    # Dispatch-mode capability hints, both optional: how many jobs the
+    # worker can run at once, and which job kinds it serves (a worker that
+    # says nothing serves chat only).
+    concurrency = 1
+    try:
+        concurrency = max(1, min(8, int(hardware.get("concurrency") or 1)))
+    except (TypeError, ValueError):
+        concurrency = 1
+    kinds_raw = hardware.get("kinds")
+    kinds: List[str] = []
+    if isinstance(kinds_raw, list):
+        for k in kinds_raw:
+            kk = str(k).strip().lower()
+            if _KIND_RE.match(kk) and kk not in kinds:
+                kinds.append(kk)
+    if not kinds:
+        kinds = ["chat"]
     info = _WorkerInfo(
         address=address, tiers=tiers, hardware=dict(hardware),
         direct_endpoint=direct_endpoint,
+        concurrency=concurrency, kinds=kinds,
     )
     _STORE.register_worker(info)
     log.info(
@@ -2006,6 +2791,59 @@ async def worker_register(
         "tiers": tiers,
         "direct_endpoint": direct_endpoint,
     }
+
+
+@method(
+    "aicf.workerSignOff",
+    desc="Worker signs off (tab closed / ctrl-C): removed from online views, earnings ledger kept",
+    aliases=("aicf_workerSignOff", "aicf.workerUnregister"),
+)
+async def worker_sign_off(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    p = dict(params or {})
+    address = _coerce_str(p.get("address")).strip()
+    if not address:
+        raise InvalidParams("workerSignOff: 'address' is required")
+    ok = bool(getattr(_STORE, "sign_off_worker", lambda a: False)(address))
+    return {"signed_off": ok, "address": address}
+
+
+@method(
+    "aicf.workerReleaseClaim",
+    desc="Worker gives back a claim it cannot fulfil (generation failed): the job is re-offerable at once and the worker's slot is freed",
+    aliases=("aicf_workerReleaseClaim",),
+)
+async def worker_release_claim(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    # Under dispatch a claim that never turns into a submit pins the job AND
+    # the worker (concurrency 1) for the whole lease. This is the honest
+    # out: nothing to submit → hand the claim back. Never errors — a worker
+    # loop calls this best-effort from its failure path.
+    p = dict(params or {})
+    address = _coerce_str(p.get("address")).strip()
+    job_id = _coerce_str(p.get("job_id")).strip()
+    if not address or not job_id:
+        return {"released": False, "reason": "missing_params",
+                "address": address, "job_id": job_id}
+    rel = getattr(_STORE, "release_claim", None)
+    if rel is None:
+        return {"released": False, "reason": "unsupported_store",
+                "address": address, "job_id": job_id}
+    try:
+        ok, reason = rel(job_id, address)
+    except Exception as exc:  # noqa: BLE001 — never fail a worker's failure path
+        log.warning("aicf_jobs: release_claim failed for %s/%s: %s", job_id, address, exc)
+        ok, reason = False, "store_error"
+    out: Dict[str, Any] = {"released": bool(ok), "address": address, "job_id": job_id}
+    if reason:
+        out["reason"] = reason
+    if ok:
+        log.info("aicf_jobs: claim released job=%s worker=%s", job_id, address[:28])
+    return out
 
 
 @method("aicf.workerStatus", desc="Get status of a registered AICF worker", aliases=("aicf_workerStatus",))
@@ -2076,7 +2914,66 @@ async def worker_earnings(
         "jobs_completed": w.jobs_completed,
         "earnings_pending_animica": w.earnings_pending_animica,
         "earnings_paid_animica": w.earnings_paid_animica,
-        "note": "settlement_pending_consensus_upgrade",
+        # pending is the credit-only lifetime WEIGHT ledger; paid mirrors the
+        # actual on-chain ANM received from settlement anchors. unpaid is the
+        # WEIGHT the next anchor will pay for: pending minus the weights already
+        # consumed by past anchors (anchor_ledger, maintained by the settlement
+        # worker; falls back to pending - paid when absent).
+        "earnings_unpaid_animica": _unpaid_weight(w),
+        "note": "paid via ANMSETL1 settlement anchors (block carve, pro-rata)",
+    }
+
+
+@method(
+    "aicf.workerCount",
+    desc="Aggregate stats over registered AICF workers (no addresses enumerated)",
+    aliases=("aicf_workerCount",),
+)
+async def worker_count(
+    ctx: Any = None,
+    **params: Any,
+) -> Dict[str, Any]:
+    """Public, aggregate-only view of the worker fleet for dashboards
+    (pool.animica.org/stats shows "phones serving" from this). Buckets by the
+    self-reported hardware.engine: "webllm" = the browser Serve&Earn page
+    (phones + desktops), "animica-serve" = the Termux/CLI thin worker (its
+    hardware.termux flag separates actual phones), everything else = full
+    nodes (animica up). No addresses are enumerated — per-address data stays
+    behind aicf.workerStatus(address), which requires knowing the address."""
+    p = dict(params or {})
+    online_window = float(p.get("online_window_s") or 300.0)
+    online_window = max(30.0, min(online_window, 86400.0))
+    now = time.time()
+    workers = _STORE.all_workers()
+    total = len(workers)
+    online = 0
+    engines: Dict[str, int] = {}
+    engines_online: Dict[str, int] = {}
+    phones_online = 0
+    jobs_completed = 0
+    pending = 0.0
+    for w in workers:
+        hw = w.hardware if isinstance(w.hardware, Mapping) else {}
+        eng = str(hw.get("engine") or "node").lower()[:32]
+        is_online = (now - float(w.last_seen or 0)) <= online_window
+        engines[eng] = engines.get(eng, 0) + 1
+        if is_online:
+            online += 1
+            engines_online[eng] = engines_online.get(eng, 0) + 1
+            if eng in ("webllm", "wllama") or (eng == "animica-serve" and hw.get("termux")):
+                phones_online += 1
+        jobs_completed += int(w.jobs_completed or 0)
+        pending += float(w.earnings_pending_animica or 0.0)
+    return {
+        "total_registered": total,
+        "online": online,
+        "online_window_s": online_window,
+        "phones_online": phones_online,
+        "engines": engines,
+        "engines_online": engines_online,
+        "jobs_completed_total": jobs_completed,
+        "earnings_pending_animica_total": round(pending, 9),
+        "ts": now,
     }
 
 
@@ -2120,6 +3017,8 @@ async def worker_claim_next_job(
         "top_p": job.spec.get("top_p", 0.95),
         "estimated_cost_animica": job.estimated_cost,
         "claim_expires_at": job.claim_expires_at,
+        # Additive: the job class, so a multi-kind worker routes internally.
+        "kind": job.kind or "chat",
     }
 
 
@@ -2135,6 +3034,68 @@ async def worker_submit_result(
     if not address or not job_id:
         raise InvalidParams("workerSubmitResult: 'address' and 'job_id' are required")
     _STORE.touch_worker(address)
+    if not text.strip():
+        # An empty answer must never WIN the K-way race (a broken worker was
+        # beating real phone/CPU workers with "" and getting credited for it —
+        # every consumer then saw blank completions). Not an error for the
+        # worker loop, just never a completion; the job stays open for the
+        # replicas that actually produced text.
+        log.info(
+            "aicf_jobs: rejecting EMPTY submit for job %s from %s", job_id, address,
+        )
+        return {
+            "accepted": False,
+            "state": "claimed",
+            "reason": "empty_text",
+            "job_id": job_id,
+        }
+    # Trim trailing degeneracy ('sssss…', '===', blank runs) instead of losing
+    # the whole answer; reject only when nothing real remains. Probe-sized jobs
+    # (max_output_tokens <= _BESTOF_MIN_TOKENS) are exempt from the minimum-
+    # length test: 'Pong!' is a legitimate, complete health-probe answer.
+    text = _trim_degenerate_tail(text)
+    _t = text.strip()
+    _probe_job = False
+    try:
+        _j = _STORE.get(job_id)
+        _mo = int(_j.spec.get("max_output_tokens") or 0) if _j is not None else 0
+        _probe_job = bool(_mo and _mo <= _BESTOF_MIN_TOKENS)
+    except Exception:
+        pass
+    _non_ws = len(_t) - sum(_t.count(c) for c in " \n\t\r")
+    _hopeless = (_non_ws < 8 and not _probe_job) or (len(_t) >= 30 and (
+        max(_t.count(ch) for ch in set(_t)) / len(_t) > 0.6
+        or len(set(_t) - set(" \n\t\r")) < 3))
+    if _hopeless:
+        log.info(
+            "aicf_jobs: rejecting DEGENERATE submit for job %s from %s (%r)",
+            job_id, address, _t[:40],
+        )
+        return {
+            "accepted": False,
+            "state": "claimed",
+            "reason": "degenerate_text",
+            "job_id": job_id,
+        }
+    # Same for the well-known miner-side STUB markers: they are machine-generated
+    # placeholders ("my model failed to load"), never real answers. A broken-but-
+    # fast worker was winning every race with them, so real (slower) phone/CPU
+    # answers never reached users — the bridge just cycled into its fallback.
+    _head = text.lstrip()[:96].lower()
+    if (_head.startswith("[aicf-miner-stub")
+            or _head.startswith("[distributed-aicf stub")
+            or "model_load_failed" in _head
+            or "unrecognized model in" in _head):
+        log.info(
+            "aicf_jobs: rejecting STUB submit for job %s from %s (%r)",
+            job_id, address, text[:60],
+        )
+        return {
+            "accepted": False,
+            "state": "claimed",
+            "reason": "stub_text",
+            "job_id": job_id,
+        }
     job = _STORE.get(job_id)
     if job is None:
         raise InvalidParams(f"workerSubmitResult: unknown job_id {job_id}")
@@ -2175,6 +3136,62 @@ async def worker_submit_result(
             "(active claimants: %s)",
             job_id, address, sorted(a for a in claim_addrs if a),
         )
+    try:
+        max_out = int(job.spec.get("max_output_tokens") or 0)
+    except (TypeError, ValueError):
+        max_out = 0
+    score = _answer_score(text)
+    if _DISPATCH and hasattr(_STORE, "note_worker_submit"):
+        # Speed/quality EMAs + inflight release (once per claim).
+        try:
+            _STORE.note_worker_submit(job_id, address, score)
+        except Exception as exc:  # noqa: BLE001 — bookkeeping never fails a submit
+            log.warning("aicf_jobs: note_worker_submit failed: %s", exc)
+    if not (max_out and max_out <= _BESTOF_MIN_TOKENS):
+        # BEST-OF-N: register a scored candidate; the highest-quality answer
+        # wins at settle (all claimants in / strong score / window). Credit
+        # happens at finalize, winner only. A low-scoring miner is invited to
+        # regenerate and resubmit — a better attempt replaces its candidate.
+        if _DISPATCH and hasattr(_STORE, "widen_job"):
+            # K=1 quality fallback: the sole answer is under the floor and
+            # has no competitor — open a second slot instead of settling on
+            # it. The worker gets the usual retry_suggested reply and any
+            # other worker can claim within one poll.
+            _k = int(job.k_wanted or 0) or int(job.replicas_wanted or 1)
+            if _k == 1 and score < _quality_floor(max_out) \
+                    and job_id not in _WIDENED:
+                try:
+                    if _STORE.widen_job(job_id, 2):
+                        with _CANDS_LOCK:
+                            _WIDENED[job_id] = time.time()
+                            if len(_WIDENED) > 800:
+                                for k in sorted(_WIDENED, key=_WIDENED.get)[:200]:
+                                    _WIDENED.pop(k, None)
+                        log.info(
+                            "aicf_jobs: DISPATCH widened job %s K=1→2 (score %.1f < floor)",
+                            job_id, score,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("aicf_jobs: widen_job failed: %s", exc)
+        n_cands, first_ts = _register_candidate(job_id, address, text, score)
+        winner = _maybe_finalize(job_id)
+        if winner is None:
+            latest = _STORE.get(job_id)
+            if latest is not None and latest.state in {"completed", "failed"}:
+                winner = latest.winner_address or latest.provider_id or ""
+        if winner:
+            return {"accepted": True, "state": "completed", "job_id": job_id,
+                    "winner_address": winner, "won": winner == address,
+                    "score": score,
+                    "reason": None if winner == address else "lost_race"}
+        floor = _quality_floor(max_out)
+        return {"accepted": True, "state": "candidate", "job_id": job_id,
+                "score": score, "quality": "low" if score < floor else "good",
+                "retry_suggested": score < floor,
+                "candidates": n_cands,
+                "settles_in_s": max(0.0, round(_BESTOF_SETTLE_MAX_S - (time.time() - first_ts), 1)),
+                "note": "best answer wins at settle; a higher-scoring resubmit replaces yours"}
+    # Tiny probe/health jobs: latency beats polish — first-wins.
     completed = _STORE.complete(job_id, text=text, provider_id=address)
     if completed is None:
         # Lost the race between read-state and complete: someone else
@@ -2196,20 +3213,7 @@ async def worker_submit_result(
     # mutation. See aicf.workerEarnings for retrieval; once the
     # treasury→state-pool sweep activates (consensus rule), these IOUs
     # become claimable via aicf.claim.
-    amount = float(completed.estimated_cost or 0.0)
-    if hasattr(_STORE, "credit_worker_completion"):
-        try:
-            _STORE.credit_worker_completion(address, amount)
-        except Exception as exc:
-            log.warning("aicf_jobs: credit_worker_completion failed: %s", exc)
-    else:
-        w = _STORE.get_worker(address)
-        if w is not None:
-            w.jobs_completed += 1
-            try:
-                w.earnings_pending_animica += amount
-            except (TypeError, ValueError):
-                pass
+    _credit_winner(address, float(completed.estimated_cost or 0.0))
     return {"accepted": True, "state": "completed", "job_id": job_id,
             "winner_address": address}
 
