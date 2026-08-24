@@ -42,12 +42,14 @@ import socket
 import subprocess
 import sys
 import time
+import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-__version__ = "0.1.3"
+__version__ = "0.1.5"
 
 DEFAULT_RPC = "https://rpc.animica.org/rpc"
 TIERS = ["free", "standard"]
@@ -57,7 +59,7 @@ CLAIM_MIN_S, CLAIM_MAX_S = 2.5, 15.0
 REGISTER_EVERY_S = 300.0
 EARNINGS_EVERY_S = 45.0
 BATTERY_EVERY_S = 30.0
-CTX_TOKENS = 6144
+CTX_TOKENS = 8192
 
 MODELS: Dict[str, Dict[str, Any]] = {
     "qwen2.5-1.5b": {
@@ -372,6 +374,40 @@ def is_valid_anim_address(addr: str) -> bool:
     return _bech32_polymod(expand + data) == 0x2BC830A3
 
 
+SEARCH_URL = os.environ.get("ANIMICA_SERVE_SEARCH_URL",
+                            "https://animica.dev/v1/web-search")
+_WEB_INTENT = re.compile(
+    r"\b(today|current|currently|latest|news|price|weather|version|release|"
+    r"score|happened|recent|who is|when did|look ?up|search the web|20(2[4-9]|3[0-9]))\b", re.I)
+
+
+def web_lookup(raw_prompt: str) -> str:
+    """Let the miner research the prompt on the live web (free, keyless,
+    SSRF-hardened endpoint) before answering. Skips prompts the bridge
+    already grounded with web results."""
+    try:
+        if "=== WEB RESULTS ===" in raw_prompt or "[fresh web findings]" in raw_prompt:
+            return ""
+        tail = raw_prompt[-600:]
+        if not _WEB_INTENT.search(tail):
+            return ""
+        m = re.search(r"(?:^|\n)\s*User:\s*(.*)$", raw_prompt, re.S | re.I)
+        q = re.sub(r"\s+", " ", (m.group(1) if m else tail)).strip()[:180]
+        if len(q) < 8:
+            return ""
+        url = SEARCH_URL + "?q=" + urllib.parse.quote(q)
+        req = urllib.request.Request(url, headers={"User-Agent": "animica-serve"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            d = json.loads(resp.read().decode("utf-8", "replace"))
+        ctx = str(d.get("context") or "")[:1200]
+        if len(ctx) < 60:
+            return ""
+        log(f"web lookup: {len(ctx)} chars of fresh findings folded into the prompt")
+        return "[fresh web findings]\n" + ctx + "\n[end findings]\n\n"
+    except Exception:
+        return ""
+
+
 def clamp_prompt(p: str, max_chars: int = PROMPT_CLAMP_CHARS) -> str:
     """Keep the head (instructions) and the tail (recent history + the question)."""
     if len(p) <= max_chars:
@@ -423,7 +459,16 @@ def serve(args) -> int:
     signal.signal(signal.SIGINT, _sig)
     signal.signal(signal.SIGTERM, _sig)
 
-    rpc(args.rpc, "aicf.workerRegister", {"address": address, "tiers": TIERS, "hardware": hw})
+    # The node restarts occasionally (upgrades); ride it out instead of crashing.
+    for attempt in range(12):
+        try:
+            rpc(args.rpc, "aicf.workerRegister", {"address": address, "tiers": TIERS, "hardware": hw})
+            break
+        except Exception as e:  # noqa: BLE001
+            if stop["flag"] or attempt == 11:
+                raise SystemExit(f"could not register with the queue: {e}")
+            log(f"network restarting ({str(e)[:50]}) — retrying registration…")
+            time.sleep(min(15.0, 4.0 + attempt * 2.0))
     log(f"registered {address[:14]}… tiers={','.join(TIERS)} — waiting for jobs "
         f"(jobs race across workers; losses to faster GPUs are normal)")
 
@@ -482,38 +527,63 @@ def serve(args) -> int:
         if not prompt.strip():
             log(f"claimed {job['job_id'][:10]}… but it carried no prompt — skipped")
             continue
+        findings = web_lookup(str(job.get("prompt") or ""))
+        if findings:
+            prompt = (findings + prompt)[: len(findings) + len(prompt)]
         max_tok = max(16, min(int(job.get("max_output_tokens") or 512), args.max_tokens))
         expires = float(job.get("claim_expires_at") or 0)
         budget = max(10.0, (expires - time.time()) - 4.0) if expires else 120.0
         log(f"claimed {job['job_id'][:10]}… tier={job.get('tier')} "
             f"({len(prompt)} chars in, ≤{max_tok} tokens out, {budget:.0f}s budget)")
+        # Best-of-N: submits are scored candidates — the best answer wins at
+        # settle, not the first. A low score or a rejected degenerate gets one
+        # more pass at higher temperature.
         t0 = time.time()
-        try:
-            text = backend.generate(
-                prompt, max_tok,
-                max(0.0, min(float(job.get("temperature") or 0.3), 1.2)),
-                max(0.05, min(float(job.get("top_p") or 0.9), 1.0)),
-                timeout=min(budget, 300.0),
-            )
-        except Exception as e:
-            log(f"generation failed: {str(e)[:90]}")
-            continue
-        dt = time.time() - t0
-        if not text.strip():
-            log(f"no text produced for {job['job_id'][:10]}… — nothing submitted")
-            continue
-        try:
-            r = rpc(args.rpc, "aicf.workerSubmitResult",
-                    {"address": address, "job_id": job["job_id"], "text": text[:32000]})
+        temp0 = max(0.0, min(float(job.get("temperature") or 0.3), 1.2))
+        top_p = max(0.05, min(float(job.get("top_p") or 0.9), 1.0))
+        for attempt in range(2):
+            try:
+                text = backend.generate(
+                    prompt, max_tok,
+                    temp0 if attempt == 0 else min(1.0, temp0 + 0.3),
+                    top_p,
+                    timeout=min(max(10.0, (expires - time.time()) - 4.0) if expires else budget, 300.0),
+                )
+            except Exception as e:
+                log(f"generation failed: {str(e)[:90]}")
+                break
+            dt = time.time() - t0
+            if not text.strip():
+                log(f"no text produced for {job['job_id'][:10]}… — nothing submitted")
+                break
+            try:
+                r = rpc(args.rpc, "aicf.workerSubmitResult",
+                        {"address": address, "job_id": job["job_id"], "text": text[:32000]})
+            except Exception as e:
+                log(f"submit failed: {str(e)[:90]}")
+                break
+            time_left = (expires - time.time()) if expires else 999.0
             if r and r.get("accepted") is not False:
                 won += 1
-                log(f"WON {job['job_id'][:10]}… · {len(text)} chars in {dt:.1f}s")
-            else:
-                lost += 1
-                log(f"lost the race on {job['job_id'][:10]}… "
-                    f"({(r or {}).get('reason', 'another worker was faster')})")
-        except Exception as e:
-            log(f"submit failed: {str(e)[:90]}")
+                if r.get("state") == "candidate":
+                    log(f"answer in for {job['job_id'][:10]}… score {r.get('score')} "
+                        f"({r.get('candidates', 1)} candidate(s)) — best answer wins at settle")
+                    if (r.get("retry_suggested") and attempt == 0
+                            and float(r.get("settles_in_s") or 0) > 8 and time_left > 30):
+                        won -= 1
+                        log("score is low — taking another pass at it")
+                        continue
+                else:
+                    log(f"WON {job['job_id'][:10]}… · {len(text)} chars in {dt:.1f}s")
+                break
+            if (r and r.get("reason") in ("degenerate_text", "stub_text")
+                    and attempt == 0 and time_left > 30):
+                log(f"answer rejected ({r.get('reason')}) — regenerating at higher temperature")
+                continue
+            lost += 1
+            log(f"lost on {job['job_id'][:10]}… "
+                f"({(r or {}).get('reason', 'another answer was better')})")
+            break
     backend.close()
     log(f"stopped · session: {won} won / {lost} lost · pending earnings stay on {address[:14]}…")
     return 0

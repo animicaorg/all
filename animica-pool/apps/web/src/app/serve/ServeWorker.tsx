@@ -77,6 +77,17 @@ export function __control(msg) {
   if (msg === "resume") { paused = false; }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function refreshEarnings(cfg) {
+  rpc(cfg.rpcUrl, "aicf.workerEarnings", { address: cfg.address })
+    .then((e) => {
+      const pendingCum = Number(e && e.earnings_pending_animica || 0);
+      const paid = Number(e && e.earnings_paid_animica || 0);
+      const unpaid = e && e.earnings_unpaid_animica != null
+        ? Number(e.earnings_unpaid_animica) : Math.max(0, pendingCum - paid);
+      post({ type: "earnings", pending: unpaid, paid: paid, completed: Number(e && e.jobs_completed || 0) });
+    })
+    .catch(() => {});
+}
 async function rpc(url, method, params) {
   const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: (Date.now() % 1e9) + Math.floor(Math.random() * 1e3), method, params }) });
@@ -105,7 +116,7 @@ function promptBudget(cfg) {
   // prompt small even with threads (the head instructions + the tail question
   // are what matter; the middle history is the safest cut).
   const threaded = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
-  return threaded ? 3600 : 2400;
+  return threaded ? 5200 : 3200;
 }
 let engineModelId = null;
 let engineKind = null;
@@ -133,7 +144,7 @@ async function ensureEngine(cfg) {
     const w = new mod.Wllama(cfg.wllamaWasm);
     post({ type: "status", text: "Downloading the model (cached after the first time)…" });
     await w.loadModelFromUrl(cfg.ggufUrl, {
-      n_ctx: 6144,
+      n_ctx: 8192,
       useCache: true,
       progressCallback: (pr) => {
         if (stopped || !pr || !pr.total) return;
@@ -164,11 +175,39 @@ async function ensureEngine(cfg) {
 function interruptEngine() {
   try { engine && engine.e && engine.e.interruptGenerate && engine.e.interruptGenerate(); } catch (e) {}
 }
+// "Make sure they can use the internet to look stuff up": before answering,
+// a worker may research the prompt through the network's free, SSRF-hardened
+// lookup endpoint. Skipped when the bridge already injected web grounding.
+const WEB_INTENT = new RegExp("\\b(today|current|currently|latest|news|price|weather|version|release|score|happened|recent|who is|when did|look ?up|search the web|20(2[4-9]|3[0-9]))\\b", "i");
+async function webLookup(cfg, rawPrompt) {
+  try {
+    if (!cfg.searchUrl) return "";
+    if (rawPrompt.indexOf("=== WEB RESULTS ===") >= 0 || rawPrompt.indexOf("[fresh web findings]") >= 0) return "";
+    const tail = rawPrompt.slice(-600);
+    if (!WEB_INTENT.test(tail)) return "";
+    const m = rawPrompt.match(/(?:^|\\n)\\s*User:\\s*([^]*?)$/i);
+    const q = (m ? m[1] : tail).replace(/\\s+/g, " ").trim().slice(0, 180);
+    if (q.length < 8) return "";
+    post({ type: "status", text: "Researching the web for this job…" });
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 20000);
+    const r = await fetch(cfg.searchUrl + "?q=" + encodeURIComponent(q), { signal: ctl.signal });
+    clearTimeout(t);
+    if (!r.ok) return "";
+    const d = await r.json();
+    const ctx = String((d && d.context) || "").slice(0, 1200);
+    if (ctx.length < 60) return "";
+    post({ type: "log", text: "web lookup: " + ctx.length + " chars of fresh findings folded into the prompt" });
+    return "[fresh web findings]\\n" + ctx + "\\n[end findings]\\n\\n";
+  } catch (e) { return ""; }
+}
+
 async function generateText(prompt, maxTok, temperature, topP, onToken) {
   if (engine.kind === "wllama") {
     const out = await engine.w.createChatCompletion(
       [{ role: "user", content: prompt }],
-      { nPredict: maxTok, sampling: { temp: temperature, top_p: topP },
+      { nPredict: maxTok,
+        sampling: { temp: temperature, top_p: topP, penalty_repeat: 1.15, penalty_freq: 0.1 },
         onNewToken: (tok, piece, currentText) => { onToken(1); } });
     return String(out || "");
   }
@@ -202,7 +241,21 @@ export async function run(cfg) {
     await ensureEngine(cfg);
     if (stopped) { unloadEngine(); return; }
     post({ type: "ready" });
-    await rpc(cfg.rpcUrl, "aicf.workerRegister", { address: cfg.address, tiers: cfg.tiers, hardware: cfg.hardware });
+    // The node restarts occasionally (upgrades); registration must ride it out
+    // instead of dying with a fatal. Claims already retry with backoff below.
+    let registered = false;
+    for (let attempt = 0; attempt < 12 && !stopped; attempt++) {
+      try {
+        await rpc(cfg.rpcUrl, "aicf.workerRegister", { address: cfg.address, tiers: cfg.tiers, hardware: cfg.hardware });
+        registered = true;
+        break;
+      } catch (e) {
+        post({ type: "status", text: "Network restarting (" + String(e && e.message || e).slice(0, 50) + ") — retrying registration…" });
+        await sleep(Math.min(15000, 4000 + attempt * 2000));
+      }
+    }
+    if (stopped) { unloadEngine(); return; }
+    if (!registered) throw new Error("could not register with the queue after 12 attempts — is rpc.animica.org reachable?");
     post({ type: "log", text: "registered " + cfg.address.slice(0, 14) + "… tiers=" + cfg.tiers.join(",") });
     post({ type: "status", text: "Serving — waiting for jobs…" });
 
@@ -215,17 +268,9 @@ export async function run(cfg) {
         lastRegister = Date.now();
         rpc(cfg.rpcUrl, "aicf.workerRegister", { address: cfg.address, tiers: cfg.tiers, hardware: cfg.hardware }).catch(() => {});
       }
-      if (Date.now() - lastEarnings > 45000) {
+      if (Date.now() - lastEarnings > 15000) {
         lastEarnings = Date.now();
-        rpc(cfg.rpcUrl, "aicf.workerEarnings", { address: cfg.address })
-          .then((e) => {
-            const pendingCum = Number(e && e.earnings_pending_animica || 0);
-            const paid = Number(e && e.earnings_paid_animica || 0);
-            const unpaid = e && e.earnings_unpaid_animica != null
-              ? Number(e.earnings_unpaid_animica) : Math.max(0, pendingCum - paid);
-            post({ type: "earnings", pending: unpaid, paid: paid, completed: Number(e && e.jobs_completed || 0) });
-          })
-          .catch(() => {});
+        refreshEarnings(cfg);
       }
       let job = null;
       try {
@@ -242,7 +287,9 @@ export async function run(cfg) {
         continue;
       }
       delay = 2500;
-      const prompt = clampPrompt(String(job.prompt || ""), promptBudget(cfg));
+      let prompt = clampPrompt(String(job.prompt || ""), promptBudget(cfg));
+      const findings = await webLookup(cfg, String(job.prompt || ""));
+      if (findings) prompt = clampPrompt(findings + prompt, promptBudget(cfg) + 600);
       if (!prompt.trim()) { post({ type: "log", text: "claimed " + job.job_id.slice(0, 10) + "… but it carried no prompt — skipped" }); continue; }
       // Output budget: enough for complete code/answers. The CPU engine scales
       // with its thread mode — multithreaded wasm sustains ~450 tokens inside
@@ -251,43 +298,68 @@ export async function run(cfg) {
       // clamped prompt, and the wall-clock is covered by the 600s claim lease +
       // matching bridge/node windows. Multithreaded CPU sustains ~1.5k tokens.
       const engineCap = cfg.engineKind === "wllama"
-        ? ((typeof crossOriginIsolated !== "undefined" && crossOriginIsolated) ? 1536 : 768)
+        ? ((typeof crossOriginIsolated !== "undefined" && crossOriginIsolated) ? 2048 : 1024)
         : cfg.maxOutputCap;
       const maxTok = Math.max(16, Math.min(Number(job.max_output_tokens) || 2048, engineCap));
       const deadline = Number(job.claim_expires_at) > 0 ? Number(job.claim_expires_at) * 1000 : Date.now() + 120000;
       post({ type: "status", text: "Answering job " + job.job_id.slice(0, 10) + "… (" + prompt.length + " chars in, ≤" + maxTok + " tokens out)" });
       post({ type: "log", text: "claimed " + job.job_id.slice(0, 10) + "… tier=" + job.tier });
+      // Best-of-N: submits are scored CANDIDATES — the network settles on the
+      // best answer, not the first. A low score (or a rejected degenerate) gets
+      // ONE more generation pass at higher temperature: "even miners should do
+      // multiple iterations of the same job if necessary to ensure really good
+      // answers."
       let text = "";
       let tokens = 0;
+      let anyAccepted = false;
       const t0 = Date.now();
-      const watchdog = setTimeout(interruptEngine, Math.max(5000, deadline - Date.now() - 4000));
-      try {
-        text = await generateText(
-          prompt, maxTok,
-          Math.max(0, Math.min(Number(job.temperature != null ? job.temperature : 0.3), 1.2)),
-          Math.max(0.05, Math.min(Number(job.top_p != null ? job.top_p : 0.9), 1)),
-          (n) => { tokens += n; });
-      } catch (e) {
-        post({ type: "log", text: "generation failed: " + String(e && e.message || e).slice(0, 80) });
-      } finally {
-        clearTimeout(watchdog);
+      const temp0 = Math.max(0, Math.min(Number(job.temperature != null ? job.temperature : 0.3), 1.2));
+      const topP = Math.max(0.05, Math.min(Number(job.top_p != null ? job.top_p : 0.9), 1));
+      for (let attempt = 0; attempt < 2 && !stopped; attempt++) {
+        tokens = 0;
+        const watchdog = setTimeout(interruptEngine, Math.max(5000, deadline - Date.now() - 4000));
+        try {
+          text = await generateText(prompt, maxTok, attempt === 0 ? temp0 : Math.min(1.0, temp0 + 0.3), topP, (n) => { tokens += n; });
+        } catch (e) {
+          post({ type: "log", text: "generation failed: " + String(e && e.message || e).slice(0, 80) });
+        } finally {
+          clearTimeout(watchdog);
+        }
+        if (stopped) break;
+        if (!text.trim()) { post({ type: "log", text: "no text produced for " + job.job_id.slice(0, 10) + "… — nothing submitted" }); break; }
+        let r = null;
+        try {
+          r = await rpc(cfg.rpcUrl, "aicf.workerSubmitResult", { address: cfg.address, job_id: job.job_id, text: text.slice(0, 32000) });
+        } catch (e) {
+          post({ type: "log", text: "submit failed: " + String(e && e.message || e).slice(0, 80) });
+          break;
+        }
+        const timeLeft = deadline - Date.now();
+        if (r && r.accepted !== false) {
+          anyAccepted = true;
+          if (r.state === "candidate") {
+            post({ type: "log", text: "answer in for " + job.job_id.slice(0, 10) + "… score " + (r.score != null ? r.score : "?") + " (" + (r.candidates || 1) + " candidate" + ((r.candidates || 1) > 1 ? "s" : "") + ") — best answer wins at settle" });
+            if (r.retry_suggested && attempt === 0 && Number(r.settles_in_s || 0) > 8 && timeLeft > 30000) {
+              post({ type: "log", text: "score is low — taking another pass at it" });
+              continue;
+            }
+          } else {
+            post({ type: "log", text: (r.won !== false ? "WON " : "settled ") + job.job_id.slice(0, 10) + "… · " + tokens + " tok" });
+          }
+          break;
+        }
+        if (r && (r.reason === "degenerate_text" || r.reason === "stub_text") && attempt === 0 && timeLeft > 30000) {
+          post({ type: "log", text: "answer rejected (" + r.reason + ") — regenerating at higher temperature" });
+          continue;
+        }
+        post({ type: "log", text: "lost on " + job.job_id.slice(0, 10) + "… (" + ((r && r.reason) || "another answer was better") + ")" });
+        break;
       }
       const dt = (Date.now() - t0) / 1000;
-      if (stopped) break;
-      if (!text.trim()) { post({ type: "log", text: "no text produced for " + job.job_id.slice(0, 10) + "… — nothing submitted" }); continue; }
-      try {
-        const r = await rpc(cfg.rpcUrl, "aicf.workerSubmitResult", { address: cfg.address, job_id: job.job_id, text: text.slice(0, 32000) });
-        const tokS = tokens > 0 && dt > 0 ? tokens / dt : null;
-        if (r && r.accepted !== false) {
-          post({ type: "job", won: true, tokens: tokens, tokS: tokS });
-          post({ type: "log", text: "WON " + job.job_id.slice(0, 10) + "… · " + tokens + " tok in " + dt.toFixed(1) + "s" + (tokS ? " (" + tokS.toFixed(1) + " tok/s)" : "") });
-        } else {
-          post({ type: "job", won: false, tokens: tokens, tokS: tokS });
-          post({ type: "log", text: "lost the race on " + job.job_id.slice(0, 10) + "… (" + ((r && r.reason) || "another worker was faster") + ")" });
-        }
-      } catch (e) {
-        post({ type: "log", text: "submit failed: " + String(e && e.message || e).slice(0, 80) });
-      }
+      const tokS = tokens > 0 && dt > 0 ? tokens / dt : null;
+      post({ type: "job", won: anyAccepted, tokens: tokens, tokS: tokS });
+      refreshEarnings(cfg);          // pending/paid update the moment a race resolves
+      lastEarnings = Date.now();
       post({ type: "status", text: "Serving — waiting for jobs…" });
     }
   } catch (e) {
@@ -639,6 +711,7 @@ export default function ServeWorker() {
     // CPU generation is slow: cap output harder so answers land inside the claim window.
     maxOutputCap: 2048,   // GPU engine ceiling; per-engine CPU caps decided in the core
     pageHref: window.location.href,
+    searchUrl: "https://animica.dev/v1/web-search",
     hardware: {
       engine: engineKind,
       model: modelId,
@@ -832,7 +905,7 @@ export default function ServeWorker() {
         <StatBox label="races lost" value={String(stats.lost)} />
         <StatBox label="tokens out" value={stats.tokensOut.toLocaleString()} />
         <StatBox label="speed" value={stats.lastTokS ? `${stats.lastTokS.toFixed(1)} tok/s` : "—"} />
-        <StatBox label="pending ANM" value={fmtANM(stats.pendingANM)} note="queued for the next payout" />
+        <StatBox label="pending ANM" value={fmtANM(stats.pendingANM)} note="earned weight — next block's anchor pays it (scaled to the 75 ANM carve)" />
         {isValidAnimAddress(address) ? (
           <a href={`https://explorer.animica.org/address/${address.trim()}`} target="_blank" rel="noreferrer" className="block">
             <StatBox label="paid out ANM ↗" value={fmtANM(stats.paidANM)} accent note="on-chain · tap to verify" />

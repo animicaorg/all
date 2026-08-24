@@ -35,16 +35,23 @@ export default function ServePage() {
             answers, submits.
           </li>
           <li>
-            <strong className="text-white">Races keep quality honest.</strong> Jobs are replicated to
-            several workers; the first good answer wins and is the one credited. A fast desktop GPU
-            will usually beat your phone when both are online — and your phone still wins whenever
-            it&apos;s the fastest (or only) worker awake.
+            <strong className="text-white">The best answer wins — not the fastest.</strong> Every job
+            fans out to every provider online. Submits collect as scored candidates for a short
+            settle window, then the highest-quality answer is credited. Score low and the network
+            tells you — your device takes another pass at it. Speed still matters (a better resubmit
+            has to land before settle), but a careful phone can beat a sloppy GPU.
           </li>
           <li>
             <strong className="text-white">Teams pool token budgets.</strong> Long-form requests fan
             out across every machine online — one worker drafts the outline, others each write a
             section in parallel, and the network stitches one long answer. More devices serving
             means more sections, more depth, and more winners paid per question.
+          </li>
+          <li>
+            <strong className="text-white">Workers can look things up.</strong> When a prompt needs
+            fresh facts — prices, versions, news — your device researches it first through the
+            network&apos;s free web-lookup endpoint and folds the findings into its answer. Grounded
+            answers score higher and win more.
           </li>
           <li>
             <strong className="text-white">Earnings are per-job IOUs.</strong> Each job won credits

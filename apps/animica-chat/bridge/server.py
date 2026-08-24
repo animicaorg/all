@@ -496,7 +496,7 @@ BRIDGE_HISTORY_CHAR_BUDGET = int(os.environ.get("BRIDGE_HISTORY_CHAR_BUDGET", "6
 BRIDGE_TEMP_DEFAULT = float(os.environ.get("BRIDGE_TEMP_DEFAULT", "0.3"))
 BRIDGE_TEMP_MAX = float(os.environ.get("BRIDGE_TEMP_MAX", "0.8"))
 BRIDGE_TOP_P_DEFAULT = float(os.environ.get("BRIDGE_TOP_P_DEFAULT", "0.9"))
-BRIDGE_DEFAULT_MAX_TOKENS = int(os.environ.get("BRIDGE_DEFAULT_MAX_TOKENS", "2560"))
+BRIDGE_DEFAULT_MAX_TOKENS = int(os.environ.get("BRIDGE_DEFAULT_MAX_TOKENS", "3072"))
 
 # --- rank 15/16: auto web retrieval + untrusted-content framing ---
 BRIDGE_AUTO_WEB = _env_flag("BRIDGE_AUTO_WEB", "1")
@@ -675,9 +675,9 @@ def _total_budget_s() -> float:
 # back to the normal single-worker serve.
 BRIDGE_TEAM = _env_flag("BRIDGE_TEAM", "1")
 BRIDGE_TEAM_MIN_WORKERS = int(os.environ.get("BRIDGE_TEAM_MIN_WORKERS", "2"))
-BRIDGE_TEAM_MAX_SECTIONS = int(os.environ.get("BRIDGE_TEAM_MAX_SECTIONS", "4"))
-BRIDGE_TEAM_SECTION_TOKENS = int(os.environ.get("BRIDGE_TEAM_SECTION_TOKENS", "700"))
-BRIDGE_TEAM_PLAN_TOKENS = int(os.environ.get("BRIDGE_TEAM_PLAN_TOKENS", "240"))
+BRIDGE_TEAM_MAX_SECTIONS = int(os.environ.get("BRIDGE_TEAM_MAX_SECTIONS", "6"))
+BRIDGE_TEAM_SECTION_TOKENS = int(os.environ.get("BRIDGE_TEAM_SECTION_TOKENS", "900"))
+BRIDGE_TEAM_PLAN_TOKENS = int(os.environ.get("BRIDGE_TEAM_PLAN_TOKENS", "320"))
 # Section payments come from ONE bridge wallet: stagger submits so each
 # fetches the next nonce after the previous landed in the mempool.
 BRIDGE_TEAM_STAGGER_S = float(os.environ.get("BRIDGE_TEAM_STAGGER_S", "1.2"))
@@ -733,7 +733,7 @@ def _team_text(provider, prompt: str, tier: str, max_tokens: int,
     )
     res = provider.serve(turn)
     t = (res.text or "").strip()
-    return "" if _is_stub_text(t) else t
+    return "" if (_is_stub_text(t) or _is_junk_text(t)) else t
 
 
 _POSTSCRIPT_RE = re.compile(
@@ -971,10 +971,23 @@ def _system_grounding(req) -> str:
         return DEFAULT_SYSTEM_PROMPT
 
 
+def _is_junk_text(text: Optional[str]) -> bool:
+    """Degenerate output ("ssss…", floods of ?/newlines) — as useless as a stub."""
+    t = (text or "").strip()
+    if len(t) < 30:
+        return False
+    top = max(t.count(ch) for ch in set(t))
+    distinct = len(set(t) - set(" \n\t\r"))
+    return top / len(t) > 0.6 or distinct < 3
+
+
 def _stub_head(text: Optional[str]) -> bool:
-    """True if ``text`` STARTS with a known worker-stub prefix (after lstrip)."""
+    """True if ``text`` STARTS with a known worker-stub prefix (after lstrip),
+    or the head is already degenerate junk (mostly one repeated character)."""
     t = (text or "").lstrip()
-    return any(t.startswith(p) for p in _STUB_PREFIXES)
+    if any(t.startswith(p) for p in _STUB_PREFIXES):
+        return True
+    return len(t) >= 40 and _is_junk_text(t[:96])
 
 app = FastAPI(title="Animica Chat AICF Bridge", version="0.1.0")
 
@@ -1794,6 +1807,7 @@ def _full_payload(resp_id: str, model: str, text: str, usage: dict) -> dict:
 
 
 _MODEL_CHAIN_TIER = {
+    "kimi-k3": "standard",
     "animica-chat": "standard",
     "animica-chat-small": "standard",
     "animica-chat-flagship": "premium",
@@ -1803,6 +1817,9 @@ _MODEL_CHAIN_TIER = {
     # actually serve — routing a 32B job there hangs. Re-add once elite is served.
 }
 _MODELS_META = [
+    ("kimi-k3", "Kimi K3 — the network's flagship chat & coding brand, served by the "
+                "distributed AICF worker fleet (phones, laptops, GPUs race and the "
+                "best answer wins)."),
     ("animica-chat", "On-chain AICF chat — routed through registered miners."),
     ("animica-chat-small", "Tier 'small' on the AICF network."),
     ("animica-chat-flagship", "Tier 'flagship' on the AICF network."),
@@ -1950,6 +1967,40 @@ async def list_tiers() -> JSONResponse:
             "available": spec["chain_tier"] in chain_available,
         })
     return JSONResponse({"object": "list", "data": out})
+
+
+_WORKER_SEARCH_HITS: dict = {}   # ip -> [timestamps]  (12/min)
+
+
+@app.get("/v1/web-search")
+async def worker_web_search(request: Request, q: str = "", mode: str = "context"):
+    """Free, keyless web lookup for inference WORKERS (phones/laptops serving
+    jobs at pool.animica.org/serve and animica-serve). Lets miners research a
+    prompt before answering — 'make sure they can use the internet to look
+    stuff up'. SSRF-hardened via web_access; CORS-open; 12 req/min/IP."""
+    q = (q or "").strip()[:220]
+    hdrs = {"access-control-allow-origin": "*", "cache-control": "no-store"}
+    if len(q) < 3:
+        return JSONResponse({"error": "q too short"}, status_code=400, headers=hdrs)
+    ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "?")).split(",")[0].strip()
+    now = time.time()
+    hits = [t for t in _WORKER_SEARCH_HITS.get(ip, []) if now - t < 60.0]
+    if len(hits) >= 12:
+        return JSONResponse({"error": "rate_limited", "retry_in_s": 60}, status_code=429, headers=hdrs)
+    hits.append(now)
+    _WORKER_SEARCH_HITS[ip] = hits
+    if len(_WORKER_SEARCH_HITS) > 2000:
+        for k in list(_WORKER_SEARCH_HITS.keys())[:1000]:
+            _WORKER_SEARCH_HITS.pop(k, None)
+    try:
+        if mode == "context":
+            wc = await web_access.web_context(q, k=4, fetch_top=1, max_chars=1400)
+            return JSONResponse({"query": q, "context": (wc or {}).get("text", ""),
+                                 "sources": (wc or {}).get("sources", [])}, headers=hdrs)
+        res = await web_access.web_search(q, k=5)
+        return JSONResponse({"query": q, "results": res or []}, headers=hdrs)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)[:120]}, status_code=502, headers=hdrs)
 
 
 @app.get("/healthz")
@@ -2406,7 +2457,7 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
             # healthy/updated worker may claim the re-submitted job); if it still
             # stubs, return a clean first-party notice.
             served_fallback = timed_out
-            if not timed_out and (_is_stub_text(text) or not text.strip()):
+            if not timed_out and (_is_stub_text(text) or _is_junk_text(text) or not text.strip()):
                 for _attempt in range(max(0, BRIDGE_STUB_RETRIES)):
                     # Deadline across first serve + all retries: once the budget
                     # is spent, fall back immediately instead of re-submitting
@@ -2419,10 +2470,10 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                     except Exception:    # noqa: BLE001 — treat as still-stubbed
                         break
                     retry_text = _apply_stop(retry_res.text, req.stop)
-                    if retry_text.strip() and not _is_stub_text(retry_text):
+                    if retry_text.strip() and not _is_stub_text(retry_text) and not _is_junk_text(retry_text):
                         text = retry_text
                         break
-                if _is_stub_text(text) or not text.strip():
+                if _is_stub_text(text) or _is_junk_text(text) or not text.strip():
                     # Every AICF provider stubbed. Try the last-resort upstream
                     # before apologising — an answer beats a notice.
                     alt = _serve_fallback_upstream(req.messages, req.max_tokens, system=_system_grounding(req) + ("\n\n" + grounding_block if grounding_block else ""))
