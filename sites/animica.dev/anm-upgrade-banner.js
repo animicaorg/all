@@ -21,10 +21,17 @@
  *   retired 50,000 IOU copy while the new text sat in the post-activation branch
  *   nobody would see until it was already too late. Check which branch renders at
  *   the current height before shipping banner copy.
- * Current release: animica 9.7.0. CONSENSUS FLOOR IS 9.7.0 — VERSION and CONSENSUS_MIN
- *   are the same number here because 9.7.0 is the release that WIRED the 75,000 forks.
- *   They were defined-but-dead in network_params before it (the node computed the old
- *   split and reverted the new rules), so every earlier node is non-compliant at 75,000.
+ * Current release: animica 10.2.5. CONSENSUS FLOOR IS ALSO 10.2.5 — two separate reasons
+ *   stack here. 9.7.0 was the release that WIRED the 75,000 forks (they were
+ *   defined-but-dead in network_params before it — the node computed the old split and
+ *   reverted the new rules), so every pre-9.7.0 node is non-compliant at 75,000. Then
+ *   10.2.5 changed the carve PAYOUT rule: a block in which ANY provider claims now pays
+ *   the WHOLE inference slice to those providers pro-rata, rather than paying only the
+ *   claimed amount and rolling the remainder to the treasury. A 10.2.4 node computes the
+ *   old amounts, so the two disagree on balances the first time a settlement anchor
+ *   lands. INERT until then: with no anchors in a block both versions are byte-identical,
+ *   which is why this could ship close to the height — but do not post an anchor until
+ *   the fleet is on 10.2.5.
  * ONE MANDATORY CONSENSUS HEIGHT, 75,000. FORK_TREASURY_25 was once slated for 70,000 but
  *   the reward code never read the flag there, so nothing activated and no realized history
  *   changed; 9.7.0 moves it to 75,000 so the whole reward-split change lands in one step.
@@ -106,18 +113,34 @@
   // is kept equal to DEADLINE so the single-height copy renders for every reader.
   var DEADLINE = 75000;                                   // all forks activate here — MANDATORY
   var DEADLINE_FIRST = DEADLINE;
-  var VERSION = "10.0.0";
+  var VERSION = "11.1.0";
   // The lowest release that computes post-75,000 state correctly. 9.7.0 is the floor:
   // block 75,000 activates the treasury 15%->25% raise AND the 25% inference carve
   // (emission split), value-carrying CALL and on-chain contract execution (state), and
   // the bounded difficulty retarget (theta). All were defined-but-unwired before 9.7.0,
   // so a node below it computes the OLD 85/15 split and a divergent state root the moment
   // the fork height passes. 9.7.0 supersedes the 9.6.0 VM floor and carries it.
-  var CONSENSUS_MIN = "9.7.1";
+  // RAISED TO 10.2.5 (was 9.7.1). 10.2.5 changes the carve payout rule itself: from
+  // 75,000, a block in which ANY provider claims pays the WHOLE inference slice to those
+  // providers pro-rata, instead of paying only the claimed amount and sending the
+  // remainder to the treasury. A 10.2.4 node computes the old amounts, so the two
+  // disagree on balances the first time a settlement anchor lands. It is INERT until
+  // then — with no anchors both versions are identical — which is why the release can
+  // ship this close to the height, but every node must still be on 10.2.5 before any
+  // anchor is posted.
+  var CONSENSUS_MIN = "10.2.5";
+  // Separate from the consensus floor and NOT the same number. 10.2.2 restored the
+  // getBlockTemplate carve fix (7281d06c, reverted by the 10.1.0 commit): below it the
+  // template advertises the PRE-carve miner slice, so from 75,000 it says 225 ANM where
+  // the miner receives 150. Blocks stay valid — submitBlock prefers state_balance_delta —
+  // so this is a payout bug, not a fork: a pool crediting shares from the advertised value
+  // hands out 75 ANM/block of its own money. Node operators who do not run a pool are
+  // unaffected by this one, which is why it is not folded into CONSENSUS_MIN.
+  var POOL_MIN = "10.2.2";
   var NOTICE = "https://animica.dev/upgrade/";            // a consensus deadline: the guide is the action
   var GUIDE = "https://animica.dev/upgrade/";             // still the right link for node operators
   var HEIGHT_URL = "https://animica.dev/net-height";
-  var KEY = "anmUpgrade-971";                             // re-show: 9.7.1 canonical consensus (supersedes 9.7.0; all forks @ 75,000)
+  var KEY = "anmUpgrade-1110";                             // re-show: 10.3.1 is the current release (compute/inference + payout wallet-clamp fix); CONSENSUS FLOOR stays 10.2.5
   // Fail-safe retirement: if live height is never readable (cross-origin/CORS/network),
   // still stop showing a pre-activation notice after this date. Height stays the
   // authoritative deadline; this only ever HIDES the bar, so it can't misfire in the
@@ -188,29 +211,33 @@
     var msgHtml;
     if (postActivation) {
       msgHtml =
-        "<strong style='color:#FFC24B'>Block 75,000 has passed.</strong> "
-        + "The split is now <strong style='color:#fff'>50% miner / 25% treasury / 25% inference</strong>. "
-        + "A node still below <strong style='color:#fff'>" + CONSENSUS_MIN + "</strong> computes the OLD split. It will "
-        + "<strong style='color:#fff'>not fork, stall or show an error</strong> &mdash; coinbase amounts "
-        + "are not validated against the schedule, so it accepts the same blocks and simply reports "
-        + "<strong style='color:#fff'>WRONG BALANCES, silently and permanently</strong>. Exchanges and "
-        + "explorers especially: there is no symptom to wait for. "
-        + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span> "
-        + "and restart to rejoin. Balances read from an un-upgraded node are wrong. "
-        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span> <span style='color:#8FB8FF'>New in 10.0.0: <strong style=\'color:#fff\'>ANM Instant</strong> \u2014 an ANM-native L2 for near-instant payments (additive &amp; opt-in). Update your wallet to try it.</span>";
+        "<strong style='color:#FFC24B'>New: animica 11.1.0</strong> &mdash; accurate image generation "
+        + "(prompt compiler + fidelity judge), a video director with distributed shots, web-grounded chat, "
+        + "and a working <span style=\"font-family:'JetBrains Mono',ui-monospace,monospace\">wallet new</span>. "
+        + "<strong style='color:#fff'>11.0.0's CLI does not start</strong> &mdash; skip straight to " + VERSION + ": "
+        + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">pip install -U animica</span>. "
+        + "<strong style='color:#FFC24B'>New: Serve &amp; Earn</strong> &mdash; your phone or laptop answers AI jobs "
+        + "straight from the browser and earns ANM per job, paid on-chain every block: "
+        + "<a href='https://pool.animica.org/serve' style='color:#14C79B;text-decoration:underline'>pool.animica.org/serve</a>. "
+        + "<span style='color:#A9C4B8'>Still below " + CONSENSUS_MIN + "? Your node has computed wrong balances since "
+        + "block 75,000 with no visible symptom &mdash; update now (pools below " + POOL_MIN + " overpay 75 ANM/block). "
+        + "Wallet and hosted-service users: nothing to do.</span>";
     } else {
       // ONE mandatory height (75,000) now — see the DEADLINE note above. Every fork,
       // including the treasury raise once slated for 70,000, activates here in one step.
       var head = "Mandatory consensus upgrade at block 75,000.";
       msgHtml =
         "<strong style='color:#FFC24B'>" + head + "</strong> "
-        + "animica <strong style='color:#fff'>" + VERSION + "</strong> carries it. At 75,000 the "
+        + "Update to animica <strong style='color:#fff'>" + VERSION + "</strong>. At 75,000 the "
         + "foundation-treasury share goes from <strong style='color:#fff'>15% to 25%</strong> and the block "
         + "also reserves <strong style='color:#fff'>25% of every block for inference payments</strong>, "
         + "withheld from the miner whether or not anything claims it &mdash; so the split becomes "
         + "<strong style='color:#fff'>50% miner / 25% treasury / 25% inference</strong> (miners go from "
-        + "85% to 50%). On a block where nothing claims the inference slice it goes to the treasury, so the "
-        + "treasury receives 50% of that block. The same height also turns on on-chain contract execution "
+        + "85% to 50%). Where the inference slice lands depends on one thing &mdash; whether any provider "
+        + "claims in that block. Nothing claimed: it goes to the treasury, so the treasury receives 50% of "
+        + "that block. <strong style='color:#fff'>Any claim: the WHOLE slice is paid to the claiming "
+        + "providers</strong>, split pro-rata, and the treasury takes no share of it. "
+        + "The same height also turns on on-chain contract execution "
         + "(the token launcher + DEX), value-carrying CALL, a bounded difficulty retarget and a uniform "
         + "reorg bound. Total emission and the halving schedule are "
         + "<strong style='color:#fff'>unchanged</strong> &mdash; only the split. "
@@ -218,12 +245,18 @@
         + "on every <strong style='color:#fff'>full node, pool and exchange</strong>." + count
         + " Then CHECK IT TOOK: "
         + "<span style=\"font-family:'JetBrains Mono',ui-monospace,monospace;color:#14C79B\">animica --version</span>"
-        + " must report <strong style='color:#fff'>" + CONSENSUS_MIN + "</strong> or later &mdash; if it does not, the "
+        + " must report <strong style='color:#fff'>" + VERSION + "</strong> &mdash; if it does not, the "
         + "release has not reached your index yet and you are NOT upgraded. "
-        + "A node left below it will <strong style='color:#fff'>not fork, stall or error</strong> &mdash; "
-        + "coinbase amounts are not validated against the schedule, so it accepts the same blocks and "
-        + "reports <strong style='color:#fff'>WRONG BALANCES, silently and permanently</strong>. "
-        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span> <span style='color:#8FB8FF'>New in 10.0.0: <strong style=\'color:#fff\'>ANM Instant</strong> \u2014 an ANM-native L2 for near-instant payments (additive &amp; opt-in). Update your wallet to try it.</span>";
+        + "Skipping it breaks two separate things, and <strong style='color:#fff'>neither announces itself</strong>. "
+        + "<strong style='color:#fff'>Below " + CONSENSUS_MIN + "</strong>: the node computes the OLD split and will "
+        + "<strong style='color:#fff'>not fork, stall or error</strong> &mdash; coinbase amounts are not validated "
+        + "against the schedule, so it accepts the same blocks and reports "
+        + "<strong style='color:#fff'>WRONG BALANCES, silently and permanently</strong>. "
+        + "<strong style='color:#fff'>Below " + POOL_MIN + "</strong>: a <strong style='color:#fff'>pool</strong> "
+        + "overpays &mdash; the block template will advertise 225 ANM while the miner actually receives 150, so a "
+        + "pool crediting shares from that figure hands out <strong style='color:#fff'>75 ANM per block out of its "
+        + "own hot wallet</strong>. "
+        + "<span style='color:#A9C4B8'>Wallet and hosted-service users: nothing to do.</span>";
     }
     var msg = el("div", "flex:1 1 320px;font-size:14px;line-height:1.45", msgHtml);
 
