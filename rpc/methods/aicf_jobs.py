@@ -153,6 +153,16 @@ _TIER_LATENCY_MS: Dict[str, int] = {
 _WORKER_CLAIM_GRACE_S = float(
     os.environ.get("ANIMICA_AICF_WORKER_CLAIM_GRACE_S", "30.0")
 )
+# After a worker CLAIMS, how long it may take to actually deliver the result
+# before the stub ships. Phones and other CPU workers (the pool.animica.org/serve
+# browser lane, animica-serve on Termux) legitimately take 1-3 minutes for a chat
+# completion — the old behavior stubbed a CLAIMED job after one extra 30s window,
+# which threw away nearly every phone answer. The wait is poll-checked, so a fast
+# worker's completion still returns immediately; only a genuinely wedged worker
+# runs out the clock. Override with ANIMICA_AICF_WORKER_COMPLETE_GRACE_S.
+_WORKER_COMPLETE_GRACE_S = float(
+    os.environ.get("ANIMICA_AICF_WORKER_COMPLETE_GRACE_S", "210.0")
+)
 # How long a worker lease is valid; if a worker claims and goes silent,
 # the job becomes reclaimable after this many seconds. The default is
 # generous so a miner downloading multi-GB model weights on its first
@@ -1640,13 +1650,14 @@ async def _local_fallback_after_grace(job_id: str) -> None:
     if job is None or job.state in {"completed", "failed"}:
         return
     if job.state == "claimed":
-        # Give the worker one more grace window to actually return a result
-        # before giving up — small chat completions normally finish well
-        # inside this; a worker that hasn't is wedged.
-        await asyncio.sleep(_WORKER_CLAIM_GRACE_S)
-        job = _STORE.get(job_id)
-        if job is None or job.state in {"completed", "failed"}:
-            return
+        # A worker HAS the job: give it a real completion window (CPU/phone
+        # workers take minutes), polling so a finished job returns instantly.
+        deadline = time.time() + _WORKER_COMPLETE_GRACE_S
+        while time.time() < deadline:
+            await asyncio.sleep(5.0)
+            job = _STORE.get(job_id)
+            if job is None or job.state in {"completed", "failed"}:
+                return
     prompt = str(job.spec.get("prompt", ""))
     text = _stub_response(prompt, job.tier)
     prior_state = job.state
@@ -1685,7 +1696,12 @@ def _schedule_fallback(job_id: str) -> None:
         if job is None or job.state in {"completed", "failed"}:
             return
         if job.state == "claimed":
-            time.sleep(_WORKER_CLAIM_GRACE_S)
+            deadline = time.time() + _WORKER_COMPLETE_GRACE_S
+            while time.time() < deadline:
+                time.sleep(5.0)
+                job = _STORE.get(job_id)
+                if job is None or job.state in {"completed", "failed"}:
+                    return
             job = _STORE.get(job_id)
             if job is None or job.state in {"completed", "failed"}:
                 return
@@ -2227,6 +2243,40 @@ async def worker_submit_result(
     if not address or not job_id:
         raise InvalidParams("workerSubmitResult: 'address' and 'job_id' are required")
     _STORE.touch_worker(address)
+    if not text.strip():
+        # An empty answer must never WIN the K-way race (a broken worker was
+        # beating real phone/CPU workers with "" and getting credited for it —
+        # every consumer then saw blank completions). Not an error for the
+        # worker loop, just never a completion; the job stays open for the
+        # replicas that actually produced text.
+        log.info(
+            "aicf_jobs: rejecting EMPTY submit for job %s from %s", job_id, address,
+        )
+        return {
+            "accepted": False,
+            "state": "claimed",
+            "reason": "empty_text",
+            "job_id": job_id,
+        }
+    # Same for the well-known miner-side STUB markers: they are machine-generated
+    # placeholders ("my model failed to load"), never real answers. A broken-but-
+    # fast worker was winning every race with them, so real (slower) phone/CPU
+    # answers never reached users — the bridge just cycled into its fallback.
+    _head = text.lstrip()[:96].lower()
+    if (_head.startswith("[aicf-miner-stub")
+            or _head.startswith("[distributed-aicf stub")
+            or "model_load_failed" in _head
+            or "unrecognized model in" in _head):
+        log.info(
+            "aicf_jobs: rejecting STUB submit for job %s from %s (%r)",
+            job_id, address, text[:60],
+        )
+        return {
+            "accepted": False,
+            "state": "claimed",
+            "reason": "stub_text",
+            "job_id": job_id,
+        }
     job = _STORE.get(job_id)
     if job is None:
         raise InvalidParams(f"workerSubmitResult: unknown job_id {job_id}")

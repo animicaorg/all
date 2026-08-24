@@ -75,9 +75,11 @@ animica-serve --address anim1yourwallet`}</code>
             slower, but it serves and earns the same way. Pick the 0.5B model on phones with less RAM.
           </li>
           <li>
-            <strong className="text-white">Plugged in, screen on.</strong> Sustained inference is
-            real work: leave the phone charging. The page holds a screen wake-lock while serving and
-            (where the browser exposes battery state) pauses automatically when you unplug.
+            <strong className="text-white">Plugged in; screen your choice.</strong> Sustained
+            inference is real work: leave the phone charging (it auto-pauses when unplugged where
+            the browser exposes battery state). &quot;Keep screen awake&quot; holds a wake-lock —
+            the most reliable mode. Turn it off to let the screen sleep: on Android the background
+            worker + keepalive tone keep serving; iPhone suspends sleeping tabs, so leave it on there.
           </li>
           <li>
             <strong className="text-white">Background serving.</strong> The worker runs on a

@@ -93,6 +93,17 @@ function clampPrompt(p, maxChars) {
   const tail = maxChars - head;
   return p.slice(0, head) + "\\n…\\n" + p.slice(p.length - tail);
 }
+// CPU prefill is the bottleneck: ~10KB flattened prompts are ~2.6k tokens, which a
+// single wasm thread chews through for MINUTES. Clamp much harder for the wasm
+// engine (instructions head + the recent tail with the actual question survive).
+function promptBudget(cfg) {
+  if (cfg.engineKind !== "wllama") return 13000;
+  // Keep CPU jobs under ~a minute end-to-end: prefill dominates, so keep the
+  // prompt small even with threads (the head instructions + the tail question
+  // are what matter; the middle history is the safest cut).
+  const threaded = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
+  return threaded ? 3600 : 2400;
+}
 let engineModelId = null;
 let engineKind = null;
 function unloadEngine() {
@@ -120,6 +131,8 @@ async function ensureEngine(cfg) {
       },
     });
     engine = { kind: "wllama", w: w };
+    const threaded = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated;
+    post({ type: "log", text: "CPU engine ready · " + (threaded ? "multi-threaded (" + ((navigator.hardwareConcurrency || 4)) + " cores)" : "single-threaded (no cross-origin isolation)") });
   } else {
     post({ type: "status", text: "Loading WebLLM…" });
     const webllm = await import(cfg.webllmUrl);
@@ -212,7 +225,7 @@ export async function run(cfg) {
         continue;
       }
       delay = 2500;
-      const prompt = clampPrompt(String(job.prompt || ""), 13000);
+      const prompt = clampPrompt(String(job.prompt || ""), promptBudget(cfg));
       if (!prompt.trim()) { post({ type: "log", text: "claimed " + job.job_id.slice(0, 10) + "… but it carried no prompt — skipped" }); continue; }
       const maxTok = Math.max(16, Math.min(Number(job.max_output_tokens) || 512, cfg.maxOutputCap));
       const deadline = Number(job.claim_expires_at) > 0 ? Number(job.claim_expires_at) * 1000 : Date.now() + 120000;
@@ -326,6 +339,7 @@ export default function ServeWorker() {
   const [modelId, setModelId] = useState<string>(MODELS[0].id);
   const [chargeOnly, setChargeOnly] = useState<boolean>(true);
   const [bgMode, setBgMode] = useState<boolean>(true);
+  const [screenAwake, setScreenAwake] = useState<boolean>(true);
   const [batterySupported, setBatterySupported] = useState<boolean>(false);
   const [charging, setCharging] = useState<boolean>(true);
   const [gpuOk, setGpuOk] = useState<boolean | null>(null);
@@ -369,6 +383,7 @@ export default function ServeWorker() {
       else if (kind === "wllama") setModelId(MODELS[1].id);   // CPU: default to the 0.5B
       const c = localStorage.getItem("anmServeChargeOnly"); if (c != null) setChargeOnly(c !== "0");
       const b = localStorage.getItem("anmServeBgMode"); if (b != null) setBgMode(b !== "0");
+      const w = localStorage.getItem("anmServeScreenAwake"); if (w != null) setScreenAwake(w !== "0");
     } catch { /* private mode */ }
     const nav = navigator as any;
     if (typeof nav.getBattery === "function") {
@@ -383,6 +398,18 @@ export default function ServeWorker() {
   useEffect(() => { try { localStorage.setItem("anmServeModel", modelId); } catch { /* */ } setModelReady(false); }, [modelId]);
   useEffect(() => { try { localStorage.setItem("anmServeChargeOnly", chargeOnly ? "1" : "0"); } catch { /* */ } }, [chargeOnly]);
   useEffect(() => { try { localStorage.setItem("anmServeBgMode", bgMode ? "1" : "0"); } catch { /* */ } }, [bgMode]);
+  const screenAwakeRef = useRef(screenAwake);
+  useEffect(() => {
+    screenAwakeRef.current = screenAwake;
+    try { localStorage.setItem("anmServeScreenAwake", screenAwake ? "1" : "0"); } catch { /* */ }
+    // Live toggle: releasing lets the screen sleep — serving continues on the
+    // background worker (keep the audio keepalive on for reliability); the
+    // checkbox click is a user gesture, so re-acquiring works too.
+    if (phaseRef.current === "serving" || phaseRef.current === "paused" || phaseRef.current === "loading") {
+      if (screenAwake) void acquireWakeLock(); else releaseWakeLock();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenAwake]);
 
   const cfgRef = useRef<any>(null);
   const signOff = useCallback((addr: string) => {
@@ -438,6 +465,7 @@ export default function ServeWorker() {
   }, [charging, chargeOnly, batterySupported, phase, sendControl]);
 
   async function acquireWakeLock() {
+    if (!screenAwakeRef.current) return;   // user allows the screen to sleep
     try { const wl = (navigator as any).wakeLock; if (wl?.request) wakeLockRef.current = await wl.request("screen"); } catch { /* */ }
   }
   function releaseWakeLock() { try { wakeLockRef.current?.release?.(); } catch { /* */ } wakeLockRef.current = null; }
@@ -570,7 +598,7 @@ export default function ServeWorker() {
     wllamaWasm: WLLAMA_WASM,
     ggufUrl: MODELS.find((x) => x.id === modelId)?.gguf || MODELS[1].gguf,
     // CPU generation is slow: cap output harder so answers land inside the claim window.
-    maxOutputCap: engineKind === "wllama" ? 320 : 768,
+    maxOutputCap: engineKind === "wllama" ? 160 : 768,
     hardware: {
       engine: engineKind,
       model: modelId,
@@ -725,6 +753,10 @@ export default function ServeWorker() {
         <label className="flex items-center gap-2 text-sm text-white/70" title="Plays a near-silent tone so Android Chrome doesn't freeze the tab when you switch apps. iOS suspends background tabs regardless — keep the tab open there.">
           <input type="checkbox" checked={bgMode} disabled={running} onChange={(e) => setBgMode(e.target.checked)} className="h-4 w-4 accent-[#14C79B]" />
           Keep serving in background
+        </label>
+        <label className="flex items-center gap-2 text-sm text-white/70" title="On: holds a wake-lock so the screen stays on (most reliable). Off: the screen may sleep; on Android the background worker + keepalive tone keep serving while plugged in. iPhone suspends the tab when the screen sleeps — leave this on there.">
+          <input type="checkbox" checked={screenAwake} onChange={(e) => setScreenAwake(e.target.checked)} className="h-4 w-4 accent-[#14C79B]" />
+          Keep screen awake
         </label>
       </div>
 

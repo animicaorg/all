@@ -611,6 +611,58 @@ BRIDGE_SSE_HEARTBEAT_S = float(os.environ.get("BRIDGE_SSE_HEARTBEAT_S", "12"))
 # claims a job and never produces output holds the connection open forever
 # behind keepalives — a hang dressed up as a healthy 200.
 BRIDGE_STREAM_FIRST_TOKEN_S = float(os.environ.get("BRIDGE_STREAM_FIRST_TOKEN_S", "20"))
+
+# ── rank 17: phone-aware patience (2026-08-24) ──────────────────────────────
+# CPU workers (the pool.animica.org/serve browser lane, animica-serve on Termux
+# phones) legitimately take 1-3 minutes end-to-end: up to ~15s to CLAIM (their
+# poll backoff) plus wasm/CPU generation, and they deliver the WHOLE answer in
+# one chunk — so "first token" arrives at completion. The 20s deadlines above
+# were tuned for GPU workers and systematically discarded every phone answer
+# (the phone still got credited; the user got the upstream fallback). When the
+# node reports REAL workers online, wait like the patient homepage client
+# already does (it holds for 660s with keepalives); with no workers online the
+# short deadlines keep no-provider failures snappy.
+BRIDGE_SLOW_FIRST_TOKEN_S = float(os.environ.get("BRIDGE_SLOW_FIRST_TOKEN_S", "110"))
+BRIDGE_SLOW_CYCLE_ATTEMPT_S = float(os.environ.get("BRIDGE_SLOW_CYCLE_ATTEMPT_S", "60"))
+BRIDGE_SLOW_TOTAL_BUDGET_S = float(os.environ.get("BRIDGE_SLOW_TOTAL_BUDGET_S", "300"))
+_AICF_RPC_URL = (os.environ.get("ANIMICA_AICF_ENDPOINT")
+                 or os.environ.get("AICF_URL")
+                 or "https://rpc.animica.org/rpc")
+_WORKERS_ONLINE = {"t": 0.0, "n": 0}
+
+
+def _external_workers_online() -> int:
+    """How many real AICF workers are live right now (nodes + phones + browsers).
+    Cached 20s; fail-closed to 0 so an unreachable node keeps the fast deadlines."""
+    now = time.time()
+    if now - _WORKERS_ONLINE["t"] < 20.0:
+        return _WORKERS_ONLINE["n"]
+    _WORKERS_ONLINE["t"] = now
+    n = 0
+    try:
+        import httpx
+        r = httpx.post(_AICF_RPC_URL, json={
+            "jsonrpc": "2.0", "id": 1, "method": "aicf.workerCount",
+            "params": {"online_window_s": 120},
+        }, timeout=3.0)
+        n = int(((r.json() or {}).get("result") or {}).get("online") or 0)
+    except Exception:  # noqa: BLE001 — patience probing must never break serving
+        n = 0
+    _WORKERS_ONLINE["n"] = n
+    return n
+
+
+def _first_token_deadline_s() -> float:
+    return BRIDGE_SLOW_FIRST_TOKEN_S if _external_workers_online() > 0 else BRIDGE_STREAM_FIRST_TOKEN_S
+
+
+def _cycle_attempt_s() -> float:
+    return BRIDGE_SLOW_CYCLE_ATTEMPT_S if _external_workers_online() > 0 else BRIDGE_CYCLE_ATTEMPT_S
+
+
+def _total_budget_s() -> float:
+    return BRIDGE_SLOW_TOTAL_BUDGET_S if _external_workers_online() > 0 else BRIDGE_TOTAL_BUDGET_S
+
 # Clean, honest message served when every attempt returns a stub, instead of
 # leaking a worker's raw model-load error (the giant transformers model list).
 _FALLBACK_ANSWER = (
@@ -2078,7 +2130,7 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                     lambda f: f.cancelled() or f.exception())
                 result = await asyncio.wait_for(
                     asyncio.shield(serve_fut),
-                    timeout=max(1.0, BRIDGE_TOTAL_BUDGET_S))
+                    timeout=max(1.0, _total_budget_s()))
             except asyncio.TimeoutError:
                 # Budget spent before the provider returned (a claimed-but-dead
                 # job can burn the whole stub-grace window). Serve the clean
@@ -2143,12 +2195,12 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
             # healthy/updated worker may claim the re-submitted job); if it still
             # stubs, return a clean first-party notice.
             served_fallback = timed_out
-            if not timed_out and _is_stub_text(text):
+            if not timed_out and (_is_stub_text(text) or not text.strip()):
                 for _attempt in range(max(0, BRIDGE_STUB_RETRIES)):
                     # Deadline across first serve + all retries: once the budget
                     # is spent, fall back immediately instead of re-submitting
                     # (each re-serve can burn minutes on a claimed-but-dead job).
-                    if time.monotonic() - t0 >= BRIDGE_TOTAL_BUDGET_S:
+                    if time.monotonic() - t0 >= _total_budget_s():
                         break
                     try:
                         retry_res = await loop.run_in_executor(
@@ -2159,7 +2211,7 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                     if retry_text.strip() and not _is_stub_text(retry_text):
                         text = retry_text
                         break
-                if _is_stub_text(text):
+                if _is_stub_text(text) or not text.strip():
                     # Every AICF provider stubbed. Try the last-resort upstream
                     # before apologising — an answer beats a notice.
                     alt = _serve_fallback_upstream(req.messages, req.max_tokens, system=_system_grounding(req) + ("\n\n" + grounding_block if grounding_block else ""))
@@ -2198,6 +2250,11 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
     # provider thread (which calls back synchronously) can hand chunks
     # to the asyncio generator producing the SSE response.
     async def streamer() -> AsyncGenerator[bytes, None]:
+        # model_label lives in the enclosing handler; the upstream-fallback branch
+        # below REBINDS it ("report the model that actually answered"), which made
+        # it generator-local and crashed every stream at its first read
+        # (UnboundLocalError) since that branch landed. nonlocal restores both.
+        nonlocal model_label
         chunk_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         queue: asyncio.Queue[Optional[tuple[str, bool]]] = asyncio.Queue()
         loop = asyncio.get_running_loop()
@@ -2354,7 +2411,7 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                 checked on every iteration now.
                 """
                 return (not first_token_seen
-                        and (time.monotonic() - t_serve0) >= BRIDGE_STREAM_FIRST_TOKEN_S)
+                        and (time.monotonic() - t_serve0) >= _first_token_deadline_s())
 
             while True:
                 if _stream_deadline_passed():
@@ -2410,6 +2467,12 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                     if gate_active and not gate_decided:
                         for chunk in _gate_emit(True):
                             yield chunk
+                    # An EMPTY stream (no content ever emitted, no tool calls) is as
+                    # useless as a stub — cycle to other workers instead of closing
+                    # the stream with a bare finish frame.
+                    if (not gate_swallow and not saw_tool_call
+                            and not "".join(learned_parts).strip()):
+                        gate_swallow = True
                     if gate_swallow:
                         # First provider stubbed — don't finalize here; cycle to
                         # other miners after the loop.
@@ -2444,7 +2507,7 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                     turn.stream_callback = None
                     serve_task = loop.run_in_executor(None, provider.serve, turn)
                     waited = 0.0
-                    while not serve_task.done() and waited < BRIDGE_CYCLE_ATTEMPT_S:
+                    while not serve_task.done() and waited < _cycle_attempt_s():
                         done, _pending = await asyncio.wait(
                             {serve_task}, timeout=BRIDGE_SSE_HEARTBEAT_S)
                         waited += BRIDGE_SSE_HEARTBEAT_S
@@ -2471,7 +2534,7 @@ async def chat_completions(req: OpenAIChatRequest, request: Request,
                     # the event loop that is still emitting keepalives.
                     _alt = await loop.run_in_executor(
                         None, _serve_fallback_upstream, req.messages, req.max_tokens,
-                        _system_grounding(req))
+                        _system_grounding(req) + ("\n\n" + grounding_block if grounding_block else ""))
                     if _alt is not None:
                         cycled = _alt[0]
                         # Report the model that ACTUALLY answered.
