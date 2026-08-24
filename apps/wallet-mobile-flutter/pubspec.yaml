@@ -1,7 +1,7 @@
 name: animica_wallet
 description: Animica mobile wallet — view ANM balance, ANM-20 tokens and NFTs, buy ANM via buy.animica.org, launch tokens and swap on the built-in DEX, and browse dapps with an injected provider.
 publish_to: "none"
-version: 0.7.1+23
+version: 0.8.0+24
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -42,6 +42,9 @@ dependencies:
   # inference jobs (the page's own navigator.wakeLock is not available
   # inside Android WebView).
   wakelock_plus: ^1.2.8
+
+  # Serve & Earn native engine: model files live under the app support dir.
+  path_provider: ^2.1.3
 
   # Bech32m + hashing + canonical CBOR for tx envelopes
   bech32: ^0.2.2

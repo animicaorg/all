@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Serve & Earn native engine binary — 37MB, rebuilt by tool/build-native-engine.sh
+android/app/src/serve/jniLibs/

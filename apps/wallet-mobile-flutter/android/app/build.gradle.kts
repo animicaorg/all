@@ -50,6 +50,16 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // Extract native libs to disk: Serve & Earn EXECUTES the bundled
+            // llama-server (shipped as jniLibs/arm64-v8a/libanmllamaserver.so)
+            // as a subprocess, and Android only allows exec of real files in
+            // the app's nativeLibraryDir — not of libs mapped from the APK.
+            useLegacyPackaging = true
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
