@@ -2489,11 +2489,20 @@ async def worker_submit_result(
             "job_id": job_id,
         }
     # Trim trailing degeneracy ('sssss…', '===', blank runs) instead of losing
-    # the whole answer; reject only when nothing real remains.
+    # the whole answer; reject only when nothing real remains. Probe-sized jobs
+    # (max_output_tokens <= _BESTOF_MIN_TOKENS) are exempt from the minimum-
+    # length test: 'Pong!' is a legitimate, complete health-probe answer.
     text = _trim_degenerate_tail(text)
     _t = text.strip()
+    _probe_job = False
+    try:
+        _j = _STORE.get(job_id)
+        _mo = int(_j.spec.get("max_output_tokens") or 0) if _j is not None else 0
+        _probe_job = bool(_mo and _mo <= _BESTOF_MIN_TOKENS)
+    except Exception:
+        pass
     _non_ws = len(_t) - sum(_t.count(c) for c in " \n\t\r")
-    _hopeless = _non_ws < 8 or (len(_t) >= 30 and (
+    _hopeless = (_non_ws < 8 and not _probe_job) or (len(_t) >= 30 and (
         max(_t.count(ch) for ch in set(_t)) / len(_t) > 0.6
         or len(set(_t) - set(" \n\t\r")) < 3))
     if _hopeless:
