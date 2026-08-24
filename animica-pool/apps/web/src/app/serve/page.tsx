@@ -18,6 +18,29 @@ export default function ServePage() {
         description="This page turns any modern browser into an Animica inference worker — a phone on a shelf, a laptop on a desk, a gaming PC overnight. A small open model downloads once and runs entirely on your device (GPU via WebGPU on Chrome/Edge; CPU via WebAssembly everywhere else, iPhone included); the page claims real chat jobs from the network, answers them locally, and credits your wallet in ANM per job won. Nothing to install, no keys on this page — just an address to pay."
       >
         <ServeWorker />
+        <div
+          id="serve-android-app"
+          className="mt-6 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70"
+        >
+          📱 On Android?{" "}
+          <a
+            href="https://animica.org/wallet"
+            className="font-medium text-white underline decoration-white/40 hover:decoration-white"
+          >
+            Get Animica Serve
+          </a>{" "}
+          — the mobile wallet with this worker built in: your payout address
+          auto-filled from the wallet, screen kept awake while serving, and
+          earnings on the home screen.
+        </div>
+        {/* Hide the promo when this page is already running inside the
+            Animica Serve wallet's WebView (Android WebView UAs carry "; wv)"). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              'if(/; wv\\)/.test(navigator.userAgent)){var e=document.getElementById("serve-android-app");e&&e.remove();}',
+          }}
+        />
       </Section>
 
       <Section title="How it works" className="text-sm text-white/70">
