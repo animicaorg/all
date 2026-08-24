@@ -2131,7 +2131,13 @@ async def worker_earnings(
         "jobs_completed": w.jobs_completed,
         "earnings_pending_animica": w.earnings_pending_animica,
         "earnings_paid_animica": w.earnings_paid_animica,
-        "note": "settlement_pending_consensus_upgrade",
+        # pending is the credit-only lifetime WEIGHT ledger; paid mirrors the
+        # on-chain settlement anchors (which scale weights up to the full block
+        # carve). unpaid is what the NEXT anchor will use as this worker's weight.
+        "earnings_unpaid_animica": max(
+            0.0, float(w.earnings_pending_animica) - float(w.earnings_paid_animica)
+        ),
+        "note": "paid via ANMSETL1 settlement anchors (block carve, pro-rata)",
     }
 
 

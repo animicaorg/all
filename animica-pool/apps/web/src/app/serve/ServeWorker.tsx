@@ -59,7 +59,8 @@ interface Stats {
   lost: number;
   tokensOut: number;
   lastTokS: number | null;
-  pendingANM: number | null;
+  pendingANM: number | null;   // unpaid — next anchor's weight
+  paidANM: number | null;      // settled on-chain by ANMSETL1 anchors
   jobsCompleted: number | null;
 }
 
@@ -207,7 +208,13 @@ export async function run(cfg) {
       if (Date.now() - lastEarnings > 45000) {
         lastEarnings = Date.now();
         rpc(cfg.rpcUrl, "aicf.workerEarnings", { address: cfg.address })
-          .then((e) => post({ type: "earnings", pending: Number(e && e.earnings_pending_animica || 0), completed: Number(e && e.jobs_completed || 0) }))
+          .then((e) => {
+            const pendingCum = Number(e && e.earnings_pending_animica || 0);
+            const paid = Number(e && e.earnings_paid_animica || 0);
+            const unpaid = e && e.earnings_unpaid_animica != null
+              ? Number(e.earnings_unpaid_animica) : Math.max(0, pendingCum - paid);
+            post({ type: "earnings", pending: unpaid, paid: paid, completed: Number(e && e.jobs_completed || 0) });
+          })
           .catch(() => {});
       }
       let job = null;
@@ -346,7 +353,7 @@ export default function ServeWorker() {
   const [modelReady, setModelReady] = useState<boolean>(false);
   const [downloading, setDownloading] = useState<boolean>(false);
   const [mode, setMode] = useState<"worker" | "inline" | null>(null);
-  const [stats, setStats] = useState<Stats>({ won: 0, lost: 0, tokensOut: 0, lastTokS: null, pendingANM: null, jobsCompleted: null });
+  const [stats, setStats] = useState<Stats>({ won: 0, lost: 0, tokensOut: 0, lastTokS: null, pendingANM: null, paidANM: null, jobsCompleted: null });
   const [log, setLog] = useState<string[]>([]);
 
   const workerRef = useRef<Worker | null>(null);
@@ -368,6 +375,24 @@ export default function ServeWorker() {
 
   // ── environment probes + persisted prefs ──────────────────────────────────
   const [engineKind, setEngineKind] = useState<"webllm" | "wllama">("webllm");
+  // Payout cadence feed (written by the settlement-anchor worker after every run):
+  // anchors post ~every block (~95s) whenever there was ANY new inference, moving
+  // the whole 75 ANM carve to providers pro-rata.
+  const [payoutFeed, setPayoutFeed] = useState<any>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetch("/serve-payouts.json", { cache: "no-cache" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive && j) setPayoutFeed(j); })
+      .catch(() => { /* */ });
+    load();
+    const poll = setInterval(load, 30000);
+    const tick = setInterval(() => {
+      setPayoutFeed((f: any) => { if (f) setCountdown(Math.max(0, Math.round(f.next_eta_ts - Date.now() / 1000))); return f; });
+    }, 1000);
+    return () => { alive = false; clearInterval(poll); clearInterval(tick); };
+  }, []);
   useEffect(() => {
     const hasGpu = typeof navigator !== "undefined" && !!(navigator as any).gpu;
     setGpuOk(hasGpu);
@@ -536,7 +561,7 @@ export default function ServeWorker() {
           lastTokS: m.tokS ?? s.lastTokS,
         }));
         break;
-      case "earnings": setStats((s) => ({ ...s, pendingANM: m.pending, jobsCompleted: m.completed })); break;
+      case "earnings": setStats((s) => ({ ...s, pendingANM: m.pending, paidANM: m.paid ?? s.paidANM, jobsCompleted: m.completed })); break;
       case "fatal": setPhase("error"); setStatus(`Stopped: ${m.text}`); setDownloading(false); cleanup(); break;
       case "stopped": if (phaseRef.current !== "error") { setPhase("stopped"); } cleanup(); break;
       default: break;
@@ -693,7 +718,11 @@ export default function ServeWorker() {
           />
           {address.trim() ? (
             isValidAnimAddress(address) ? (
-              <span className="mt-1 block text-xs text-neon-green">✓ valid address — earnings will credit here</span>
+              <span className="mt-1 block text-xs text-neon-green">
+                ✓ valid address — earnings will credit here ·{" "}
+                <a className="underline hover:text-white" target="_blank" rel="noreferrer"
+                   href={`https://explorer.animica.org/address/${address.trim()}`}>view on explorer</a>
+              </span>
             ) : (
               <span className="mt-1 block text-xs text-red-400">✗ not a valid anim1… address (bech32m checksum fails) — it could never be paid</span>
             )
@@ -783,17 +812,44 @@ export default function ServeWorker() {
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 text-center md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 text-center md:grid-cols-3 lg:grid-cols-6">
         <StatBox label="jobs won" value={String(stats.won)} accent />
         <StatBox label="races lost" value={String(stats.lost)} />
         <StatBox label="tokens out" value={stats.tokensOut.toLocaleString()} />
         <StatBox label="speed" value={stats.lastTokS ? `${stats.lastTokS.toFixed(1)} tok/s` : "—"} />
-        <StatBox label="pending ANM" value={fmtANM(stats.pendingANM)} accent />
+        <StatBox label="pending ANM" value={fmtANM(stats.pendingANM)} note="queued for the next payout" />
+        {isValidAnimAddress(address) ? (
+          <a href={`https://explorer.animica.org/address/${address.trim()}`} target="_blank" rel="noreferrer" className="block">
+            <StatBox label="paid out ANM ↗" value={fmtANM(stats.paidANM)} accent note="on-chain · tap to verify" />
+          </a>
+        ) : (
+          <StatBox label="paid out ANM" value={fmtANM(stats.paidANM)} accent />
+        )}
       </div>
+      {payoutFeed && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-xs text-white/60">
+          <span>
+            next payout window in{" "}
+            <span className="font-mono text-neon-green">
+              {countdown != null ? `${Math.floor(countdown / 60)}:${String(countdown % 60).padStart(2, "0")}` : "…"}
+            </span>
+          </span>
+          <span>· every block (~95s) with any inference moves the whole {payoutFeed.carve_anm} ANM carve to providers, pro-rata</span>
+          {payoutFeed.last_anchor_ts > 0 && (
+            <span>
+              · last payout {Math.max(0, Math.round((Date.now() / 1000 - payoutFeed.last_anchor_ts) / 60))} min ago
+              {payoutFeed.last_anchor_txid ? (
+                <>{" "}(<a className="underline hover:text-white" target="_blank" rel="noreferrer"
+                  href={`https://explorer.animica.org/tx/${payoutFeed.last_anchor_txid}`}>tx ↗</a>)</>
+              ) : null}
+            </span>
+          )}
+        </div>
+      )}
       <p className="text-xs text-white/40">
         Serving counts toward the network&apos;s <strong className="text-white/60">inference carve — {CARVE_ANM_PER_BLOCK} ANM
-        per block</strong> (25% of the block reward): settlement anchors post automatically (~every 10 min when there are
-        new earnings) and split the whole carve pro-rata across servers by earned weight.
+        per block</strong> (25% of the block reward): every block with ANY new inference gets a settlement anchor that
+        moves the whole carve to providers, split pro-rata by earned weight; blocks without inference roll it to the treasury.
         {stats.jobsCompleted != null && (
           <> Ledger for this address: {stats.jobsCompleted} jobs completed all-time, {fmtANM(stats.pendingANM)} ANM pending.</>
         )}
@@ -811,11 +867,12 @@ export default function ServeWorker() {
   );
 }
 
-function StatBox({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+function StatBox({ label, value, accent = false, note }: { label: string; value: string; accent?: boolean; note?: string }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-3">
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-3 transition hover:border-white/20">
       <div className={`text-lg font-semibold ${accent ? "text-neon-green" : "text-white"}`}>{value}</div>
       <div className="mt-0.5 text-[11px] uppercase tracking-wider text-white/40">{label}</div>
+      {note && <div className="mt-0.5 text-[10px] text-white/30">{note}</div>}
     </div>
   );
 }

@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -68,6 +69,11 @@ NANM = 1_000_000_000
 # split pro-rata by the anchor's weights, regardless of what was claimed.
 CARVE_NANM = 75 * NANM
 MIN_INTERVAL_S = int(os.environ.get("ANIMICA_ANCHOR_MIN_INTERVAL_S", "300"))
+# The systemd timer cadence — published in the status feed so the Serve & Earn
+# page can show an honest countdown to the next payout window.
+TIMER_S = int(os.environ.get("ANIMICA_ANCHOR_TIMER_S", "600"))
+STATUS_JSON = os.environ.get(
+    "ANIMICA_ANCHOR_STATUS_JSON", "/var/www/pool.animica.org/serve-payouts.json")
 MIN_NEW_EARNINGS_NANM = int(os.environ.get("ANIMICA_ANCHOR_MIN_NEW_NANM", "1000"))
 
 
@@ -111,6 +117,53 @@ def read_earnings() -> Dict[str, int]:
     return out
 
 
+def write_status(state: Dict, *, posted: bool = False, txid: str = "",
+                 claimants: int = 0, moved_nanm: int = 0) -> None:
+    """Publish the payout cadence for dashboards (pool.animica.org/serve reads
+    this to render the countdown). Written after EVERY run — holds included —
+    so next_eta always moves. Best-effort."""
+    try:
+        now = time.time()
+        doc = {
+            "ts": now,
+            "interval_s": TIMER_S,
+            "next_eta_ts": now + TIMER_S,
+            "last_anchor_ts": float(state.get("last_anchor_ts") or 0),
+            "last_anchor_txid": str(state.get("last_anchor_txid") or ""),
+            "anchors_total": int(state.get("anchors", 0)),
+            "carve_anm": CARVE_NANM / NANM,
+            "floor_anm": MIN_NEW_EARNINGS_NANM / NANM,
+            "last_run_posted": bool(posted),
+            "last_run_claimants": int(claimants),
+            "last_run_moved_anm": moved_nanm / NANM,
+        }
+        tmp = STATUS_JSON + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(doc, f, separators=(",", ":"))
+        os.replace(tmp, STATUS_JSON)
+    except Exception as e:  # noqa: BLE001 — the feed must never fail a payout
+        print(f"status feed write failed (non-fatal): {e}")
+
+
+def mirror_paid_to_ledger(anchored: Dict[str, int]) -> None:
+    """Mirror cumulative on-chain payouts into the node's workers table
+    (earnings_paid_animica) so aicf.workerEarnings/workerStatus report REAL
+    paid figures and the Serve & Earn page can show pending vs paid.
+    Column-level UPDATE only — earnings_pending stays the node's own credit-only
+    ledger. Best-effort: a locked DB just means the next run mirrors it."""
+    try:
+        con = sqlite3.connect(JOBS_DB, timeout=5)
+        for addr, received in anchored.items():
+            con.execute(
+                "UPDATE workers SET earnings_paid_animica=? WHERE address=?",
+                (received / NANM, addr),
+            )
+        con.commit()
+        con.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"paid-mirror failed (non-fatal, retries next run): {e}")
+
+
 def compute_outstanding(earned: Dict[str, int], state: Dict) -> List[Tuple[str, int]]:
     anchored = state.get("anchored_nanm", {})
     rows = []
@@ -147,17 +200,21 @@ def main() -> int:
     if not outstanding:
         print("no new inference since the last anchor — nothing to post "
               "(carve rolls to treasury, which is correct)")
+        mirror_paid_to_ledger(state.get("anchored_nanm", {}))
+        write_status(state)
         return 0
 
     total = sum(a for _, a in outstanding)
     if total < MIN_NEW_EARNINGS_NANM:
         print(f"new earnings {total/NANM:.9f} ANM below floor "
               f"{MIN_NEW_EARNINGS_NANM/NANM:.9f} — holding")
+        write_status(state)
         return 0
 
     since = time.time() - float(state.get("last_anchor_ts") or 0)
     if since < MIN_INTERVAL_S and not args.force:
         print(f"last anchor {since:.0f}s ago (< {MIN_INTERVAL_S}s) — holding")
+        write_status(state)
         return 0
 
     payload = encode_anchor_payload(outstanding)
@@ -176,6 +233,7 @@ def main() -> int:
 
     if not args.send:
         print("\n(dry run — pass --send to broadcast)")
+        write_status(state)
         return 0
 
     cmd = [ANIMICA, "tx", "send", "--from", TREASURY, "--to", TREASURY,
@@ -185,7 +243,12 @@ def main() -> int:
     print(f"\nbroadcast: {'OK' if ok else 'FAILED'}")
     if not ok:
         print((res.stdout + res.stderr)[-600:])
+        write_status(state)
         return 1
+    m_tx = re.search(r"0x[0-9a-fA-F]{64}", res.stdout + res.stderr)
+    if m_tx:
+        state["last_anchor_txid"] = m_tx.group(0)
+        print(f"anchor tx        : {m_tx.group(0)}")
 
     # Credit what each provider will actually RECEIVE, not what it claimed.
     # split_carve scales entries up to consume the whole carve, so a provider
@@ -198,6 +261,9 @@ def main() -> int:
         anchored[addr] = int(anchored.get(addr, 0)) + received
     state["last_anchor_ts"] = time.time()
     state["anchors"] = int(state.get("anchors", 0)) + 1
+    mirror_paid_to_ledger(anchored)
+    write_status(state, posted=True, txid=str(state.get("last_anchor_txid") or ""),
+                 claimants=len(outstanding), moved_nanm=CARVE_NANM)
     save_state(state)
     print(f"state updated — {len(outstanding)} providers marked anchored")
     return 0
