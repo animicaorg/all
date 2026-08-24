@@ -119,6 +119,14 @@ async function ensureEngine(cfg) {
   unloadEngine();
   if (cfg.engineKind === "wllama") {
     // CPU / WebAssembly lane (no WebGPU needed — iPhone Safari runs this).
+    // wllama's wasm loader has one unguarded document.baseURI read; give a
+    // WORKER the minimum it dereferences (an https base, never blob:). Scoped
+    // HERE because a fake global document breaks WebLLM's environment
+    // detection (it then resolves URLs against the blob: worker base —
+    // "Failed to construct URL: Invalid URL" on every GPU laptop).
+    if (typeof document === "undefined") {
+      globalThis.document = { baseURI: cfg.pageHref || "https://pool.animica.org/serve", currentScript: null };
+    }
     post({ type: "status", text: "Loading the CPU engine (WebAssembly)…" });
     const mod = await import(cfg.wllamaUrl);
     if (stopped) return;
@@ -293,11 +301,6 @@ export async function run(cfg) {
 `;
 
 const WORKER_HARNESS = `
-// wllama's wasm loader reads document.baseURI / document.currentScript (one use is
-// unguarded) — workers have no document, so give it the minimum it dereferences.
-if (typeof self.document === "undefined") {
-  self.document = { baseURI: self.location.href, currentScript: null };
-}
 ${CORE_SOURCE.replace("__POST__(m)", "self.postMessage(m)")}
 self.onmessage = (ev) => {
   const d = ev.data || {};
@@ -635,6 +638,7 @@ export default function ServeWorker() {
     ggufUrl: MODELS.find((x) => x.id === modelId)?.gguf || MODELS[1].gguf,
     // CPU generation is slow: cap output harder so answers land inside the claim window.
     maxOutputCap: 2048,   // GPU engine ceiling; per-engine CPU caps decided in the core
+    pageHref: window.location.href,
     hardware: {
       engine: engineKind,
       model: modelId,
