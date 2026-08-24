@@ -6,6 +6,14 @@ set -eu
 : "${ANIMICA_RUNTIME_UID:=${ANIMICA_UID:-10001}}"
 : "${ANIMICA_RUNTIME_GID:=${ANIMICA_GID:-10001}}"
 : "${ANIMICA_VOLUME_STRATEGY:=named}"
+# AICF dispatch mode (rpc/methods/aicf_jobs.py, 11.1.1): K per job by kind,
+# kinds-filtered claims, idle/fast-worker routing. CHAT_K=3 keeps chat racing
+# as before — only 1-token probes and embed/classify/batch jobs go K=1.
+# Set ANIMICA_AICF_DISPATCH=0 in the container env to revert (schema is inert).
+: "${ANIMICA_AICF_DISPATCH:=1}"
+export ANIMICA_AICF_DISPATCH
+: "${ANIMICA_AICF_DISPATCH_CHAT_K:=3}"
+export ANIMICA_AICF_DISPATCH_CHAT_K
 
 export HOME="${HOME:-${ANIMICA_DATA_DIR}}"
 CHAIN_DIR="${ANIMICA_DATA_DIR%/}/chain-${ANIMICA_CHAIN_ID}"
