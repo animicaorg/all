@@ -27,6 +27,7 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../constants.dart';
@@ -44,6 +45,13 @@ class _ServeScreenState extends ConsumerState<ServeScreen> {
   double? _unpaidAnm;
   double? _paidAnm;
   int? _jobsCompleted;
+
+  /// Whether the embedded WebView exposes navigator.gpu. Android WebView
+  /// ships WITHOUT WebGPU (2026) even though Chrome has had it since 121,
+  /// so this is almost always false today — but it's a runtime probe, not
+  /// an assumption: the day WebView gains WebGPU the embedded worker uses
+  /// the GPU lane automatically and the Chrome hand-off stops being offered.
+  bool? _webViewHasGpu;
 
   @override
   void initState() {
@@ -166,13 +174,48 @@ class _ServeScreenState extends ConsumerState<ServeScreen> {
                 // The worker page has no use for popups.
                 javaScriptCanOpenWindowsAutomatically: false,
               ),
+              onLoadStop: (ctrl, _) async {
+                final r = await ctrl.evaluateJavascript(
+                    source: '!!navigator.gpu');
+                if (mounted) setState(() => _webViewHasGpu = r == true);
+              },
             ),
           ),
+          if (_webViewHasGpu == false)
+            Container(
+              width: double.infinity,
+              color: scheme.primaryContainer,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(Icons.speed, size: 18, color: scheme.onPrimaryContainer),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'In-app serving runs on CPU. Chrome unlocks this '
+                      "phone's GPU — 5–20× faster, same wallet address.",
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onPrimaryContainer),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => launchUrl(
+                      Uri.parse(
+                          '${AnimicaConfig.serveUrl}?address=${active.address}'),
+                      mode: LaunchMode.externalApplication,
+                    ),
+                    child: const Text('Serve with GPU'),
+                  ),
+                ],
+              ),
+            ),
           Container(
             width: double.infinity,
             color: scheme.surfaceContainerHighest,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Text(
+              '${_webViewHasGpu == true ? 'Serving on this phone\'s GPU (WebGPU). ' : ''}'
               'Keep the app open and the phone plugged in. First start '
               'downloads a ~0.5 GB model — use Wi-Fi. Earnings settle '
               'on-chain to ${_short(active.address)}.',

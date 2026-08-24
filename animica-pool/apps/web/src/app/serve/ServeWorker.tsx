@@ -499,8 +499,20 @@ export default function ServeWorker() {
     const forced = new URLSearchParams(window.location.search).get("engine");
     const kind = forced === "wasm" ? "wllama" : forced === "webgpu" ? "webllm" : hasGpu ? "webllm" : "wllama";
     setEngineKind(kind);
+    // ?address=anim1… pre-fills the payout address and WINS over the stored
+    // one — it's how the Animica Serve wallet hands this page the wallet's
+    // account when it launches Chrome for the WebGPU lane (WebView has no
+    // navigator.gpu, so the app escapes to the real browser for GPU serving).
+    const urlAddr = new URLSearchParams(window.location.search).get("address");
+    const urlAddrOk = !!urlAddr && isValidAnimAddress(urlAddr.trim());
+    if (urlAddrOk) {
+      setAddress(urlAddr!.trim());
+      try { localStorage.setItem("anmServeAddress", urlAddr!.trim()); } catch { /* private mode */ }
+    }
     try {
-      const a = localStorage.getItem("anmServeAddress"); if (a) setAddress(a);
+      if (!urlAddrOk) {
+        const a = localStorage.getItem("anmServeAddress"); if (a) setAddress(a);
+      }
       const m = localStorage.getItem("anmServeModel");
       if (m && MODELS.some((x) => x.id === m)) setModelId(m);
       else if (kind === "wllama") setModelId(MODELS[1].id);   // CPU: default to the 0.5B

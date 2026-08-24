@@ -57,5 +57,11 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Serve & Earn's "Serve with GPU" opens the worker page in the
+             system browser (WebView has no WebGPU; Chrome does). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
     </queries>
 </manifest>
