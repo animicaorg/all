@@ -1,0 +1,115 @@
+name: Wallet Qt — Windows x64
+
+# Windows-only (x86_64 / AMD64) RELEASE build of the Qt desktop wallet.
+#
+# wallet-qt-release.yml builds all three platforms in one matrix; this workflow
+# is the Windows lane on its own so a Windows-only republish doesn't burn the
+# macOS/Linux runners. It uses the same native flow:
+#   scripts/release-windows.ps1 → build-windows.ps1 (cmake, VS 17 2022, -A x64)
+#                               → package-windows-installer.ps1 (Inno Setup 6)
+#
+# The bundled Python is a relocatable python-build-standalone tree fetched by
+# cmake/AnimicaNode.cmake (NOT `python -m venv`, which is never relocatable on
+# Windows), and build-windows.ps1 copies the OpenSSL 3 DLL pair that Qt Network
+# needs but windeployqt does not deploy.
+#
+# Publishing the artifact to animica.org/wallet is a separate, manual step.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Build/release label (e.g. v0.2.7). Defaults to the CMakeLists project version."
+        required: false
+        default: ""
+  push:
+    tags:
+      - 'wallet-win-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: build-windows-x64
+    runs-on: windows-2022     # build-windows.ps1 configures with -G "Visual Studio 17 2022"
+    env:
+      WALLET_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the packaging scripts derive a version from git describe
+
+      - name: Install Qt 6.7.3 (win64_msvc2019_64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.3'          # 6.5.0's install-time windeployqt fails on the runner
+          arch: 'win64_msvc2019_64'
+          cache: true
+
+      - name: Set up Python 3.12 (host interpreter for the build)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up MSVC dev environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build + package (Windows x64)
+        shell: pwsh
+        run: |
+          cd wallet-qt
+          ./scripts/release-windows.ps1
+
+      - name: Verify the staged bundle is self-contained
+        shell: pwsh
+        run: |
+          $stage = "wallet-qt/build/windows/stage"
+          $required = @(
+            "animica-wallet.exe",
+            "Qt6Core.dll",
+            "qt.conf",
+            "plugins/platforms/qwindows.dll",
+            "libcrypto-3-x64.dll",
+            "libssl-3-x64.dll",
+            "node/venv/python.exe"
+          )
+          $missing = @()
+          foreach ($rel in $required) {
+            if (-not (Test-Path (Join-Path $stage $rel))) { $missing += $rel }
+          }
+          if ($missing.Count -gt 0) { throw "Staged bundle is missing: $($missing -join ', ')" }
+          Write-Host "Staged bundle OK. Bundled animica version:"
+          & "$stage/node/venv/python.exe" -c "import animica, sys; print('animica', getattr(animica,'__version__','?')); print(sys.version)"
+
+      - name: Portable ZIP + checksums
+        shell: pwsh
+        run: |
+          $ver = if ($env:WALLET_VERSION) { $env:WALLET_VERSION } else { "dev" }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item "wallet-qt/build/windows/installer/AnimicaWallet-Setup.exe" `
+                    "out/animica-wallet-windows-x64-setup.exe" -Force
+          # 7z (preinstalled on the runner) — Compress-Archive takes many minutes
+          # on the ~10k-file bundled Python runtime.
+          7z a -tzip -mx=5 "out/animica-wallet-windows-x64.zip" "./wallet-qt/build/windows/stage/*" | Out-Null
+          $files = @(Get-ChildItem out -File)
+          $files | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Out-File -FilePath "out/SHA256SUMS" -Append -Encoding ascii
+            Write-Host "$h  $($_.Name)  ($($_.Length) bytes)"
+          }
+          Write-Host "--- build label: $ver ---"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-windows-x64-${{ env.WALLET_VERSION }}
+          path: out/**
+          if-no-files-found: error
