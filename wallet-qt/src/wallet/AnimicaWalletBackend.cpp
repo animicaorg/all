@@ -121,6 +121,38 @@ QJsonObject AnimicaWalletBackend::errorResponse(const QString& message, const QS
     return response;
 }
 
+namespace {
+// True if `path` is a real Python interpreter we may execute.
+//
+// Windows ships %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe — an "app
+// execution alias": a zero-byte reparse point that exists, reports itself
+// executable, and on launch prints
+//   "Python was not found; run without arguments to install from the Microsoft
+//    Store, or disable this shortcut from Settings > Apps > ..."
+// to stdout instead of running Python. QStandardPaths::findExecutable("python")
+// happily returns it, so without this guard the bridge receives that sentence
+// where JSON was expected and the wallet reports "the Animica wallet backend
+// returned an invalid response". Skip the alias so we fall through to a real
+// interpreter, or to the honest "no interpreter" path.
+bool isUsablePythonExecutable(const QString& path)
+{
+    const QFileInfo info(path);
+    if (!info.exists() || info.isDir() || !info.isExecutable()) {
+        return false;
+    }
+#ifdef Q_OS_WIN
+    const QString abs = QDir::fromNativeSeparators(info.absoluteFilePath());
+    if (abs.contains(QLatin1String("/Microsoft/WindowsApps/"), Qt::CaseInsensitive)) {
+        return false;
+    }
+    if (info.size() == 0) {
+        return false;
+    }
+#endif
+    return true;
+}
+} // namespace
+
 QString AnimicaWalletBackend::findRepoRoot()
 {
     const QString override = qEnvironmentVariable("ANIMICA_REPO_ROOT");
@@ -203,26 +235,21 @@ QString AnimicaWalletBackend::findPythonInterpreter()
 {
     // 1) Explicit override always wins.
     const QString override = qEnvironmentVariable("ANIMICA_WALLET_PYTHON");
-    if (!override.isEmpty()) {
-        QFileInfo info(override);
-        if (info.exists() && info.isExecutable()) {
-            return info.absoluteFilePath();
-        }
+    if (!override.isEmpty() && isUsablePythonExecutable(override)) {
+        return QFileInfo(override).absoluteFilePath();
     }
 
     // 2) A bundled venv (proper native builds) is authoritative if present.
     for (const QString& candidate : bundledPythonCandidates()) {
-        QFileInfo info(candidate);
-        if (info.exists() && info.isExecutable()) {
-            return info.absoluteFilePath();
+        if (isUsablePythonExecutable(candidate)) {
+            return QFileInfo(candidate).absoluteFilePath();
         }
     }
 
     // 3) Repo checkout venv.
     for (const QString& candidate : repoPythonCandidates()) {
-        QFileInfo info(candidate);
-        if (info.exists() && info.isExecutable()) {
-            return info.absoluteFilePath();
+        if (isUsablePythonExecutable(candidate)) {
+            return QFileInfo(candidate).absoluteFilePath();
         }
     }
 
@@ -231,11 +258,10 @@ QString AnimicaWalletBackend::findPythonInterpreter()
     //    pip-installed `animica` is found automatically with no env var.
     QString firstExisting;
     for (const QString& candidate : systemPythonCandidates()) {
-        QFileInfo info(candidate);
-        if (!info.exists() || !info.isExecutable()) {
+        if (!isUsablePythonExecutable(candidate)) {
             continue;
         }
-        const QString abs = info.absoluteFilePath();
+        const QString abs = QFileInfo(candidate).absoluteFilePath();
         if (firstExisting.isEmpty()) {
             firstExisting = abs;
         }

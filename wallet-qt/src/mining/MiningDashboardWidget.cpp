@@ -669,9 +669,28 @@ QString MiningDashboardWidget::locatePython() const
         const QString cand = QDir::cleanPath(appDir + r);
         if (QFileInfo(cand).isExecutable()) return cand;
     }
-    QString onPath = QStandardPaths::findExecutable("python3");
-    if (onPath.isEmpty()) onPath = QStandardPaths::findExecutable("python");
-    return onPath;
+    // Fall back to PATH, but never to a Microsoft Store app-execution alias
+    // (%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe): it is a zero-byte
+    // reparse point that only prints "Python was not found; run without
+    // arguments to install from the Microsoft Store" and would make every
+    // mining/training launch fail with that as its output.
+    const auto usable = [](const QString& p) {
+        if (p.isEmpty()) return false;
+        const QFileInfo info(p);
+        if (!info.exists() || info.isDir() || !info.isExecutable()) return false;
+#ifdef Q_OS_WIN
+        if (QDir::fromNativeSeparators(info.absoluteFilePath())
+                .contains(QLatin1String("/Microsoft/WindowsApps/"), Qt::CaseInsensitive))
+            return false;
+        if (info.size() == 0) return false;
+#endif
+        return true;
+    };
+    for (const char* name : {"python3", "python"}) {
+        const QString onPath = QStandardPaths::findExecutable(QString::fromLatin1(name));
+        if (usable(onPath)) return onPath;
+    }
+    return QString();
 }
 
 QString MiningDashboardWidget::enaRuntimeDir() const
