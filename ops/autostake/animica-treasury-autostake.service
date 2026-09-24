@@ -1,0 +1,35 @@
+[Unit]
+Description=Animica treasury auto-staker (bonds incoming ANM above a reserve, per block)
+Wants=network-online.target docker.service
+After=network-online.target docker.service animica-pos-minter.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/animica
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/root
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+Environment=ANIMICA_AUTOSTAKE_ADDRESS=anim1zqpsmegc0qcvzjfukm89xs0zeu3eqyyyel7kelehuszvwfarqypky2gr946ga
+# KEEP THIS RESERVE. The same wallet funds the academy payout worker (10 ANM per
+# lesson, capped at 10,000 ANM/day) and transaction fees. Bonding the balance to
+# zero would lock those coins for the whole term and make every payout fail with
+# "insufficient balance" — which reads as an academy bug, not a staking choice.
+Environment=ANIMICA_AUTOSTAKE_RESERVE_ANM=50000
+Environment=ANIMICA_AUTOSTAKE_MIN_ANM=100
+Environment=ANIMICA_AUTOSTAKE_DAYS=365
+Environment=ANIMICA_AUTOSTAKE_NAME=treasury
+Environment=ANIMICA_AUTOSTAKE_POLL_S=30
+# ARMED 2026-09-24 at the operator's instruction. Set to 1 to disarm.
+Environment=ANIMICA_AUTOSTAKE_DRY_RUN=0
+# Minimum spacing between bonds. NOT a preference — a staker is capped at 64
+# distinct bonds and consecutive bonds never merge (each takes its unlock from
+# the including block's timestamp), so per-block bonding would exhaust the cap
+# in about an hour and then every stake would fail. See the module docstring.
+Environment=ANIMICA_AUTOSTAKE_INTERVAL_S=86400
+ExecStart=/root/animica/.venv/bin/python /root/animica/ops/autostake/treasury_autostake.py
+Restart=always
+RestartSec=30
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

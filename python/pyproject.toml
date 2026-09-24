@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animica"
-version = "11.1.1"
+version = "11.2.3"
 description = "Animica blockchain CLI and client libraries — node, wallet, miner, contracts, useful-work jobs, and Animica Studio serverless compute."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -251,9 +251,9 @@ all = [
 
 [project.urls]
 Homepage = "https://animica.org"
-Repository = "https://github.com/animicaorg/all"
+Repository = "https://gitlab.com/Animica/animica-core"
 Documentation = "https://animica.org/docs"
-Issues = "https://github.com/animicaorg/all/issues"
+Issues = "https://gitlab.com/Animica/animica-core/-/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["animica"]

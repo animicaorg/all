@@ -77,6 +77,8 @@ _NUMERIC_KIND = {
     6: "ena_submit_receipt",  # Phase 2: Submit compute receipt
     7: "aicf_claim_provider_rewards",  # Phase 2: Provider claim
     8: "aicf_governance_topup",  # Governance top-up
+    9: "stake",  # PoS: bond balance into a time-locked stake (TxKind.STAKE)
+    10: "unstake",  # PoS: withdraw matured stake (TxKind.UNSTAKE)
 }
 
 _ALIAS_KIND = {
@@ -94,6 +96,11 @@ _ALIAS_KIND = {
     "ena_call": "ena_call",
     "ena": "ena_call",
     "aicf_governance_topup": "aicf_governance_topup",
+    "stake": "stake",
+    "bond": "stake",
+    "unstake": "unstake",
+    "withdraw_stake": "unstake",
+    "unbond": "unstake",
     "topup": "aicf_governance_topup",
     "governance_topup": "aicf_governance_topup",
 }
@@ -121,6 +128,28 @@ def resolve_tx_kind(tx: Any) -> str:
         if unsigned is not None:
             explicit = _get(unsigned, "kind")
 
+    # Wire envelope {"sig": ..., "body": {...}}: look inside the body, which is
+    # what the signature covers.
+    body = _get(tx, "body")
+    if explicit is None and body is not None:
+        explicit = _get(body, "kind", "tx_kind", "type", "txType")
+
+    # Stake/unstake intent travels in `data`, not as a sibling of `value`. The
+    # mempool normalises bodies to a canonical field set and DROPS unknown keys,
+    # so a top-level `kind` never survives to execution — while `data` does, and
+    # is inside the signed payload. See core.staking.encode_stake_data.
+    if explicit is None:
+        data = _get(body if body is not None else tx, "data", "input", "call_data", "calldata")
+        if data:
+            try:
+                from core.staking import decode_stake_data
+
+                intent = decode_stake_data(data)
+            except Exception:
+                intent = None
+            if intent is not None:
+                explicit = intent.get("kind")
+
     if explicit is not None:
         # numeric → map; string → normalize
         if isinstance(explicit, int):
@@ -128,7 +157,16 @@ def resolve_tx_kind(tx: Any) -> str:
                 return _NUMERIC_KIND[explicit]
         else:
             k = str(explicit).strip().lower()
-            if k in ("transfer", "deploy", "call", "coinbase", "aicf_claim", "ena_call"):
+            if k in (
+                "transfer",
+                "deploy",
+                "call",
+                "coinbase",
+                "aicf_claim",
+                "ena_call",
+                "stake",
+                "unstake",
+            ):
                 return k
             if k in _ALIAS_KIND:
                 return _ALIAS_KIND[k]
@@ -280,6 +318,17 @@ def dispatch(
         if not hasattr(_topup, "apply_aicf_governance_topup"):
             raise DispatchError("aicf_governance_topup handler not available")
         return _topup.apply_aicf_governance_topup(  # type: ignore[no-any-return]
+            tx, state, block_env, tx_env, params=params
+        )
+
+    if kind in ("stake", "unstake"):
+        from . import staking as _staking
+
+        fn_name = "apply_stake" if kind == "stake" else "apply_unstake"
+        fn = getattr(_staking, fn_name, None)
+        if fn is None:
+            raise DispatchError(f"{kind} handler not available")
+        return fn(  # type: ignore[no-any-return]
             tx, state, block_env, tx_env, params=params
         )
 

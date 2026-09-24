@@ -101,6 +101,42 @@ def is_disabled() -> bool:
     return os.environ.get("ANIMICA_DISABLE_AICF_WORKER") == "1"
 
 
+def _env_float(name: str, default: float) -> float:
+    """Read a positive finite duration from the environment."""
+    try:
+        value = float(os.environ.get(name, ""))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 and value < float("inf") else default
+
+
+def bundle_dir_candidates(tier: str) -> list[str]:
+    """Return both catalog and chain names that may exist on older installs."""
+    raw = str(tier or "").strip().lower()
+    if not raw:
+        return []
+    catalog = canonical_tier(raw)
+    aliases = {
+        "tiny": "free", "small": "standard",
+        "flagship": "premium", "large": "elite",
+    }
+    out: list[str] = []
+    for candidate in (catalog, aliases.get(catalog), raw):
+        if candidate and candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def advertised_tier_aliases(tiers: list[str]) -> list[str]:
+    """Advertise both tier vocabularies during the compatibility window."""
+    out: list[str] = []
+    for tier in tiers:
+        for candidate in bundle_dir_candidates(tier):
+            if candidate not in out:
+                out.append(candidate)
+    return out
+
+
 def _has_servable_bundle(tier: str) -> bool:
     """True when an installed flagship bundle exists for ``tier``.
 
@@ -112,17 +148,16 @@ def _has_servable_bundle(tier: str) -> bool:
     stub bridge on every claim.
     """
     try:
-        # Normalize any vocabulary (e.g. stratum 'standard') to the catalog id
-        # ('small') so the bundle dir actually resolves.
-        base = Path(os.environ.get(
-            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models" / \
-            canonical_tier(tier)
-        if not base.is_dir():
-            return False
-        for bundle in base.iterdir():
-            if (bundle / "manifest.json").is_file() and \
-                    (bundle / "inference.json").is_file():
-                return True
+        root = Path(os.environ.get(
+            "ANIMICA_DATA_DIR", "~/.animica")).expanduser() / "models"
+        for tier_dir in bundle_dir_candidates(tier):
+            base = root / tier_dir
+            if not base.is_dir():
+                continue
+            for bundle in base.iterdir():
+                if (bundle / "manifest.json").is_file() and \
+                        (bundle / "inference.json").is_file():
+                    return True
         return False
     except OSError:
         return False
@@ -202,6 +237,7 @@ class AICFWorker:
         )
         if self.pipeline_enabled and "pipeline" not in self.tiers:
             self.tiers = [*self.tiers, "pipeline"]
+        self._eligible_tiers = list(self.tiers)
         # ---- Serving qualification --------------------------------------
         # Only advertise tiers we can actually serve. A tier with no installed
         # flagship bundle would claim jobs off animica.dev's AICF queue and
@@ -214,26 +250,20 @@ class AICFWorker:
         # the operator explicitly opts into advertising bare capacity. The
         # synthetic "pipeline" tier is always kept — pipeline stages run via
         # the layer-range/reference path, not a local bundle.
-        _skip_qual = (
+        self._skip_bundle_qual = (
             os.environ.get("ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE", "0")
             .strip().lower() in {"1", "true", "yes", "on"}
             or bool(os.environ.get(
                 "ANIMICA_AICF_PIPELINE_MODEL_ID", "").strip())
         )
-        if not _skip_qual:
-            real_before = [t for t in self.tiers if t != "pipeline"]
-            servable = [t for t in self.tiers
-                        if t == "pipeline" or _has_servable_bundle(t)]
-            if real_before and not any(t != "pipeline" for t in servable):
-                log.warning(
-                    "[aicf-worker] no installed flagship bundle for eligible "
-                    "tier(s) %s; not advertising AICF serving capacity. Run "
-                    "`animica miner aicf-worker pull --tier <tier>` to serve "
-                    "chat/inference, or set "
-                    "ANIMICA_AICF_ADVERTISE_WITHOUT_BUNDLE=1 to override.",
-                    real_before,
-                )
-            self.tiers = servable
+        self.tiers = self._servable_tiers()
+        real_before = [t for t in self._eligible_tiers if t != "pipeline"]
+        if real_before and not any(t != "pipeline" for t in self.tiers):
+            log.warning(
+                "[aicf-worker] model bundle is not ready for eligible tier(s) "
+                "%s; waiting for the current download to finish before "
+                "advertising AICF capacity.", real_before,
+            )
         # Direct worker-to-worker activation transport (optional). When
         # pipeline mode is on AND ANIMICA_AICF_PIPELINE_DIRECT_PORT is
         # set, the worker spins up a small HTTP server that peers can
@@ -332,7 +362,7 @@ class AICFWorker:
 
     def register(self) -> None:
         self.client.register_worker(
-            address=self.address, tiers=self.tiers,
+            address=self.address, tiers=advertised_tier_aliases(self.tiers),
             hardware=self.profile.to_dict(),
             direct_endpoint=self._direct_endpoint,
         )
@@ -342,20 +372,40 @@ class AICFWorker:
     def stop(self) -> None:
         self.state.stopping = True
 
+    def _servable_tiers(self) -> list[str]:
+        """Re-evaluate installed bundles; intentionally never cached."""
+        if self._skip_bundle_qual:
+            return list(self._eligible_tiers)
+        return [tier for tier in self._eligible_tiers
+                if tier == "pipeline" or _has_servable_bundle(tier)]
+
+    def _refresh_servable_tiers(self) -> bool:
+        current = self._servable_tiers()
+        if current != self.tiers:
+            self.tiers = current
+            self.state.tiers = list(current)
+            self._write_state()
+            if current:
+                self.register()
+        return bool(current)
+
     def run(self, *, idle_sleep_ms: int = 1500,
             heartbeat_interval_sec: int = 30,
             max_idle_sleep_ms: int = 20000) -> None:
         """Main loop. Returns when self.state.stopping is set."""
         import random
-        if not self.tiers:
-            log.warning(
-                "[aicf-worker] no servable tiers to advertise; worker idle. "
-                "Install a bundle with `animica miner aicf-worker pull` to "
-                "participate in AICF serving."
-            )
+        requalify_sec = _env_float("ANIMICA_AICF_REQUALIFY_SECS", 30.0)
+        while not self.state.stopping and not self.tiers:
+            time.sleep(requalify_sec)
+            self._refresh_servable_tiers()
+        if self.state.stopping:
             return
-        self.register()
+        # _refresh_servable_tiers registers after a transition; a worker that
+        # was already qualified at construction still needs its first register.
+        if not self.state.last_heartbeat_at:
+            self.register()
         last_hb = time.time()
+        last_requalify = last_hb
         idle_streak = 0
 
         def _idle_wait() -> None:
@@ -372,6 +422,13 @@ class AICFWorker:
         # Lazy-load a runner per bundle; we keep a cache by tier.
         runners: dict[str, "LocalBundleRunner"] = {}     # noqa: F821
         while not self.state.stopping:
+            now = time.time()
+            if now - last_requalify >= requalify_sec:
+                self._refresh_servable_tiers()
+                last_requalify = now
+            if not self.tiers:
+                time.sleep(requalify_sec)
+                continue
             # When advertising the pipeline tier, prefer claiming a
             # pending pipeline stage before falling back to a race-mode
             # claim. Pipeline jobs are time-sensitive (stage k blocks
@@ -1382,8 +1439,10 @@ def bootstrap_bundle_from_hf(
             ],
         )
     except Exception as exc:    # noqa: BLE001
-        import shutil as _shutil
-        _shutil.rmtree(bundle_dir, ignore_errors=True)
+        # Keep Hugging Face's partial local_dir and metadata cache. A later
+        # invocation can resume verified chunks instead of downloading the
+        # whole model again. The bundle remains unservable because manifests
+        # are written only after snapshot_download succeeds.
         raise BundleError(
             f"could not download base model {repo_id!r} from HuggingFace: {exc}",
             hint="set HF_TOKEN if the repo is gated; check network access",

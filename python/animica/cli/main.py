@@ -53,7 +53,7 @@ import typer
 from . import (vpn,  # dVPN
     ai, aicf, animal, beacon, bittensor, chain, chat, cloud, compute, contract, da, debug, ena, faucet, growth, gui, key,
                mcp, media, mempool, mining, network, node, p2p, peer, phase2, quantum,
-               rpc, script, settle, snapshot, stratum, studio, sync, tx, up, wallet)
+               rpc, script, settle, snapshot, stake, stratum, studio, sync, tx, up, wallet)
 from . import l2 as l2_cli
 
 app = typer.Typer(
@@ -182,6 +182,7 @@ def main_callback(
 app.add_typer(node.app, name="node")
 app.add_typer(wallet.app, name="wallet")
 app.add_typer(mining.app, name="miner")
+app.add_typer(stake.app, name="stake")
 # Mount the agent_runtime miner sub-apps (pool, aicf-worker) onto the
 # existing miner app — additive only, no existing command modified.
 try:

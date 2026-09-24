@@ -173,7 +173,7 @@ class IntrinsicGas:
     Result of an intrinsic gas computation with a debuggable breakdown.
     """
 
-    kind: Literal["transfer", "deploy", "call", "blob"]
+    kind: Literal["transfer", "deploy", "call", "blob", "stake", "unstake"]
     base: int
     calldata: int
     access_list: int
@@ -205,7 +205,7 @@ def _mul(a: int, b: int, cap: int) -> int:
 
 
 def intrinsic_gas(
-    kind: Literal["transfer", "deploy", "call", "blob"],
+    kind: Literal["transfer", "deploy", "call", "blob", "stake", "unstake"],
     *,
     calldata: Optional[bytes | bytearray | memoryview] = None,
     calldata_len: Optional[int] = None,
@@ -259,6 +259,10 @@ def intrinsic_gas(
         base = p.base_call
     elif kind == "blob":
         base = p.base_blob
+    elif kind in ("stake", "unstake"):
+        # PoS bond/withdraw are balance moves plus one bounded storage write, so
+        # they price as a transfer; the handler charges its own execution gas.
+        base = p.base_transfer
     else:  # pragma: no cover (type checker guards literals)
         raise ValueError(f"unknown tx kind: {kind!r}")
 
@@ -299,7 +303,7 @@ def intrinsic_gas(
 
 def calc_intrinsic_gas(
     *,
-    kind: Literal["transfer", "deploy", "call", "blob"],
+    kind: Literal["transfer", "deploy", "call", "blob", "stake", "unstake"],
     payload: bytes = b"",
     access_list: Optional[Iterable[tuple[bytes, Iterable[bytes]]]] = None,
     blob_bytes: int = 0,

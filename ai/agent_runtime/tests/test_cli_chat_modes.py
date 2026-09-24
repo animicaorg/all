@@ -31,6 +31,7 @@ from agent_runtime.orchestrator import (
     run_swarm,
 )
 from agent_runtime.provider_hosted import _is_capacity_apology, strip_reasoning
+from agent_runtime.cli.chat import Session
 
 
 def _deny(tool, args):
@@ -157,6 +158,60 @@ def test_would_ask_previews_without_prompting():
     p = PermissionPolicy("auto-edit")
     assert not p.would_ask(_TOOL_BY_NAME["write_file"])
     assert p.would_ask(_TOOL_BY_NAME["bash"])
+
+
+# --------------------------------------------------------------------------- #
+# Chat workflow mode                                                         #
+# --------------------------------------------------------------------------- #
+
+class _Console:
+    def __init__(self):
+        self.lines = []
+
+    def print(self, *values, **_kwargs):
+        self.lines.append(" ".join(str(v) for v in values))
+
+
+def _session(tmp_path):
+    return Session(_Console(), PermissionPolicy("plan"), object(),
+                   str(tmp_path), "test-session", 3)
+
+
+def test_swarm_command_enables_and_disables_future_turns(tmp_path):
+    s = _session(tmp_path)
+    s.cmd_swarm("")
+    assert s.swarm_enabled
+    s.cmd_swarm("status")
+    assert s.swarm_enabled
+    s.cmd_swarm("off")
+    assert not s.swarm_enabled
+
+
+def test_swarm_command_does_not_treat_text_as_an_immediate_task(tmp_path):
+    s = _session(tmp_path)
+    s.cmd_swarm("do this now")
+    assert not s.swarm_enabled
+    assert any("usage: /swarm [on|off]" in line for line in s.console.lines)
+
+
+def test_enabled_swarm_routes_normal_prompt_and_saves_the_turn(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANIMICA_DATA_DIR", str(tmp_path / "data"))
+    s = _session(tmp_path)
+    s.swarm_enabled = True
+    seen = []
+    monkeypatch.setattr(s, "_run_swarm_turn",
+                        lambda task: seen.append(task) or "reviewed result")
+
+    s.ask("inspect the repository")
+
+    assert seen == ["inspect the repository"]
+    assert s.turns == [
+        {"role": "user", "content": "inspect the repository"},
+        {"role": "assistant", "content": "reviewed result"},
+    ]
+    saved = json.loads((tmp_path / "data" / "sessions" /
+                        "test-session.json").read_text())
+    assert saved["turns"] == s.turns
 
 
 # --------------------------------------------------------------------------- #

@@ -2142,8 +2142,57 @@ class BlockImporter:
         payload: Dict[str, Any],
     ) -> Optional[str]:
         """
-        Lightweight PoW threshold check aligned with miner target rules.
+        Block proof check.
+
+        HYBRID (FORK_POS_MINTING): a block satisfies either proof lane.
+          * workType == WORKTYPE_POS -> the PoS proof in `header.extra` is
+            verified against committed stake and the PoW target is not applied.
+          * anything else            -> the PoW threshold check below, unchanged.
+
+        Forward-only: below the activation height this method behaves exactly as
+        it did before, so no historical block is re-judged. The PoS lane reads
+        state as of the PARENT block (this runs before apply_block), which makes
+        leader selection a pure function of committed state.
         """
+        from core.network_params import FORK_POS_MINTING, is_fork_active
+        from core.pos import WORKTYPE_POS, verify_pos_header
+
+        if int(getattr(header, "workType", 0) or 0) == WORKTYPE_POS:
+            height_for_gate = None
+            try:
+                height_for_gate = _height_of(header, payload)
+            except Exception:
+                height_for_gate = None
+            if height_for_gate is None or not is_fork_active(
+                FORK_POS_MINTING,
+                int(height_for_gate),
+                chain_id=int(self.params.chain_id),
+            ):
+                return "pos block before pos_minting activation"
+            if self.state_db is None:
+                return "pos block cannot be verified without state"
+            try:
+                target_block_time_s = float(self.params.block.target_seconds)
+            except Exception:
+                target_block_time_s = 60.0
+            reason = verify_pos_header(
+                header,
+                self.state_db,
+                target_block_time_s=target_block_time_s,
+            )
+            if reason is not None:
+                log.warning(
+                    "PoS proof rejected",
+                    extra={
+                        "block_hash": header_hash.hex(),
+                        "height": height_for_gate,
+                        "reason": reason,
+                        "chain_id": int(self.params.chain_id),
+                    },
+                )
+                return f"pos proof invalid: {reason}"
+            return None
+
         # Normal block PoW validation
         try:
             theta_micro = _weight_micro_of(header, payload, self.params)

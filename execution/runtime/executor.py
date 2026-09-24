@@ -37,6 +37,90 @@ except Exception:  # pragma: no cover
     Journal = None  # type: ignore
 
 
+def _tx_data_field(tx):
+    """
+    Pull `data` from a transaction in every shape the execution layer sees it.
+
+    This has to cover more than the mempool's dict form. Block import decodes
+    blocks into Tx OBJECTS and passes those straight to apply_block, so on the
+    consensus path the field lives at `tx.unsigned.payload.data` — missing that
+    is exactly how a stake silently executed as a transfer.
+    """
+    seen = []
+
+    def add(obj):
+        if obj is not None and not any(obj is s for s in seen):
+            seen.append(obj)
+
+    add(tx)
+    if isinstance(tx, dict):
+        add(tx.get("body"))
+        add(tx.get("payload"))
+        add(tx.get("unsigned"))
+    add(getattr(tx, "body", None))
+    add(getattr(tx, "payload", None))
+    unsigned = getattr(tx, "unsigned", None)
+    if unsigned is None and isinstance(tx, dict):
+        unsigned = tx.get("unsigned")
+    add(unsigned)
+    if unsigned is not None:
+        add(getattr(unsigned, "payload", None))
+        if isinstance(unsigned, dict):
+            add(unsigned.get("payload"))
+            add(unsigned.get("body"))
+
+    # normalize_tx_body() emits a DISCRIMINATED payload: {"t": <kind>, "v": {...}},
+    # so the field sits at payload.v.data — one level deeper than every other
+    # shape. Walk one more level on anything that looks like that union.
+    for src in list(seen):
+        inner = None
+        if isinstance(src, dict) and "v" in src and "t" in src:
+            inner = src.get("v")
+        elif not isinstance(src, dict) and hasattr(src, "v") and hasattr(src, "t"):
+            inner = getattr(src, "v", None)
+        add(inner)
+
+    for src in seen:
+        if isinstance(src, dict):
+            for k in ("data", "input", "call_data", "calldata"):
+                if src.get(k):
+                    return src[k]
+        else:
+            for k in ("data", "input"):
+                v = getattr(src, k, None)
+                if v:
+                    return v
+    return None
+
+
+def _try_apply_stake(tx, state, block_env, tx_env, params):
+    """
+    Route a stake/unstake transaction, or return None to let normal execution
+    proceed. Never raises: a malformed payload must behave like a plain tx.
+    """
+    try:
+        from core.staking import decode_stake_data
+
+        intent = decode_stake_data(_tx_data_field(tx))
+        if intent is None:
+            return None
+        kind = int(intent.get("kind", 0))
+        if kind not in (9, 10):          # TxKind.STAKE / TxKind.UNSTAKE
+            return None
+        from .staking import apply_stake, apply_unstake
+
+        handler = apply_stake if kind == 9 else apply_unstake
+        return handler(tx, state, block_env, tx_env, params=params)
+    except Exception:
+        import logging
+
+        logging.getLogger("execution.runtime.executor").warning(
+            "stake routing failed; falling through to normal execution",
+            exc_info=True,
+        )
+        return None
+
+
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
@@ -141,6 +225,21 @@ def apply_tx(
             tx_env = make_tx_env(tx, block_env)
         except Exception:
             tx_env = None
+
+    # PoS stake/unstake (FORK_POS_MINTING). This check lives HERE, not in
+    # dispatcher.resolve_tx_kind, because `dispatcher` exposes no `apply_tx` —
+    # the import above therefore always fails, `_dispatch_apply_tx` is always
+    # None, and EVERY block transaction is executed by the small fallback below.
+    # The fallback maps kinds through {0,1,2} and silently defaults to
+    # "transfer", so a stake routed anywhere else executes as a self-transfer
+    # with no error and no log line.
+    #
+    # Forward-only and inert for every existing transaction: it fires only when
+    # `data` decodes as the stake CBOR envelope (magic + version + kind). Any
+    # other payload — including arbitrary user bytes — falls through unchanged.
+    _stake_result = _try_apply_stake(tx, state, block_env, tx_env, params)
+    if _stake_result is not None:
+        return _stake_result
 
     # Preferred path: delegate to dispatcher (module-local import above)
     if _dispatch_apply_tx is not None:

@@ -61,7 +61,12 @@ except Exception:  # pragma: no cover
 # --------------------------------------------------------------------------------------
 
 
-def _check_allowed() -> None:
+def _check_allowed(allow: bool = False) -> None:
+    # ``allow`` is the per-call opt-in for callers that are pure-Python BY DESIGN
+    # (sphincs_shake_128s). It must not go through os.environ: the mainnet wallet
+    # keygen guard fails closed when that flag is set process-wide.
+    if allow:
+        return
     if os.environ.get("ANIMICA_ALLOW_PQ_PURE_FALLBACK") != "1":
         raise NotImplementedError(
             "Pure-Python PQ fallbacks are disabled. "
@@ -140,11 +145,11 @@ def _rand(n: int) -> bytes:
 # --------------------------------------------------------------------------------------
 
 
-def fallback_sig_keypair(alg: str) -> Tuple[bytes, bytes]:
+def fallback_sig_keypair(alg: str, *, allow: bool = False) -> Tuple[bytes, bytes]:
     """
     Return (sk, pk) for the given signature algorithm.
     """
-    _check_allowed()
+    _check_allowed(allow)
     alg_l = alg.lower()
     if "dilithium3" in alg_l:
         lens = DILITHIUM3
@@ -158,7 +163,9 @@ def fallback_sig_keypair(alg: str) -> Tuple[bytes, bytes]:
     return sk, pk
 
 
-def fallback_sig_sign(alg: str, msg: bytes, sk: bytes, pk: bytes | None = None) -> bytes:
+def fallback_sig_sign(
+    alg: str, msg: bytes, sk: bytes, pk: bytes | None = None, *, allow: bool = False
+) -> bytes:
     """
     Produce a *forgeable* deterministic signature with correct length.
     sig = XOF("sig" | pk | msg) where pk is provided or derived as H("pk"|sk).
@@ -170,7 +177,7 @@ def fallback_sig_sign(alg: str, msg: bytes, sk: bytes, pk: bytes | None = None) 
         pk: Optional public key bytes. If provided, use it directly instead of deriving
             from sk. This allows compatibility with wallets created using real PQ libraries.
     """
-    _check_allowed()
+    _check_allowed(allow)
     alg_l = alg.lower()
     if "dilithium3" in alg_l:
         lens = DILITHIUM3
@@ -187,11 +194,11 @@ def fallback_sig_sign(alg: str, msg: bytes, sk: bytes, pk: bytes | None = None) 
     return sig
 
 
-def fallback_sig_verify(alg: str, msg: bytes, sig: bytes, pk: bytes) -> bool:
+def fallback_sig_verify(alg: str, msg: bytes, sig: bytes, pk: bytes, *, allow: bool = False) -> bool:
     """
     Verify by recomputing XOF("sig"|pk|msg) and constant-time compare.
     """
-    _check_allowed()
+    _check_allowed(allow)
     alg_l = alg.lower()
     if "dilithium3" in alg_l:
         lens = DILITHIUM3

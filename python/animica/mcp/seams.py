@@ -290,6 +290,35 @@ def beacon_round(round_id: int, *, timeout: Optional[float] = None) -> Any:
 # --------------------------------------------------------------------------- #
 
 
+def adapter_factory_url() -> str:
+    # Host serving the adapter factory (free coverage preview + paid orders).
+    return os.environ.get("ANIMICA_FACTORY_URL", "https://animica.dev").rstrip("/")
+
+
+def adapter_preview_url() -> str:
+    return f"{adapter_factory_url()}/factory/preview"
+
+
+def adapter_preview(spec_url: str = "", spec: Optional[dict] = None,
+                    *, timeout: Optional[float] = None) -> Any:
+    """Run the FREE adapter-coverage preview over an API specification.
+
+    Unauthenticated, costs nothing and starts no training: the service parses
+    the spec and reports what a tool-calling adapter trained on it would cover.
+    Rate-limited upstream per IP and per spec, so a 429 is expected under load
+    and is surfaced to the caller rather than retried here.
+    """
+    body: dict = {}
+    if spec_url:
+        body["spec_url"] = spec_url
+    if spec is not None:
+        body["spec"] = spec
+    if not body:
+        raise SeamError("give either spec_url or spec")
+    return _post_json(adapter_preview_url(), body,
+                      timeout=timeout or max(DEFAULT_TIMEOUT, 60.0))
+
+
 def x402_catalog_url() -> str:
     return f"{x402_url()}/.well-known/x402"
 

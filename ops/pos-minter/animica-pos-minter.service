@@ -1,0 +1,31 @@
+[Unit]
+Description=Animica PoS minter (hybrid PoW/PoS block production for a staked validator)
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/animica
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/root
+Environment=ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc
+Environment=ANIMICA_POS_WALLET_LABEL=tresure
+# Slot length MUST equal the chain's block.target_seconds (60.0 on mainnet).
+# If it differs, the slot a block claims will not match its own timestamp and
+# every block is rejected with "pos slot does not match header timestamp".
+Environment=ANIMICA_POS_TARGET_BLOCK_S=60
+# The node's RPC is slow under load; a template fetch that outlives the slot is
+# worse than an empty block, so allow a long fetch and fall back to a
+# coinbase-only template (see mint_once). Set INCLUDE_MEMPOOL=0 to always mint
+# empty blocks — the fastest path to a moving head.
+Environment=ANIMICA_POS_RPC_TIMEOUT=300
+Environment=ANIMICA_POS_INCLUDE_MEMPOOL=1
+ExecStart=/root/animica/.venv/bin/python /root/animica/ops/pos-minter/pos_minter.py
+Restart=always
+RestartSec=20
+# Signing is this process's whole job; do not let it lose a slot to the AI
+# workers, but do not outrank the node itself either.
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

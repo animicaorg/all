@@ -49,6 +49,13 @@ class TxKind(IntEnum):
     DEPLOY = 1
     CALL = 2
     COINBASE = 3  # Mining reward transaction (protocol-generated)
+    # NOTE: 4..8 are ALREADY TAKEN by execution.runtime.dispatcher._NUMERIC_KIND
+    # (aicf_claim=4, ena_call=5, ena_submit_receipt=6,
+    #  aicf_claim_provider_rewards=7, aicf_governance_topup=8). TxKind ints are
+    # the payload discriminator AND the dispatcher key, so they must not collide:
+    # STAKE at 4 would have executed as an AICF credit claim. Next free: 9, 10.
+    STAKE = 9  # Bond spendable balance into a time-locked stake (PoS)
+    UNSTAKE = 10  # Withdraw matured stake back to spendable balance (PoS)
 
 
 @dataclass(frozen=True)
@@ -260,7 +267,79 @@ class TxCall:
         )
 
 
-TxPayload = TxTransfer | TxDeploy | TxCall
+STAKE_NAME_MAX_BYTES = 32
+
+
+@dataclass(frozen=True)
+class TxStake:
+    """
+    Bond `amount` (base units, nANM) of the sender's spendable balance into a
+    time-locked stake for `duration_days`. The bond becomes withdrawable via
+    TxUnstake only once the block timestamp passes its unlock time; until then
+    it counts as weight for PoS leader selection and cannot be spent.
+    """
+
+    amount: int
+    duration_days: int
+    name: str = ""
+
+    def __post_init__(self) -> None:
+        if self.amount <= 0:
+            raise ValueError("TxStake.amount must be > 0")
+        if self.duration_days <= 0:
+            raise ValueError("TxStake.duration_days must be > 0")
+        if self.duration_days > 3650:
+            raise ValueError("TxStake.duration_days must be <= 3650")
+        if not isinstance(self.name, str):
+            raise TypeError("TxStake.name must be str")
+        # Display label only, never an identity: the account key still comes from
+        # the signing pubkey. Bounded and charset-restricted so it is safe to
+        # render in the pool UI and the explorer without escaping surprises.
+        if len(self.name.encode("utf-8")) > STAKE_NAME_MAX_BYTES:
+            raise ValueError(
+                f"TxStake.name must be <= {STAKE_NAME_MAX_BYTES} bytes UTF-8"
+            )
+        for ch in self.name:
+            if not (ch.isalnum() or ch in "-_. "):
+                raise ValueError(
+                    "TxStake.name may only contain alphanumerics, space, '-', '_' or '.'"
+                )
+
+    def to_obj(self) -> Mapping[str, Any]:
+        return {
+            "amount": int(self.amount),
+            "days": int(self.duration_days),
+            "name": str(self.name),
+        }
+
+    @staticmethod
+    def from_obj(o: Mapping[str, Any]) -> "TxStake":
+        return TxStake(
+            amount=int(o["amount"]),
+            duration_days=int(o.get("days", o.get("duration_days", 0))),
+            name=str(o.get("name", "") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class TxUnstake:
+    """Withdraw up to `amount` of MATURED stake back to spendable balance."""
+
+    amount: int
+
+    def __post_init__(self) -> None:
+        if self.amount <= 0:
+            raise ValueError("TxUnstake.amount must be > 0")
+
+    def to_obj(self) -> Mapping[str, Any]:
+        return {"amount": int(self.amount)}
+
+    @staticmethod
+    def from_obj(o: Mapping[str, Any]) -> "TxUnstake":
+        return TxUnstake(amount=int(o["amount"]))
+
+
+TxPayload = TxTransfer | TxDeploy | TxCall | TxStake | TxUnstake
 
 
 # ---- unsigned + signed tx model ----
@@ -345,6 +424,10 @@ class UnsignedTx:
             payload_obj = {"t": int(TxKind.CALL), "v": self.payload.to_obj()}  # type: ignore[union-attr]
         elif self.kind is TxKind.COINBASE:
             payload_obj = {"t": int(TxKind.COINBASE), "v": self.payload.to_obj()}  # type: ignore[union-attr]
+        elif self.kind is TxKind.STAKE:
+            payload_obj = {"t": int(TxKind.STAKE), "v": self.payload.to_obj()}  # type: ignore[union-attr]
+        elif self.kind is TxKind.UNSTAKE:
+            payload_obj = {"t": int(TxKind.UNSTAKE), "v": self.payload.to_obj()}  # type: ignore[union-attr]
         else:  # pragma: no cover
             raise ValueError("unknown tx kind")
 
@@ -413,6 +496,12 @@ class UnsignedTx:
         elif payload_tag == int(TxKind.COINBASE):
             payload = TxTransfer.from_obj(payload_val)
             kind = TxKind.COINBASE
+        elif payload_tag == int(TxKind.STAKE):
+            payload = TxStake.from_obj(payload_val)
+            kind = TxKind.STAKE
+        elif payload_tag == int(TxKind.UNSTAKE):
+            payload = TxUnstake.from_obj(payload_val)
+            kind = TxKind.UNSTAKE
         else:
             raise ValueError("Unknown payload tag")
 
@@ -692,6 +781,14 @@ class Tx:
             p: TxDeploy = u.payload  # type: ignore[assignment]
             base["codeHash"] = to_hex(sha3_256(p.code))
             base["manifestHash"] = to_hex(sha3_256(p.manifest))
+        elif u.kind is TxKind.STAKE:
+            p: TxStake = u.payload  # type: ignore[assignment]
+            base["amount"] = p.amount
+            base["durationDays"] = p.duration_days
+            base["stakerName"] = p.name
+        elif u.kind is TxKind.UNSTAKE:
+            p: TxUnstake = u.payload  # type: ignore[assignment]
+            base["amount"] = p.amount
         elif u.kind is TxKind.CALL:
             p: TxCall = u.payload  # type: ignore[assignment]
             base["to"] = to_hex(p.to)

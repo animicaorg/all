@@ -800,6 +800,58 @@ def _render_tool_list() -> str:
     return "\n".join(lines)
 
 
+
+_PARAM_TYPE = {"string": "string", "str": "string", "int": "integer", "integer": "integer",
+               "float": "number", "number": "number", "bool": "boolean", "boolean": "boolean",
+               "any": "string", "list": "array", "dict": "object"}
+
+
+# The subset an agentic CLI turn actually needs. 24 tools is 8.3 KB of schema,
+# which the bridge renders into prose for the worker; on a CPU worker that
+# prefill is most of the turn. Nine tools cover read/search/edit/run/finish.
+CORE_TOOLS = ("read_file", "list_files", "grep", "glob", "write_file", "edit_file",
+              "bash", "think", "done")
+
+
+def openai_tools_schema(core: bool = False) -> list[dict]:
+    """The tool table as an OpenAI `tools` list.
+
+    ToolSpec.parameters is prose-ish ("int (default 200)"); this maps it to a
+    JSON-schema type and keeps the human hint as the description, which is
+    what a tool-calling model actually reads.
+    """
+    out = []
+    for t in _TOOL_SPECS:
+        if core and t.name not in CORE_TOOLS:
+            continue
+        props, required = {}, []
+        for k, hint in (t.parameters or {}).items():
+            h = str(hint)
+            base = h.split(" ")[0].strip("(),").lower()
+            props[k] = {"type": _PARAM_TYPE.get(base, "string"), "description": h}
+            if "default" not in h and "optional" not in h:
+                required.append(k)
+        out.append({"type": "function", "function": {
+            "name": t.name, "description": t.description,
+            "parameters": {"type": "object", "properties": props, "required": required}}})
+    return out
+
+
+def build_system_prompt_compact(cwd: Optional[str] = None) -> str:
+    """System prompt for when tools travel in the API `tools` field.
+
+    The full prompt repeats every tool in prose (~4.9 KB). On a CPU worker that
+    prefill alone is ~50 s a turn, so when the API carries the schemas the
+    prompt only carries the rules.
+    """
+    where = f" The working directory is {cwd}." if cwd else ""
+    return ("You are an autonomous coding assistant in a terminal." + where +
+            " Use the provided tools to inspect and change files and run commands."
+            " Call ONE tool per turn and wait for its result. Never invent file"
+            " contents you have not read. When the task is complete, call the `done`"
+            " tool with a one-paragraph summary; if no tool is needed, answer in plain text.")
+
+
 def build_system_prompt(cwd: Optional[str] = None) -> str:
     return (
         _SYSTEM_PROMPT_TEMPLATE
@@ -1104,6 +1156,7 @@ def run_agent_loop(
     max_iterations: int = 10,
     max_cost: float = 0.5,
     initial_history: Optional[list[dict]] = None,
+    compact_prompt: bool = False,
 ) -> AgentRunResult:
     """Run the agentic loop.
 
@@ -1115,7 +1168,8 @@ def run_agent_loop(
     is called for every non-safe tool when not in yolo / read_only mode.
     """
     history: list[dict[str, str]] = list(initial_history or [])
-    history.append({"role": "system", "content": build_system_prompt(cwd)})
+    history.append({"role": "system", "content": (build_system_prompt_compact(cwd)
+                                                  if compact_prompt else build_system_prompt(cwd))})
     history.append({"role": "user", "content": user_task})
 
     turns: list[AgentTurn] = []

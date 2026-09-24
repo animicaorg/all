@@ -1251,14 +1251,15 @@ def _build_tx_body(
     valid_after: int,
     valid_until: int,
     salt: bytes,
+    extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     # Keep keys stable + canonical CBOR in _cbor().
     # NOTE: v2 tx bodies omit nonce; validity window + salt are required instead.
     # Convert addresses to canonical 32-byte format (digest bytes, not bech32 strings)
     from_bytes = _address_to_32_bytes(from_addr)
     to_bytes = _address_to_32_bytes(to_addr)
-    
-    return {
+
+    body: Dict[str, Any] = {
         "to": to_bytes,
         "from": from_bytes,
         "value": int(value_base_units),
@@ -1270,6 +1271,13 @@ def _build_tx_body(
         "validUntil": int(valid_until),
         "salt": bytes(salt),
     }
+    if extra:
+        # Non-transfer tx kinds (e.g. TxKind.STAKE / UNSTAKE) carry their fields
+        # here. They go INSIDE the body on purpose: the body is what the
+        # signature covers, so a kind or amount sitting beside the signature
+        # instead of under it could be rewritten in flight.
+        body.update(extra)
+    return body
 
 
 def _build_raw_tx(
@@ -1557,6 +1565,13 @@ def send(
               "can never pay a provider."),
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Simulate mempool admission without inserting"),
+    emit_raw: bool = typer.Option(
+        False,
+        "--emit-raw",
+        help=("Sign but DO NOT submit: print the signed raw transaction as JSON. This is the "
+              "artifact the x402 ANM lane wants as payload.rawTransaction — you sign, the "
+              "gateway submits, which is why that lane costs it no gas and is priced below USDC."),
+    ),
     secret_key_hex: Optional[str] = typer.Option(
         None, "--secret-key-hex", help="Secret key hex (for external wallets, bypasses wallets.json lookup)"
     ),
@@ -1564,7 +1579,14 @@ def send(
         None, "--public-key-hex", help="Public key hex (required with --secret-key-hex)"
     ),
     alg_id: Optional[int] = typer.Option(
-        None, "--alg-id", help="Signature algorithm ID (4098 for Dilithium3, 65535 for Ed25519, or hex 0x1001/0xFFFF)"
+        None,
+        "--alg-id",
+        help=(
+            "Signature algorithm ID. Use 4099 (0x1003, ML-DSA-65) — that is the only scheme in "
+            "real use on mainnet, and it is what `animica wallet new` writes. 4098 is the legacy "
+            "SPHINCS+ id and is stranded at the consensus level; do not sign new transactions "
+            "with it. 65535 (0xFFFF) is Ed25519, for test networks only."
+        ),
     ),
 ):
     """
@@ -1855,6 +1877,32 @@ def send(
                         "raw_hex": raw_hex,
                     }
                 )
+
+            if emit_raw:
+                # SIGN-ONLY, for the x402 ANM lane ("exact-anm"). That scheme wants a
+                # signed but UNSUBMITTED transfer: the payer signs it and hands it over,
+                # and the GATEWAY submits it. Broadcasting here would spend the transfer
+                # before it could be presented as payment — the payer would have paid and
+                # still owe payment. So this path must return before any submit call.
+                # The signature was verified locally just above, so what we print is a
+                # transaction already known to be well formed.
+                console.print_json(
+                    data={
+                        "raw_transaction": raw_hex,
+                        "from": from_addr,
+                        "to": to_addr,
+                        "value_nanm": str(value_base),
+                        "chain_id": cid,
+                        "network": "animica:1",
+                        "submitted": False,
+                        "next": (
+                            "Send this as payload.rawTransaction in the X-PAYMENT header of the "
+                            "402-challenged request. Pay to the payTo and amount from the "
+                            "animica:1 entry in the challenge's accepts[]."
+                        ),
+                    }
+                )
+                raise typer.Exit(0)
 
             # Submit (with one compatibility fallback)
             def _extract_send_hash(result: Any) -> str:

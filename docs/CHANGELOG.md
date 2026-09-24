@@ -8,6 +8,20 @@ Module-scoped, low-level tweaks that don’t affect the user experience live in 
 
 ---
 
+## [11.2.3] - 2026-09-24
+### Fix: mainnet nodes on 11.1.0–11.2.2 restart-looped at startup
+- Startup aborted with `Required PQ signature schemes are not enabled for mainnet-rpc on chainId=1: sphincs_shake_128s[2] reason=backend_missing`, so a supervised node (docker restart policy / systemd) restarted forever. 11.1.0 stopped the SPHINCS+ module from setting `ANIMICA_ALLOW_PQ_PURE_FALLBACK=1` at import (it broke mainnet `animica wallet new`) but never added the call-time opt-in it described, so the SPHINCS+ self-test raised on every fresh process.
+- The SPHINCS+ backend now opts in per call; the process-wide flag stays unset, so the mainnet wallet keygen guard is unaffected. Signature bytes are unchanged, so no consensus change.
+- **Workaround without upgrading:** set `ANIMICA_ALLOW_PQ_PURE_FALLBACK=1` in the node's environment only (not the shell you run `animica wallet new` from).
+
+## [11.1.2] - 2026-08-27
+### Agentic chat and reliable local inference
+- `animica chat` is an agentic coding assistant by default: normal prompts can inspect files, search code, edit with approval, run commands, query Animica, and use the web. `/swarm` now enables or disables reviewed multi-agent workflows for subsequent prompts; `--swarm` does the same for one-shot use.
+- Interrupted model downloads retain verified partial data so retries resume instead of starting over. AICF workers re-detect bundles that finish after startup and advertise both chain and catalog tier names without a restart.
+- The browser inference worker verifies a real WebGPU adapter before selecting an engine, recovers corrupt cached GGUF data once, preserves good cached downloads, and explains when Animica Agent 2B uses its CPU/WASM build despite WebGPU being available.
+- Pool statistics distinguish active mining machines, currently serving inference workers, historical registrations, inference engines, phones, and completed jobs. Counts come from the live pool and AICF worker aggregates.
+- Animica Chat adds revocable API keys, a tool-callback protocol for local CLI tools, and an action-oriented default agent with authenticated web, repository, RPC, and wallet tools.
+
 ## [11.1.0] - 2026-08-23
 ### Image generation — prompt-fidelity pipeline (miner side, `animica/media/image_gen.py`)
 Accuracy against *specific* prompts. Every `image` job now runs:

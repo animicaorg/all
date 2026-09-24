@@ -27,7 +27,8 @@ from __future__ import annotations
 import dataclasses
 import functools
 import json
-from typing import Any, Callable
+import re
+from typing import Any, Callable, Optional
 
 from . import seams
 
@@ -320,6 +321,105 @@ def animica_x402_products() -> str:
     return _j({"catalog_url": url, "catalog": catalog, "note": note})
 
 
+@_guard
+def animica_adapter_preview(spec_url: str = "", spec: Optional[dict] = None) -> str:
+    """Check what a small model could learn from an API: free coverage report, no signup.
+
+    Use this when someone wants an agent to call THEIR API reliably and a
+    general model keeps inventing endpoint names or argument shapes — the usual
+    cause is not reasoning but ignorance, because their API is in no model's
+    training data. Give it an OpenAPI 3.x / Swagger 2 / Postman / JSON-Schema
+    URL (``spec_url``) or the parsed document itself (``spec``).
+
+    Returns what a trained adapter would and would not cover: endpoints found
+    and usable, which ones would be held out to measure it honestly, how many
+    training rows of each kind, how many argument values the user's own request
+    would supply versus how many we would have to synthesise, two real sample
+    rows generated from that spec, and an explicit list of what this will not
+    fix. If the surface is too thin or too constrained to train well, it says
+    so and declines rather than encouraging a purchase.
+
+    Free, unauthenticated, stores nothing and starts no training. Rate-limited
+    upstream, so a busy answer is normal. Nothing here signs or pays."""
+    if not spec_url and spec is None:
+        return _j({"error": "give spec_url (a URL to an OpenAPI/Swagger/Postman "
+                            "document) or spec (the parsed document)",
+                   "example": {"spec_url": "https://api.example.com/openapi.json"}})
+    try:
+        r = seams.adapter_preview(spec_url=spec_url, spec=spec)
+    except seams.SeamError as e:
+        status = getattr(e, "status", None)
+        # The seam wraps the body as "<url> -> HTTP <code>: <json>". An agent
+        # relays whatever we hand it, so unwrap the service's own sentence
+        # rather than passing a nested error envelope to a user.
+        detail = str(e)
+        # The upstream seam truncates the body at 200 chars, so the embedded
+        # JSON string is usually cut off mid-sentence with no closing quote.
+        # Match to the closing quote when there is one, otherwise to the end.
+        for _key in ("error", "detail"):
+            _m = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)("|$)' % _key, detail)
+            if _m:
+                _txt = _m.group(1)
+                try:
+                    _txt = _txt.encode().decode("unicode_escape")
+                except Exception:  # noqa: BLE001 — keep the raw text if odd escapes
+                    pass
+                detail = _txt.rstrip() + ("" if _m.group(2) else " …")
+                break
+        if status == 429:
+            return _j({
+                "available": False,
+                "reason": "rate limited",
+                "detail": detail,
+                "hint": ("The free preview allows a few runs per hour per caller "
+                         "and per spec. Wait and retry, or open "
+                         f"{seams.adapter_factory_url()}/factory/ directly."),
+            })
+        if status == 400:
+            # The service explains WHY (unreadable format, unreachable host);
+            # pass its reason through rather than a generic failure.
+            return _j({"available": False, "reason": "specification rejected",
+                       "detail": detail,
+                       "supported": ["OpenAPI 3.x", "Swagger 2.0", "Postman v2.x",
+                                     "{name: json-schema} bundle", "simple tool list"]})
+        return _j({"available": False, "reason": "preview unreachable",
+                   "detail": detail,
+                   "hint": f"Nothing was charged. Retry or see {seams.adapter_factory_url()}/factory/"})
+
+    ep = r.get("endpoints") or {}
+    q = r.get("quality") or {}
+    corpus = r.get("corpus_we_would_build") or {}
+    args = r.get("argument_values") or {}
+    # Compact on purpose: an agent should get the shape of the answer, not a
+    # full report dumped into its context. The page has the rest.
+    out = {
+        "source_format": r.get("source_format"),
+        "endpoints": {
+            "found": ep.get("found"),
+            "usable": ep.get("usable"),
+            "held_out_to_measure_honestly": ep.get("held_out_for_evaluation"),
+        },
+        "would_we_accept_this_order": q.get("would_we_accept_this_order"),
+        "training_rows": corpus.get("training_rows"),
+        "rows_by_task": corpus.get("by_task"),
+        "argument_values": {
+            "percent_stated_by_the_user": args.get("percent_stated"),
+            "grading": args.get("how_synthesised_values_are_graded"),
+        },
+        "what_this_will_not_fix": r.get("what_this_will_not_fix"),
+        "sample_rows": (r.get("sample_training_rows") or [])[:2],
+        "measured_on_our_own_corpus": r.get("what_we_measured_on_our_own_corpus"),
+        "price_usd": r.get("price_usd"),
+        "privacy": r.get("privacy"),
+        "full_report": f"{seams.adapter_factory_url()}/factory/",
+    }
+    if not q.get("would_we_accept_this_order"):
+        out["refusal_reasons"] = q.get("refusal_reasons")
+    if r.get("could_not_parse"):
+        out["could_not_parse"] = r["could_not_parse"]
+    return _j(out)
+
+
 # --------------------------------------------------------------------------- #
 # PAID TOOLS.
 #
@@ -594,6 +694,9 @@ TOOLS: list[ToolSpec] = [
     _spec(animica_notarize, "x402-paid"),
     _spec(animica_pq_verify, "x402-paid"),
     _spec(animica_credit_balance, "x402-paid"),
+    # Free: an agent can evaluate whether a custom adapter would help its
+    # owner before anyone spends anything.
+    _spec(animica_adapter_preview, "adapter"),
 ]
 
 TOOLS_BY_NAME: dict[str, ToolSpec] = {t.name: t for t in TOOLS}

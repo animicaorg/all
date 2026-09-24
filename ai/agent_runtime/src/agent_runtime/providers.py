@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -63,6 +64,10 @@ class TurnRequest:
     top_p: float = 0.95
     require_provider: Optional[str] = None    # forces a single provider
     stream_callback: Optional["StreamFn"] = None
+    # OpenAI-shaped tool list. When set, the hosted provider sends it through
+    # the API's `tools` field instead of describing tools in prose, and any
+    # structured tool_calls in the reply are handed back as [TOOL_CALL] text.
+    tools: Optional[list] = None
     yolo: bool = False                         # override balance refusal
     # Pipeline routing knobs for this turn. Leave None to use the chat
     # session defaults (see DistributedAICFProvider._pipeline_defaults).
@@ -122,8 +127,15 @@ class DistributedAICFProvider(Provider):
                 "retry_backoff_ms"]),
         )
         self._wallet: Optional[WalletInfo] = None
+        # Serializes nonce+sign+submit (see serve()). Also guards the lazy
+        # wallet load so two threads can't both build one.
+        self._pay_lock = threading.RLock()
 
     def _wallet_info(self) -> WalletInfo:
+        with self._pay_lock:
+            return self._wallet_info_locked()
+
+    def _wallet_info_locked(self) -> WalletInfo:
         if self._wallet is None:
             self._wallet = load_wallet_info(
                 wallet_path=self.wallet_path,
@@ -195,7 +207,6 @@ class DistributedAICFProvider(Provider):
                 self.name,
                 preview.reason or "insufficient_balance",
             )
-        nonce = get_next_nonce(self.rpc_url, wi.address)
         # Treasury address — prefer the on-chain canonical (aicf.getTreasuryAddress
         # served by the local node). Fall back to the integration config, and
         # finally to a placeholder that the server-side payment decoder will
@@ -212,17 +223,26 @@ class DistributedAICFProvider(Provider):
             recipient = str(self.cfg.integration["aicf"].get(
                 "treasury_address", "aicf-treasury"
             ))
-        signed = sign_payment(
-            wi,
-            amount_animica=quote.estimated_cost_animica,
-            recipient=str(recipient),
-            chain_id=wi.chain_id,
-            nonce=nonce,
-            rpc_url=self.rpc_url,
-            job_metadata={"job_kind": spec.job_kind,
-                           "tier": spec.tier_preferred},
-        )
-        sub = self.client.submit(spec, signed_payment=signed.__dict__)
+        # NONCE + SIGN + SUBMIT IS ONE CRITICAL SECTION. `wi` is a shared,
+        # MUTABLE wallet object: two concurrent serves would interleave here,
+        # each re-signing over the other's tx body, and the node rejected the
+        # loser with "[-32012] Invalid post-quantum signature: verification
+        # failed" — measured at 50 rejections in 2h (~17% of requests), each
+        # costing a full retry. Fetching the nonce inside the lock also stops
+        # two requests claiming the same nonce.
+        with self._pay_lock:
+            nonce = get_next_nonce(self.rpc_url, wi.address)
+            signed = sign_payment(
+                wi,
+                amount_animica=quote.estimated_cost_animica,
+                recipient=str(recipient),
+                chain_id=wi.chain_id,
+                nonce=nonce,
+                rpc_url=self.rpc_url,
+                job_metadata={"job_kind": spec.job_kind,
+                              "tier": spec.tier_preferred},
+            )
+            sub = self.client.submit(spec, signed_payment=signed.__dict__)
         # Surface the node's actual routing decision (auto → race or
         # pipeline) into metadata so the chat footer can show it.
         accumulated: list[str] = []

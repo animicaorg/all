@@ -47,6 +47,12 @@ from agent_runtime.providers import Provider, TurnRequest, TurnResult
 
 DEFAULT_BASE_URL = "https://animica.dev/v1"
 DEFAULT_MODEL = "kimi-k3"
+# Tool-calling turns go to the model that was actually trained for them. The
+# agentic CLI on a CPU-only network cannot afford kimi-k3 prose: a 4.9 KB prompt
+# plus 2048 output tokens on a ~5 tok/s worker was 1-7 MINUTES per turn, which
+# read as "hangs forever". animica-agent-2b + real `tools` + short outputs is
+# the shape that answers in under a minute. Verified 2026-08-27.
+AGENT_TOOLS_MODEL = os.environ.get("ANIMICA_AGENT_MODEL") or "animica-agent-2b"
 PRICING_HINT = "animica.dev/pricing lifts the limit."
 # Not a timeout so much as a dead-socket backstop: the bridge's own ceiling is
 # 600s, so anything shorter cancels work the network is still doing.
@@ -171,7 +177,7 @@ class HostedProvider(Provider):
         ok, reason = self.is_available()
         if not ok:
             from agent_runtime.errors import ProviderUnavailable
-            raise ProviderUnavailable(f"{self.name}: {reason}")
+            raise ProviderUnavailable(self.name, f"{reason}")
 
         messages = []
         for h in req.history or []:
@@ -202,9 +208,37 @@ class HostedProvider(Provider):
         }
 
         started = time.monotonic()
-        raw, receipt = self._stream("/chat/completions", body,
-                                    on_text=req.stream_callback)
-        if not raw.strip():
+        tools = getattr(req, "tools", None)
+        if tools:
+            # Non-streaming on purpose: the bridge returns structured
+            # `message.tool_calls` on this path, which the SSE reader would
+            # flatten away. Structured calls are re-emitted as [TOOL_CALL]
+            # blocks so the agent loop's parser needs no change.
+            body["tools"] = tools
+            body["model"] = AGENT_TOOLS_MODEL
+            body.pop("stream", None)
+            payload = self._post("/chat/completions", body)
+            choices = payload.get("choices") or []
+            msg = ((choices[0] or {}).get("message") or {}) if choices else {}
+            raw = msg.get("content") or ""
+            for tc in (msg.get("tool_calls") or []):
+                fn = tc.get("function") or {}
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (json.JSONDecodeError, ValueError):
+                        args = {"_raw": args}
+                block = json.dumps({"name": fn.get("name", ""), "arguments": args or {}},
+                                   ensure_ascii=False)
+                raw = f"{raw}\n[TOOL_CALL]\n{block}\n[/TOOL_CALL]"
+            receipt = payload.get("animica_receipt")
+            if req.stream_callback and raw:
+                req.stream_callback(raw)
+        else:
+            raw, receipt = self._stream("/chat/completions", body,
+                                        on_text=req.stream_callback)
+        if not raw.strip() and not tools:
             # The stream produced nothing — a proxy that buffered it, or a worker
             # that dropped. Retry once without streaming rather than reporting an
             # empty answer.
@@ -224,8 +258,7 @@ class HostedProvider(Provider):
         # unavailability — which is what it is.
         if _is_capacity_apology(answer):
             from agent_runtime.errors import ProviderUnavailable
-            raise ProviderUnavailable(
-                f"{self.name}: no miner is serving {self.cfg.model} right now "
+            raise ProviderUnavailable(self.name, f"no miner is serving {self.cfg.model} right now "
                 "(the network returned its capacity notice)"
             )
 
@@ -354,7 +387,7 @@ class HostedProvider(Provider):
             if acc:
                 return "".join(acc), receipt
             from agent_runtime.errors import ProviderUnavailable
-            raise ProviderUnavailable(f"{self.name}: {_short(exc)}") from exc
+            raise ProviderUnavailable(self.name, f"{_short(exc)}") from exc
         return "".join(acc), receipt
 
     def _raise_http(self, exc) -> None:
@@ -365,11 +398,9 @@ class HostedProvider(Provider):
             pass
         from agent_runtime.errors import ProviderUnavailable
         if exc.code == 429:
-            raise ProviderUnavailable(
-                f"{self.name}: rate limited by the free tier. "
+            raise ProviderUnavailable(self.name, f"rate limited by the free tier. "
                 f"{PRICING_HINT}") from exc
-        raise ProviderUnavailable(
-            f"{self.name}: HTTP {exc.code}{': ' + detail if detail else ''}") from exc
+        raise ProviderUnavailable(self.name, f"HTTP {exc.code}{': ' + detail if detail else ''}") from exc
 
     def _post(self, path: str, body: dict):
         data = json.dumps(body).encode("utf-8")
@@ -383,7 +414,7 @@ class HostedProvider(Provider):
             self._raise_http(exc)
         except Exception as exc:  # noqa: BLE001
             from agent_runtime.errors import ProviderUnavailable
-            raise ProviderUnavailable(f"{self.name}: {_short(exc)}") from exc
+            raise ProviderUnavailable(self.name, f"{_short(exc)}") from exc
 
 
 def _short(exc: Exception, limit: int = 120) -> str:

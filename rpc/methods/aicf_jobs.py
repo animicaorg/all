@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress as _ipaddress
 import logging
 import os
 import re
@@ -197,6 +198,11 @@ _REPLICAS_MAX = max(_REPLICAS_DEFAULT, int(
     os.environ.get("ANIMICA_AICF_REPLICAS_MAX", "10") or "10"
 ))
 _ONLINE_WINDOW_S = 180.0
+# A job nobody has answered within this window is dead to its requester: the
+# bridge budget is 20-120s (480s slow). claim_next used to hand a worker the
+# OLDEST open job, so one CPU worker spent its time serving requests whose
+# clients had hung up minutes earlier while fresh ones queued behind them.
+_CLAIM_TTL_S = float(os.environ.get("ANIMICA_AICF_CLAIM_TTL_S", "240") or "240")
 
 # Dispatch mode (2026-08-24, opt-in via ANIMICA_AICF_DISPATCH=1). Under the
 # default race mode every job fans out to every online worker and all but one
@@ -233,6 +239,176 @@ _DISPATCH_IDLE_WINDOW_S = 60.0
 # the deferral would only add latency.
 _DISPATCH_DEFER_MIN_EMA_S = 5.0
 _KIND_RE = re.compile(r"^[a-z0-9_\-]{1,32}$")
+
+# ---------------------------------------------------------------------------
+# Region routing (2026-08-25, opt-in via ANIMICA_AICF_REGION_ROUTING=1).
+#
+# "Nearby serves nearby": for the first REGION_HOLD_S seconds of a job's life
+# only workers we can SHOW are far away are held back; everyone else may
+# claim immediately. It is a widening radius, never a filter — after the hold
+# any worker may claim, so a region with no workers online is never starved.
+#
+# HONEST SCOPE: at today's scale this buys very little. End-to-end latency is
+# dominated by on-device generation (browser workers measured ~0.4 tok/s vs
+# ~13 tok/s on the GPU worker), so the network RTT this optimizes is a small
+# fraction of the total. It matters when the swarm is large enough that
+# several capable workers compete for the same job, and it is a prerequisite
+# for licensing the routing layer to networks that care about data locality.
+_REGION_ROUTING = (
+    os.environ.get("ANIMICA_AICF_REGION_ROUTING", "0").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+_REGION_HOLD_S = max(0.0, float(
+    os.environ.get("ANIMICA_AICF_REGION_HOLD_S", "4") or "4"
+))
+# Fine-grained codes a worker may self-report via hardware.region, plus the
+# coarse continent codes IP derivation can produce. Anything else → unknown.
+_REGION_CONTINENT: Dict[str, str] = {
+    "na-east": "na", "na-west": "na", "na": "na",
+    "sa": "sa",
+    "eu-west": "eu", "eu-central": "eu", "eu-east": "eu", "eu": "eu",
+    "me": "me",
+    "af": "af",
+    "as-south": "as", "as-east": "as", "as-southeast": "as", "as": "as",
+    "oc": "oc",
+}
+_REGION_RE = re.compile(r"^[a-z]{2}(?:-[a-z]{2,9})?$")
+# Coarse IPv4 /8 → continent, from the IANA address-space registry (which RIR
+# administers the block). Continent-level ONLY: it cannot tell na-east from
+# na-west, and legacy /8s are attributed to the RIR that administers them
+# today. Deliberately partial — an unlisted block yields "" (unknown) rather
+# than a guess, because a wrong region is worse than no region here. Replace
+# with a real GeoIP database (none installed on this host) for finer routing.
+_RIR_V4_CONTINENT: Dict[int, str] = {}
+for _blocks, _cont in (
+    ((3, 4, 6, 7, 8, 9, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+      26, 28, 29, 30, 32, 33, 34, 35, 38, 40, 44, 47, 48, 50, 52, 54, 55, 56,
+      63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 96, 97, 98, 99,
+      100, 104, 107, 108, 132, 134, 135, 136, 137, 138, 139, 140, 142, 143,
+      144, 146, 147, 148, 149, 152, 155, 156, 157, 158, 159, 160, 161, 162,
+      164, 165, 166, 167, 168, 169, 170, 172, 173, 174, 184, 198, 199, 204,
+      205, 206, 207, 208, 209, 214, 215, 216), "na"),
+    ((2, 5, 25, 31, 37, 46, 51, 53, 57, 62, 77, 78, 79, 80, 81, 82, 83, 84,
+      85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 109, 141, 145, 151, 176,
+      178, 185, 188, 193, 194, 195, 212, 213, 217), "eu"),
+    ((1, 14, 27, 36, 39, 42, 43, 49, 58, 59, 60, 61, 101, 103, 106, 110, 111,
+      112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125,
+      126, 133, 150, 153, 163, 171, 175, 180, 182, 183, 202, 203, 210, 211,
+      218, 219, 220, 221, 222, 223), "as"),
+    ((177, 179, 181, 186, 187, 189, 190, 191, 200, 201), "sa"),
+    ((41, 102, 105, 154, 196, 197), "af"),
+):
+    for _b in _blocks:
+        _RIR_V4_CONTINENT[_b] = _cont
+
+
+def _normalize_region(raw: Any) -> str:
+    """A self-reported region code, validated. Unrecognized → "" (unknown)."""
+    if raw is None:
+        return ""
+    code = str(raw).strip().lower()
+    if not code or code == "unknown":
+        return ""
+    if not _REGION_RE.match(code):
+        return ""
+    return code if code in _REGION_CONTINENT else ""
+
+
+def _region_continent(code: str) -> str:
+    return _REGION_CONTINENT.get(code or "", "")
+
+
+def _region_match(a: str, b: str) -> bool:
+    """Same place, coarsely: identical codes or the same continent.
+
+    An unknown region on EITHER side matches — see _region_may_claim for why
+    that is the safe default rather than a mismatch.
+    """
+    if not a or not b:
+        return True
+    if a == b:
+        return True
+    ca, cb = _region_continent(a), _region_continent(b)
+    return bool(ca) and ca == cb
+
+
+def _region_may_claim(job_region: str, worker_region: str, age_s: float) -> bool:
+    """May this worker claim this job right now, region-wise?
+
+    Only a worker we can SHOW is far away waits, and only for the first
+    REGION_HOLD_S seconds. Unknown on either side ⇒ allowed immediately:
+    holding back a worker whose location we cannot determine would convert a
+    latency optimization into a latency regression (the job would sit
+    unclaimed for the hold with nothing gained), and today most workers
+    report no region at all.
+    """
+    if not _REGION_ROUTING or age_s >= _REGION_HOLD_S:
+        return True
+    return _region_match(job_region, worker_region)
+
+
+def _region_from_ip(ip: str) -> str:
+    """Coarse continent for an IPv4/IPv6 address, or "" when unknown."""
+    if not ip:
+        return ""
+    try:
+        addr = _ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return ""
+    if addr.is_private or addr.is_loopback or addr.is_link_local \
+            or addr.is_unspecified:
+        return ""
+    if addr.version == 4:
+        return _RIR_V4_CONTINENT.get(int(str(addr).split(".", 1)[0]), "")
+    # IPv6: 2001:200::/23 APNIC, 2001:400::/23 ARIN, 2001:600::/23 RIPE,
+    # 2001:1200::/23 LACNIC, 2001:4200::/23 AFRINIC. Only the unambiguous
+    # documented ranges; everything else is unknown.
+    packed = addr.packed
+    if packed[0] == 0x20 and packed[1] == 0x01:
+        block = (packed[2] << 8) | packed[3]
+        for lo, hi, cont in (
+            (0x0200, 0x03FF, "as"), (0x0400, 0x05FF, "na"),
+            (0x0600, 0x07FF, "eu"), (0x1200, 0x13FF, "sa"),
+            (0x4200, 0x43FF, "af"),
+        ):
+            if lo <= block <= hi:
+                return cont
+    return ""
+
+
+def _ctx_client_ip(ctx: Any) -> str:
+    """Best-effort caller IP for ROUTING ONLY — never an authz decision.
+
+    Mirrors rpc.access_policy._extract_ip: prefers the edge's forwarding
+    header (the node binds loopback, so a real remote caller always arrives
+    through nginx) and falls back to the socket peer. The value is
+    client-controlled, which is acceptable here precisely because the worst a
+    forged region can do is win a head start on a job it would have been
+    allowed to claim REGION_HOLD_S later anyway.
+    """
+    try:
+        headers = {k.lower(): v for k, v in (getattr(ctx, "headers", {}) or {}).items()}
+        fwd = headers.get("x-forwarded-for") or headers.get("x-real-ip")
+        if fwd:
+            return str(fwd).split(",")[0].strip()
+        client = getattr(ctx, "client", None)
+        if isinstance(client, tuple) and client:
+            return str(client[0])
+        host = getattr(client, "host", None)
+        if host:
+            return str(host)
+    except Exception:  # noqa: BLE001 — routing hint, never fatal
+        pass
+    return ""
+
+
+def _derive_region(hardware: Optional[Mapping[str, Any]], ctx: Any) -> str:
+    """Region for a worker/submitter: self-reported first, then coarse IP."""
+    if isinstance(hardware, Mapping):
+        explicit = _normalize_region(hardware.get("region"))
+        if explicit:
+            return explicit
+    return _region_from_ip(_ctx_client_ip(ctx))
 
 
 def _job_kind(spec: Mapping[str, Any]) -> str:
@@ -313,6 +489,12 @@ class _JobRecord:
     kind: str = "chat"
     k_wanted: int = 0
     offers: List[str] = field(default_factory=list)
+    # Region routing. `region` is the submitter's coarse locality ("" =
+    # unknown → the job is region-agnostic and claimable by anyone at once);
+    # `served_region` records where the winning worker actually was, so the
+    # benefit of routing can be measured rather than assumed.
+    region: str = ""
+    served_region: str = ""
     # Pipeline (model-parallel) mode. When mode == "pipeline", `stages`
     # holds an ordered list of stage records that chain together to
     # produce the final result. Each stage dict is:
@@ -373,6 +555,8 @@ class _WorkerInfo:
     inflight: int = 0
     concurrency: int = 1
     kinds: List[str] = field(default_factory=lambda: ["chat"])
+    # Coarse locality for region routing ("" = unknown, never held back).
+    region: str = ""
 
 
 class _AicfJobStore:
@@ -382,6 +566,15 @@ class _AicfJobStore:
         self._lock = threading.RLock()
         self._jobs: Dict[str, _JobRecord] = {}
         self._workers: Dict[str, _WorkerInfo] = {}
+        # Worker reputation for claims. A worker that claims and never submits
+        # holds the job for the whole _WORKER_LEASE_S (600s) while the bridge
+        # budget is 20-120s: one phantom claim is a guaranteed timeout for the
+        # user. On 2026-08-27 a browser tab still loading its model did exactly
+        # this to every job on the network. After 2 unserved claims a worker is
+        # cooled down: no new claims for a while, and its live claims stop
+        # blocking other workers.
+        self._unserved_streak: Dict[str, int] = {}
+        self._cooldown_until: Dict[str, float] = {}
 
     # ---------- jobs ----------
 
@@ -402,16 +595,23 @@ class _AicfJobStore:
             return None
         now = time.time()
         with self._lock:
+            if self._cooldown_until.get(worker_addr, 0.0) > now:
+                return None
             # Dispatch: non-chat kinds only go to workers advertising them.
             # (The in-memory store carries K-at-submit + kind filtering only;
             # speed routing / leases / fairness are SQLite-store features.)
             worker_kinds: List[str] = ["chat"]
-            if _DISPATCH:
+            worker_region = ""
+            if _DISPATCH or _REGION_ROUTING:
                 _w = self._workers.get(worker_addr)
-                if _w is not None and _w.kinds:
-                    worker_kinds = list(_w.kinds)
+                if _w is not None:
+                    if _DISPATCH and _w.kinds:
+                        worker_kinds = list(_w.kinds)
+                    worker_region = getattr(_w, "region", "") or ""
             for job in self._jobs.values():
                 if job.state in {"completed", "failed"}:
+                    continue
+                if (now - float(job.created_at or now)) > _CLAIM_TTL_S:
                     continue
                 if job.tier not in tiers:
                     continue
@@ -421,6 +621,11 @@ class _AicfJobStore:
                     continue
                 if _DISPATCH and (job.kind or "chat") != "chat" \
                         and job.kind not in worker_kinds:
+                    continue
+                if not _region_may_claim(
+                    getattr(job, "region", "") or "", worker_region,
+                    now - float(job.created_at or now),
+                ):
                     continue
                 # Drop expired claims so a slow worker doesn't lock out
                 # the slot indefinitely. Note this mutates the live job.
@@ -434,7 +639,11 @@ class _AicfJobStore:
                     continue
                 # Cap concurrent claims at replicas_wanted (K-way race).
                 cap = max(1, int(job.replicas_wanted or 1))
-                if len(live_claims) >= cap:
+                # Claims held by cooled-down workers do not count toward the cap:
+                # a phantom must not keep a real worker off the job.
+                blocking = [c for c in live_claims
+                            if self._cooldown_until.get(str(c.get('address') or ''), 0.0) <= now]
+                if len(blocking) >= cap:
                     continue
                 claim = {
                     "address": worker_addr,
@@ -472,7 +681,27 @@ class _AicfJobStore:
             job.state = "completed"
             job.completed_at = time.time()
             job.winner_address = provider_id
+            self._unserved_streak.pop(provider_id, None)
+            self._cooldown_until.pop(provider_id, None)
             return job
+
+    def record_unserved(self, job: Any) -> None:
+        """Every worker that claimed this job and never submitted gets a strike.
+        Cooldown grows with the streak (2 min x streak, capped at 30 min) and
+        starts on the 2nd strike so one dropped job is forgiven."""
+        now = time.time()
+        with self._lock:
+            for c in (getattr(job, "claims", None) or []):
+                addr = str(c.get("address") or "")
+                if not addr:
+                    continue
+                n = self._unserved_streak.get(addr, 0) + 1
+                self._unserved_streak[addr] = n
+                if n >= 2:
+                    cd = min(1800.0, 120.0 * n)
+                    self._cooldown_until[addr] = now + cd
+                    log.info("aicf_jobs: worker %s cooled down for %ds after %d unserved claims",
+                             addr[:16], int(cd), n)
 
     def fail(self, job_id: str, error: str) -> Optional[_JobRecord]:
         with self._lock:
@@ -849,7 +1078,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     decode_step_cursor INTEGER NOT NULL DEFAULT 0,
     kind TEXT NOT NULL DEFAULT 'chat',
     k_wanted INTEGER NOT NULL DEFAULT 0,
-    offers_json TEXT NOT NULL DEFAULT '[]'
+    offers_json TEXT NOT NULL DEFAULT '[]',
+    region TEXT NOT NULL DEFAULT '',
+    served_region TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_state_tier ON jobs(state, tier);
 CREATE INDEX IF NOT EXISTS idx_jobs_claim_owner ON jobs(claim_owner);
@@ -873,7 +1104,8 @@ CREATE TABLE IF NOT EXISTS workers (
     ema_score REAL NOT NULL DEFAULT 0,
     inflight INTEGER NOT NULL DEFAULT 0,
     concurrency INTEGER NOT NULL DEFAULT 1,
-    kinds_json TEXT NOT NULL DEFAULT '["chat"]'
+    kinds_json TEXT NOT NULL DEFAULT '["chat"]',
+    region TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -943,6 +1175,11 @@ class _SqliteAicfJobStore:
              "ALTER TABLE jobs ADD COLUMN k_wanted INTEGER NOT NULL DEFAULT 0"),
             ("offers_json",
              "ALTER TABLE jobs ADD COLUMN offers_json TEXT NOT NULL DEFAULT '[]'"),
+            # Region routing (additive; '' = unknown = today's behaviour).
+            ("region",
+             "ALTER TABLE jobs ADD COLUMN region TEXT NOT NULL DEFAULT ''"),
+            ("served_region",
+             "ALTER TABLE jobs ADD COLUMN served_region TEXT NOT NULL DEFAULT ''"),
         ):
             try:
                 conn.execute(ddl)
@@ -956,6 +1193,7 @@ class _SqliteAicfJobStore:
             "ALTER TABLE workers ADD COLUMN inflight INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE workers ADD COLUMN concurrency INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE workers ADD COLUMN kinds_json TEXT NOT NULL DEFAULT '[\"chat\"]'",
+            "ALTER TABLE workers ADD COLUMN region TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 conn.execute(ddl)
@@ -1056,6 +1294,9 @@ class _SqliteAicfJobStore:
             kind=kind,
             k_wanted=k_wanted,
             offers=[str(a) for a in offers],
+            region=(row["region"] if "region" in keys else "") or "",
+            served_region=(
+                row["served_region"] if "served_region" in keys else "") or "",
         )
 
     @staticmethod
@@ -1084,6 +1325,7 @@ class _SqliteAicfJobStore:
             inflight=int(row["inflight"] or 0) if "inflight" in keys else 0,
             concurrency=max(1, int(row["concurrency"] or 1)) if "concurrency" in keys else 1,
             kinds=[str(k) for k in kinds],
+            region=(row["region"] if "region" in keys else "") or "",
         )
 
     # ---------- jobs ----------
@@ -1097,8 +1339,8 @@ class _SqliteAicfJobStore:
             "  claim_expires_at,error,payment_tx_hash,payment_accepted,"
             "  payment_status,settled_chain_id,replicas_wanted,claims_json,"
             "  winner_address,mode,stages_json,decode_inbox_json,"
-            "  decode_step_cursor,kind,k_wanted,offers_json"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  decode_step_cursor,kind,k_wanted,offers_json,region,served_region"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 job.job_id,
                 _json.dumps(job.spec),
@@ -1128,6 +1370,8 @@ class _SqliteAicfJobStore:
                 job.kind or "chat",
                 int(job.k_wanted or 0),
                 _json.dumps(job.offers or []),
+                job.region or "",
+                job.served_region or "",
             ),
         )
 
@@ -1249,11 +1493,14 @@ class _SqliteAicfJobStore:
         conn.execute("BEGIN IMMEDIATE")
         try:
             wrow = conn.execute(
-                "SELECT ema_secs, ema_score, inflight, concurrency, kinds_json"
-                " FROM workers WHERE address=?", (worker_addr,),
+                "SELECT ema_secs, ema_score, inflight, concurrency, kinds_json,"
+                " region FROM workers WHERE address=?", (worker_addr,),
             ).fetchone()
             my_ema = float(wrow["ema_secs"] or 0.0) if wrow else 0.0
             my_conc = max(1, int(wrow["concurrency"] or 1)) if wrow else 1
+            my_region = ""
+            if wrow and "region" in wrow.keys():
+                my_region = (wrow["region"] or "")
             my_kinds: List[str] = ["chat"]
             if wrow:
                 try:
@@ -1274,6 +1521,14 @@ class _SqliteAicfJobStore:
                 " ORDER BY created_at ASC LIMIT 64",
                 tuple(tiers),
             ).fetchall()
+            if _REGION_ROUTING and rows:
+                # Prefer jobs from this worker's own region, oldest first
+                # within each group (a stable sort keeps the created_at
+                # order the query already established).
+                rows = sorted(rows, key=lambda r: 0 if _region_match(
+                    (r["region"] if "region" in r.keys() else "") or "",
+                    my_region,
+                ) else 1)
             # Routing context, computed lazily (only if a fresh K=1 job is
             # actually in play) and once per call.
             _ctx: Dict[str, Any] = {}
@@ -1345,8 +1600,16 @@ class _SqliteAicfJobStore:
                 k = max(1, k)
                 if len(live) >= k:
                     continue
+                age = now - float(row["created_at"] or now)
+                # Region hold: a KNOWN-remote worker waits out the first
+                # REGION_HOLD_S so a local one can take it. Never a denial —
+                # after the hold this check passes for everyone.
+                if not _region_may_claim(
+                    (row["region"] if "region" in row.keys() else "") or "",
+                    my_region, age,
+                ):
+                    continue
                 if k == 1 and not live:
-                    age = now - float(row["created_at"] or now)
                     if age < _DISPATCH_DEFER_S:
                         rc = routing_ctx()
                         # Fairness guard #2: a demonstrably faster idle worker
@@ -1521,11 +1784,23 @@ class _SqliteAicfJobStore:
         WHERE clause matched after the update."""
         now = time.time()
         conn = self._conn()
+        # Stamp where the winner actually was, so the value of region
+        # routing can be measured after the fact instead of assumed.
+        served = ""
+        try:
+            wrow = conn.execute(
+                "SELECT region FROM workers WHERE address=?", (provider_id,),
+            ).fetchone()
+            if wrow is not None:
+                served = (wrow["region"] or "")
+        except _sqlite3.OperationalError:
+            served = ""
         cur = conn.execute(
             "UPDATE jobs SET state='completed',text=?,provider_id=?,"
-            "completed_at=?,winner_address=? "
+            "completed_at=?,winner_address=?,"
+            "served_region=CASE WHEN ?!='' THEN ? ELSE served_region END "
             "WHERE job_id=? AND state IN ('pending','claimed')",
-            (text, provider_id, now, provider_id, job_id),
+            (text, provider_id, now, provider_id, served, served, job_id),
         )
         if (cur.rowcount or 0) <= 0:
             return None
@@ -1917,8 +2192,8 @@ class _SqliteAicfJobStore:
             "INSERT INTO workers (address,tiers_json,hardware_json,"
             "registered_at,last_seen,jobs_completed,"
             "earnings_pending_animica,earnings_paid_animica,direct_endpoint,"
-            "concurrency,kinds_json,inflight) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,0) "
+            "concurrency,kinds_json,region,inflight) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0) "
             "ON CONFLICT(address) DO UPDATE SET "
             "  tiers_json=excluded.tiers_json,"
             "  hardware_json=excluded.hardware_json,"
@@ -1926,6 +2201,11 @@ class _SqliteAicfJobStore:
             "  direct_endpoint=excluded.direct_endpoint,"
             "  concurrency=excluded.concurrency,"
             "  kinds_json=excluded.kinds_json,"
+            # A re-register may arrive from a new network (phone off wifi):
+            # keep the freshly derived region, but never overwrite a known
+            # one with "" when derivation fails this time.
+            "  region=CASE WHEN excluded.region != '' THEN excluded.region"
+            "              ELSE workers.region END,"
             "  inflight=0",
             (
                 info.address,
@@ -1939,6 +2219,7 @@ class _SqliteAicfJobStore:
                 info.direct_endpoint or "",
                 max(1, int(info.concurrency or 1)),
                 _json.dumps(list(info.kinds or ["chat"])),
+                info.region or "",
             ),
         )
 
@@ -2028,6 +2309,13 @@ if _DISPATCH:
             "aicf_jobs: DISPATCH mode on with the in-memory store — K-per-kind and"
             " kind filtering apply, speed routing/leases/fairness are SQLite-only"
         )
+if _REGION_ROUTING:
+    log.info(
+        "aicf_jobs: REGION routing on (hold=%.0fs, self-reported hardware.region"
+        " preferred, coarse IANA /8 continent fallback — no GeoIP database"
+        " installed; unknown regions are never held back)",
+        _REGION_HOLD_S,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2077,16 +2365,118 @@ def _trim_degenerate_tail(text: str) -> str:
     return trimmed
 
 
-def _answer_score(text: str) -> float:
-    """Heuristic answer quality, no model required. Length helps (sqrt-capped),
-    degeneracy/repetition/non-language soup hurt hard, structure helps a bit."""
+# Relevance scoring. Until 2026-08-25 answer quality was length-and-formatting
+# only, with no signal about whether the answer had anything to do with the
+# QUESTION. Measured consequence: "Tokyo is the capital of Japan." scored 5.75
+# while an unrelated markdown/code template scored 10.71-15.18, so best-of-N
+# systematically picked the most-formatted candidate over the correct one
+# whenever the right answer was short. Three live failures were reproduced,
+# including a 2,749-token summarise request answered with "The capital of Peru
+# is Lima." Content-word overlap with the question fixes that at negligible
+# cost (pure, deterministic, no model, one pass over two short strings).
+_SCORE_STOPWORDS = frozenset("""
+a an the and or but if then else of in on at to for from by with without about
+into over under again further this that these those there here what which who
+whom whose when where why how all any both each few more most other some such
+no nor not only own same so than too very can will just should now is are was
+were be been being have has had having do does did doing i me my we our you
+your he him his she her it its they them their as up down out off is it's
+please tell give show explain write make create using use used need want
+""".split())
+
+# Grounding blocks the bridge prepends (web findings, first-party facts). They
+# are not the user's question and must not count as question terms.
+_GROUNDING_RE = re.compile(
+    r"\[fresh web findings\].*?\[end findings\]"
+    r"|===+\s*WEB RESULTS\s*===+.*?(?====|\Z)"
+    r"|\[first-party facts\].*?\[end facts\]",
+    re.S | re.I)
+_USER_TURN_RE = re.compile(r"(?:^|\n)\s*User:\s*(.+?)(?=\n\s*(?:Assistant|System|User):|\Z)",
+                           re.S)
+
+
+def _question_of(prompt: str) -> str:
+    """The part of a flattened prompt that is actually the user's request.
+
+    Strips grounding blocks, then takes the LAST `User:` turn when the prompt
+    is a transcript (the current question, not the history). Falls back to the
+    tail of the prompt, which is where a bare question ends up.
+    """
+    if not prompt:
+        return ""
+    p = _GROUNDING_RE.sub(" ", prompt)
+    turns = _USER_TURN_RE.findall(p)
+    if turns:
+        return turns[-1].strip()
+    return p[-2000:].strip()
+
+
+def _content_terms(s: str) -> set:
+    """Lowercased content words, stopwords dropped, 3+ chars."""
+    return {w for w in re.findall(r"[a-zÀ-ɏ0-9]{3,}", s.lower())
+            if w not in _SCORE_STOPWORDS}
+
+
+def _term_weight(w: str) -> float:
+    """Cheap IDF proxy: longer words are rarer and more diagnostic. No corpus
+    is available on the node, so word length stands in for inverse frequency."""
+    n = len(w)
+    if n >= 9:
+        return 1.6
+    if n >= 7:
+        return 1.3
+    if n >= 5:
+        return 1.0
+    return 0.7
+
+
+def _relevance_factor(prompt: str, answer: str) -> float:
+    """How much of the question's content shows up in the answer, as a bounded
+    multiplier. Neutral (1.0) when there is no usable signal — a prompt we
+    cannot parse, or a question with fewer than two content words — because a
+    wrong penalty is worse than no penalty.
+
+    Near-zero overlap against a question that HAS content words is treated like
+    the other degeneracy guards (a hard 0.15), since an answer sharing no
+    content word with its question is almost always answering something else.
+    """
+    q = _content_terms(_question_of(prompt))
+    if len(q) < 2:
+        return 1.0
+    a = _content_terms(answer)
+    total = sum(_term_weight(w) for w in q)
+    if total <= 0:
+        return 1.0
+    hit = sum(_term_weight(w) for w in q if w in a)
+    overlap = hit / total
+    if overlap <= 0.02:
+        return 0.15
+    return 0.55 + 0.85 * min(1.0, overlap / 0.4)
+
+
+def _answer_score(text: str, prompt: str = "") -> float:
+    """Heuristic answer quality, no model required. Relevance to the question
+    dominates; length helps but saturates (so verbosity cannot outrank a short
+    correct answer); degeneracy/repetition/non-language soup hurt hard;
+    structure helps a bit.
+
+    `prompt` is optional so older callers keep working — without it the
+    relevance term is neutral and behaviour is the pre-2026-08-25 heuristic.
+    """
     t = text.strip()
     if not t:
         return 0.0
     non_ws = re.sub(r"\s+", "", t)
     if len(non_ws) < 8:
         return 0.1
-    score = min(len(t), 6000) ** 0.5
+    # Length credit with a knee at 600 chars: enough to reward a complete
+    # answer over a truncated one, gentle enough after that (quarter weight)
+    # that padding cannot buy a win. Previously a flat sqrt to 6000, which let
+    # a 2,000-char irrelevant answer outscore a correct sentence 8:1.
+    n = len(t)
+    score = min(n, 600) ** 0.5
+    if n > 600:
+        score += 0.25 * (min(n, 6000) - 600) ** 0.5
     if len(set(non_ws)) < 12:
         score *= 0.05
     top = max(non_ws.count(c) for c in set(non_ws)) / len(non_ws)
@@ -2108,6 +2498,7 @@ def _answer_score(text: str) -> float:
         score *= 1.1
     if re.search(r"[.!?)\"'`\]]\s*$", t):
         score *= 1.05
+    score *= _relevance_factor(prompt, t)
     return round(score, 3)
 
 
@@ -2309,6 +2700,48 @@ def _stub_response(prompt: str, tier: str) -> str:
     )
 
 
+# FAIL HONESTLY (operator decision 2026-08-25). A stub is not an answer, and
+# it was reaching users as one: 51% of real jobs over 7 days settled as
+# `local-stub` placeholder prose, which the bridge then served with HTTP 200.
+# An unserved job is now marked FAILED with a machine-readable reason, so
+# every consumer can tell "nobody answered" from "here is your answer".
+# settleJob/jobStatus/streamJob all already handle the failed state (they
+# check `state in {"completed","failed"}`), and the AICF client returns
+# text="" / settled=False rather than raising — which the bridge turns into
+# a 503. ANIMICA_AICF_STUB_ANSWERS=1 restores placeholder completion.
+_STUB_ANSWERS = str(
+    os.environ.get("ANIMICA_AICF_STUB_ANSWERS", "0")
+).strip().lower() in {"1", "true", "yes", "on"}
+_UNSERVED_ERROR = "no_worker_answered"
+
+
+def _finish_unserved(job_id: str, job: Any, where: str) -> None:
+    """End a job nobody answered — failed by default, stubbed only if the
+    operator has explicitly re-enabled placeholder answers."""
+    prior_state = job.state
+    if _STUB_ANSWERS:
+        text = _stub_response(str(job.spec.get("prompt", "")), job.tier)
+        _STORE.complete(job_id, text=text, provider_id="local-stub")
+        log.info(
+            "aicf_jobs: local-stub completed (%s) job_id=%s tier=%s prior_state=%s",
+            where, job_id, job.tier, prior_state,
+        )
+        return
+    try:
+        _STORE.record_unserved(job)
+    except Exception as exc:  # noqa: BLE001 - reputation must never block failing the job
+        log.warning('aicf_jobs: record_unserved raised for %s: %s', job_id, exc)
+    try:
+        _STORE.fail(job_id, _UNSERVED_ERROR)
+    except Exception as exc:  # noqa: BLE001 — never leave a job wedged
+        log.warning("aicf_jobs: fail() raised for %s: %s", job_id, exc)
+        return
+    log.info(
+        "aicf_jobs: job unserved -> failed (%s) job_id=%s tier=%s prior_state=%s",
+        where, job_id, job.tier, prior_state,
+    )
+
+
 async def _local_fallback_after_grace(job_id: str) -> None:
     """Stub-complete a job whose worker never came back, so chat doesn't hang.
 
@@ -2338,14 +2771,7 @@ async def _local_fallback_after_grace(job_id: str) -> None:
                 return
     if _maybe_finalize(job_id, force=True):
         return
-    prompt = str(job.spec.get("prompt", ""))
-    text = _stub_response(prompt, job.tier)
-    prior_state = job.state
-    _STORE.complete(job_id, text=text, provider_id="local-stub")
-    log.info(
-        "aicf_jobs: local-stub completed job_id=%s tier=%s prior_state=%s",
-        job_id, job.tier, prior_state,
-    )
+    _finish_unserved(job_id, job, "async")
 
 
 _FALLBACK_TASKS: set = set()
@@ -2387,14 +2813,7 @@ def _schedule_fallback(job_id: str) -> None:
                 return
         if _maybe_finalize(job_id, force=True):
             return
-        prompt = str(job.spec.get("prompt", ""))
-        text = _stub_response(prompt, job.tier)
-        prior_state = job.state
-        _STORE.complete(job_id, text=text, provider_id="local-stub")
-        log.info(
-            "aicf_jobs: local-stub completed (thread) job_id=%s tier=%s prior_state=%s",
-            job_id, job.tier, prior_state,
-        )
+        _finish_unserved(job_id, job, "thread")
 
     threading.Thread(target=_run, daemon=True, name=f"aicf-stub-{job_id[:8]}").start()
 
@@ -2500,6 +2919,13 @@ async def submit_inference_job(
         stages=(_build_initial_stages(resolved_stages) if mode == "pipeline" else []),
         kind=kind,
         k_wanted=k_wanted,
+        # The job inherits its SUBMITTER's locality; spec.region lets an
+        # agent submitting on someone else's behalf say where the user is.
+        # "" (unknown) means region-agnostic: claimable by anyone at once.
+        region=_derive_region(
+            {"region": spec.get("region")} if isinstance(spec, Mapping) else None,
+            ctx,
+        ),
     )
 
     # Real on-chain settlement: decode the SignedPayment envelope and
@@ -2775,21 +3201,26 @@ async def worker_register(
                 kinds.append(kk)
     if not kinds:
         kinds = ["chat"]
+    # Coarse locality for region routing: hardware.region if the worker
+    # self-reports one (browsers/apps know their timezone, which is far more
+    # accurate than IP), else a continent derived from the caller IP.
+    region = _derive_region(hardware, ctx)
     info = _WorkerInfo(
         address=address, tiers=tiers, hardware=dict(hardware),
         direct_endpoint=direct_endpoint,
-        concurrency=concurrency, kinds=kinds,
+        concurrency=concurrency, kinds=kinds, region=region,
     )
     _STORE.register_worker(info)
     log.info(
-        "aicf_jobs: worker registered address=%s tiers=%s direct=%s",
-        address, tiers, bool(direct_endpoint),
+        "aicf_jobs: worker registered address=%s tiers=%s direct=%s region=%s",
+        address, tiers, bool(direct_endpoint), region or "unknown",
     )
     return {
         "registered": True,
         "address": address,
         "tiers": tiers,
         "direct_endpoint": direct_endpoint,
+        "region": region or "unknown",
     }
 
 
@@ -2952,14 +3383,19 @@ async def worker_count(
     phones_online = 0
     jobs_completed = 0
     pending = 0.0
+    regions: Dict[str, int] = {}
+    regions_online: Dict[str, int] = {}
     for w in workers:
         hw = w.hardware if isinstance(w.hardware, Mapping) else {}
         eng = str(hw.get("engine") or "node").lower()[:32]
         is_online = (now - float(w.last_seen or 0)) <= online_window
         engines[eng] = engines.get(eng, 0) + 1
+        reg = (getattr(w, "region", "") or "unknown")
+        regions[reg] = regions.get(reg, 0) + 1
         if is_online:
             online += 1
             engines_online[eng] = engines_online.get(eng, 0) + 1
+            regions_online[reg] = regions_online.get(reg, 0) + 1
             if eng in ("webllm", "wllama") or (eng == "animica-serve" and hw.get("termux")):
                 phones_online += 1
         jobs_completed += int(w.jobs_completed or 0)
@@ -2971,6 +3407,9 @@ async def worker_count(
         "phones_online": phones_online,
         "engines": engines,
         "engines_online": engines_online,
+        "regions": regions,
+        "regions_online": regions_online,
+        "region_routing": _REGION_ROUTING,
         "jobs_completed_total": jobs_completed,
         "earnings_pending_animica_total": round(pending, 9),
         "ts": now,
@@ -3140,7 +3579,14 @@ async def worker_submit_result(
         max_out = int(job.spec.get("max_output_tokens") or 0)
     except (TypeError, ValueError):
         max_out = 0
-    score = _answer_score(text)
+    # Score against the job's own prompt so an answer to a different question
+    # cannot win on formatting alone. `spec.prompt` is the flattened prompt the
+    # worker was given (see the prompt-flatten hunk in worker_claim_next_job).
+    try:
+        _job_prompt = str(job.spec.get("prompt") or "")
+    except (AttributeError, TypeError):
+        _job_prompt = ""
+    score = _answer_score(text, _job_prompt)
     if _DISPATCH and hasattr(_STORE, "note_worker_submit"):
         # Speed/quality EMAs + inflight release (once per claim).
         try:

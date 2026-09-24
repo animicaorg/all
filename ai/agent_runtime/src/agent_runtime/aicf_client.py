@@ -277,6 +277,7 @@ class AICFClient:
         """
         cursor = 0
         deadline = time.time() + self.timeout_sec
+        poll_backoff = float(max(self.poll_interval_ms, 250))
         while time.time() < deadline:
             try:
                 raw = self._rpc("aicf.streamJob", {
@@ -300,10 +301,17 @@ class AICFClient:
             if on_chunk is not None:
                 on_chunk(chunk)
             if text or is_final:
+                poll_backoff = float(max(self.poll_interval_ms, 250))
                 yield chunk
             if is_final:
                 return
-            time.sleep(self.poll_interval_ms / 1000.0)
+            # Adaptive back-off: the first polls are fast (a warm worker answers in
+            # seconds), then the interval grows to 2s. A fixed 250 ms poll multiplied
+            # by every in-flight job was ~4 RPC/s per job — enough, with one agent
+            # re-sending every 20 s, to pin the node at 93% CPU and starve the very
+            # worker that would have answered. Observed 2026-08-27.
+            time.sleep(poll_backoff / 1000.0)
+            poll_backoff = min(poll_backoff * 1.5, 2000.0)
         raise AICFError("TIMEOUT",
                         f"job {job_id} did not complete in {self.timeout_sec}s")
 

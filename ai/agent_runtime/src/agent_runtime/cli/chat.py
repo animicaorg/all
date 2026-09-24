@@ -3,6 +3,7 @@
     animica chat                       start a session in the current directory
     animica chat "fix the bug in x"    one shot, then exit
     animica chat -p auto-edit          start with edits pre-approved
+    animica chat --swarm "audit this"   use a reviewed multi-agent workflow
     animica chat --continue            pick up the last session
 
 It reads and edits files, runs commands, and asks before anything with a
@@ -64,7 +65,11 @@ app = typer.Typer(add_completion=False, no_args_is_help=False,
                   context_settings={"allow_interspersed_args": True},
                   help="An agentic coding assistant in your terminal.")
 
-MAX_OUTPUT_TOKENS = 2048
+# 384, not 2048: a tool-call turn is ~40 tokens and a final answer a paragraph.
+# 2048 on a ~5 tok/s CPU worker was up to seven minutes per turn.
+MAX_OUTPUT_TOKENS = 384
+_NO_CAPACITY_RETRIES = 3
+_NO_CAPACITY_BACKOFF_S = 8.0
 
 
 # --------------------------------------------------------------------------- #
@@ -200,10 +205,32 @@ def _make_submit(provider: HostedProvider):
     Cost is always 0.0 — kimi-k3 on the public endpoint is free, which is precisely
     why every wallet and cost flag could be deleted.
     """
+    from agent_runtime.agentic import openai_tools_schema
+    tools = openai_tools_schema(core=True)
+
+    from agent_runtime.errors import ProviderUnavailable
+    import time as _time
+
     def submit(prompt: str) -> tuple[str, float, int]:
-        r = provider.serve(TurnRequest(prompt=prompt,
-                                       max_output_tokens=MAX_OUTPUT_TOKENS))
-        return r.text, 0.0, r.latency_ms
+        # A volunteer network says "no capacity" for a few seconds at a time
+        # (a worker mid-generation, a job claimed by a tab that then closed).
+        # One transient 503 used to abort the whole task after the first tool
+        # call had already succeeded. Retry like a person would: wait, try again.
+        last: Exception | None = None
+        for attempt in range(_NO_CAPACITY_RETRIES + 1):
+            try:
+                r = provider.serve(TurnRequest(prompt=prompt,
+                                               max_output_tokens=MAX_OUTPUT_TOKENS,
+                                               tools=tools))
+                return r.text, 0.0, r.latency_ms
+            except ProviderUnavailable as exc:
+                last = exc
+                msg = str(exc).lower()
+                if attempt >= _NO_CAPACITY_RETRIES or not (
+                        "no_capacity" in msg or "503" in msg or "timeout" in msg):
+                    raise
+                _time.sleep(_NO_CAPACITY_BACKOFF_S * (attempt + 1))
+        raise last  # pragma: no cover
     return submit
 
 
@@ -222,6 +249,7 @@ class Session:
         self.sid = sid
         self.max_iterations = max_iterations
         self.turns: list[dict] = []
+        self.swarm_enabled = False
         self.done = False
 
     # -- slash commands --------------------------------------------------
@@ -242,7 +270,7 @@ class Session:
         t.add_column()
         for row in [
             ("/mode [name]", "how tool calls are approved: plan, manual, auto-edit, auto"),
-            ("/swarm <task>", "split across parallel agents, review each, merge"),
+            ("/swarm [on|off]", "enable dynamic, reviewed workflows for normal prompts"),
             ("/sessions", "list saved sessions"),
             ("/resume [id]", "reopen a session (default: the most recent)"),
             ("/new", "start a fresh session"),
@@ -332,10 +360,25 @@ class Session:
     cmd_license = cmd_licence
 
     def cmd_swarm(self, rest: str) -> None:
-        task = rest.strip()
-        if not task:
-            self.console.print("[yellow]usage: /swarm <task>[/yellow]")
+        want = rest.strip().lower()
+        if want in ("", "on", "enable", "enabled"):
+            self.swarm_enabled = True
+        elif want in ("off", "disable", "disabled"):
+            self.swarm_enabled = False
+        elif want == "status":
+            pass
+        else:
+            self.console.print("[yellow]usage: /swarm [on|off][/yellow]")
             return
+
+        state = "enabled" if self.swarm_enabled else "disabled"
+        detail = ("normal prompts now use planning, parallel agents, independent "
+                  "review, and synthesis" if self.swarm_enabled
+                  else "normal prompts now use one agent")
+        self.console.print(f"swarm: [bold cyan]{state}[/bold cyan] — {detail}")
+
+    def _run_swarm_turn(self, task: str) -> Optional[str]:
+        """Run one normal chat prompt through the reviewed swarm workflow."""
         from agent_runtime import entitlements as E
         from agent_runtime.orchestrator import (PRO_MAX_AGENTS, max_agents_for,
                                                 run_swarm)
@@ -343,7 +386,7 @@ class Session:
         verdict = E.check_agent_task(ent)
         if not verdict.allowed:
             self._refuse(verdict)
-            return
+            return None
         width = max_agents_for(ent)
         self.console.print(f"[bold]swarm[/bold] · {width} agents · "
                            f"{self.policy.label} · {self.cwd}")
@@ -381,6 +424,7 @@ class Session:
         self.console.print(f"[dim]{len(r.surviving)}/{len(r.results)} survived"
                            + (f", {refuted} refuted by review" if refuted else "")
                            + f" · {r.wall_ms / 1000:.0f}s[/dim]")
+        return _clean_answer(r.synthesis)
 
     def _refuse(self, verdict) -> None:
         self.console.print(f"[yellow]{verdict.reason}[/yellow]")
@@ -390,6 +434,17 @@ class Session:
     # -- a normal turn ---------------------------------------------------
     def ask(self, text: str) -> None:
         """Every turn is agentic, operating on the directory we started in."""
+        if self.swarm_enabled:
+            answer = self._run_swarm_turn(text)
+            if answer is None:
+                return
+            self.turns.extend([
+                {"role": "user", "content": text},
+                {"role": "assistant", "content": answer},
+            ])
+            _save_session(self.sid, self.cwd, self.turns)
+            return
+
         from agent_runtime import entitlements as E
         ent = E.resolve()
         verdict = E.check_agent_task(ent, requested_iterations=self.max_iterations)
@@ -424,6 +479,7 @@ class Session:
                 # here would be theatre.
                 max_cost=float(10 ** 9),
                 initial_history=history,
+                compact_prompt=True,
             )
         E.record_agent_task()
 
@@ -458,6 +514,8 @@ def main(
         None, "--session", help="Resume a specific session id."),
     list_sessions: bool = typer.Option(
         False, "--sessions", help="List saved sessions and exit."),
+    swarm: bool = typer.Option(
+        False, "--swarm", help="Use dynamic parallel agents with independent review."),
 ) -> None:
     console = Console()
 
@@ -481,6 +539,7 @@ def main(
 
     cwd = os.getcwd()
     s = Session(console, policy, provider, cwd, _new_session_id(), max_iterations)
+    s.swarm_enabled = swarm
 
     if session or continue_last:
         s.cmd_resume(session or "")
@@ -492,7 +551,8 @@ def main(
             _save_session(s.sid, s.cwd, s.turns)
         raise typer.Exit()
 
-    console.print(Panel(f"[bold]animica[/bold] · kimi-k3 · {policy.label} mode\n"
+    workflow = " · swarm" if s.swarm_enabled else ""
+    console.print(Panel(f"[bold]animica[/bold] · kimi-k3 · {policy.label} mode{workflow}\n"
                         f"[dim]{cwd}[/dim]",
                         border_style="blue", padding=(0, 1)))
     console.print("[dim]/help for commands · Ctrl+D to exit[/dim]\n")

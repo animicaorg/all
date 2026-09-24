@@ -524,6 +524,33 @@ FORK_IOU_SETTLEMENT = FORK_VPN_RELAY_REWARDS
 # until the logs show a real fleet attaching well-formed proofs, THEN unset it.
 FORK_USEFUL_WORK_VERIFY = "useful_work_verify"
 
+# FORK_POS_MINTING (11.2.0) — Animica becomes HYBRID PoW/PoS.
+#
+# WHY: theta retargets only on block import, and the stale-head relaxation that
+# was meant to cover a hashrate collapse is inert (`_adjust_theta_for_mining`
+# computes an eased theta and then returns the canonical one). So when hashrate
+# reaches zero the chain cannot lower its own difficulty and cannot produce the
+# block that would lower it — a death spiral with no exit. Mainnet sat frozen at
+# height 110,072 for exactly this reason.
+#
+# THE RULE, from the activation height: a block is valid if it carries EITHER
+#   * workType == 0  -> the existing PoW proof (header hash <= theta target), or
+#   * workType == 1  -> a PoS proof in `header.extra`: an ML-DSA-65 signature by
+#                       the slot's stake-weighted leader (see core.pos).
+# PoW is deliberately kept: if the PoS minter has a bug, blocks still come from
+# hashrate, so neither path alone can wedge the chain.
+#
+# Stake is an explicit bond (TxKind.STAKE / UNSTAKE = 9 / 10) recorded in the
+# storage of core.staking.STAKE_SYSTEM_ADDR, so it is covered by the state root
+# and verified like any other state. Leader selection is a pure function of
+# (committed stake, parentHash, slot), so two honest nodes always agree.
+#
+# Forward-only and grandfathered: below H a header with workType != 0 is judged
+# exactly as it is today, so no historical block is re-evaluated. PoS headers
+# only become admissible at/after H.
+# Retunable via ANIMICA_FORK_POS_MINTING_HEIGHT.
+FORK_POS_MINTING = "pos_minting"
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
     # This MUST match on every node — the live node and every operator's pip install
@@ -574,6 +601,14 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_BOUNDED_RETARGET: 75_000,
         # Value-carrying CALL (9.5.0). Operator-chosen height 75,000.
         FORK_VALUE_CALL: 75_000,
+        # Hybrid PoW/PoS minting (11.2.0). Set to the CURRENT frozen head so the
+        # rule is live the moment the code is, with no off-by-one to get wrong.
+        # Activating AT 110,072 does not re-judge block 110,072: the PoS branch
+        # is entered only for workType == 1, and that block is workType 0, so it
+        # still validates on the PoW path exactly as it always did. There is no
+        # runway to give anyway — no blocks are being produced to traverse one.
+        # Retune with ANIMICA_FORK_POS_MINTING_HEIGHT.
+        FORK_POS_MINTING: 110_072,
         # Uniform reorg bound / finality (9.5.0). Operator-chosen height 75,000.
         FORK_FINALITY_DEPTH: 75_000,
         # Quantum beacon binding (9.5.0). Activated but DORMANT: presence-gated, so
@@ -632,6 +667,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_TREASURY_25: 0,
         FORK_BOUNDED_RETARGET: 0,
         FORK_VALUE_CALL: 0,
+        FORK_POS_MINTING: 0,
         FORK_FINALITY_DEPTH: 0,
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,
@@ -650,6 +686,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_TREASURY_25: 0,
         FORK_BOUNDED_RETARGET: 0,
         FORK_VALUE_CALL: 0,
+        FORK_POS_MINTING: 0,
         FORK_FINALITY_DEPTH: 0,
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,

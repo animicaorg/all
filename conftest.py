@@ -116,6 +116,9 @@ def pytest_collection_modifyitems(config, items):
     # Node-store tests only use stdlib (no heavy deps); don't skip them.
     optional_allowlist = (
         "da/tests/test_node_store.py",
+        # Pure-Python SPHINCS+ path; the mainnet restart loop of 11.1.0-11.2.2
+        # went unnoticed because every pq/ test was skipped here.
+        "pq/tests/test_sphincs_mainnet_startup.py",
     )
     opt_skip = pytest.mark.skip(
         reason="Optional suite skipped in lightweight environment"

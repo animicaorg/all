@@ -41,7 +41,7 @@ _HASHSHARE_TRIALS = 2 ** 32
 _INFERENCE_WALLETS = [
     w.strip() for w in str(os.getenv("ANIMICA_INFERENCE_WORKER_WALLETS", "")).split(",") if w.strip()
 ]
-_SERVING_FRESH_S = 300.0
+_SERVING_FRESH_S = 900.0
 
 
 async def _count_serving_inference_workers(rpc_url: str) -> Dict[str, Any]:
@@ -56,23 +56,38 @@ async def _count_serving_inference_workers(rpc_url: str) -> Dict[str, Any]:
         with no freshness filter (210 "providers" while the true count was 0);
       * there is no ``aicf.listServingWorkers``.
 
-    A wallet counts only when registered is true, its heartbeat is within
-    300 s (values > 1e12 are milliseconds), and it advertises at least one real
+    An audited wallet counts only when registered is true, its heartbeat is
+    within 900 s (values > 1e12 are milliseconds), and it advertises a real
     tier. This mirrors src/capacity.js in the x402 gateway ON PURPOSE: the
     stats page and the capacity gate must not disagree about who is serving.
 
-    Returns ``serving=None`` when no wallet list is configured — an unknown is
-    reported as unknown, never as zero.
+    Fleet totals come from ``aicf.workerCount``. The configured wallet list is
+    still checked individually because it is the only privacy-preserving way
+    to intersect inference identities with pool payout addresses without
+    publishing every worker address.
+
+    Older nodes may not implement ``workerCount``. In that case the audited
+    wallet count remains the fallback; when neither source is available,
+    ``serving`` is ``None`` so callers report unknown rather than a false zero.
     """
-    if not _INFERENCE_WALLETS:
-        return {"serving": None, "configured": 0, "reason": "no_wallets_configured"}
     from mining.share_submitter import AsyncJsonRpcClient
 
-    serving = 0
+    aggregate: Dict[str, Any] = {}
+    audited_serving = 0
     serving_wallets: list = []
     now = time.time()
     client = AsyncJsonRpcClient(rpc_url)
     try:
+        try:
+            result = await client.call(
+                "aicf.workerCount",
+                {"online_window_s": float(_SERVING_FRESH_S)},
+                timeout_s=5.0,
+            ) or {}
+            if isinstance(result, dict):
+                aggregate = result
+        except Exception:
+            aggregate = {}
         for wallet in _INFERENCE_WALLETS:
             try:
                 res = await client.call(
@@ -94,16 +109,36 @@ async def _count_serving_inference_workers(rpc_url: str) -> Dict[str, Any]:
             tiers = [t for t in (res.get("tiers") or []) if t and t != "pipeline"]
             if not tiers:
                 continue
-            serving += 1
+            audited_serving += 1
             serving_wallets.append(wallet)
     finally:
         try:
             await client.aclose()
         except Exception:
             pass
-    return {"serving": serving, "configured": len(_INFERENCE_WALLETS),
-            "fresh_window_seconds": int(_SERVING_FRESH_S),
-            "serving_wallets": serving_wallets}
+    aggregate_online = aggregate.get("online")
+    try:
+        aggregate_online = int(aggregate_online) if aggregate_online is not None else None
+    except (TypeError, ValueError):
+        aggregate_online = None
+    serving = aggregate_online
+    if serving is None and _INFERENCE_WALLETS:
+        serving = audited_serving
+    return {
+        "serving": serving,
+        "registered_total": aggregate.get("total_registered"),
+        "phones_online": aggregate.get("phones_online"),
+        "engines_online": aggregate.get("engines_online") or {},
+        "regions_online": aggregate.get("regions_online") or {},
+        "jobs_completed_total": aggregate.get("jobs_completed_total"),
+        "configured": len(_INFERENCE_WALLETS),
+        "audited_serving": audited_serving,
+        "fresh_window_seconds": int(_SERVING_FRESH_S),
+        "serving_wallets": serving_wallets,
+        "source": "aicf.workerCount" if aggregate_online is not None else (
+            "configured_wallet_status" if _INFERENCE_WALLETS else "unavailable"
+        ),
+    }
 
 
 async def _fetch_network_hashrate(metrics: PoolMetrics, window_blocks: int = 120) -> Dict[str, Any]:
@@ -514,6 +549,13 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
             # same primitive the x402 capacity gate uses. None = not configured
             # here, which is reported as unknown rather than as zero.
             "inference_workers_serving": inference.get("serving"),
+            "inference_workers_registered_total": inference.get("registered_total"),
+            "inference_phones_online": inference.get("phones_online"),
+            "inference_engines_online": inference.get("engines_online") or {},
+            "inference_regions_online": inference.get("regions_online") or {},
+            "inference_jobs_completed_total": inference.get("jobs_completed_total"),
+            "inference_count_source": inference.get("source"),
+            "inference_fresh_window_seconds": inference.get("fresh_window_seconds"),
             "inference_wallets_configured": inference.get("configured"),
             # DUAL ROLE. Operators doing BOTH — mining accepted shares and
             # serving inference. Intersected on the wallet address, because
