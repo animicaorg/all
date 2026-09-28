@@ -14,9 +14,12 @@ Each slot it:
      preserving the coinbase commitment the template put there,
   4. submits the block (`miner.submitBlock`).
 
-It does not check locally whether it is this slot's leader: the node re-derives
-the leader from committed stake and rejects a block from anyone else. Attempting
-and being rejected is cheap, and it keeps exactly one authority for that rule.
+Before building anything it asks the node who leads the slot
+(`stake.leaderForSlot`) and sits the slot out when it is not us. The node stays
+the only authority — it re-derives the leader on import and rejects anyone
+else — but a doomed attempt is NOT cheap: the template executes the mempool and
+the submit runs a full block apply, and with several stakers most slots belong
+to someone else (~100 rejected submits/hour before 11.3.0).
 
 Environment
 -----------
@@ -168,6 +171,28 @@ def header_to_wire(header: Header) -> Dict[str, Any]:
     return out
 
 
+def _we_lead(validator: Dict[str, Any], slot: int) -> bool:
+    """
+    True when the node says we lead `slot`. Fails OPEN on an RPC error or an
+    old node without `stake.leaderForSlot`, so the minter can never stop
+    producing just because the pre-check is unavailable — the node still
+    enforces leadership on submit.
+    """
+    try:
+        res = _rpc("stake.leaderForSlot", {"slot": int(slot)}, timeout=10)
+    except Exception as exc:
+        log.debug("leader pre-check unavailable (%s); attempting anyway", str(exc)[:120])
+        return True
+    if not isinstance(res, dict) or not res.get("available"):
+        return True
+    leader = str(res.get("leader") or "").lower()
+    ours = "0x" + bytes(validator["account_key"]).hex()
+    if leader != ours:
+        log.debug("slot %d led by %s, not us — skipping", slot, leader[:18])
+        return False
+    return True
+
+
 def mint_once(validator: Dict[str, Any]) -> Optional[str]:
     """
     One mint attempt. Returns the submitted block hash on success, None when
@@ -179,6 +204,9 @@ def mint_once(validator: Dict[str, Any]) -> Optional[str]:
     # can take minutes on a busy node — long enough to miss the slot entirely.
     # Fall back to a coinbase-only template rather than mint nothing: an empty
     # block still advances the head, and the mempool drains on later blocks.
+    if not _we_lead(validator, slot_for_timestamp(int(time.time()), TARGET_BLOCK_S)):
+        return None
+
     tpl = None
     for include_mempool in ([True, False] if INCLUDE_MEMPOOL else [False]):
         # The mempool attempt gets a SHORT budget: if it cannot beat the slot it
@@ -214,6 +242,10 @@ def mint_once(validator: Dict[str, Any]) -> Optional[str]:
     header = replace(header, workType=WORKTYPE_POS, nonce=0)
 
     slot = slot_for_timestamp(header.timestamp, TARGET_BLOCK_S)
+    # The template's timestamp can land in a different slot than the wall clock
+    # did a moment ago, and the head may have moved: re-ask for the exact slot.
+    if not _we_lead(validator, slot):
+        return None
     extra = build_pos_extra(
         header,
         staker=validator["account_key"],

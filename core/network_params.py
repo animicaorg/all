@@ -103,6 +103,16 @@ PINNED_CHECKPOINTS_BY_NETWORK: dict[tuple[str, int], dict[int, bytes]] = {
         38728: bytes.fromhex(
             "00000000190117cd360d56179f88d8d03474e1ab396d90d4ecdc69e6d1e4bc45"
         ),
+        # 11.3.0 bootstrap checkpoint. Mainnet PoS history between 111,639 and here
+        # does not replay: 254 canonical PoS blocks fail the leader check against the
+        # deterministically replayed stake table (the serving node's state and its
+        # own replay disagree), so a node syncing from genesis forks at 111,639.
+        # New nodes bootstrap from the snapshot exported AT this block instead of
+        # replaying that stretch, and this pin keeps every node on the same history
+        # below it. FORK_POS_PARENT_STATE_LEADER activates at the next height.
+        114276: bytes.fromhex(
+            "0000000022cec2bac0bfefdb017ac5a50f8233211ae54c02b6f759cb72c66994"
+        ),
         # Fork point of the 2026-07-14 natural 1-block fork. Canonical block B =
         # 0x0000000004c045379a4e1d049e7b225e951aa30ee9346718155dfb57a2ec44c9 (the
         # live head at 45204+ descends from it via 44855.parentHash == B, verified
@@ -551,6 +561,25 @@ FORK_USEFUL_WORK_VERIFY = "useful_work_verify"
 # Retunable via ANIMICA_FORK_POS_MINTING_HEIGHT.
 FORK_POS_MINTING = "pos_minting"
 
+# FORK_POS_PARENT_STATE_LEADER (11.3.0) — judge a PoS block's leader against the
+# state as of its PARENT, on every branch.
+#
+# Before: the importer ran the whole PoS check at header time against its own
+# HEAD state. Right for a block that extends the head, wrong for a block on a
+# competing branch: a stake tx on the node's own tip changes the stake-weighted
+# draw, the node rejects the network's real block, and every descendant stays
+# orphaned — a permanent fork for that node.
+#
+# From H: a block that extends the head is checked in full at header time as
+# before; a block on any other branch gets the header-only checks (proof,
+# scheme, key binding, slot, signature) there, and the leader/stake check runs
+# in _apply_block_state when the branch is attached — where the state is
+# exactly the parent's. Below H nothing changes, so no historical block is
+# re-judged (mainnet history below the 114,276 checkpoint does not replay; see
+# PINNED_CHECKPOINTS_BY_NETWORK). Retune with
+# ANIMICA_FORK_POS_PARENT_STATE_LEADER_HEIGHT.
+FORK_POS_PARENT_STATE_LEADER = "pos_parent_state_leader"
+
 ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
     # Mainnet consensus activation = 40,000 (operator-chosen coordinated height).
     # This MUST match on every node — the live node and every operator's pip install
@@ -609,6 +638,10 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         # runway to give anyway — no blocks are being produced to traverse one.
         # Retune with ANIMICA_FORK_POS_MINTING_HEIGHT.
         FORK_POS_MINTING: 110_072,
+        # Parent-state PoS leader check (11.3.0): the block after the 114,276
+        # bootstrap checkpoint, so everything above the pinned history is judged
+        # by the corrected rule and nothing below it is re-evaluated.
+        FORK_POS_PARENT_STATE_LEADER: 114_277,
         # Uniform reorg bound / finality (9.5.0). Operator-chosen height 75,000.
         FORK_FINALITY_DEPTH: 75_000,
         # Quantum beacon binding (9.5.0). Activated but DORMANT: presence-gated, so
@@ -668,6 +701,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_BOUNDED_RETARGET: 0,
         FORK_VALUE_CALL: 0,
         FORK_POS_MINTING: 0,
+        FORK_POS_PARENT_STATE_LEADER: 0,
         FORK_FINALITY_DEPTH: 0,
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,
@@ -687,6 +721,7 @@ ACTIVATION_HEIGHTS_BY_NETWORK: dict[tuple[str, int], dict[str, int]] = {
         FORK_BOUNDED_RETARGET: 0,
         FORK_VALUE_CALL: 0,
         FORK_POS_MINTING: 0,
+        FORK_POS_PARENT_STATE_LEADER: 0,
         FORK_FINALITY_DEPTH: 0,
         FORK_QUANTUM_BEACON: 0,
         FORK_SERVICE_CARVE: 0,

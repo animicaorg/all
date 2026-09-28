@@ -213,10 +213,33 @@ def verify_pos_header(
     """
     Validate the PoS proof on `header` against `state`.
 
-    Returns None when the header is a valid PoS block, otherwise a short reason
-    string (the caller turns that into a BlockImportError). Every check is a
-    deterministic function of the header plus committed state, so all nodes
-    reach the same verdict on replay.
+    `state` MUST be the state as of the block's PARENT. Returns None when the
+    header is a valid PoS block, otherwise a short reason string (the caller
+    turns that into a BlockImportError).
+
+    This is `verify_pos_header_stateless` followed by `verify_pos_leader`; the
+    importer runs the two halves at different times (see `verify_pos_leader`).
+    """
+    reason = verify_pos_header_stateless(
+        header,
+        target_block_time_s=target_block_time_s,
+        timestamp_tolerance_slots=timestamp_tolerance_slots,
+    )
+    if reason is not None:
+        return reason
+    return verify_pos_leader(header, state)
+
+
+def verify_pos_header_stateless(
+    header: Any,
+    *,
+    target_block_time_s: float,
+    timestamp_tolerance_slots: int = 1,
+) -> Optional[str]:
+    """
+    Every PoS check that depends only on the header itself: proof decoding,
+    pinned scheme, pubkey -> staker binding, slot vs timestamp, and the
+    signature. Safe to run on any block, including one on a side branch.
     """
     from coretx.crypto import verify_signature
 
@@ -255,7 +278,38 @@ def verify_pos_header(
             f"(expected ~{expected_slot})"
         )
 
-    # 4. The staker must actually be this slot's leader for this parent.
+    # 4. The signature, over the sig-less preimage.
+    res = verify_signature(
+        int(proof.scheme), pos_preimage(header, proof), proof.signature, proof.pubkey
+    )
+    ok = bool(getattr(res, "ok", getattr(res, "valid", res)))
+    if not ok:
+        reason = getattr(res, "reason", None) or getattr(res, "kind", None) or "invalid"
+        return f"pos signature invalid: {reason}"
+
+    return None
+
+
+def verify_pos_leader(header: Any, state: Any) -> Optional[str]:
+    """
+    The state-dependent half: the staker must be this slot's stake-weighted
+    leader and hold at least the minimum stake.
+
+    WHY THIS IS SEPARATE (11.3.0): the verdict is a function of the bond table,
+    so it is only deterministic when `state` is the state as of the block's
+    PARENT. Before 11.3.0 the importer evaluated it against whatever its current
+    head state was — correct when the block extends the head, but wrong for a
+    block on a competing branch. A stake/unstake tx on the node's own tip then
+    changed the draw, the node rejected the network's real block, and every
+    descendant stayed orphaned: a permanent fork for that node. The importer now
+    runs this at the head-extension fast path and at attach time, where the
+    state is exactly the parent's.
+    """
+    try:
+        proof = PosProof.decode(bytes(getattr(header, "extra", b"") or b""))
+    except PosProofError as exc:
+        return f"pos proof undecodable: {exc}"
+
     stakers = active_stakers(state)
     if not stakers:
         return "pos has no active stakers"
@@ -265,23 +319,14 @@ def verify_pos_header(
     if leader != proof.staker:
         return "pos staker is not the leader for this slot"
 
-    # 5. Stake floor, re-read rather than trusted from the selection walk.
-    #    Exception: while the leader set is the synthetic bootstrap one there is
-    #    by definition no bond to read yet — step 4 already pinned the leader to
-    #    the single hardcoded bootstrap validator, which is the whole check.
+    # Stake floor, re-read rather than trusted from the selection walk.
+    # Exception: while the leader set is the synthetic bootstrap one there is
+    # by definition no bond to read yet — the leader check already pinned the
+    # leader to the single hardcoded bootstrap validator, which is the whole check.
     if not is_bootstrap_leader_set(state):
         rec = read_stake(state, proof.staker)
         if rec.total < MIN_STAKE_NANM:
             return f"pos staker stake {rec.total} below minimum {MIN_STAKE_NANM}"
-
-    # 6. Finally the signature, over the sig-less preimage.
-    res = verify_signature(
-        int(proof.scheme), pos_preimage(header, proof), proof.signature, proof.pubkey
-    )
-    ok = bool(getattr(res, "ok", getattr(res, "valid", res)))
-    if not ok:
-        reason = getattr(res, "reason", None) or getattr(res, "kind", None) or "invalid"
-        return f"pos signature invalid: {reason}"
 
     return None
 
@@ -333,5 +378,7 @@ __all__ = [
     "is_pos_header",
     "pos_preimage",
     "verify_pos_header",
+    "verify_pos_header_stateless",
+    "verify_pos_leader",
     "build_pos_extra",
 ]

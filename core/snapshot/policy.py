@@ -5,6 +5,15 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+# Default HTTP bootstrap source for mainnet (11.3.0). Served as static files from
+# animica.dev and re-exported offline from a node that REPLAYED the chain, never
+# from the live RPC node (a full export on the serving node starves its RPC).
+# Before this default existed a fresh node had no manifest source at all and fell
+# back to P2P snapshots or a genesis replay that took the better part of a day.
+# Override with ANIMICA_SNAPSHOT_MANIFEST_URL_MAINNET; set it to "" to disable.
+DEFAULT_MAINNET_MANIFEST_URL = "https://animica.dev/snapshots/mainnet/latest/manifest.json"
+
+
 def _parse_csv(value: Optional[str]) -> list[str]:
     if not value:
         return []
@@ -42,7 +51,9 @@ class SnapshotPolicy:
         manifest_urls = _parse_csv(os.environ.get("ANIMICA_SNAPSHOT_MANIFEST_URLS"))
         if not manifest_urls and network == "mainnet":
             manifest_urls = _parse_csv(
-                os.environ.get("ANIMICA_SNAPSHOT_MANIFEST_URL_MAINNET")
+                os.environ.get(
+                    "ANIMICA_SNAPSHOT_MANIFEST_URL_MAINNET", DEFAULT_MAINNET_MANIFEST_URL
+                )
             )
         if not manifest_urls and network == "testnet":
             manifest_urls = _parse_csv(

@@ -193,6 +193,23 @@ def _fetch_best_manifest_sync(
     return best, best_url, None
 
 
+def _save_manifest_json(manifest_url: str, manifest: SnapshotManifest, dest: Path) -> None:
+    import httpx
+
+    with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+        resp = client.get(manifest_url)
+        resp.raise_for_status()
+        raw = resp.json()
+    if int(raw.get("head_height", -1)) != int(manifest.head_height) or str(
+        raw.get("head_hash", "")
+    ).lower() != str(manifest.head_hash).lower():
+        raise ValueError(
+            "snapshot manifest changed during download "
+            f"(selected {manifest.head_height}, now {raw.get('head_height')})"
+        )
+    (dest / "manifest.json").write_text(json.dumps(raw))
+
+
 def _download_apply_manifest_snapshot_sync(
     *,
     manifest: SnapshotManifest,
@@ -222,6 +239,13 @@ def _download_apply_manifest_snapshot_sync(
     with tempfile.TemporaryDirectory(prefix="animica_snapshot_manifest_") as tmpdir:
         temp_path = Path(tmpdir)
         download_chunks(manifest_url, manifest, temp_path)
+        # import_snapshot reads manifest.json from the snapshot directory (the
+        # completeness gate needs its per-type counts), but download_chunks only
+        # fetches the chunks — so before 11.3.0 this path always failed with
+        # "Snapshot manifest not found" and no node ever bootstrapped over HTTP.
+        # Save the raw manifest beside the chunks, refusing one that no longer
+        # describes the snapshot we selected and are about to apply.
+        _save_manifest_json(manifest_url, manifest, temp_path)
         for chunk in manifest.chunks:
             chunk_path = temp_path / chunk.name
             valid, err = verify_chunk_hash(chunk_path, chunk.sha256)

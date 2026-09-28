@@ -128,8 +128,14 @@ DEFAULT_MAX_REORG_DEPTH = 96
 # Can be overridden via ANIMICA_SNAPSHOT_INTERVAL environment variable
 DEFAULT_SNAPSHOT_INTERVAL = int(os.getenv("ANIMICA_SNAPSHOT_INTERVAL", "2000"))
 
-# Enable/disable automatic snapshot creation
-SNAPSHOT_AUTO_CREATE = os.getenv("ANIMICA_SNAPSHOT_AUTO_CREATE", "true").lower() in ("true", "1", "yes", "on")
+# Enable/disable automatic snapshot creation. OFF by default (11.3.0), matching
+# core/snapshot/orchestrator.py. A full export re-reads the whole chain on a
+# Python thread and starves block import of the GIL; with the old default of
+# "on", a node syncing from scratch backfilled an export for EVERY missing
+# multiple of the interval (~57 at height 114k), stacking more threads every
+# 100 blocks until sync crawled to a halt. Serve snapshots from ONE node that
+# opts in with ANIMICA_SNAPSHOT_AUTO_CREATE=1.
+SNAPSHOT_AUTO_CREATE = os.getenv("ANIMICA_SNAPSHOT_AUTO_CREATE", "false").lower() in ("true", "1", "yes", "on")
 
 
 class ImportErrorCode(str):
@@ -2155,7 +2161,11 @@ class BlockImporter:
         leader selection a pure function of committed state.
         """
         from core.network_params import FORK_POS_MINTING, is_fork_active
-        from core.pos import WORKTYPE_POS, verify_pos_header
+        from core.pos import (
+            WORKTYPE_POS,
+            verify_pos_header,
+            verify_pos_header_stateless,
+        )
 
         if int(getattr(header, "workType", 0) or 0) == WORKTYPE_POS:
             height_for_gate = None
@@ -2175,11 +2185,38 @@ class BlockImporter:
                 target_block_time_s = float(self.params.block.target_seconds)
             except Exception:
                 target_block_time_s = 60.0
-            reason = verify_pos_header(
-                header,
-                self.state_db,
-                target_block_time_s=target_block_time_s,
+            # The leader/stake half of the proof is a function of the PARENT's
+            # bond table. self.state_db is the state at OUR canonical head, which
+            # is the parent's state only when this block extends the head. For a
+            # block on any other branch, check the header-only half now and defer
+            # the leader check to _apply_block_state, which runs with exactly the
+            # parent's state when (and if) the branch is attached. Judging a side
+            # branch against our own tip let a stake tx on that tip reject the
+            # network's real block and fork this node permanently (11.3.0).
+            from core.network_params import FORK_POS_PARENT_STATE_LEADER
+
+            db_head = self.block_db.get_canonical_head()
+            extends_head = db_head is not None and bytes(db_head[1]) == bytes(
+                header.parentHash
             )
+            parent_state_rule = is_fork_active(
+                FORK_POS_PARENT_STATE_LEADER,
+                int(height_for_gate),
+                chain_id=int(self.params.chain_id),
+            )
+            # Below the activation height the check is exactly 11.2.3's (full,
+            # against our head) so no historical verdict changes.
+            if extends_head or not parent_state_rule:
+                reason = verify_pos_header(
+                    header,
+                    self.state_db,
+                    target_block_time_s=target_block_time_s,
+                )
+            else:
+                reason = verify_pos_header_stateless(
+                    header,
+                    target_block_time_s=target_block_time_s,
+                )
             if reason is not None:
                 log.warning(
                     "PoS proof rejected",
@@ -3231,6 +3268,30 @@ class BlockImporter:
         except Exception:
             return None
 
+    def _pos_leader_reject_reason(self, block: Block) -> Optional[str]:
+        """Leader/stake check for a PoS block, against the state it is applied on.
+
+        Called from _apply_block_state BEFORE the block's txs execute, so
+        self.state_db is exactly the parent's state on every apply path (head
+        extension, reorg attach, rebuild). That makes the verdict identical on
+        every node, whichever branch it happened to be on when the block arrived.
+        """
+        from core.network_params import FORK_POS_PARENT_STATE_LEADER, is_fork_active
+        from core.pos import WORKTYPE_POS, verify_pos_leader
+
+        header = block.header
+        if int(getattr(header, "workType", 0) or 0) != WORKTYPE_POS:
+            return None
+        height = int(getattr(header, "height", 0) or 0)
+        # Forward-only: blocks below the activation height were judged at header
+        # time when they were imported and are never re-judged here — a state
+        # rebuild replays them without a leader check, exactly as before 11.3.0.
+        if not is_fork_active(
+            FORK_POS_PARENT_STATE_LEADER, height, chain_id=int(self.params.chain_id)
+        ):
+            return None
+        return verify_pos_leader(header, self.state_db)
+
     def _apply_block_state(self, block: Block, *, seal_only: bool = False) -> bool:
         # seal_only=True is a dry-run used by compute_sealed_state_root(): it
         # applies the identical state transition (txs + rewards + AICF, which drive
@@ -3240,6 +3301,27 @@ class BlockImporter:
         # reverts around it, so the live state is unchanged.
         if self.state_db is None:
             return False
+
+        if not seal_only:
+            pos_reason = self._pos_leader_reject_reason(block)
+            if pos_reason is not None:
+                _bad_h = block.header.hash()
+                log.warning(
+                    "PoS proof rejected",
+                    extra={
+                        "block_hash": _bad_h.hex(),
+                        "height": int(getattr(block.header, "height", 0) or 0),
+                        "reason": pos_reason,
+                        "stage": "attach",
+                    },
+                )
+                self._record_invalid_block(_bad_h)
+                try:
+                    if self.fork_choice is not None:
+                        self.fork_choice.mark_invalid(_bad_h)
+                except Exception as _mi_exc:
+                    log.error("pos: mark_invalid failed: %s", _mi_exc)
+                return False
 
         try:
             block_env = make_block_env(block.header, self.params)
@@ -3889,8 +3971,8 @@ class BlockImporter:
             return False
         if height % self._snapshot_interval != 0:
             return False
-        # Don't create if already created or in progress
-        if height in self._created_snapshots or height in self._pending_snapshots:
+        # Don't create if already created, or while ANY export is in progress.
+        if height in self._created_snapshots or self._pending_snapshots:
             return False
         return True
     
@@ -4023,6 +4105,10 @@ class BlockImporter:
             return
         if current_height <= self._snapshot_interval:
             return
+        # One export at a time, ever: each one is a full-chain read competing with
+        # block import for the GIL. Queued heights are picked up on a later call.
+        if self._pending_snapshots:
+            return
         
         # Find all snapshot heights we should have
         missing_heights = []
@@ -4055,9 +4141,9 @@ class BlockImporter:
                 }
             )
             
-            # Create missing snapshots (oldest first, but limited to avoid overwhelming)
-            for height in sorted(missing_heights)[:3]:  # Create max 3 at a time
-                self._create_disk_snapshot(height)
+            # Only the NEWEST missing height is worth exporting: a fresh node wants
+            # the snapshot closest to the tip, and older ones are superseded by it.
+            self._create_disk_snapshot(max(missing_heights))
 
     def _rebuild_state_from_canonical(
         self, target_height: int, *, max_baseline_height: Optional[int] = None

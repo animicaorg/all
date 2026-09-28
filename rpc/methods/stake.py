@@ -177,3 +177,50 @@ def stake_get(address: str | None = None, **kwargs: t.Any) -> dict:
     view["available"] = True
     view["staking"] = bool(rec.bonds)
     return view
+
+
+@method(
+    "stake.leaderForSlot",
+    desc="The stake-weighted PoS leader for a slot on top of the current head.",
+    aliases=("stake_leaderForSlot",),
+)
+def stake_leader_for_slot(slot: int | None = None, **kwargs: t.Any) -> dict:
+    """
+    Who may mint a PoS block for `slot` (default: the current wall-clock slot)
+    as the child of the current canonical head.
+
+    Lets a minter skip slots it does not lead instead of signing and submitting
+    a block the importer is certain to reject. Computed exactly as the importer
+    does for a head-extending block: committed state at the head, the head hash
+    as the parent, and the slot.
+    """
+    from core.staking import leader_for_slot, slot_for_timestamp
+
+    state = _state()
+    if state is None:
+        return {"available": False, "reason": "state unavailable"}
+
+    ctx = deps.get_ctx()
+    block_db = getattr(ctx, "block_db", None)
+    head = block_db.get_canonical_head() if block_db is not None else None
+    if not head:
+        return {"available": False, "reason": "no canonical head"}
+    head_height, head_hash = int(head[0]), bytes(head[1])
+
+    try:
+        target_s = float(getattr(getattr(ctx, "params", None), "block", None).target_seconds)
+    except Exception:
+        target_s = 60.0
+    if slot is None:
+        slot = kwargs.get("slot")
+    slot = int(slot) if slot is not None else slot_for_timestamp(_now(), target_s)
+
+    leader = leader_for_slot(state, head_hash, slot)
+    return {
+        "available": True,
+        "parentHeight": head_height,
+        "parentHash": "0x" + head_hash.hex(),
+        "slot": slot,
+        "leader": ("0x" + bytes(leader).hex()) if leader is not None else None,
+        "leaderAddress": _address_of(leader) if leader is not None else "",
+    }
