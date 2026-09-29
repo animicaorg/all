@@ -533,27 +533,55 @@ def gettransaction(txid: str, include_watchonly: bool = False, verbose: bool = F
         raw = (F.native("mempool.getRawTx", F.px(txid)) or {}).get("raw")
     except Exception:
         pass
-    return {
-        "amount": value,
-        "fee": -fee,
+
+    # Tx bodies carry no timestamp, so the block's is the tx time (it read as 0,
+    # i.e. 1970, before).
+    ts = F.int_from(tx.get("timestamp"), 0)
+    if not ts and bnum >= 0:
+        try:
+            blk = F.native("chain.getBlockByNumber", bnum, False, False) or {}
+            ts = F.int_from(blk.get("timestamp"), 0)
+        except Exception:
+            ts = 0
+
+    # Direction from the wallet's point of view. Before this, EVERY tx came back
+    # as category "send" with a negative amount — so an exchange confirming a
+    # deposit through gettransaction saw an outgoing withdrawal and rejected it.
+    to_raw = body.get("to", tx.get("to"))
+    from_raw = body.get("from", body.get("sender", tx.get("from")))
+    to_addr, from_addr = F.render_address(to_raw), F.render_address(from_raw)
+    watched = {k for k in (F.account_key(a) for a in WS.addresses()) if k is not None}
+    to_key, from_key = F.account_key(to_raw), F.account_key(from_raw)
+    details = []
+    if from_key is not None and from_key in watched:
+        details.append({"address": to_addr, "category": "send", "amount": -value,
+                        "vout": 0, "fee": -fee})
+    if (to_key is not None and to_key in watched) or not details:
+        # A watched recipient, or neither side watched (a deposit to an address
+        # the exchange has not importaddress'd yet): report it as received.
+        details.append({"address": to_addr, "category": "receive", "amount": value,
+                        "vout": 0})
+    net = sum(d["amount"] for d in details)
+
+    out = {
+        "amount": net,
+        "fee": -fee if details[0]["category"] == "send" else 0.0,
         "confirmations": (head_h - bnum + 1) if bnum >= 0 else 0,
         "blockhash": F.hx(tx.get("blockHash")),
         "blockheight": bnum if bnum >= 0 else None,
         "blockindex": F.int_from(tx.get("index"), 0),
-        "blocktime": F.int_from(tx.get("timestamp"), 0),
+        "blocktime": ts,
         "txid": F.hx(txid),
         "wtxid": F.hx(txid),
-        "time": F.int_from(tx.get("timestamp"), 0),
-        "timereceived": F.int_from(tx.get("timestamp"), 0),
+        "time": ts,
+        "timereceived": ts,
         "bip125-replaceable": "no",
-        "details": [{
-            "address": body.get("to"),
-            "category": "send",
-            "amount": -value,
-            "vout": 0,
-        }],
+        "details": details,
         "hex": F.hx(raw),
     }
+    if from_addr:
+        out["animica:from"] = from_addr
+    return out
 
 
 # --------------------------------------------------------------------------- #

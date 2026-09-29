@@ -237,6 +237,44 @@ def block_to_btc(view: dict, head_height: int, verbosity: int,
     return out
 
 
+# The node renders tx `from`/`to` as 32-byte hex account keys, but Bitcoin-RPC
+# clients (exchanges) expect the chain's own address format and validate it. An
+# `anim1` address is bech32m("anim", alg_id || key); ML-DSA-65 (0x1003) is the
+# only live signature scheme, so every real account renders under it.
+_ML_DSA_65_ALG_ID = b"\x10\x03"
+
+
+def account_key(addr: Any) -> Optional[bytes]:
+    """32-byte account key for an anim1 address or a 0x-hex key; None if neither."""
+    s = str(addr or "").strip()
+    if not s:
+        return None
+    try:
+        if s.lower().startswith("anim1"):
+            from core.utils.address_codec import account_key_from_any
+
+            return bytes(account_key_from_any(s))
+        h = s[2:] if s[:2].lower() == "0x" else s
+        if len(h) == 64:
+            return bytes.fromhex(h)
+    except Exception:
+        return None
+    return None
+
+
+def render_address(addr: Any) -> Any:
+    """Render any address form as anim1…; pass through what cannot be decoded."""
+    s = str(addr or "").strip()
+    if s.lower().startswith("anim1"):
+        return s.lower()
+    key = account_key(s)
+    if key is None:
+        return addr
+    from core.utils.bytes import bech32m_encode
+
+    return bech32m_encode("anim", _ML_DSA_65_ALG_ID + key)
+
+
 def btc_tx_view(tx: dict) -> dict:
     """Animica tx (decoded or record) -> Bitcoin decoderawtransaction shape.
 
@@ -244,8 +282,8 @@ def btc_tx_view(tx: dict) -> dict:
     """
     body = tx.get("body") or tx.get("tx", {}).get("body") or tx
     txid = tx.get("hash") or tx.get("txid") or tx.get("txHash")
-    frm = body.get("from") or body.get("sender")
-    to = body.get("to") or body.get("recipient")
+    frm = render_address(body.get("from") or body.get("sender"))
+    to = render_address(body.get("to") or body.get("recipient"))
     value = body.get("value", body.get("amount", 0))
     kind = body.get("kind", body.get("type"))
     data = body.get("data") or ""
